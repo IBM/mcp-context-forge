@@ -806,3 +806,177 @@ def test_mask_jwt_in_cookies_no_equals():
     masked = mask_jwt_in_cookies(cookie)
     assert "flagonly" in masked
     assert "jwt_token=******" in masked
+
+
+# --- Large body with boundary logging - request failure path ---
+
+@pytest.mark.asyncio
+async def test_large_body_boundary_logging_on_exception(dummy_logger, mock_structured_logger):
+    """Large body + call_next raises + boundary logging captures failure."""
+
+    async def _failing_call_next(request):
+        raise RuntimeError("downstream failure")
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=10,
+    )
+    body = b"x" * 500  # Way over max_body_size * 4
+    request = make_request(body=body, headers={"content-length": str(len(body))})
+
+    with pytest.raises(RuntimeError, match="downstream failure"):
+        await middleware.dispatch(request, _failing_call_next)
+
+    # Structured logger should have logged a request_failed event
+    mock_structured_logger.log.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_large_body_boundary_completion_logging(dummy_logger, mock_structured_logger):
+    """Large body + successful response triggers boundary completion logging."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=10,
+    )
+    body = b"x" * 500  # Way over max_body_size * 4
+
+    async def _call_next(request):
+        return Response(content="OK", status_code=200)
+
+    request = make_request(body=body, headers={"content-length": str(len(body))})
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+    # Structured logger should have logged request_completed
+    mock_structured_logger.log.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_large_body_logger_type_error_fallback(dummy_logger, mock_structured_logger):
+    """Large body: logger.log raises TypeError → falls back to no-extra call."""
+    call_count = 0
+
+    class TypeErrorOnFirstLog:
+        def __init__(self):
+            self.logged = []
+            self.warnings = []
+            self.enabled = True
+
+        def isEnabledFor(self, level):
+            return True
+
+        def log(self, level, msg, extra=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1 and extra is not None:
+                raise TypeError("no extra")
+            self.logged.append((level, msg))
+
+        def warning(self, msg):
+            self.warnings.append(msg)
+
+        def debug(self, msg):
+            pass
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=10,
+    )
+    import mcpgateway.middleware.request_logging_middleware as rlm
+    original_logger = rlm.logger
+    rlm.logger = TypeErrorOnFirstLog()
+
+    body = b"x" * 500
+    try:
+        async def _call_next(request):
+            return Response(content="OK", status_code=200)
+
+        request = make_request(body=body, headers={"content-length": str(len(body))})
+        response = await middleware.dispatch(request, _call_next)
+        assert response.status_code == 200
+        # Second call (without extra) should succeed
+        assert len(rlm.logger.logged) >= 1
+    finally:
+        rlm.logger = original_logger
+
+
+@pytest.mark.asyncio
+async def test_empty_body_logs_empty_placeholder(dummy_logger, mock_structured_logger):
+    """Empty body logs <empty> placeholder."""
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=1000,
+    )
+
+    async def _call_next(request):
+        return Response(content="OK", status_code=200)
+
+    request = make_request(body=b"")
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+    assert any("<empty>" in msg for _, msg in dummy_logger.logged)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_exception_with_boundary_logging(dummy_logger, mock_structured_logger):
+    """call_next raises during normal body flow + boundary logging records failure."""
+
+    async def _failing_call_next(request):
+        raise ValueError("handler error")
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=1000,
+    )
+    request = make_request(body=b'{"key": "value"}')
+
+    with pytest.raises(ValueError, match="handler error"):
+        await middleware.dispatch(request, _failing_call_next)
+
+    # Structured logger should have been called with error event
+    mock_structured_logger.log.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_boundary_completion_structured_log_failure(dummy_logger, mock_structured_logger):
+    """Structured logger failure on completion is caught and warned."""
+    mock_structured_logger.log.side_effect = RuntimeError("structured log failed")
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=1000,
+    )
+
+    async def _call_next(request):
+        return Response(content="OK", status_code=200)
+
+    request = make_request(body=b'{"test": true}')
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+    # Warning should have been logged about structured log failure
+    assert any("Failed to log" in w for w in dummy_logger.warnings)
+
+
+# --- _categorize_response_time ---
+
+def test_categorize_response_time_all_buckets():
+    assert RequestLoggingMiddleware._categorize_response_time(50) == "fast"
+    assert RequestLoggingMiddleware._categorize_response_time(200) == "normal"
+    assert RequestLoggingMiddleware._categorize_response_time(1000) == "slow"
+    assert RequestLoggingMiddleware._categorize_response_time(5000) == "very_slow"
+
+
+# --- Sampling exception fallback ---
+
+@pytest.mark.asyncio
+async def test_sampling_exception_defaults_to_logging(dummy_logger, mock_structured_logger, monkeypatch):
+    """When secrets.randbelow raises, detailed logging is NOT disabled."""
+    import secrets as secrets_mod
+    monkeypatch.setattr(secrets_mod, "randbelow", lambda _: (_ for _ in ()).throw(RuntimeError("rng fail")))
+
+    middleware = RequestLoggingMiddleware(
+        app=None, enable_gateway_logging=False, log_detailed_requests=True,
+        max_body_size=1000, log_detailed_sample_rate=0.5,
+    )
+
+    async def _call_next(request):
+        return Response(content="OK", status_code=200)
+
+    request = make_request(body=b'{"data": "test"}')
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+    # Should still have logged despite sampling exception
+    assert len(dummy_logger.logged) > 0

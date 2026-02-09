@@ -21,7 +21,8 @@ The tests cover:
 """
 
 # Standard
-from unittest.mock import patch
+import socket
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -821,3 +822,362 @@ def test_new_pattern_special_cases():
 
     # Test that legitimate data URIs pass
     assert SecurityValidator.sanitize_display_text("data:image/png;base64,abc", "desc")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_no_xss                                                    #
+# --------------------------------------------------------------------------- #
+class TestValidateNoXss:
+    """Tests for validate_no_xss (lines 1266-1270)."""
+
+    def test_empty_string(self):
+        SecurityValidator.validate_no_xss("", "test")  # Should not raise
+
+    def test_none_value(self):
+        SecurityValidator.validate_no_xss(None, "test")  # Should not raise
+
+    def test_safe_text(self):
+        SecurityValidator.validate_no_xss("Hello World", "test")  # Should not raise
+
+    def test_html_script_tag(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_no_xss("<script>alert(1)</script>", "test")
+
+    def test_html_iframe_tag(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_no_xss("<iframe src='evil'></iframe>", "test")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_mime_type                                                 #
+# --------------------------------------------------------------------------- #
+class TestValidateMimeType:
+    """Tests for validate_mime_type (lines 1454-1469)."""
+
+    def test_empty_string(self):
+        assert SecurityValidator.validate_mime_type("") == ""
+
+    def test_valid_standard_types(self):
+        assert SecurityValidator.validate_mime_type("text/plain") == "text/plain"
+        assert SecurityValidator.validate_mime_type("application/json") == "application/json"
+        assert SecurityValidator.validate_mime_type("image/jpeg") == "image/jpeg"
+
+    def test_invalid_format(self):
+        with pytest.raises(ValueError, match="Invalid MIME type"):
+            SecurityValidator.validate_mime_type("invalid")
+        with pytest.raises(ValueError, match="Invalid MIME type"):
+            SecurityValidator.validate_mime_type("text/")
+
+    def test_vendor_types_allowed(self):
+        assert SecurityValidator.validate_mime_type("application/x-custom") == "application/x-custom"
+        assert SecurityValidator.validate_mime_type("text/x-log") == "text/x-log"
+
+    def test_plus_suffix_allowed(self):
+        assert SecurityValidator.validate_mime_type("application/vnd.api+json") == "application/vnd.api+json"
+        assert SecurityValidator.validate_mime_type("image/svg+xml") == "image/svg+xml"
+
+    def test_not_in_whitelist(self):
+        with pytest.raises(ValueError, match="not in the allowed list"):
+            SecurityValidator.validate_mime_type("application/evil")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_shell_parameter                                           #
+# --------------------------------------------------------------------------- #
+class TestValidateShellParameter:
+    """Tests for validate_shell_parameter (lines 1490-1502)."""
+
+    def test_non_string(self):
+        with pytest.raises(ValueError, match="must be string"):
+            SecurityValidator.validate_shell_parameter(123)
+
+    def test_safe_value(self):
+        assert SecurityValidator.validate_shell_parameter("safe_param") == "safe_param"
+
+    def test_dangerous_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = True
+            with pytest.raises(ValueError, match="shell metacharacters"):
+                SecurityValidator.validate_shell_parameter("test; rm -rf /")
+
+    def test_dangerous_non_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = False
+            result = SecurityValidator.validate_shell_parameter("test; rm")
+            # shlex.quote wraps in single quotes
+            assert result.startswith("'")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_path                                                      #
+# --------------------------------------------------------------------------- #
+class TestValidatePath:
+    """Tests for validate_path (lines 1524-1547)."""
+
+    def test_non_string(self):
+        with pytest.raises(ValueError, match="must be string"):
+            SecurityValidator.validate_path(123)
+
+    def test_uri_scheme_passthrough(self):
+        assert SecurityValidator.validate_path("http://example.com/file") == "http://example.com/file"
+        assert SecurityValidator.validate_path("plugin://some/path") == "plugin://some/path"
+
+    def test_traversal_detected(self):
+        with pytest.raises(ValueError, match="Path traversal"):
+            SecurityValidator.validate_path("../../../etc/passwd")
+
+    def test_allowed_roots_denied(self):
+        with pytest.raises(ValueError, match="outside allowed roots"):
+            SecurityValidator.validate_path("/tmp/file", allowed_roots=["/nonexistent/root"])
+
+    def test_valid_path(self):
+        result = SecurityValidator.validate_path("/tmp")
+        assert result  # Returns resolved path
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_sql_parameter                                             #
+# --------------------------------------------------------------------------- #
+class TestValidateSqlParameter:
+    """Tests for validate_sql_parameter (lines 1568-1579)."""
+
+    def test_non_string_passthrough(self):
+        assert SecurityValidator.validate_sql_parameter(123) == 123
+
+    def test_safe_value(self):
+        assert SecurityValidator.validate_sql_parameter("safe_value") == "safe_value"
+
+    def test_injection_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = True
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("'; DROP TABLE users--")
+
+    def test_injection_non_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = False
+            result = SecurityValidator.validate_sql_parameter("test' OR '1'='1")
+            assert "''" in result  # Single quotes escaped
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_parameter_length                                          #
+# --------------------------------------------------------------------------- #
+class TestValidateParameterLength:
+    """Tests for validate_parameter_length (lines 1599-1602)."""
+
+    def test_within_limit(self):
+        assert SecurityValidator.validate_parameter_length("short", 10) == "short"
+
+    def test_exceeds_limit(self):
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            SecurityValidator.validate_parameter_length("a" * 100, max_length=10)
+
+    def test_default_limit(self):
+        assert SecurityValidator.validate_parameter_length("test") == "test"
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: sanitize_text                                                      #
+# --------------------------------------------------------------------------- #
+class TestSanitizeText:
+    """Tests for sanitize_text (lines 1620-1627)."""
+
+    def test_non_string_passthrough(self):
+        assert SecurityValidator.sanitize_text(123) == 123
+
+    def test_ansi_removal(self):
+        result = SecurityValidator.sanitize_text("\x1b[31mRed\x1b[0m Text")
+        assert "\x1b" not in result
+        assert "Red" in result
+
+    def test_control_char_removal(self):
+        result = SecurityValidator.sanitize_text("Text\x00with\x01control")
+        assert "\x00" not in result
+        assert "\x01" not in result
+
+    def test_clean_text(self):
+        assert SecurityValidator.sanitize_text("Clean text") == "Clean text"
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: sanitize_json_response                                             #
+# --------------------------------------------------------------------------- #
+class TestSanitizeJsonResponse:
+    """Tests for sanitize_json_response (lines 1647-1653)."""
+
+    def test_string(self):
+        result = SecurityValidator.sanitize_json_response("text\x1b[31m")
+        assert "\x1b" not in result
+
+    def test_dict(self):
+        data = {"key": "val\x00ue", "nested": {"k": "v\x01"}}
+        result = SecurityValidator.sanitize_json_response(data)
+        assert "\x00" not in result["key"]
+        assert "\x01" not in result["nested"]["k"]
+
+    def test_list(self):
+        data = ["item\x00", "item\x1b[31m"]
+        result = SecurityValidator.sanitize_json_response(data)
+        assert "\x00" not in result[0]
+        assert "\x1b" not in result[1]
+
+    def test_primitives(self):
+        assert SecurityValidator.sanitize_json_response(123) == 123
+        assert SecurityValidator.sanitize_json_response(None) is None
+        assert SecurityValidator.sanitize_json_response(True) is True
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: _iter_template_expressions edge cases                              #
+# --------------------------------------------------------------------------- #
+class TestIterTemplateExpressions:
+    """Tests for _iter_template_expressions backslash/quote/unterminated paths."""
+
+    def test_unterminated_expression(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ unclosed")
+
+    def test_escaped_chars_in_expression(self):
+        """Template with escaped backslash inside expression."""
+        result = SecurityValidator.validate_template("{{ 'test' }}")
+        assert result == "{{ 'test' }}"
+
+    def test_double_quoted_expression(self):
+        result = SecurityValidator.validate_template('{{ "hello" }}')
+        assert result == '{{ "hello" }}'
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_template SSTI branches                                    #
+# --------------------------------------------------------------------------- #
+class TestValidateTemplateSsti:
+    """Tests for SSTI detection in validate_template (lines 802-818)."""
+
+    def test_ssti_dangerous_substring_in_expression(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ config }}")
+
+    def test_ssti_dangerous_substring_import(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ __import__('os') }}")
+
+    def test_ssti_dangerous_operator_bracket(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ foo[bar] }}")
+
+    def test_ssti_in_block_tag(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{% set x = __class__ %}")
+
+    def test_ssti_simple_template_dollar(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("${evil}")
+
+    def test_ssti_simple_template_hash(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("#{expression}")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_url additional security branches                          #
+# --------------------------------------------------------------------------- #
+class TestValidateUrlSecurity:
+    """Tests for uncovered URL validation branches (lines 1011-1070)."""
+
+    def test_ipv6_blocked(self):
+        with pytest.raises(ValueError, match="IPv6"):
+            SecurityValidator.validate_url("https://[::1]/path")
+
+    def test_crlf_injection(self):
+        with pytest.raises(ValueError, match="line breaks"):
+            SecurityValidator.validate_url("https://example.com/\r\nHost: evil.com")
+
+    def test_space_in_domain(self):
+        with pytest.raises(ValueError, match="spaces"):
+            SecurityValidator.validate_url("https://exam ple.com/")
+
+    def test_zero_address(self):
+        with pytest.raises(ValueError, match="0.0.0.0"):
+            SecurityValidator.validate_url("https://0.0.0.0/")
+
+    def test_credentials_in_url(self):
+        with pytest.raises(ValueError, match="credentials"):
+            SecurityValidator.validate_url("https://user:pass@example.com/")
+
+    def test_html_in_url(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_url("https://example.com/<script>")
+
+    def test_js_in_url_query(self):
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url("https://example.com?x=javascript:alert(1)")
+
+    def test_dangerous_data_protocol_in_url(self):
+        """data: protocol patterns in URL (line 1011)."""
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url("https://example.com?r=data:text/html,<script>")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: _validate_ssrf branches                                            #
+# --------------------------------------------------------------------------- #
+class TestValidateSsrf:
+    """Tests for _validate_ssrf (lines 1130-1189)."""
+
+    @pytest.fixture
+    def ssrf_settings(self):
+        s = MagicMock()
+        s.ssrf_protection_enabled = True
+        s.ssrf_blocked_networks = ["169.254.169.254/32"]
+        s.ssrf_blocked_hosts = ["metadata.google.internal"]
+        s.ssrf_allow_localhost = False
+        s.ssrf_allow_private_networks = False
+        s.ssrf_dns_fail_closed = True
+        return s
+
+    def test_blocked_hostname(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="blocked hostname"):
+                SecurityValidator._validate_ssrf("metadata.google.internal", "URL")
+
+    def test_blocked_network(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="blocked by SSRF"):
+                SecurityValidator._validate_ssrf("169.254.169.254", "URL")
+
+    def test_localhost_blocked(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="localhost"):
+                SecurityValidator._validate_ssrf("127.0.0.1", "URL")
+
+    def test_private_network_blocked(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="private network"):
+                SecurityValidator._validate_ssrf("10.1.2.3", "URL")
+
+    def test_dns_fail_closed(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+                with pytest.raises(ValueError, match="DNS resolution failed"):
+                    SecurityValidator._validate_ssrf("nonexistent.example.invalid", "URL")
+
+    def test_public_ip_allowed(self, ssrf_settings):
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    def test_invalid_cidr_logged(self, ssrf_settings):
+        ssrf_settings.ssrf_blocked_networks = ["invalid-cidr"]
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    def test_no_resolved_addresses_fail_closed(self, ssrf_settings):
+        """DNS resolves but returns no valid addresses."""
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", return_value=[]):
+                with pytest.raises(ValueError, match="no addresses"):
+                    SecurityValidator._validate_ssrf("weird.host.example", "URL")

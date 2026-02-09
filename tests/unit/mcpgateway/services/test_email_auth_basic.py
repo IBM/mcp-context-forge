@@ -1793,3 +1793,122 @@ class TestEmailAuthServiceAdminCounting:
         result = await service.is_last_active_admin("nonexistent@example.com")
 
         assert result is False
+
+    # ---- _escape_like ---- #
+    def test_escape_like_backslash(self, service):
+        """Backslashes are escaped in LIKE patterns."""
+        assert service._escape_like("test\\val") == "test\\\\val"
+
+    def test_escape_like_percent(self, service):
+        """Percent signs are escaped in LIKE patterns."""
+        assert service._escape_like("100%") == "100\\%"
+
+    def test_escape_like_underscore(self, service):
+        """Underscores are escaped in LIKE patterns."""
+        assert service._escape_like("user_name") == "user\\_name"
+
+    def test_escape_like_combined(self, service):
+        """Combined special characters are all escaped."""
+        result = service._escape_like("a\\b%c_d")
+        assert result == "a\\\\b\\%c\\_d"
+
+    # ---- count_users ---- #
+    @pytest.mark.asyncio
+    async def test_count_users_success(self, service, mock_db):
+        """count_users returns count from DB."""
+        mock_db.execute.return_value.scalar.return_value = 42
+        result = await service.count_users()
+        assert result == 42
+
+    @pytest.mark.asyncio
+    async def test_count_users_none_returns_zero(self, service, mock_db):
+        """count_users returns 0 when scalar is None."""
+        mock_db.execute.return_value.scalar.return_value = None
+        result = await service.count_users()
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_count_users_error_returns_zero(self, service, mock_db):
+        """count_users returns 0 on exception."""
+        mock_db.execute.side_effect = Exception("db error")
+        result = await service.count_users()
+        assert result == 0
+
+    # ---- count_active_admin_users ---- #
+    @pytest.mark.asyncio
+    async def test_count_active_admin_users(self, service, mock_db):
+        """count_active_admin_users returns count."""
+        mock_db.execute.return_value.scalar.return_value = 3
+        result = await service.count_active_admin_users()
+        assert result == 3
+
+    @pytest.mark.asyncio
+    async def test_count_active_admin_users_none(self, service, mock_db):
+        """count_active_admin_users returns 0 when None."""
+        mock_db.execute.return_value.scalar.return_value = None
+        result = await service.count_active_admin_users()
+        assert result == 0
+
+    # ---- list_users with search ---- #
+    @pytest.mark.asyncio
+    async def test_list_users_with_search(self, service, mock_db):
+        """list_users with search parameter filters results."""
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "john@test.com"
+        mock_user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_user]
+
+        result = await service.list_users(search="john", limit=50)
+        assert len(result.data) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_users_page_based(self, service, mock_db):
+        """list_users with page parameter returns pagination metadata."""
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "user@test.com"
+        mock_user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+        # Mock count for pagination
+        count_result = MagicMock()
+        count_result.scalar.return_value = 1
+        # Mock data query
+        data_result = MagicMock()
+        data_result.scalars.return_value.all.return_value = [mock_user]
+
+        mock_db.execute.side_effect = [count_result, data_result]
+
+        result = await service.list_users(page=1, per_page=10)
+        assert result.data is not None
+
+    # ---- get_auth_events ---- #
+    @pytest.mark.asyncio
+    async def test_get_auth_events_success(self, service, mock_db):
+        """get_auth_events returns events."""
+        mock_event = MagicMock(spec=EmailAuthEvent)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_event]
+        result = await service.get_auth_events(email="user@test.com")
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_auth_events_error(self, service, mock_db):
+        """get_auth_events returns empty list on error."""
+        mock_db.execute.side_effect = Exception("db error")
+        result = await service.get_auth_events()
+        assert result == []
+
+    # ---- is_last_active_admin true case ---- #
+    @pytest.mark.asyncio
+    async def test_is_last_active_admin_true(self, service, mock_db):
+        """is_last_active_admin returns True when only 1 active admin."""
+        mock_user = MagicMock()
+        mock_user.is_admin = True
+        mock_user.is_active = True
+        # First call: find user; Second call: count admins
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = mock_user
+        count_result = MagicMock()
+        count_result.scalar.return_value = 1
+        mock_db.execute.side_effect = [user_result, count_result]
+
+        result = await service.is_last_active_admin("admin@test.com")
+        assert result is True

@@ -2261,3 +2261,406 @@ class TestCreateToolObject:
         )
         assert result.base_url == "http://base.example.com"
         assert result.path_template == "/api/{id}"
+
+
+# ─── Notification event coverage ─────────────────────────────────────────────
+
+
+class TestNotificationEventsCoverage:
+    """Direct tests for notification methods (lines 4016-4118)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        svc = ToolService()
+        svc._event_service = AsyncMock()
+        return svc
+
+    def _make_tool(self, **overrides):
+        t = MagicMock(spec=DbTool)
+        t.id = "t1"
+        t.name = "test-tool"
+        t.url = "http://example.com"
+        t.description = "desc"
+        t.enabled = True
+        t.reachable = True
+        for k, v in overrides.items():
+            setattr(t, k, v)
+        return t
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_activated(self, tool_service):
+        tool = self._make_tool()
+        await tool_service._notify_tool_activated(tool)
+        tool_service._event_service.publish_event.assert_awaited_once()
+        event = tool_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "tool_activated"
+        assert event["data"]["id"] == "t1"
+        assert "timestamp" in event
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_deactivated(self, tool_service):
+        tool = self._make_tool(enabled=False, reachable=False)
+        await tool_service._notify_tool_deactivated(tool)
+        event = tool_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "tool_deactivated"
+        assert event["data"]["enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_offline(self, tool_service):
+        tool = self._make_tool()
+        await tool_service._notify_tool_offline(tool)
+        event = tool_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "tool_offline"
+        assert event["data"]["reachable"] is False
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_deleted(self, tool_service):
+        tool_info = {"id": "t1", "name": "test-tool"}
+        await tool_service._notify_tool_deleted(tool_info)
+        event = tool_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "tool_deleted"
+        assert event["data"] == tool_info
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_added(self, tool_service):
+        tool = self._make_tool()
+        await tool_service._notify_tool_added(tool)
+        event = tool_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "tool_added"
+        assert event["data"]["url"] == "http://example.com"
+
+    @pytest.mark.asyncio
+    async def test_notify_tool_removed(self, tool_service):
+        tool = self._make_tool(enabled=False)
+        await tool_service._notify_tool_removed(tool)
+        event = tool_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "tool_removed"
+
+
+# ─── _invoke_a2a_tool coverage ───────────────────────────────────────────────
+
+
+class TestInvokeA2AToolCoverage:
+    """Tests for _invoke_a2a_tool (lines 4449-4510)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        svc = ToolService()
+        svc._event_service = AsyncMock()
+        return svc
+
+    def _make_a2a_tool(self, agent_id="agent-1"):
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool-1"
+        tool.name = "a2a-tool"
+        tool.annotations = {"a2a_agent_id": agent_id} if agent_id else {}
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_missing_agent_id_raises(self, tool_service):
+        tool = self._make_a2a_tool(agent_id=None)
+        db = MagicMock()
+        with pytest.raises(ToolNotFoundError, match="missing agent ID"):
+            await tool_service._invoke_a2a_tool(db, tool, {})
+
+    @pytest.mark.asyncio
+    async def test_agent_not_found_raises(self, tool_service):
+        tool = self._make_a2a_tool()
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with pytest.raises(ToolNotFoundError, match="A2A agent not found"):
+            await tool_service._invoke_a2a_tool(db, tool, {})
+
+    @pytest.mark.asyncio
+    async def test_agent_disabled_raises(self, tool_service):
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = False
+        agent.name = "test-agent"
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        with pytest.raises(ToolNotFoundError, match="is disabled"):
+            await tool_service._invoke_a2a_tool(db, tool, {})
+
+    @pytest.mark.asyncio
+    async def test_success_with_response_key(self, tool_service):
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value={"response": "hello"})
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {"query": "hi"})
+        assert result.is_error is False
+        assert result.content[0].text == "hello"
+
+    @pytest.mark.asyncio
+    async def test_success_without_response_key(self, tool_service):
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "custom"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(return_value="raw-response")
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is False
+        assert result.content[0].text == "raw-response"
+
+    @pytest.mark.asyncio
+    async def test_exception_returns_error_result(self, tool_service):
+        tool = self._make_a2a_tool()
+        agent = MagicMock()
+        agent.enabled = True
+        agent.name = "agent"
+        agent.endpoint_url = "http://agent.test"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = agent
+        tool_service._call_a2a_agent = AsyncMock(side_effect=RuntimeError("boom"))
+
+        result = await tool_service._invoke_a2a_tool(db, tool, {})
+        assert result.is_error is True
+        assert "boom" in result.content[0].text
+
+
+# ─── _call_a2a_agent coverage ────────────────────────────────────────────────
+
+
+class TestCallA2AAgentCoverage:
+    """Tests for _call_a2a_agent (lines 4512-4598)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        svc = ToolService()
+        svc._event_service = AsyncMock()
+        return svc
+
+    def _make_agent(self, **overrides):
+        agent = MagicMock()
+        agent.name = "test-agent"
+        agent.endpoint_url = "http://agent.test/api"
+        agent.agent_type = "generic"
+        agent.protocol_version = "1.0"
+        agent.auth_type = None
+        agent.auth_value = None
+        agent.auth_query_params = None
+        for k, v in overrides.items():
+            setattr(agent, k, v)
+        return agent
+
+    @pytest.mark.asyncio
+    async def test_jsonrpc_with_query_param(self, tool_service):
+        agent = self._make_agent(agent_type="jsonrpc")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"result": "ok"}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+        assert result == {"result": "ok"}
+        call_data = mock_client.post.call_args[1]["json"]
+        assert call_data["jsonrpc"] == "2.0"
+        assert call_data["params"]["message"]["parts"][0]["text"] == "hello"
+
+    @pytest.mark.asyncio
+    async def test_custom_agent_format(self, tool_service):
+        agent = self._make_agent(agent_type="custom", endpoint_url="http://custom.test")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"answer": "42"}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await tool_service._call_a2a_agent(agent, {"query": "what"})
+        assert result == {"answer": "42"}
+        call_data = mock_client.post.call_args[1]["json"]
+        assert call_data["interaction_type"] == "query"
+
+    @pytest.mark.asyncio
+    async def test_api_key_auth(self, tool_service):
+        agent = self._make_agent(auth_type="api_key", auth_value="secret-key")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
+        headers = mock_client.post.call_args[1]["headers"]
+        assert headers["Authorization"] == "Bearer secret-key"
+
+    @pytest.mark.asyncio
+    async def test_bearer_auth(self, tool_service):
+        agent = self._make_agent(auth_type="bearer", auth_value="bearer-token")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
+        headers = mock_client.post.call_args[1]["headers"]
+        assert headers["Authorization"] == "Bearer bearer-token"
+
+    @pytest.mark.asyncio
+    async def test_query_param_auth(self, tool_service):
+        agent = self._make_agent(auth_type="query_param", auth_query_params={"api_key": "encrypted"})
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with (
+            patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"api_key": "real-key"}),
+            patch("mcpgateway.services.tool_service.apply_query_param_auth", return_value="http://agent.test/api?api_key=real-key"),
+            patch("mcpgateway.services.tool_service.sanitize_url_for_logging", return_value="http://agent.test/api?api_key=***"),
+        ):
+            await tool_service._call_a2a_agent(agent, {"query": "test"})
+        assert mock_client.post.call_args[0][0] == "http://agent.test/api?api_key=real-key"
+
+    @pytest.mark.asyncio
+    async def test_non_200_raises(self, tool_service):
+        agent = self._make_agent()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 500
+        mock_resp.text = "Server Error"
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            with pytest.raises(Exception, match="HTTP 500"):
+                await tool_service._call_a2a_agent(agent, {"query": "test"})
+
+    @pytest.mark.asyncio
+    async def test_passthrough_params(self, tool_service):
+        """Non-query dict parameters should be passed through as-is for JSONRPC."""
+        agent = self._make_agent(agent_type="jsonrpc")
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"ok": True}
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_resp
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock, return_value=mock_client):
+            await tool_service._call_a2a_agent(agent, {"params": {"custom": "data"}, "method": "custom/method"})
+        call_data = mock_client.post.call_args[1]["json"]
+        assert call_data["method"] == "custom/method"
+        assert call_data["params"] == {"custom": "data"}
+
+
+# ─── _record_tool_metric coverage ────────────────────────────────────────────
+
+
+class TestRecordToolMetricCoverage:
+    """Tests for _record_tool_metric (lines 762-786)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        svc = ToolService()
+        svc._event_service = AsyncMock()
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_record_metric_success(self, tool_service):
+        db = MagicMock()
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool-1"
+        start = time.monotonic() - 0.5
+
+        await tool_service._record_tool_metric(db, tool, start, True, None)
+        db.add.assert_called_once()
+        metric = db.add.call_args[0][0]
+        assert metric.tool_id == "tool-1"
+        assert metric.is_success is True
+        assert metric.error_message is None
+        assert metric.response_time > 0
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_record_metric_failure(self, tool_service):
+        db = MagicMock()
+        tool = MagicMock(spec=DbTool)
+        tool.id = "tool-2"
+        start = time.monotonic()
+
+        await tool_service._record_tool_metric(db, tool, start, False, "timeout")
+        metric = db.add.call_args[0][0]
+        assert metric.is_success is False
+        assert metric.error_message == "timeout"
+
+
+# ─── validate_tool_url and check_tool_health coverage ────────────────────────
+
+
+class TestToolHealthValidationCoverage:
+    """Tests for _validate_tool_url and _check_tool_health (lines 4129-4157)."""
+
+    @pytest.fixture
+    def tool_service(self):
+        svc = ToolService()
+        svc._event_service = AsyncMock()
+        svc._http_client = AsyncMock()
+        return svc
+
+    @pytest.mark.asyncio
+    async def test_validate_tool_url_success(self, tool_service):
+        tool_service._http_client.get.return_value = MagicMock(raise_for_status=MagicMock())
+        await tool_service._validate_tool_url("http://example.com")
+
+    @pytest.mark.asyncio
+    async def test_validate_tool_url_failure(self, tool_service):
+        tool_service._http_client.get.side_effect = ConnectionError("refused")
+        with pytest.raises(ToolValidationError, match="Failed to validate"):
+            await tool_service._validate_tool_url("http://bad.example.com")
+
+    @pytest.mark.asyncio
+    async def test_check_tool_health_success(self, tool_service):
+        resp = MagicMock()
+        resp.is_success = True
+        tool_service._http_client.get.return_value = resp
+        tool = MagicMock(spec=DbTool)
+        tool.url = "http://example.com"
+        assert await tool_service._check_tool_health(tool) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_health_failure(self, tool_service):
+        tool_service._http_client.get.side_effect = ConnectionError("refused")
+        tool = MagicMock(spec=DbTool)
+        tool.url = "http://bad.example.com"
+        assert await tool_service._check_tool_health(tool) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_health_non_success(self, tool_service):
+        resp = MagicMock()
+        resp.is_success = False
+        tool_service._http_client.get.return_value = resp
+        tool = MagicMock(spec=DbTool)
+        tool.url = "http://example.com"
+        assert await tool_service._check_tool_health(tool) is False

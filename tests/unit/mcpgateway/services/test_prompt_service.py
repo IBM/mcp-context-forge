@@ -1105,3 +1105,863 @@ class TestPromptBulkRegistration:
 
         assert result["failed"] == 1
         assert any("Failed to process prompt" in err for err in result["errors"])
+
+
+# ---------------------------------------------------------------------------
+# Additional coverage tests
+# ---------------------------------------------------------------------------
+
+
+class TestGetTopPrompts:
+    """Tests for get_top_prompts (lines 236-287)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_cache_hit(self, prompt_service):
+        db = MagicMock()
+        with (
+            patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
+        ):
+            mock_cache.get.return_value = [{"id": 1, "name": "cached"}]
+            result = await prompt_service.get_top_prompts(db)
+        assert result == [{"id": 1, "name": "cached"}]
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_queries_db(self, prompt_service):
+        db = MagicMock()
+        mock_results = MagicMock()
+        with (
+            patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
+            patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
+            patch("mcpgateway.services.metrics_query_service.get_top_performers_combined", return_value=mock_results),
+            patch("mcpgateway.services.prompt_service.build_top_performers", return_value=["top1"]),
+        ):
+            mock_cache.get.return_value = None
+            result = await prompt_service.get_top_prompts(db, limit=3)
+        assert result == ["top1"]
+        mock_cache.set.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cache_disabled(self, prompt_service):
+        db = MagicMock()
+        mock_results = MagicMock()
+        with (
+            patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=False),
+            patch("mcpgateway.services.metrics_query_service.get_top_performers_combined", return_value=mock_results),
+            patch("mcpgateway.services.prompt_service.build_top_performers", return_value=["top1"]),
+        ):
+            result = await prompt_service.get_top_prompts(db)
+        assert result == ["top1"]
+
+    @pytest.mark.asyncio
+    async def test_include_deleted(self, prompt_service):
+        db = MagicMock()
+        mock_results = MagicMock()
+        with (
+            patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=False),
+            patch("mcpgateway.services.metrics_query_service.get_top_performers_combined", return_value=mock_results) as mock_gtp,
+            patch("mcpgateway.services.prompt_service.build_top_performers", return_value=[]),
+        ):
+            await prompt_service.get_top_prompts(db, include_deleted=True)
+            assert mock_gtp.call_args[1]["include_deleted"] is True
+
+
+class TestConvertPromptToRead:
+    """Tests for convert_prompt_to_read (lines 289-375)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    def test_without_metrics(self, prompt_service):
+        p = _build_db_prompt(pid=10, name="my-prompt", desc="A prompt")
+        result = prompt_service.convert_prompt_to_read(p, include_metrics=False)
+        assert result["id"] == 10
+        assert result["name"] == "my-prompt"
+        assert result["metrics"] is None
+
+    def test_with_metrics(self, prompt_service):
+        m1 = MagicMock()
+        m1.is_success = True
+        m1.response_time = 0.5
+        m1.timestamp = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        m2 = MagicMock()
+        m2.is_success = False
+        m2.response_time = 1.0
+        m2.timestamp = datetime(2025, 6, 2, tzinfo=timezone.utc)
+
+        p = _build_db_prompt(pid=11, metrics=[m1, m2])
+        result = prompt_service.convert_prompt_to_read(p, include_metrics=True)
+        assert result["metrics"]["totalExecutions"] == 2
+        assert result["metrics"]["successfulExecutions"] == 1
+        assert result["metrics"]["failedExecutions"] == 1
+        assert result["metrics"]["avgResponseTime"] == 0.75
+        assert result["metrics"]["minResponseTime"] == 0.5
+        assert result["metrics"]["maxResponseTime"] == 1.0
+
+    def test_with_empty_metrics(self, prompt_service):
+        p = _build_db_prompt(pid=12, metrics=[])
+        result = prompt_service.convert_prompt_to_read(p, include_metrics=True)
+        assert result["metrics"]["totalExecutions"] == 0
+        assert result["metrics"]["avgResponseTime"] is None
+
+    def test_arguments_from_schema(self, prompt_service):
+        p = _build_db_prompt()
+        p.argument_schema = {"properties": {"name": {"type": "string", "description": "User name"}}, "required": ["name"]}
+        result = prompt_service.convert_prompt_to_read(p)
+        assert len(result["arguments"]) == 1
+        assert result["arguments"][0]["name"] == "name"
+        assert result["arguments"][0]["required"] is True
+
+
+class TestGetTeamName:
+    """Tests for _get_team_name (lines 377-391)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    def test_none_team_id(self, prompt_service):
+        db = MagicMock()
+        assert prompt_service._get_team_name(db, None) is None
+
+    def test_team_found(self, prompt_service):
+        db = MagicMock()
+        mock_team = MagicMock()
+        mock_team.name = "Engineering"
+        db.query.return_value.filter.return_value.first.return_value = mock_team
+        assert prompt_service._get_team_name(db, "team-1") == "Engineering"
+
+    def test_team_not_found(self, prompt_service):
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = None
+        assert prompt_service._get_team_name(db, "team-99") is None
+
+
+class TestComputePromptName:
+    """Tests for _compute_prompt_name (lines 393-407)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    def test_no_gateway(self, prompt_service):
+        result = prompt_service._compute_prompt_name("My Prompt")
+        assert result == "my-prompt"
+
+    def test_with_gateway(self, prompt_service, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.prompt_service.settings", MagicMock(gateway_tool_name_separator="__"))
+        gateway = MagicMock()
+        gateway.name = "Test Gateway"
+        result = prompt_service._compute_prompt_name("My Prompt", gateway=gateway)
+        assert result == "test-gateway__my-prompt"
+
+
+class TestListPromptsAdvanced:
+    """Tests for list_prompts pagination and filtering (lines 969-1152)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_page_based_pagination(self, prompt_service):
+        db = MagicMock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.team_id = None
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_paginate.return_value = {
+                "data": [mock_prompt],
+                "pagination": {"page": 1, "per_page": 10, "total": 1},
+                "links": {"self": "/admin/prompts?page=1"},
+            }
+
+            result = await prompt_service.list_prompts(db, page=1, per_page=10)
+
+        assert "data" in result
+        assert "pagination" in result
+        assert result["data"] == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_cache_hit(self, prompt_service):
+        db = MagicMock()
+        with patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters.return_value = "hash"
+            mock_cache.get = AsyncMock(return_value={"prompts": [{"id": 1, "name": "cached"}], "next_cursor": None})
+            mock_cache_fn.return_value = mock_cache
+
+            result, cursor = await prompt_service.list_prompts(db)
+        assert len(result) == 1
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_token_teams_empty_public_only(self, prompt_service):
+        """Empty token_teams should only show public prompts."""
+        db = MagicMock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.team_id = None
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_paginate.return_value = ([mock_prompt], None)
+
+            result, cursor = await prompt_service.list_prompts(db, token_teams=[])
+        assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_token_teams_with_teams(self, prompt_service):
+        db = MagicMock()
+        mock_prompt = _build_db_prompt()
+        mock_prompt.team_id = "team-1"
+
+        with (
+            patch.object(prompt_service, "convert_prompt_to_read", return_value="converted"),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.unified_paginate", new_callable=AsyncMock) as mock_paginate,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_paginate.return_value = ([mock_prompt], None)
+
+            result, cursor = await prompt_service.list_prompts(db, token_teams=["team-1"])
+        assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_user_email_with_team_id_no_access(self, prompt_service):
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_ts
+
+            result, cursor = await prompt_service.list_prompts(db, user_email="user@test.com", team_id="team-99")
+        assert result == []
+
+
+class TestListPromptsForUser:
+    """Tests for list_prompts_for_user (lines 1154-1243)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_basic_listing(self, prompt_service):
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.team_id = None
+        db.execute.return_value.scalars.return_value.all.return_value = [mock_prompt]
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted")
+
+        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_ts
+
+            result = await prompt_service.list_prompts_for_user(db, "user@test.com")
+
+        assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_team_no_access(self, prompt_service):
+        db = MagicMock()
+        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_ts
+
+            result = await prompt_service.list_prompts_for_user(db, "user@test.com", team_id="team-99")
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_team_with_access(self, prompt_service):
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.team_id = "team-1"
+
+        # Use side_effect to return different results for sequential db.execute() calls
+        main_result = MagicMock()
+        main_result.scalars.return_value.all.return_value = [mock_prompt]
+        team_result = MagicMock()
+        team_result.all.return_value = [MagicMock(id="team-1", name="Team")]
+        db.execute = MagicMock(side_effect=[main_result, team_result])
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted")
+
+        team = MagicMock()
+        team.id = "team-1"
+        team.name = "Team"
+
+        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[team])
+            MockTMS.return_value = mock_ts
+
+            result = await prompt_service.list_prompts_for_user(db, "user@test.com", team_id="team-1")
+
+        assert len(result) == 1
+
+    @pytest.mark.asyncio
+    async def test_conversion_error_skipped(self, prompt_service):
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.team_id = None
+        db.execute.return_value.scalars.return_value.all.return_value = [mock_prompt]
+
+        prompt_service.convert_prompt_to_read = MagicMock(side_effect=ValueError("bad"))
+
+        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_ts
+
+            result = await prompt_service.list_prompts_for_user(db, "user@test.com")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_visibility_filter(self, prompt_service):
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+
+        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_ts
+
+            result = await prompt_service.list_prompts_for_user(db, "user@test.com", visibility="private")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_include_inactive(self, prompt_service):
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = []
+
+        with patch("mcpgateway.services.prompt_service.TeamManagementService") as MockTMS:
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_ts
+
+            result = await prompt_service.list_prompts_for_user(db, "user@test.com", include_inactive=True)
+
+        assert result == []
+
+
+class TestRecordPromptMetric:
+    """Tests for _record_prompt_metric (lines 1348-1370)."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_success(self, prompt_service):
+        db = MagicMock()
+        prompt = _build_db_prompt(pid="prompt-1")
+        import time
+        start = time.monotonic() - 0.5
+        await prompt_service._record_prompt_metric(db, prompt, start, True, None)
+        db.add.assert_called_once()
+        metric = db.add.call_args[0][0]
+        assert metric.prompt_id == "prompt-1"
+        assert metric.is_success is True
+        assert metric.response_time > 0
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_failure(self, prompt_service):
+        db = MagicMock()
+        prompt = _build_db_prompt(pid="prompt-2")
+        import time
+        start = time.monotonic()
+        await prompt_service._record_prompt_metric(db, prompt, start, False, "error msg")
+        metric = db.add.call_args[0][0]
+        assert metric.is_success is False
+        assert metric.error_message == "error msg"
+
+
+# ---------------------------------------------------------------------------
+#  Additional coverage: list_server_prompts
+# ---------------------------------------------------------------------------
+
+
+class TestListServerPrompts:
+    """Cover lines 1289-1346: list_server_prompts server association + team batch fetch."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_basic_listing(self, prompt_service):
+        """Basic listing returns prompts for a server."""
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.team_id = None
+
+        # First execute: prompt query
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [mock_prompt]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted")
+
+        result = await prompt_service.list_server_prompts(db, "server-1")
+        assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_with_team_batch_fetch(self, prompt_service):
+        """Prompts with team_ids trigger batch team name fetch."""
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.team_id = "team-1"
+
+        # First call: prompt query; second call: team name batch query
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [mock_prompt]
+        team_result = MagicMock()
+        team_row = MagicMock()
+        team_row.id = "team-1"
+        team_row.name = "Engineering"
+        team_result.all.return_value = [team_row]
+        db.execute = MagicMock(side_effect=[prompt_result, team_result])
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted")
+
+        result = await prompt_service.list_server_prompts(db, "server-1")
+        assert result == ["converted"]
+        # team was set on the prompt
+        assert mock_prompt.team == "Engineering"
+
+    @pytest.mark.asyncio
+    async def test_with_token_teams_public_only(self, prompt_service):
+        """token_teams=[] restricts to public-only prompts."""
+        db = MagicMock()
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = []
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        result = await prompt_service.list_server_prompts(db, "server-1", token_teams=[])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_with_token_teams_scoped(self, prompt_service):
+        """token_teams=["team-1"] shows public + team prompts."""
+        db = MagicMock()
+        mock_prompt = MagicMock()
+        mock_prompt.team_id = "team-1"
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [mock_prompt]
+        team_result = MagicMock()
+        team_result.all.return_value = []
+        db.execute = MagicMock(side_effect=[prompt_result, team_result])
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(return_value="converted")
+
+        result = await prompt_service.list_server_prompts(db, "server-1", token_teams=["team-1"], user_email="user@test.com")
+        assert result == ["converted"]
+
+    @pytest.mark.asyncio
+    async def test_conversion_error_skipped(self, prompt_service):
+        """Conversion errors for individual prompts don't fail the whole list."""
+        db = MagicMock()
+        p1 = MagicMock()
+        p1.team_id = None
+        p2 = MagicMock()
+        p2.team_id = None
+
+        prompt_result = MagicMock()
+        prompt_result.scalars.return_value.all.return_value = [p1, p2]
+        db.execute = MagicMock(return_value=prompt_result)
+        db.commit = MagicMock()
+
+        prompt_service.convert_prompt_to_read = MagicMock(side_effect=[ValueError("bad"), "ok"])
+
+        result = await prompt_service.list_server_prompts(db, "server-1")
+        assert result == ["ok"]
+
+
+# ---------------------------------------------------------------------------
+#  Additional coverage: update_prompt name conflict detection
+# ---------------------------------------------------------------------------
+
+
+class TestUpdatePromptNameConflict:
+    """Cover lines 1800-1810: team/private name conflict in update_prompt."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_team_name_conflict(self, prompt_service):
+        """Name conflict in team visibility raises PromptError."""
+        existing = _build_db_prompt(name="old-name")
+        existing.visibility = "team"
+        existing.team_id = "team-1"
+        existing.custom_name = "old-name"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+
+        conflicting = MagicMock()
+        conflicting.enabled = True
+        conflicting.id = 99
+        conflicting.visibility = "team"
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu,
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+        ):
+            mock_gfu.side_effect = [existing, conflicting]  # first: get prompt, second: conflict check
+
+            upd = PromptUpdate(name="new-name")
+
+            with pytest.raises(PromptError):
+                await prompt_service.update_prompt(MagicMock(), 1, upd)
+
+    @pytest.mark.asyncio
+    async def test_private_name_conflict(self, prompt_service):
+        """Name conflict in private visibility raises PromptError."""
+        existing = _build_db_prompt(name="old-name")
+        existing.visibility = "private"
+        existing.team_id = None
+        existing.custom_name = "old-name"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+
+        conflicting = MagicMock()
+        conflicting.enabled = True
+        conflicting.id = 99
+        conflicting.visibility = "private"
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update") as mock_gfu,
+        ):
+            mock_gfu.side_effect = [existing, conflicting]
+
+            upd = PromptUpdate(name="new-name")
+
+            with pytest.raises(PromptError):
+                await prompt_service.update_prompt(MagicMock(), 1, upd)
+
+
+# ---------------------------------------------------------------------------
+#  Additional coverage: update_prompt field updates and exception handlers
+# ---------------------------------------------------------------------------
+
+
+class TestUpdatePromptFieldsAndExceptions:
+    """Cover lines 1822-1873, 1924-1953."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_update_with_arguments_and_version(self, prompt_service):
+        """Updating template+arguments regenerates argument schema and increments version."""
+        existing = _build_db_prompt(name="my-prompt")
+        existing.visibility = "public"
+        existing.team_id = "t1"
+        existing.custom_name = "my-prompt"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+        existing.version = 3
+
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", return_value=existing),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            db.commit = Mock()
+            db.refresh = Mock()
+            prompt_service._notify_prompt_updated = AsyncMock()
+            prompt_service.convert_prompt_to_read = Mock(return_value={"id": 1})
+
+            upd = PromptUpdate(
+                template="Hi {{ user }}!",
+                arguments=[PromptArgument(name="user", description="Username")],
+                visibility="public",
+                tags=["v2"],
+            )
+
+            result = await prompt_service.update_prompt(db, 1, upd, modified_by="admin", modified_from_ip="1.2.3.4", modified_via="api", modified_user_agent="test-agent")
+
+        assert existing.template == "Hi {{ user }}!"
+        assert existing.argument_schema["properties"]["user"]["description"] == "Username"
+        assert existing.version == 4
+        assert existing.tags is not None
+        assert existing.visibility == "public"
+
+    @pytest.mark.asyncio
+    async def test_update_permission_denied(self, prompt_service):
+        """Permission error during update is propagated."""
+        existing = _build_db_prompt(name="owned")
+        existing.visibility = "public"
+        existing.team_id = None
+        existing.custom_name = "owned"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+
+        db = MagicMock()
+        db.rollback = Mock()
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", return_value=existing),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)),
+        ):
+            upd = PromptUpdate(description="new desc")
+
+            with pytest.raises(PermissionError, match="Only the owner"):
+                await prompt_service.update_prompt(db, 1, upd, user_email="other@test.com")
+
+    @pytest.mark.asyncio
+    async def test_update_integrity_error(self, prompt_service):
+        """IntegrityError during update is propagated."""
+        existing = _build_db_prompt(name="my-prompt")
+        existing.visibility = "public"
+        existing.team_id = None
+        existing.custom_name = "my-prompt"
+        existing.gateway = None
+        existing.gateway_id = None
+        existing.owner_email = "owner@test.com"
+
+        db = MagicMock()
+        db.commit = Mock(side_effect=IntegrityError("dup", None, BaseException()))
+        db.rollback = Mock()
+
+        with patch("mcpgateway.services.prompt_service.get_for_update", return_value=existing):
+            upd = PromptUpdate(description="new desc")
+
+            with pytest.raises(IntegrityError):
+                await prompt_service.update_prompt(db, 1, upd)
+
+    @pytest.mark.asyncio
+    async def test_update_name_on_gateway_prompt(self, prompt_service):
+        """Updating name on a gateway prompt sets custom_name instead of original_name."""
+        existing = _build_db_prompt(name="gw__old")
+        existing.visibility = "public"
+        existing.team_id = None
+        existing.custom_name = "old"
+        existing.gateway = MagicMock()
+        existing.gateway.name = "gw"
+        existing.gateway_id = "gw-1"
+        existing.owner_email = "owner@test.com"
+        existing.version = 1
+
+        db = MagicMock()
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", side_effect=[existing, None]),
+            patch("mcpgateway.services.prompt_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
+            mock_cache = AsyncMock()
+            mock_cache_fn.return_value = mock_cache
+            mock_admin_cache.invalidate_tags = AsyncMock()
+            db.commit = Mock()
+            db.refresh = Mock()
+            prompt_service._notify_prompt_updated = AsyncMock()
+            prompt_service.convert_prompt_to_read = Mock(return_value={"id": 1})
+
+            upd = PromptUpdate(name="new-name", custom_name="custom")
+
+            await prompt_service.update_prompt(db, 1, upd)
+
+        assert existing.custom_name == "custom"
+
+
+# ---------------------------------------------------------------------------
+#  Additional coverage: set_prompt_state lock conflict + permission
+# ---------------------------------------------------------------------------
+
+
+class TestSetPromptStateLockAndPermission:
+    """Cover lines 2044-2057: lock conflict and permission check in set_prompt_state."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_lock_conflict(self, prompt_service):
+        """OperationalError during row lock raises PromptLockConflictError."""
+        from sqlalchemy.exc import OperationalError
+        from mcpgateway.services.prompt_service import PromptLockConflictError
+
+        db = MagicMock()
+        db.rollback = Mock()
+
+        with patch("mcpgateway.services.prompt_service.get_for_update", side_effect=OperationalError("locked", None, BaseException())):
+            with pytest.raises(PromptLockConflictError, match="currently being modified"):
+                await prompt_service.set_prompt_state(db, 1, activate=True)
+
+    @pytest.mark.asyncio
+    async def test_permission_denied(self, prompt_service):
+        """Non-owner user gets PermissionError when toggling prompt state."""
+        prompt = _build_db_prompt()
+        prompt.enabled = True
+
+        db = MagicMock()
+        db.rollback = Mock()
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_for_update", return_value=prompt),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=False)),
+        ):
+            with pytest.raises(PermissionError, match="Only the owner"):
+                await prompt_service.set_prompt_state(db, 1, activate=False, user_email="other@test.com")
+
+
+# ---------------------------------------------------------------------------
+#  Additional coverage: event notification methods
+# ---------------------------------------------------------------------------
+
+
+class TestPromptEventNotifications:
+    """Cover lines 2501-2586: _notify_prompt_* event publishing methods."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_notify_prompt_added(self, prompt_service):
+        prompt = _build_db_prompt(pid=1, name="test")
+        prompt_service._event_service.publish_event = AsyncMock()
+
+        await prompt_service._notify_prompt_added(prompt)
+
+        event = prompt_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "prompt_added"
+        assert event["data"]["name"] == "test"
+
+    @pytest.mark.asyncio
+    async def test_notify_prompt_updated(self, prompt_service):
+        prompt = _build_db_prompt(pid=2, name="updated")
+        prompt_service._event_service.publish_event = AsyncMock()
+
+        await prompt_service._notify_prompt_updated(prompt)
+
+        event = prompt_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "prompt_updated"
+
+    @pytest.mark.asyncio
+    async def test_notify_prompt_activated(self, prompt_service):
+        prompt = _build_db_prompt(pid=3, name="active")
+        prompt_service._event_service.publish_event = AsyncMock()
+
+        await prompt_service._notify_prompt_activated(prompt)
+
+        event = prompt_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "prompt_activated"
+        assert event["data"]["enabled"] is True
+
+    @pytest.mark.asyncio
+    async def test_notify_prompt_deactivated(self, prompt_service):
+        prompt = _build_db_prompt(pid=4, name="inactive")
+        prompt_service._event_service.publish_event = AsyncMock()
+
+        await prompt_service._notify_prompt_deactivated(prompt)
+
+        event = prompt_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "prompt_deactivated"
+        assert event["data"]["enabled"] is False
+
+    @pytest.mark.asyncio
+    async def test_notify_prompt_deleted(self, prompt_service):
+        prompt_service._event_service.publish_event = AsyncMock()
+
+        await prompt_service._notify_prompt_deleted({"id": 5, "name": "deleted"})
+
+        event = prompt_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "prompt_deleted"
+
+    @pytest.mark.asyncio
+    async def test_notify_prompt_removed(self, prompt_service):
+        prompt = _build_db_prompt(pid=6, name="removed")
+        prompt_service._event_service.publish_event = AsyncMock()
+
+        await prompt_service._notify_prompt_removed(prompt)
+
+        event = prompt_service._event_service.publish_event.call_args[0][0]
+        assert event["type"] == "prompt_removed"
+        assert event["data"]["enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+#  Additional coverage: register_prompts_bulk chunk exception
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterPromptsBulkChunkException:
+    """Cover lines 938-943: chunk-level exception in register_prompts_bulk."""
+
+    @pytest.fixture
+    def prompt_service(self):
+        return PromptService()
+
+    @pytest.mark.asyncio
+    async def test_chunk_commit_exception(self, prompt_service):
+        """Exception during chunk commit is caught and recorded in stats."""
+        db = MagicMock()
+        # Empty existing prompts list
+        db.execute.return_value.scalars.return_value.all.return_value = []
+        db.add_all = MagicMock()
+        db.commit = MagicMock(side_effect=RuntimeError("db crash"))
+        db.rollback = MagicMock()
+        prompt_service._notify_prompt_added = AsyncMock()
+
+        prompt = PromptCreate(
+            name="test-prompt",
+            description="desc",
+            template="Hello {{ name }}",
+            arguments=[],
+        )
+
+        result = await prompt_service.register_prompts_bulk(
+            db=db,
+            prompts=[prompt],
+            created_by="tester",
+            conflict_strategy="skip",
+        )
+
+        assert result["failed"] >= 1
+        assert any("Chunk processing failed" in err for err in result["errors"])

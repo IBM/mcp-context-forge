@@ -463,6 +463,91 @@ class TestGetUserInfo:
 
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_get_user_info_github_orgs_exception(self, sso_service):
+        """GitHub orgs fetch raises exception → orgs set to empty list."""
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"login": "testuser", "email": "test@github.com"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=[user_response, RuntimeError("network")])
+
+        provider = _make_provider()
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = ["my-org"]
+            result = await sso_service._get_user_info(provider, "access_token")
+
+        assert result is not None
+        assert result.get("organizations", []) == []
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_entra_group_overage(self, sso_service):
+        """Entra ID group overage detection (>200 groups)."""
+        import base64
+        import orjson
+
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@contoso.com", "name": "User"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(id="entra", name="entra", provider_type="oidc", provider_metadata={})
+
+        # Build id_token with group overage indicator
+        payload = orjson.dumps({"sub": "oid", "_claim_names": {"groups": "src1"}, "_claim_sources": {"src1": {"endpoint": "https://graph"}}})
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
+        token_data = {"access_token": "at", "id_token": fake_id_token}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["provider"] == "entra"
+
+    @pytest.mark.asyncio
+    async def test_get_user_info_keycloak_with_id_token(self, sso_service):
+        """Keycloak extracts realm_access, resource_access, groups from id_token."""
+        import base64
+        import orjson
+
+        user_response = MagicMock()
+        user_response.status_code = 200
+        user_response.json.return_value = {"email": "user@kc.com", "name": "KC User", "preferred_username": "kcuser", "sub": "kc-123"}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=user_response)
+
+        provider = _make_provider(
+            id="keycloak", name="keycloak", provider_type="oidc",
+            provider_metadata={"map_realm_roles": True, "map_client_roles": True},
+        )
+
+        payload = orjson.dumps({"realm_access": {"roles": ["admin"]}, "resource_access": {"app": {"roles": ["edit"]}}, "groups": ["/team"]})
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
+        token_data = {"access_token": "at", "id_token": fake_id_token}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["provider"] == "keycloak"
+        assert "admin" in result["groups"]
+        assert "app:edit" in result["groups"]
+
 
 # ---------------------------------------------------------------------------
 # Normalization tests
@@ -825,3 +910,299 @@ class TestAuthenticateOrCreateUser:
             "email": "new@untrusted.com", "full_name": "New User", "provider": "github",
         })
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_pending(self, sso_service, mock_db):
+        """Admin approval required + no existing pending → creates pending request."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()) as mock_select, \
+             patch("mcpgateway.services.sso_service.PendingUserApproval"):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user({
+                "email": "new@test.com", "full_name": "New User", "provider": "github",
+            })
+
+        assert result is None
+        mock_db.add.assert_called()  # Pending request created
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_still_pending(self, sso_service, mock_db):
+        """Existing pending approval that hasn't expired."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(status="pending", is_expired=lambda: False)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user({
+                "email": "new@test.com", "full_name": "New User", "provider": "github",
+            })
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_rejected(self, sso_service, mock_db):
+        """Existing pending approval that was rejected."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        pending = SimpleNamespace(status="rejected", is_expired=lambda: False)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = pending
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()):
+            mock_settings.sso_require_admin_approval = True
+            result = await sso_service.authenticate_or_create_user({
+                "email": "new@test.com", "full_name": "New User", "provider": "github",
+            })
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_new_user_admin_approval_approved(self, sso_service, mock_db):
+        """Existing pending approval that was approved → user gets created."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+        new_user = SimpleNamespace(
+            email="new@test.com", full_name="New User", auth_provider="github",
+            is_admin=False, admin_origin=None,
+        )
+        sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
+
+        # First call returns "approved" pending, second call returns pending for completion
+        approved = SimpleNamespace(status="approved", is_expired=lambda: False)
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [approved, approved]
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.select", return_value=MagicMock()), \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_require_admin_approval = True
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_jwt.return_value = "approved-jwt"
+            result = await sso_service.authenticate_or_create_user({
+                "email": "new@test.com", "full_name": "New User", "provider": "github",
+            })
+
+        assert result == "approved-jwt"
+
+    @pytest.mark.asyncio
+    async def test_new_user_create_fails(self, sso_service, mock_db):
+        """create_user returns None → returns None."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service.create_user = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_require_admin_approval = False
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            result = await sso_service.authenticate_or_create_user({
+                "email": "new@test.com", "full_name": "New User", "provider": "github",
+            })
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_existing_user_with_role_sync(self, sso_service, mock_db):
+        """Existing user with provider metadata sync_roles=True triggers role sync."""
+        existing_user = SimpleNamespace(
+            email="user@test.com", full_name="Name", auth_provider="github",
+            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider(provider_metadata={"sync_roles": True, "role_mappings": {}})
+        sso_service._map_groups_to_roles = AsyncMock(return_value=[])
+        sso_service._sync_user_roles = AsyncMock()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_jwt.return_value = "jwt"
+            result = await sso_service.authenticate_or_create_user({
+                "email": "user@test.com", "full_name": "Name", "provider": "github", "groups": ["dev"],
+            })
+
+        sso_service._map_groups_to_roles.assert_called_once()
+        sso_service._sync_user_roles.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _sync_user_roles tests
+# ---------------------------------------------------------------------------
+
+
+class TestSyncUserRoles:
+    @pytest.mark.asyncio
+    async def test_revokes_removed_roles(self, sso_service):
+        """Roles no longer in desired set are revoked."""
+        old_role = SimpleNamespace(
+            role=SimpleNamespace(name="old-role", id="r-old"),
+            scope="team", scope_id=None, granted_by="sso_system", role_id="r-old",
+        )
+
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[old_role])
+            role_svc.revoke_role_from_user = AsyncMock()
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="new-role", id="r-new", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            provider = _make_provider()
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "new-role", "scope": "team", "scope_id": None}],
+                provider,
+            )
+
+        role_svc.revoke_role_from_user.assert_called_once()
+        role_svc.assign_role_to_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_assigns_new_roles(self, sso_service):
+        """New roles are assigned when not existing."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])  # No existing
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="developer", id="r1", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "developer", "scope": "team"}],
+                _make_provider(),
+            )
+
+        role_svc.assign_role_to_user.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_skips_existing_active_role(self, sso_service):
+        """Existing active role assignment is not re-assigned."""
+        existing_assignment = SimpleNamespace(is_active=True)
+
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="viewer", id="r2", scope="global"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=existing_assignment)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "viewer", "scope": "global"}],
+                _make_provider(),
+            )
+
+        role_svc.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_role_not_found_skipped(self, sso_service):
+        """Role not found by name is logged and skipped."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock()
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "nonexistent", "scope": "team"}],
+                _make_provider(),
+            )
+
+        role_svc.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_assignment_exception_handled(self, sso_service):
+        """Exception during role assignment is caught and logged."""
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="dev", id="r1", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock(side_effect=RuntimeError("db error"))
+            MockRoleService.return_value = role_svc
+
+            # Should not raise
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "dev", "scope": "team"}],
+                _make_provider(),
+            )
+
+
+# ---------------------------------------------------------------------------
+# Entra legacy role mapping fallback
+# ---------------------------------------------------------------------------
+
+
+class TestEntraLegacyRoleMappings:
+    @pytest.mark.asyncio
+    async def test_entra_legacy_role_mappings_fallback(self, sso_service):
+        """When no role_mappings in metadata, falls back to sso_entra_role_mappings."""
+        mock_role = SimpleNamespace(name="developer", scope="team", id="r1")
+        provider = _make_provider(id="entra", provider_metadata={})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {"dev-group": "developer"}
+            role_svc = AsyncMock()
+            role_svc.get_role_by_name = AsyncMock(return_value=mock_role)
+            MockRoleService.return_value = role_svc
+            result = await sso_service._map_groups_to_roles("user@test.com", ["dev-group"], provider)
+
+        assert len(result) == 1
+        assert result[0]["role_name"] == "developer"
+
+    @pytest.mark.asyncio
+    async def test_role_not_found_in_cache(self, sso_service):
+        """Role mapping to non-existent role logs warning."""
+        provider = _make_provider(provider_metadata={"role_mappings": {"grp": "missing-role"}})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            role_svc = AsyncMock()
+            role_svc.get_role_by_name = AsyncMock(return_value=None)
+            MockRoleService.return_value = role_svc
+            result = await sso_service._map_groups_to_roles("user@test.com", ["grp"], provider)
+
+        assert result == []  # Nothing mapped
+
+    @pytest.mark.asyncio
+    async def test_entra_admin_group_checked_before_role_mappings(self, sso_service):
+        """Entra admin groups produce platform_admin even without role_mappings."""
+        provider = _make_provider(id="entra", provider_metadata={})
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = ["admin-grp"]
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            role_svc = AsyncMock()
+            MockRoleService.return_value = role_svc
+            result = await sso_service._map_groups_to_roles("user@test.com", ["admin-grp", "other"], provider)
+
+        assert any(r["role_name"] == "platform_admin" for r in result)

@@ -1064,5 +1064,54 @@ class TestListSessionsFiltering:
             manager.sessions.clear()
 
 
+# ---------------------------------------------------------------------------
+# Token missing subject claim tests
+# ---------------------------------------------------------------------------
+
+
+class TestWebSocketTokenMissingSubject:
+    """Tests for token payloads missing sub/email claim."""
+
+    @pytest.mark.asyncio
+    async def test_bearer_token_missing_subject(self, mock_websocket):
+        """Bearer token verified but has no sub or email → ValueError caught."""
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        mock_websocket.headers = {"Authorization": "Bearer valid-token"}
+        mock_websocket.query_params = {}
+
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = False
+
+            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+                mock_verify.return_value = {"iss": "test", "iat": 123}  # No sub or email
+                await websocket_endpoint(mock_websocket, Mock())
+
+        mock_websocket.accept.assert_not_called()
+        mock_websocket.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_query_token_missing_subject(self, mock_websocket):
+        """Query token verified but has no sub or email → ValueError caught."""
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        mock_websocket.headers = {}
+        mock_websocket.query_params = {"token": "valid-query-token"}
+
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = False
+
+            with patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+                mock_verify.return_value = {"iss": "test", "iat": 123}  # No sub or email
+                await websocket_endpoint(mock_websocket, Mock())
+
+        mock_websocket.accept.assert_not_called()
+        mock_websocket.close.assert_called_once()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
