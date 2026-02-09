@@ -395,11 +395,10 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for view button test")
 
-        # Wait for server creation to complete and persist
+        # Wait for creation to persist, reload, and re-navigate to servers tab
         servers_page.page.wait_for_timeout(2000)
-
-        # Reload page to see the new server
-        servers_page.page.reload()
+        servers_page.page.reload(wait_until="load")
+        servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
         # Set pagination to show 100 items per page to ensure server is visible
@@ -442,11 +441,10 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for edit button test")
 
-        # Wait for server creation to complete and persist
+        # Wait for creation to persist, reload, and re-navigate to servers tab
         servers_page.page.wait_for_timeout(2000)
-
-        # Reload page to see the new server
-        servers_page.page.reload()
+        servers_page.page.reload(wait_until="load")
+        servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
         # Set pagination to show 100 items per page to ensure server is visible
@@ -494,11 +492,10 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for export button test")
 
-        # Wait for server creation to complete and persist
+        # Wait for creation to persist, reload, and re-navigate to servers tab
         servers_page.page.wait_for_timeout(2000)
-
-        # Reload page to see the new server
-        servers_page.page.reload()
+        servers_page.page.reload(wait_until="load")
+        servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
         # Set pagination to show 100 items per page to ensure server is visible
@@ -535,11 +532,10 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for deactivate button test")
 
-        # Wait for server creation to complete and persist
+        # Wait for creation to persist, reload, and re-navigate to servers tab
         servers_page.page.wait_for_timeout(2000)
-
-        # Reload page to see the new server
-        servers_page.page.reload()
+        servers_page.page.reload(wait_until="load")
+        servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
         # Set pagination to show 100 items per page to ensure server is visible
@@ -579,11 +575,10 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for UI delete button test")
 
-        # Wait for server creation to complete and persist
+        # Wait for creation to persist, reload, and re-navigate to servers tab
         servers_page.page.wait_for_timeout(2000)
-
-        # Reload page to see the new server
-        servers_page.page.reload()
+        servers_page.page.reload(wait_until="load")
+        servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
         # Set pagination to show 100 items per page to ensure server is visible
