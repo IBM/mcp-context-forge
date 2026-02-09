@@ -21,6 +21,9 @@ class DummyResult:
     def scalar_one_or_none(self):
         return self._value
 
+    def all(self):
+        return self._value if isinstance(self._value, list) else []
+
 
 class DummySession:
     def __init__(self, results=None):
@@ -220,6 +223,8 @@ def test_get_user_by_email_sync(monkeypatch):
         email_verified_at=None,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
+        auth_provider="local",
+        password_change_required=False,
     )
     session = DummySession(results=[user])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
@@ -238,13 +243,17 @@ def test_get_auth_context_batched_sync(monkeypatch):
         email_verified_at=None,
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
+        auth_provider="local",
+        password_change_required=False,
     )
     team = SimpleNamespace(id="team-1")
-    session = DummySession(results=[user, team, SimpleNamespace(id="revoked")])
+    # Results in query execution order: user, personal_team, team_ids (.all()), revocation
+    session = DummySession(results=[user, team, [("team-1",)], SimpleNamespace(id="revoked")])
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     result = auth._get_auth_context_batched_sync("user@example.com", "jti-1")
     assert result["user"]["email"] == "user@example.com"
     assert result["personal_team_id"] == "team-1"
+    assert result["team_ids"] == ["team-1"]
     assert result["is_token_revoked"] is True
 
     session = DummySession(results=[None])

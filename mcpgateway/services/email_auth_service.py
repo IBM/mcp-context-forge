@@ -298,7 +298,17 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False) -> EmailUser:
+    async def create_user(
+        self,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        is_active: bool = True,
+        password_change_required: bool = False,
+        auth_provider: str = "local",
+        skip_password_validation: bool = False,
+    ) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -306,6 +316,8 @@ class EmailAuthService:
             password: Plain text password (will be hashed)
             full_name: Optional full name for display
             is_admin: Whether user has admin privileges
+            is_active: Whether user account is active (default: True)
+            password_change_required: Whether user must change password on next login (default: False)
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
 
@@ -321,10 +333,13 @@ class EmailAuthService:
             # user = await service.create_user(
             #     email="new@example.com",
             #     password="secure123",
-            #     full_name="New User"
+            #     full_name="New User",
+            #     is_active=True,
+            #     password_change_required=False
             # )
             # user.email          # Returns: 'new@example.com'
             # user.full_name      # Returns: 'New User'
+            # user.is_active      # Returns: True
         """
         # Normalize email to lowercase
         email = email.lower().strip()
@@ -343,7 +358,17 @@ class EmailAuthService:
         password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
-        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
+        user = EmailUser(
+            email=email,
+            password_hash=password_hash,
+            full_name=full_name,
+            is_admin=is_admin,
+            is_active=is_active,
+            password_change_required=password_change_required,
+            auth_provider=auth_provider,
+            password_changed_at=utc_now(),
+            admin_origin="api" if is_admin else None,
+        )
 
         try:
             self.db.add(user)
@@ -982,23 +1007,38 @@ class EmailAuthService:
             logger.error(f"Error getting auth events: {e}")
             return []
 
-    async def update_user(self, email: str, full_name: Optional[str] = None, is_admin: Optional[bool] = None, password: Optional[str] = None) -> EmailUser:
+    async def update_user(
+        self,
+        email: str,
+        full_name: Optional[str] = None,
+        is_admin: Optional[bool] = None,
+        is_active: Optional[bool] = None,
+        password_change_required: Optional[bool] = None,
+        password: Optional[str] = None,
+        admin_origin_source: Optional[str] = None,
+    ) -> EmailUser:
         """Update user information.
 
         Args:
             email: User's email address (primary key)
             full_name: New full name (optional)
             is_admin: New admin status (optional)
+            is_active: New active status (optional)
+            password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
+            admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist
+            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
+            # Normalize email to match create_user() / get_user_by_email() behavior
+            email = email.lower().strip()
+
             # Get existing user
             stmt = select(EmailUser).where(EmailUser.email == email)
             result = self.db.execute(stmt)
@@ -1007,19 +1047,39 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
+            # Admin protection guard
+            if user.is_admin and user.is_active:
+                would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
+                if would_lose_admin:
+                    if settings.protect_all_admins:
+                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    if await self.is_last_active_admin(email):
+                        raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
 
             if is_admin is not None:
-                user.is_admin = is_admin
+                # Track admin_origin when status actually changes
+                if is_admin != user.is_admin:
+                    user.is_admin = is_admin
+                    user.admin_origin = admin_origin_source if is_admin else None
+
+            if is_active is not None:
+                user.is_active = is_active
 
             if password is not None:
-                if not self.validate_password(password):
-                    raise ValueError("Password does not meet security requirements")
+                self.validate_password(password)
                 user.password_hash = await self.password_service.hash_password_async(password)
-                user.password_change_required = False  # Clear password change requirement
-                user.password_changed_at = utc_now()  # Update password change timestamp
+                # Only clear password_change_required if it wasn't explicitly set
+                if password_change_required is None:
+                    user.password_change_required = False
+                user.password_changed_at = utc_now()
+
+            # Set password_change_required after password processing to allow explicit override
+            if password_change_required is not None:
+                user.password_change_required = password_change_required
 
             user.updated_at = datetime.now(timezone.utc)
 

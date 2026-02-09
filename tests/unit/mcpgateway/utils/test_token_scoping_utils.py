@@ -48,6 +48,15 @@ async def test_extract_token_scopes_http_exception():
         assert await token_scoping.extract_token_scopes_from_request(request) is None
 
 
+@pytest.mark.asyncio
+async def test_extract_token_scopes_generic_exception():
+    request = MagicMock()
+    request.headers = {"Authorization": "Bearer token123"}
+
+    with patch("mcpgateway.utils.token_scoping.verify_jwt_token_cached", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        assert await token_scoping.extract_token_scopes_from_request(request) is None
+
+
 def test_is_token_server_scoped_and_get_server_id():
     assert token_scoping.is_token_server_scoped(None) is False
     assert token_scoping.is_token_server_scoped({"server_id": None}) is False

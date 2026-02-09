@@ -344,11 +344,20 @@ def wait_for_db_ready(
         raise RuntimeError(f"Database not ready after {max_tries} attempts")
 
     if sync:
-        _probe()
+        try:
+            _probe()
+        finally:
+            # Readiness probe should not keep pooled connections open.
+            if hasattr(engine, "dispose"):
+                engine.dispose()
     else:
         loop = asyncio.get_event_loop()
-        # Off-load to default executor to avoid blocking the event-loop.
-        loop.run_until_complete(loop.run_in_executor(None, _probe))
+        try:
+            # Off-load to default executor to avoid blocking the event-loop.
+            loop.run_until_complete(loop.run_in_executor(None, _probe))
+        finally:
+            if hasattr(engine, "dispose"):
+                engine.dispose()
 
 
 # ---------------------------------------------------------------------------

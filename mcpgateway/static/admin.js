@@ -340,8 +340,11 @@ function escapeHtml(unsafe) {
  * @returns {string} Human-readable error message
  */
 function extractApiError(error, fallback = "An error occurred") {
-    if (!error || !error.detail) {
+    if (!error || (!error.detail && !error.message)) {
         return fallback;
+    }
+    if (error.message) {
+        return error.message;
     }
     if (typeof error.detail === "string") {
         return error.detail;
@@ -370,10 +373,59 @@ async function parseErrorResponse(response, fallback = "An error occurred") {
         }
         // Non-JSON response - try to get text
         const text = await response.text();
-        return text || fallback;
+        if (!text) {
+            return fallback;
+        }
+        // Detect HTML responses (proxy error pages, auth redirects) and show generic message
+        if (
+            text.trimStart().startsWith("<!") ||
+            text.trimStart().toLowerCase().startsWith("<html")
+        ) {
+            return `${fallback} (HTTP ${response.status}). The server returned an HTML error page.`;
+        }
+        // Truncate long non-HTML text responses
+        const maxLength = 200;
+        if (text.length > maxLength) {
+            return text.substring(0, maxLength) + "...";
+        }
+        return text;
     } catch {
         return fallback;
     }
+}
+
+/**
+ * Safely parse a JSON response with validation.
+ * Prevents "JSON.parse: unexpected character" errors when server/proxy returns HTML.
+ * @param {Response} response - The fetch Response object
+ * @param {string} fallbackError - Fallback error message if response is not JSON
+ * @returns {Promise<Object>} Parsed JSON result
+ * @throws {Error} If response is not OK or not JSON
+ */
+async function safeParseJsonResponse(
+    response,
+    fallbackError = "Request failed",
+) {
+    const contentType = response.headers.get("content-type") || "";
+
+    // Handle non-OK responses first
+    if (!response.ok) {
+        const errorMsg = await parseErrorResponse(
+            response,
+            `${fallbackError} (HTTP ${response.status})`,
+        );
+        throw new Error(errorMsg);
+    }
+
+    // Validate content-type before parsing
+    if (!contentType.includes("application/json")) {
+        throw new Error(
+            "The server returned an unexpected response. " +
+                "Please verify you are authenticated and the server is responding correctly.",
+        );
+    }
+
+    return await response.json();
 }
 
 /**
@@ -4710,6 +4762,10 @@ async function viewPrompt(promptName) {
         <div class="grid grid-cols-2 gap-6 mb-6">
           <div class="space-y-3">
             <div>
+              <span id="prompt-id-label" class="font-medium text-gray-700 dark:text-gray-300">Prompt ID:</span>
+              <div class="mt-1 prompt-id text-sm font-mono text-indigo-600 dark:text-indigo-400" aria-labelledby="prompt-id-label"></div>
+            </div>
+            <div>
               <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
               <div class="mt-1 prompt-display-name font-medium"></div>
             </div>
@@ -4859,6 +4915,7 @@ async function viewPrompt(promptName) {
                 }
             };
 
+            setText(".prompt-id", prompt.id || "N/A");
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
@@ -6605,6 +6662,178 @@ async function editServer(serverId) {
         console.error("Error fetching server for editing:", error);
         const errorMessage = handleFetchError(error, "load server for editing");
         showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * SECURE: View Root function with safe display
+ */
+async function viewRoot(uri) {
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}`,
+        );
+
+        if (!response.ok) {
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
+        }
+
+        const root = await response.json();
+
+        const rootDetailsDiv = safeGetElement("root-details");
+        if (rootDetailsDiv) {
+            // Create safe display elements
+            const container = document.createElement("div");
+            container.className =
+                "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // Add each piece of information safely
+            const fields = [
+                { label: "URI", value: root.uri },
+                { label: "Name", value: root.name || "N/A" },
+            ];
+
+            fields.forEach((field) => {
+                const p = document.createElement("p");
+                const strong = document.createElement("strong");
+                strong.textContent = field.label + ": ";
+                p.appendChild(strong);
+                p.appendChild(document.createTextNode(field.value));
+                container.appendChild(p);
+            });
+
+            // Replace content safely
+            rootDetailsDiv.innerHTML = "";
+            rootDetailsDiv.appendChild(container);
+        }
+
+        openModal("root-details-modal");
+    } catch (error) {
+        console.error("Error fetching root details:", error);
+        const errorMessage = handleFetchError(error, "load root details");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * SECURE: Edit Root function with validation
+ */
+async function editRoot(uri) {
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}`,
+        );
+
+        if (!response.ok) {
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
+        }
+
+        const root = await response.json();
+
+        // Ensure hidden inactive flag is preserved
+        const isInactiveCheckedBool = isInactiveChecked("roots");
+        let hiddenField = safeGetElement("edit-root-show-inactive");
+        const editForm = safeGetElement("edit-root-form");
+
+        if (!hiddenField && editForm) {
+            hiddenField = document.createElement("input");
+            hiddenField.type = "hidden";
+            hiddenField.name = "is_inactive_checked";
+            hiddenField.id = "edit-root-show-inactive";
+            editForm.appendChild(hiddenField);
+        }
+        if (hiddenField) {
+            hiddenField.value = isInactiveCheckedBool;
+        }
+
+        // Set form action and populate fields with validation
+        if (editForm) {
+            editForm.action = `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}/update`;
+        }
+
+        // Validate inputs
+        const nameValidation = validateInputName(root.name || "", "root name");
+        const uriValidation = validateInputName(root.uri, "root URI");
+
+        const uriField = safeGetElement("edit-root-uri");
+        const nameField = safeGetElement("edit-root-name");
+
+        // URI is read-only, just display it
+        if (uriField && uriValidation.valid) {
+            uriField.value = uriValidation.value;
+        }
+
+        // Name is editable
+        if (nameField && nameValidation.valid) {
+            nameField.value = nameValidation.value;
+        } else if (nameField) {
+            // If name is null/empty, set empty string
+            nameField.value = "";
+        }
+
+        openModal("root-edit-modal");
+    } catch (error) {
+        console.error("Error fetching root for editing:", error);
+        const errorMessage = handleFetchError(error, "load root for editing");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * Handle export root details
+ */
+async function exportRoot(uri) {
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/roots/export?uri=${encodeURIComponent(uri)}`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        // Trigger download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+
+        // Safely extract filename from Content-Disposition header
+        const contentDisposition = response.headers.get("Content-Disposition");
+        let filename = `root-export-${Date.now()}.json`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(
+                /filename="?([^";\n]+)"?/,
+            );
+            if (filenameMatch && filenameMatch[1]) {
+                filename = filenameMatch[1];
+            }
+        }
+        a.download = filename;
+
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error("Error exporting root:", error);
+        showErrorMessage("Failed to export root");
     }
 }
 
@@ -14431,7 +14660,11 @@ async function handleGatewayFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add gateway",
+        );
 
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add gateway");
@@ -14514,7 +14747,10 @@ async function handleResourceFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add Resource",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add Resource");
         } else {
@@ -14583,7 +14819,10 @@ async function handlePromptFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add prompt",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add prompt");
         }
@@ -14650,7 +14889,10 @@ async function handleEditPromptFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit Prompt",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit Prompt");
         }
@@ -14714,7 +14956,10 @@ async function handleServerFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add server",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add server.");
         } else {
@@ -14843,7 +15088,10 @@ async function handleA2AFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add A2A Agent",
+        );
 
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add A2A Agent.");
@@ -14939,7 +15187,10 @@ async function handleToolFormSubmit(event) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add tool",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add tool");
         } else {
@@ -15006,7 +15257,10 @@ async function handleEditToolFormSubmit(event) {
             headers: { "X-Requested-With": "XMLHttpRequest" },
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit tool",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit tool");
         } else {
@@ -15097,7 +15351,10 @@ async function handleEditGatewayFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit gateway",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit gateway");
         }
@@ -15195,7 +15452,10 @@ async function handleEditA2AAgentFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit A2A agent",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit a2a agent");
         }
@@ -15249,7 +15509,10 @@ async function handleEditServerFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit server",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit server");
         }
@@ -15321,7 +15584,10 @@ async function handleEditResFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit resource",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit resource");
         }
@@ -17464,6 +17730,9 @@ window.testGateway = testGateway;
 window.generateToolTestCases = generateToolTestCases;
 window.generateTestCases = generateTestCases;
 window.enrichTool = enrichTool;
+window.viewRoot = viewRoot;
+window.editRoot = editRoot;
+window.exportRoot = exportRoot;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY
@@ -20923,16 +21192,6 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
-
-    // Handle HTMX events to show/hide modal
-    document.body.addEventListener("htmx:afterRequest", function (event) {
-        if (
-            event.detail.pathInfo.requestPath.includes("/admin/users/") &&
-            event.detail.pathInfo.requestPath.includes("/edit")
-        ) {
-            showUserEditModal();
-        }
-    });
 });
 
 // Expose user modal functions to global scope
@@ -21582,12 +21841,6 @@ function handleAdminTeamAction(event) {
             const modals = document.querySelectorAll('[id$="-modal"]');
             modals.forEach((modal) => modal.classList.add("hidden"));
         }
-        if (detail.refreshTeamsList) {
-            const teamsList = safeGetElement("teams-list");
-            if (teamsList && window.htmx) {
-                window.htmx.trigger(teamsList, "load");
-            }
-        }
         if (detail.refreshUnifiedTeamsList && window.htmx) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
@@ -22112,7 +22365,7 @@ window.rejectJoinRequest = rejectJoinRequest;
  * Validate password match in user edit form
  */
 function getPasswordPolicy() {
-    const policyEl = document.getElementById("password-policy-data");
+    const policyEl = document.getElementById("edit-password-policy-data");
     if (!policyEl) {
         return null;
     }
@@ -22154,22 +22407,22 @@ function validatePasswordRequirements() {
 
     const password = passwordField.value || "";
     const lengthCheck = password.length >= policy.minLength;
-    updateRequirementIcon("req-length", lengthCheck);
+    updateRequirementIcon("edit-req-length", lengthCheck);
 
     const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
-    updateRequirementIcon("req-uppercase", uppercaseCheck);
+    updateRequirementIcon("edit-req-uppercase", uppercaseCheck);
 
     const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
-    updateRequirementIcon("req-lowercase", lowercaseCheck);
+    updateRequirementIcon("edit-req-lowercase", lowercaseCheck);
 
     const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
-    updateRequirementIcon("req-numbers", numbersCheck);
+    updateRequirementIcon("edit-req-numbers", numbersCheck);
 
     const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
     const specialCheck =
         !policy.requireSpecial ||
         [...password].some((char) => specialChars.includes(char));
-    updateRequirementIcon("req-special", specialCheck);
+    updateRequirementIcon("edit-req-special", specialCheck);
 
     const submitButton = document.querySelector(
         '#user-edit-modal-content button[type="submit"]',

@@ -27,7 +27,7 @@ from __future__ import annotations
 # Standard
 import base64
 from datetime import datetime, timedelta, timezone
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, MagicMock, Mock
 import uuid
 
 # Third-Party
@@ -120,6 +120,26 @@ async def test_verify_jwt_token_invalid_signature(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_verify_jwt_token_missing_exp_when_required(monkeypatch):
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "require_token_expiration", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_audience", "mcpgateway-api", raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer", "mcpgateway", raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_audience_verification", True, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_issuer_verification", True, raising=False)
+
+    # Valid signature but missing exp claim.
+    token = jwt.encode({"sub": "missing-exp", "aud": "mcpgateway-api", "iss": "mcpgateway", "jti": str(uuid.uuid4())}, SECRET, algorithm=ALGO)
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.verify_jwt_token(token)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "missing required expiration claim" in exc.value.detail
+
+
+@pytest.mark.asyncio
 async def test_verify_jwt_token_skip_issuer_verification_only(monkeypatch):
     """Test that issuer verification can be disabled independently of audience verification."""
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
@@ -197,6 +217,45 @@ async def test_require_auth_missing_token(monkeypatch):
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_manual_cookie_overrides_header(monkeypatch):
+    """Manual cookie reading should take precedence over the Authorization header."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    header_token = _token({"h": 1})
+    cookie_token = _token({"c": 2})
+
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=header_token)
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+    assert payload["c"] == 2
+    assert "h" not in payload
+
+
+@pytest.mark.asyncio
+async def test_require_auth_manual_cookie_missing_falls_back_to_header(monkeypatch):
+    """If cookies are present but don't include jwt_token, fall back to header token."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    header_token = _token({"h": 1})
+    creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials=header_token)
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"other": "x"}  # truthy but no jwt_token key
+
+    payload = await vc.require_auth(request=mock_request, credentials=creds, jwt_token=None)
+    assert payload["h"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -396,6 +455,65 @@ async def test_docs_invalid_basic_auth_fails(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         await vc.require_auth_override(auth_header=wrong_basic)
     assert exc.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_require_docs_basic_auth_invalid_format_missing_colon(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+
+    # base64("userpass") => missing ":" separator
+    userpass = base64.b64encode(b"userpass").decode()
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_docs_basic_auth(f"Basic {userpass}")
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Invalid basic auth credentials"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_basic_auth_not_allowed_or_malformed(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    userpass = base64.b64encode(b"alice:secret").decode()
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_docs_basic_auth(f"Basic {userpass}")
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Basic authentication not allowed or malformed"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_auth_override_basic_not_allowed_raises_not_authenticated(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    userpass = base64.b64encode(b"alice:secret").decode()
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_docs_auth_override(auth_header=f"Basic {userpass}", jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_auth_override_unknown_scheme_raises_not_authenticated(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_docs_auth_override(auth_header="Token abc", jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_docs_auth_override_no_header_no_cookie_raises_not_authenticated(monkeypatch):
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_docs_auth_override(auth_header=None, jwt_token=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Not authenticated"
 
 
 # Integration test for /docs endpoint (requires test_client fixture and create_test_jwt_token helper)
@@ -877,3 +995,300 @@ async def test_require_admin_auth_no_credentials_provided(monkeypatch):
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert exc.value.detail == "Authentication required"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_override_uses_provided_request_instance(monkeypatch):
+    """Cover the request!=None path (middleware can pass in a Request)."""
+    monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    req = Request(scope={"type": "http", "headers": []})
+    assert await vc.require_auth_override(auth_header=None, jwt_token=None, request=req) == "anonymous"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_success_admin_user(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+
+    # Prevent basic-auth fallback from interfering if reached.
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+
+    # Patch DB + service layer imported inside require_admin_auth().
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=True)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "admin@example.com"}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+    assert result == "admin@example.com"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_uses_token_from_bearer_credentials(monkeypatch):
+    """When jwt_token cookie is absent, token should be taken from Authorization credentials."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", False, raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=True)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "admin@example.com"}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    bearer_creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+    result = await vc.require_admin_auth(request=mock_request, credentials=bearer_creds, jwt_token=None, basic_credentials=None)
+    assert result == "admin@example.com"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_non_admin_user_falls_back_to_basic(monkeypatch):
+    """Email auth non-admin path raises internally but falls back to basic auth."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=False)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "user@example.com"}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "text/html"}
+    mock_request.scope = {"root_path": ""}
+
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert result == "admin"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_non_admin_json_falls_back_to_basic(monkeypatch):
+    """Cover the non-admin JSON branch (403 raised internally, then fallback)."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyUser:
+        def __init__(self, email: str, is_admin: bool):
+            self.email = email
+            self.is_admin = is_admin
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, email: str):
+            return DummyUser(email=email, is_admin=False)
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "user@example.com"}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert result == "admin"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_user_not_found_falls_back_to_basic(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, _email: str):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={"sub": "user@example.com"}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert result == "admin"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_missing_username_falls_back_to_basic(monkeypatch):
+    """If the verified payload lacks 'sub'/'username', email auth should fall back."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    db_session = MagicMock()
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db_session]))
+
+    class DummyEmailAuthService:
+        def __init__(self, _db):
+            pass
+
+        async def get_user_by_email(self, _email: str):
+            raise AssertionError("should not be called")
+
+    monkeypatch.setattr("mcpgateway.services.email_auth_service.EmailAuthService", DummyEmailAuthService)
+    monkeypatch.setattr(vc, "verify_jwt_token_cached", AsyncMock(return_value={}))
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert result == "admin"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_get_db_http_401_redirects_html(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+
+    def get_db_raises():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="boom")
+
+    monkeypatch.setattr("mcpgateway.db.get_db", get_db_raises)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "text/html"}
+    mock_request.scope = {"root_path": "/root"}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_302_FOUND
+    assert exc.value.headers["Location"] == "/root/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_get_db_http_403_is_reraised(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+
+    def get_db_raises():
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="nope")
+
+    monkeypatch.setattr("mcpgateway.db.get_db", get_db_raises)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_get_db_http_401_non_html_falls_back_to_basic(monkeypatch):
+    """401 from email auth should fall back to basic auth for non-browser requests."""
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    def get_db_raises():
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="boom")
+
+    monkeypatch.setattr("mcpgateway.db.get_db", get_db_raises)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    basic_creds = HTTPBasicCredentials(username="admin", password="secret")
+    result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
+    assert result == "admin"
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_fallback_redirects_for_htmx(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json", "hx-request": "true"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token=None, basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_302_FOUND
+    assert exc.value.headers["Location"].endswith("/admin/login")
+
+
+@pytest.mark.asyncio
+async def test_require_admin_auth_email_auth_fallback_returns_json_401(monkeypatch):
+    monkeypatch.setattr(vc.settings, "email_auth_enabled", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"accept": "application/json"}
+    mock_request.scope = {"root_path": ""}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token=None, basic_credentials=None)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authentication required. Please login with email/password or use basic auth." in exc.value.detail

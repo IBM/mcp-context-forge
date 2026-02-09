@@ -134,7 +134,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -147,7 +147,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.security_cookies import set_auth_cookie
+from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
 
@@ -2831,7 +2831,7 @@ async def admin_ui(
             admin_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
 
-            # Generate a comprehensive JWT token that matches the email auth format
+            # Generate a lightweight session JWT token
             now = datetime.now(timezone.utc)
             payload = {
                 "sub": admin_email,
@@ -2841,25 +2841,16 @@ async def admin_ui(
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
                 "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
-                "teams": [],  # Teams populated downstream when needed
-                "namespaces": [f"user:{admin_email}", "public"],
+                "token_use": "session",  # nosec B105 - token type marker, not a password
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
             # Generate token using centralized token creation
             token = await create_jwt_token(payload)
 
-            # Set HTTP-only cookie for security
-            response.set_cookie(
-                key="jwt_token",
-                value=token,
-                httponly=True,
-                secure=getattr(settings, "secure_cookies", False),
-                samesite=getattr(settings, "cookie_samesite", "lax"),
-                max_age=settings.token_expiry * 60,  # Convert minutes to seconds
-                path=settings.app_root_path or "/",  # Make cookie available for all paths
-            )
-            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
+            # Set HTTP-only cookie using centralized security cookie utility
+            set_auth_cookie(response, token, remember_me=False)
+            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
@@ -2912,9 +2903,14 @@ async def admin_login_page(request: Request) -> Response:
     if settings.secure_cookies and settings.environment == "development":
         secure_cookie_warning = "Serving over HTTP with secure cookies enabled. If you have login issues, try disabling secure cookies in your configuration."
 
+    # Preserve email from failed login attempt
+    prefill_email = request.query_params.get("email", "")
+
     # Use external template file
     return request.app.state.templates.TemplateResponse(
-        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
+        request,
+        "login.html",
+        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
     )
 
 
@@ -2970,7 +2966,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
         if not email or not password:
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
+            params = "error=missing_fields"
+            if email:
+                params += f"&email={urllib.parse.quote(email)}"
+            return RedirectResponse(url=f"{root_path}/admin/login?{params}", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -2984,7 +2983,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -3034,7 +3033,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    root_path = request.scope.get("root_path", "")
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                        status_code=303,
+                    )
 
                 return response
 
@@ -3046,7 +3052,13 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
-            set_auth_cookie(response, token, remember_me=False)
+            try:
+                set_auth_cookie(response, token, remember_me=False)
+            except CookieTooLargeError:
+                return RedirectResponse(
+                    url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                    status_code=303,
+                )
 
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
@@ -3058,7 +3070,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
@@ -3123,8 +3135,8 @@ async def _admin_logout(request: Request) -> Response:
         # User-initiated logout: clear cookie and redirect to login
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
-    # Clear JWT token cookie
-    response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
+    # Clear JWT token cookie using centralized security cookie utility
+    clear_auth_cookie(response)
 
     return response
 
@@ -3280,21 +3292,15 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         # Get user from JWT token in cookie
         try:
             jwt_token = request.cookies.get("jwt_token")
-            if not jwt_token:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-
-            # Authenticate using the token
-            # Create credentials object from cookie
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-            # get_current_user now uses fresh DB sessions internally
-            current_user = await get_current_user(credentials, request=request)
-
-            if not current_user:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+            current_user = None
+            if jwt_token:
+                credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+                current_user = await get_current_user(credentials, request=request)
         except Exception as e:
             LOGGER.error(f"Authentication error: {e}")
+            current_user = None
+
+        if not current_user:
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
@@ -3341,7 +3347,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large",
+                        status_code=303,
+                    )
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
@@ -4597,7 +4609,7 @@ async def admin_update_team(
             </div>
             """
             response = HTMLResponse(content=success_html)
-            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}}).decode()
+            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshUnifiedTeamsList": True, "delayMs": 1500}}).decode()
             return response
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
@@ -6080,7 +6092,7 @@ async def admin_get_user_edit(
                         <div class="ml-3 flex-1">
                             <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
                             <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
-                                <div class="flex items-center" id="req-length">
+                                <div class="flex items-center" id="edit-req-length">
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
@@ -6089,25 +6101,25 @@ async def admin_get_user_edit(
             if settings.password_require_uppercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
+                                <div class="flex items-center" id="edit-req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
                 """
                 )
             if settings.password_require_lowercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
+                                <div class="flex items-center" id="edit-req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
                 """
                 )
             if settings.password_require_numbers:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
+                                <div class="flex items-center" id="edit-req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
                 """
                 )
             if settings.password_require_special:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
+                                <div class="flex items-center" id="edit-req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
                 """
                 )
             pr_lines.append(
@@ -6128,7 +6140,7 @@ async def admin_get_user_edit(
         edit_form = f"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#user-edit-modal-content" class="space-y-4">
+            <form hx-post="{root_path}/admin/users/{user_email}/update" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -6160,7 +6172,7 @@ async def admin_get_user_edit(
                 </div>
                 {password_requirements_html}
                 <div
-                    id="password-policy-data"
+                    id="edit-password-policy-data"
                     class="hidden"
                     data-min-length="{settings.password_min_length}"
                     data-require-uppercase="{'true' if settings.password_require_uppercase else 'false'}"
@@ -6247,7 +6259,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password)
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """
@@ -10362,13 +10374,113 @@ async def admin_set_prompt_state(
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
+@admin_router.get("/roots/export")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_export_root(
+    uri: str,
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Export a single root configuration as JSON.
+
+    Args:
+        uri: Root URI to export (query parameter)
+        user: Authenticated user
+
+    Returns:
+        JSON file download with root configuration
+
+    Raises:
+        HTTPException: If root not found or export fails
+    """
+    try:
+        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+
+        # Get the root by URI
+        root = await root_service.get_root_by_uri(uri)
+
+        # Extract username from user
+        username = get_user_email(user)
+
+        # Create export data
+        export_data = {
+            "exported_at": datetime.now().isoformat(),
+            "exported_by": username,
+            "export_type": "root",
+            "version": "1.0",
+            "root": {
+                "uri": str(root.uri),
+                "name": root.name,
+            },
+        }
+
+        # Generate filename - sanitize URI for filename
+        # Remove protocol and special characters
+        safe_uri = uri.replace("://", "_").replace("/", "_").replace("\\", "_")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"root-export-{safe_uri}-{timestamp}.json"
+
+        # Return as downloadable file
+        content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except RootServiceNotFoundError as e:
+        LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Root export failed: {str(e)}")
+
+
+@admin_router.get("/roots/{uri:path}")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
+    """Get a specific root by URI via the admin UI.
+
+    This endpoint retrieves details for a specific root URI from the system.
+    It requires authentication and logs the operation for audit purposes.
+
+    Args:
+        uri (str): The URI of the root to retrieve.
+        user: Authenticated user dependency.
+
+    Returns:
+        dict: A dictionary containing the root information.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_get_root)
+        True
+        >>> admin_get_root.__name__
+        'admin_get_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    try:
+        root = await root_service.get_root_by_uri(uri)
+        return root.model_dump(by_alias=True)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting root {uri}: {e}")
+        raise e
+
+
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
-      - path
+      - uri
       - name (optional)
 
     Args:
@@ -10385,16 +10497,97 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> admin_add_root.__name__
         'admin_add_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new root")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is adding a new root")
+
     form = await request.form()
-    uri = str(form["uri"])
+    uri = str(form.get("uri", ""))
     name_value = form.get("name")
     name: str | None = None
-    if isinstance(name_value, str):
-        name = name_value
-    await root_service.add_root(uri, name)
+    if isinstance(name_value, str) and name_value.strip():
+        name = name_value.strip()
+
+    try:
+        if not uri:
+            raise ValueError("URI is required")
+        await root_service.add_root(str(uri), name)
+
+    except RootServiceError as e:
+        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+        error_message = "Failed to add root. Please check the URI format."
+    except ValueError as e:
+        LOGGER.warning(f"Invalid input from user {user_email}: {e}")
+        error_message = "Invalid input. Please try again."
+    except Exception as e:
+        LOGGER.error(f"Error adding root: {e}")
+        error_message = "Failed to add root. Please try again."
+
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin{error_param}#roots", status_code=303)
+
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+
+@admin_router.post("/roots/{uri:path}/update")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+    """Update a root via the admin UI.
+
+    This endpoint updates an existing root URI in the system. It expects form
+    fields for the new values and requires authentication.
+
+    Expects form fields:
+    - name (optional): New name for the root
+    - is_inactive_checked: Whether the root should be marked as inactive
+
+    Args:
+        uri (str): The URI of the root to update.
+        request (Request): FastAPI request object containing form data.
+        user: Authenticated user dependency.
+
+    Returns:
+        RedirectResponse: A redirect response to the roots section of the admin
+        dashboard with a status code of 303 (See Other).
+
+    Raises:
+        HTTPException: If the root is not found (404) or other errors occur.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_update_root)
+        True
+        >>> admin_update_root.__name__
+        'admin_update_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+
+    try:
+        form = await request.form()
+        name_value = form.get("name")
+        name: str | None = None
+
+        if isinstance(name_value, str):
+            name = name_value
+
+        await root_service.update_root(uri, name)
+
+        root_path = request.scope.get("root_path", "")
+        is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
+
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
+        return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error updating root {uri}: {e}")
+        raise e
 
 
 @admin_router.post("/roots/{uri:path}/delete")
@@ -12709,7 +12902,15 @@ async def admin_test_a2a_agent(
             # JSONRPC format for agents that expect it
             test_params = {
                 "method": "message/send",
-                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": user_query}]}},
+                # A2A v0.3.x: message.parts use "kind" (not "type").
+                "params": {
+                    "message": {
+                        "kind": "message",
+                        "messageId": f"admin-test-{int(time.time())}",
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": user_query}],
+                    }
+                },
             }
         else:
             # Generic test format

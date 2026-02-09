@@ -25,6 +25,7 @@ from __future__ import annotations
 # Standard
 import json
 import sys
+import time
 from types import SimpleNamespace
 from typing import Any, Dict
 
@@ -82,6 +83,17 @@ def test_create_token_paths():
     dec2 = jwt.decode(tok2, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
     # Check that the original payload keys are present
     assert dec2["foo"] == "bar"
+
+
+def test_create_token_preserves_existing_exp():
+    """If payload already contains exp>0, _create_jwt_token should not override it."""
+    existing_exp = int(time.time()) + 3600
+    payload: Dict[str, Any] = {"sub": "test@example.com", "exp": existing_exp}
+
+    tok = _create(payload, expires_in_minutes=10, secret=TEST_SECRET, algorithm=TEST_ALGO)
+    dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
+
+    assert dec["exp"] == existing_exp
 
 
 def test_create_token_includes_jti():
@@ -267,31 +279,15 @@ def test_create_token_with_teams():
     assert dec["teams"] == ["team-123", "team-456"]
 
 
-def test_create_token_with_namespaces():
-    """_create_jwt_token includes explicit namespaces when provided."""
-    payload: Dict[str, Any] = {"sub": "test@example.com"}
-    namespaces = ["user:test@example.com", "public", "team:team-123"]
-
-    tok = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO, namespaces=namespaces)
-    dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
-
-    assert "namespaces" in dec, "Token should include namespaces claim"
-    assert dec["namespaces"] == ["user:test@example.com", "public", "team:team-123"]
-
-
-def test_create_token_auto_generates_namespaces_from_teams():
-    """_create_jwt_token auto-generates namespaces from teams when not provided."""
+def test_create_token_no_namespaces():
+    """_create_jwt_token no longer includes namespaces claim (removed for cookie size)."""
     payload: Dict[str, Any] = {"sub": "test@example.com"}
     teams = ["team-123", "team-456"]
 
     tok = _create(payload, expires_in_minutes=1, secret=TEST_SECRET, algorithm=TEST_ALGO, teams=teams)
     dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
 
-    assert "namespaces" in dec, "Token should include auto-generated namespaces"
-    assert "user:test@example.com" in dec["namespaces"]
-    assert "public" in dec["namespaces"]
-    assert "team:team-123" in dec["namespaces"]
-    assert "team:team-456" in dec["namespaces"]
+    assert "namespaces" not in dec, "Token should NOT include namespaces claim"
 
 
 def test_create_token_with_scopes():
@@ -324,7 +320,6 @@ def test_create_rich_token_all_fields():
         "auth_provider": "cli",
     }
     teams = ["team-123"]
-    namespaces = ["user:admin@example.com", "public", "team:team-123"]
     scopes = {
         "server_id": None,
         "permissions": [],
@@ -332,7 +327,7 @@ def test_create_rich_token_all_fields():
         "time_restrictions": {},
     }
 
-    tok = _create(payload, expires_in_minutes=60, secret=TEST_SECRET, algorithm=TEST_ALGO, user_data=user_data, teams=teams, namespaces=namespaces, scopes=scopes)
+    tok = _create(payload, expires_in_minutes=60, secret=TEST_SECRET, algorithm=TEST_ALGO, user_data=user_data, teams=teams, scopes=scopes)
     dec = jwt.decode(tok, TEST_SECRET, algorithms=[TEST_ALGO], audience="mcpgateway-api", issuer="mcpgateway")
 
     # Verify all standard claims
@@ -345,7 +340,7 @@ def test_create_rich_token_all_fields():
     assert dec["user"]["email"] == "admin@example.com"
     assert dec["user"]["is_admin"] is True
     assert dec["teams"] == ["team-123"]
-    assert dec["namespaces"] == ["user:admin@example.com", "public", "team:team-123"]
+    assert "namespaces" not in dec
     assert dec["scopes"]["permissions"] == []
 
 

@@ -654,6 +654,7 @@ mcpContextForge:
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
     VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
     VALIDATION_STRICT: "true" # reject requests with validation failures
+    JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
     SANITIZE_OUTPUT: "true" # strip control characters from responses
     ALLOWED_ROOTS: "[]" # allowed root paths (JSON array)
     MAX_PATH_DEPTH: "10" # maximum allowed path depth
@@ -803,6 +804,7 @@ mcpContextForge:
 
     # ─ Email-Based Authentication ─
     EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
+    PROTECT_ALL_ADMINS: "true"             # prevent any admin from being demoted or deactivated via API/UI
     PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
     PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
     PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin

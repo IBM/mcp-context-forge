@@ -2245,22 +2245,6 @@ class ResourceService:
                         if not server_match:
                             raise ResourceNotFoundError(f"Resource not found: {resource_uri or resource_id}")
 
-                # Release transaction before network calls to avoid idle-in-transaction during invoke_resource
-                db.commit()
-
-                # Call post-fetch hooks if registered
-                if has_post_fetch:
-                    # Create post-fetch payload
-                    post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    # Execute post-fetch hooks
-                    post_result, _ = await self._plugin_manager.invoke_hook(
-                        ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True
-                    )  # Pass contexts from pre-fetch
-
-                    # Use modified content if plugin changed it
-                    if post_result.modified_payload:
-                        content = post_result.modified_payload.content
-
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -2273,7 +2257,14 @@ class ResourceService:
                 # Prefer returning first-class content models or objects with content-like attributes.
                 # ResourceContent and TextContent already imported at top level
 
-                # If content is already a Pydantic content model, return as-is
+                # Release transaction before network calls to avoid idle-in-transaction during invoke_resource
+                db.commit()
+
+                # ═══════════════════════════════════════════════════════════════════════════
+                # RESOLVE CONTENT: Fetch actual content from gateway if needed
+                # ═══════════════════════════════════════════════════════════════════════════
+                # If content is a Pydantic content model, invoke gateway
+
                 if isinstance(content, (ResourceContent, TextContent)):
                     resource_response = await self.invoke_resource(
                         db=db,
@@ -2287,9 +2278,8 @@ class ResourceService:
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
-                    return content
-                # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
-                if hasattr(content, "text") or hasattr(content, "blob"):
+                # If content is any object that quacks like content
+                elif hasattr(content, "text") or hasattr(content, "blob"):
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2301,7 +2291,8 @@ class ResourceService:
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
                         )
-                        setattr(content, "blob", resource_response)
+                        if resource_response:
+                            setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2313,16 +2304,27 @@ class ResourceService:
                             resource_obj=resource_db,
                             gateway_obj=resource_db_gateway,
                         )
-                        setattr(content, "text", resource_response)
-                    return content
+                        if resource_response:
+                            setattr(content, "text", resource_response)
                 # Normalize primitive types to ResourceContent
-                if isinstance(content, bytes):
-                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
-                if isinstance(content, str):
-                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
+                elif isinstance(content, bytes):
+                    content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
+                elif isinstance(content, str):
+                    content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
+                else:
+                    # Fallback to stringified content
+                    content = ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
 
-                # Fallback to stringified content
-                return ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
+                # ═══════════════════════════════════════════════════════════════════════════
+                # POST-FETCH HOOKS: Now called AFTER content is resolved from gateway
+                # ═══════════════════════════════════════════════════════════════════════════
+                if has_post_fetch:
+                    post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
+                    post_result, _ = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    if post_result.modified_payload:
+                        content = post_result.modified_payload.content
+
+                return content
             except Exception as e:
                 success = False
                 error_message = str(e)

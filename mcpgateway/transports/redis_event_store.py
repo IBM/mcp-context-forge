@@ -96,15 +96,17 @@ return seq_num
 class RedisEventStore(EventStore):
     """Redis-backed event store for multi-worker Streamable HTTP."""
 
-    def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600):
+    def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600, key_prefix: str = "mcpgw:eventstore"):
         """Initialize Redis event store.
 
         Args:
             max_events_per_stream: Maximum events per stream (ring buffer size).
             ttl: Stream TTL in seconds.
+            key_prefix: Redis key prefix for namespacing this store's data. Primarily useful for test isolation.
         """
         self.max_events = max_events_per_stream
         self.ttl = ttl
+        self.key_prefix = key_prefix.rstrip(":")
         logger.debug("RedisEventStore initialized: max_events=%s ttl=%ss", max_events_per_stream, ttl)
 
     def _get_stream_meta_key(self, stream_id: str) -> str:
@@ -116,7 +118,7 @@ class RedisEventStore(EventStore):
         Returns:
             Redis key string.
         """
-        return f"mcpgw:eventstore:{stream_id}:meta"
+        return f"{self.key_prefix}:{stream_id}:meta"
 
     def _get_stream_events_key(self, stream_id: str) -> str:
         """Return Redis key for stream events sorted set.
@@ -127,7 +129,7 @@ class RedisEventStore(EventStore):
         Returns:
             Redis key string.
         """
-        return f"mcpgw:eventstore:{stream_id}:events"
+        return f"{self.key_prefix}:{stream_id}:events"
 
     def _get_stream_messages_key(self, stream_id: str) -> str:
         """Return Redis key for stream messages hash.
@@ -138,7 +140,7 @@ class RedisEventStore(EventStore):
         Returns:
             Redis key string.
         """
-        return f"mcpgw:eventstore:{stream_id}:messages"
+        return f"{self.key_prefix}:{stream_id}:messages"
 
     def _event_index_prefix(self) -> str:
         """Return prefix for per-event index keys.
@@ -146,7 +148,7 @@ class RedisEventStore(EventStore):
         Returns:
             Prefix string for index keys.
         """
-        return "mcpgw:eventstore:event_index:"
+        return f"{self.key_prefix}:event_index:"
 
     def _event_index_key(self, event_id: str) -> str:
         """Return Redis key for event index lookup.

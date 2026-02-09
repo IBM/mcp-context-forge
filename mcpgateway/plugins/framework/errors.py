@@ -27,6 +27,14 @@ class PluginViolationError(Exception):
         Args:
             message: the reason for the violation error.
             violation: the plugin violation object details.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.errors import PluginViolationError
+            >>> from mcpgateway.plugins.framework.models import PluginViolation
+            >>> v = PluginViolation(reason="r", description="d", code="c")
+            >>> err = PluginViolationError("blocked", violation=v)
+            >>> (str(err), err.violation.code)
+            ('blocked', 'c')
         """
         self.message = message
         self.violation = violation
@@ -45,6 +53,13 @@ class PluginError(Exception):
 
         Args:
             error: the plugin error details.
+
+        Examples:
+            >>> from mcpgateway.plugins.framework.errors import PluginError
+            >>> from mcpgateway.plugins.framework.models import PluginErrorModel
+            >>> pe = PluginError(PluginErrorModel(message="boom", plugin_name="p1"))
+            >>> (str(pe), pe.error.plugin_name)
+            ('boom', 'p1')
         """
         self.error = error
         super().__init__(self.error.message)
@@ -59,5 +74,11 @@ def convert_exception_to_error(exception: Exception, plugin_name: str) -> Plugin
 
     Returns:
         A plugin error pydantic object that can be sent over HTTP.
+
+    Examples:
+        >>> from mcpgateway.plugins.framework.errors import convert_exception_to_error
+        >>> err = convert_exception_to_error(ValueError("nope"), plugin_name="p1")
+        >>> (err.plugin_name, "ValueError('nope')" in err.message)
+        ('p1', True)
     """
     return PluginErrorModel(message=repr(exception), plugin_name=plugin_name)

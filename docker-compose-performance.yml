@@ -30,6 +30,7 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  tempodata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -187,6 +188,7 @@ services:
       - JWT_AUDIENCE=mcpgateway-api
       - JWT_ISSUER=mcpgateway
       - EMAIL_AUTH_ENABLED=true
+      - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       - REQUIRE_TOKEN_EXPIRATION=false
@@ -231,6 +233,7 @@ services:
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
+      - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - OBSERVABILITY_ENABLED=false
       # ═══════════════════════════════════════════════════════════════════════════
@@ -344,6 +347,15 @@ services:
       # - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
+      # OpenTelemetry (Tempo / OTLP) - enabled automatically by `make monitoring-up` / `make performance-up`
+      - LOG_FORMAT=${LOG_FORMAT:-text}  # text (human) or json (Loki-friendly)
+      - OTEL_ENABLE_OBSERVABILITY=${OTEL_ENABLE_OBSERVABILITY:-false}
+      - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
 
     # TCP kernel tuning for 10,000 concurrent users
     # Each tool call creates a new connection → many TIME_WAIT sockets
@@ -996,6 +1008,24 @@ services:
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
+  # Tempo - Distributed tracing backend (OTLP receiver + TraceQL query API)
+  # Completes the Grafana observability stack: Prometheus (metrics) + Loki (logs) + Tempo (traces)
+  # ──────────────────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "3200:3200"      # Tempo HTTP API / query frontend
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/tempo
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
   # Promtail - Log collector for Loki
   # Collects logs from all containers via Docker socket
   # ──────────────────────────────────────────────────────────────────────
@@ -1037,6 +1067,8 @@ services:
       - ./infra/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
+      - loki
+      - tempo
     profiles: ["monitoring"]
 
 ###############################################################################

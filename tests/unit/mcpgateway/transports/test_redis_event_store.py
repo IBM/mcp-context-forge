@@ -9,6 +9,7 @@ stateful Streamable HTTP sessions.
 import asyncio
 import os
 import time
+import uuid
 
 import pytest
 
@@ -37,13 +38,15 @@ async def redis_event_store(monkeypatch):
     if redis is None:
         pytest.skip("Redis not available - skipping Redis event store tests")
 
-    store = RedisEventStore(max_events_per_stream=10, ttl=60)
+    # Use a per-test prefix to avoid cross-test interference under xdist.
+    key_prefix = f"mcpgw:eventstore:test:{uuid.uuid4().hex}"
+    store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix=key_prefix)
     yield store
 
     # Cleanup: delete all test keys
     redis = await get_redis_client()
     if redis:
-        keys = await redis.keys("mcpgw:eventstore:*")
+        keys = await redis.keys(f"{key_prefix}:*")
         if keys:
             await redis.delete(*keys)
 
@@ -312,7 +315,7 @@ class TestRedisEventStore:
     async def test_sequence_ordering(self, redis_event_store):
         """Events are replayed in correct sequence order."""
         # Create store with larger capacity to avoid eviction during this test
-        large_store = RedisEventStore(max_events_per_stream=30, ttl=60)
+        large_store = RedisEventStore(max_events_per_stream=30, ttl=60, key_prefix=redis_event_store.key_prefix)
 
         stream_id = "test-stream-ordering"
         messages = [{"jsonrpc": "2.0", "method": f"msg_{i}", "id": i} for i in range(20)]

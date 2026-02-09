@@ -36,6 +36,10 @@ Examples:
     True
     >>> conflict_error.enabled
     True
+    >>>
+    >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+    >>> import asyncio
+    >>> asyncio.run(service._http_client.aclose())
 """
 
 # Standard
@@ -371,6 +375,10 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             0
             >>> hasattr(service, 'redis_url')
             True
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> import asyncio
+            >>> asyncio.run(service._http_client.aclose())
         """
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
         self._health_check_interval = GW_HEALTH_CHECK_INTERVAL
@@ -702,6 +710,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     asyncio.run(service.register_gateway(db, gateway))
             ... except Exception:
             ...     pass
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> asyncio.run(service._http_client.aclose())
         """
         visibility = "public" if visibility not in ("private", "team", "public") else visibility
         try:
@@ -1511,6 +1522,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     empty_result, cursor = asyncio.run(service.list_gateways(db))
             ...     empty_result == [] and cursor is None
             True
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> asyncio.run(service._http_client.aclose())
         """
         # Check cache for first page only - only for public-only queries (no user/team filtering)
         # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
@@ -2379,6 +2393,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ... except GatewayNotFoundError as e:
             ...     'Gateway not found: gateway_id' in str(e)
             True
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> asyncio.run(service._http_client.aclose())
         """
         # Use eager loading to avoid N+1 queries for relationships and team name
         gateway = db.execute(
@@ -2787,6 +2804,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             ...     asyncio.run(service.delete_gateway(db, 'gateway_id', 'user@example.com'))
             ... except Exception:
             ...     pass
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> asyncio.run(service._http_client.aclose())
         """
         try:
             # Find gateway with eager loading for deletion to avoid N+1 queries
@@ -3904,6 +3924,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> service = GatewayService()
             >>> # Test parameter validation
             >>> import asyncio
+            >>> from unittest.mock import AsyncMock
+            >>> # Avoid opening a real SSE connection in doctests (it can leak anyio streams on failure paths)
+            >>> service.connect_to_sse_server = AsyncMock(side_effect=GatewayConnectionError("boom"))
             >>> async def test_params():
             ...     try:
             ...         await service._initialize_gateway("hello//")
@@ -3922,6 +3945,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             'SSE'
             >>> sig.parameters['authentication'].default is None
             True
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> asyncio.run(service._http_client.aclose())
         """
         try:
             if authentication is None:
@@ -3972,10 +3998,16 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             return capabilities, tools, resources, prompts
         except Exception as e:
+
+            # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
+            root_cause = e
+            if isinstance(e, BaseExceptionGroup):
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
+                    root_cause = root_cause.exceptions[0]
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
-            sanitized_error = sanitize_exception_message(str(e), auth_query_params)
+            sanitized_error = sanitize_exception_message(str(root_cause), auth_query_params)
             logger.error(f"Gateway initialization failed for {sanitized_url}: {sanitized_error}", exc_info=True)
-            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
+            raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}")
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
         """Sync function for database operations (runs in thread).
@@ -4709,6 +4741,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             >>> import inspect
             >>> inspect.iscoroutinefunction(service._refresh_gateway_tools_resources_prompts)
             True
+            >>>
+            >>> # Cleanup long-lived clients created by the service to avoid ResourceWarnings in doctest runs
+            >>> asyncio.run(service._http_client.aclose())
         """
         result = {
             "tools_added": 0,
@@ -5437,7 +5472,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 return capabilities, tools, resources, prompts
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
-        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
+        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
     async def connect_to_streamablehttp_server(
         self,
@@ -5589,7 +5624,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 return capabilities, tools, resources, prompts
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
-        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}")
+        raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
 
 # Lazy singleton - created on first access, not at module import time.

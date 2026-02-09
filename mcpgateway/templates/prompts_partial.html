@@ -6,6 +6,7 @@
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-36">Gateway Name</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+      <th id="prompt-id-header" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-48">Prompt ID</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Tags</th>
       <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">Owner</th>
@@ -51,6 +52,9 @@
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">
           <div>{{ prompt_label }}</div>
           <div class="text-xs text-gray-500 dark:text-gray-400 font-mono">{{ prompt_tech_name }}</div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-48" aria-labelledby="prompt-id-header">
+          <div class="font-mono text-xs">{{ prompt.id }}</div>
         </td>
         <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{% set clean_desc = (prompt.description or "") | replace('\n', ' ') | replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags | trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{ refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap">{% if prompt.tags %} {% for tag in prompt.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}</span>{% endfor %} {% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>

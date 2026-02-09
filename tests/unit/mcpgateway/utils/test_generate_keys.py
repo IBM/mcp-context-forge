@@ -39,3 +39,12 @@ def test_derive_public_key_invalid_pem_logs_error(caplog: pytest.LogCaptureFixtu
         generate_keys.derive_public_key_from_private("not-a-pem")
 
     assert any("Error deriving public key" in record.message for record in caplog.records)
+
+
+def test_main_prints_generated_key(capsys, monkeypatch):
+    # Avoid slow crypto in this unit test: main() should print whatever is generated.
+    monkeypatch.setattr(generate_keys, "generate_ed25519_private_key", lambda: "PEM_PRIVATE_KEY")
+    generate_keys.main()
+    out = capsys.readouterr().out
+    assert "Ed25519 private key generated successfully" in out
+    assert "PEM_PRIVATE_KEY" in out

@@ -32,6 +32,7 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
+| `PROTECT_ALL_ADMINS` | Prevent any admin from being demoted or deactivated via API/UI | `true` |
 
 ### ⚙️ Project Defaults (Dev Setup)
 
@@ -423,6 +424,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `true`                | bool    |
 | `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
 | `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
+| `PROTECT_ALL_ADMINS`         | Prevent any admin from being demoted or deactivated via API/UI. When false, only the last active admin is protected. | `true` | bool |
 
 ### MCP Client Authentication
 
@@ -822,6 +824,17 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `PROMPT_CACHE_SIZE`     | Cached prompt templates          | `100`    | int > 0 |
 | `MAX_PROMPT_SIZE`       | Max prompt template size (bytes) | `102400` | int > 0 |
 | `PROMPT_RENDER_TIMEOUT` | Jinja render timeout (secs)      | `10`     | int > 0 |
+
+### Schema Validation
+
+| Setting | Description | Default | Options |
+| :--- | :--- | :--- | :--- |
+| `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
+
+**Strict Mode Scenarios:**
+
+- **`true` (Default)**: Invalid schemas (e.g., unknown types, malformed JSON Schema) will cause registration to **fail** with a 400 error. This ensures that only valid, spec-compliant tools and prompts are registered, preventing runtime issues later.
+- **`false`**: Invalid schemas will be **logged as warnings** but successfully persisted. Use this **only** for backward compatibility if you have legacy tools with broken schemas that cannot be immediately updated. Invalid schemas may still cause runtime errors when used by LLMs or downstream tools.
 
 ### Health Checks
 

@@ -773,15 +773,25 @@ class SSOService:
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership
-            # NOTE: Only UPGRADE is_admin via SSO, never downgrade
-            # This preserves manual admin grants made via Admin UI/API
-            # To revoke admin access, use the Admin UI/API directly
+            # Track origin to support both promotion AND demotion for SSO-granted admins
+            # Manual/API grants are "sticky" - never auto-demoted by SSO
+            # Only users with admin_origin="sso" can be demoted on login
             provider = self.get_provider(user_info.get("provider"))
             if provider:
                 should_be_admin = self._should_user_be_admin(email, user_info, provider)
-                if should_be_admin and not user.is_admin:
-                    logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
-                    user.is_admin = True
+                if should_be_admin:
+                    # Grant admin access
+                    if not user.is_admin:
+                        logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
+                        user.is_admin = True
+                        # Track that admin was granted via SSO (only set on initial grant)
+                        user.admin_origin = "sso"
+                    # Do NOT change admin_origin if already admin - preserve manual/API grants
+                elif user.is_admin and user.admin_origin == "sso":
+                    # User was SSO admin but no longer in admin groups - revoke access
+                    logger.info(f"Revoking is_admin for {email} - removed from SSO admin groups")
+                    user.is_admin = False
+                    user.admin_origin = None
 
             self.db.commit()
 
@@ -879,7 +889,7 @@ class SSOService:
                     pending.status = "completed"
                     self.db.commit()
 
-        # Generate JWT token for user
+        # Generate JWT token for user — session token (teams resolved server-side)
         token_data = {
             "sub": user.email,
             "email": user.email,
@@ -887,20 +897,10 @@ class SSOService:
             "auth_provider": user.auth_provider,
             "iat": int(utc_now().timestamp()),
             "user": {"email": user.email, "full_name": user.full_name, "is_admin": user.is_admin, "auth_provider": user.auth_provider},
+            "token_use": "session",  # nosec B105 - token type marker, not a password
+            # Scopes
+            "scopes": {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}},
         }
-
-        # Add user teams to token
-        teams = user.get_teams()
-        token_data["teams"] = [team.id for team in teams]
-
-        # Add namespaces for RBAC
-        namespaces = [f"user:{user.email}"]
-        namespaces.extend([f"team:{team.slug}" for team in teams])
-        namespaces.append("public")
-        token_data["namespaces"] = namespaces
-
-        # Add scopes
-        token_data["scopes"] = {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}}
 
         # Create JWT token
         token = await create_jwt_token(token_data)

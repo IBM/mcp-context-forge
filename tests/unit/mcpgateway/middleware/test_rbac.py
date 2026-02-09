@@ -1,9 +1,44 @@
 # -*- coding: utf-8 -*-
+import importlib
+
 import pytest
 import asyncio
+from contextlib import contextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import HTTPException, Request, status
 from mcpgateway.middleware import rbac
+
+
+@pytest.fixture(autouse=True)
+def _restore_real_rbac_decorators():
+    """Reload rbac module to restore real decorator functions from source code.
+
+    e2e tests (test_main_apis.py, test_oauth_protected_resource.py) replace
+    rbac.require_permission/require_admin_permission/require_any_permission
+    with noop_decorator at module level without cleanup.  Under xdist, when
+    these e2e modules land on the same worker, the decorators stay permanently
+    patched as no-ops, causing 14 test failures here (DID NOT RAISE / 0 calls).
+
+    importlib.reload() re-executes the module source, restoring real decorators.
+    Non-decorator attributes are saved and restored to preserve object identity
+    for FastAPI dependency_overrides in other test files on the same worker.
+    """
+    saved_ps = rbac.PermissionService
+    saved_gcuwp = rbac.get_current_user_with_permissions
+    saved_get_db = rbac.get_db
+    saved_get_ps = rbac.get_permission_service
+
+    importlib.reload(rbac)
+
+    rbac.PermissionService = saved_ps
+    rbac.get_current_user_with_permissions = saved_gcuwp
+    rbac.get_db = saved_get_db
+    rbac.get_permission_service = saved_get_ps
+    yield
+    rbac.get_current_user_with_permissions = saved_gcuwp
+    rbac.get_db = saved_get_db
+    rbac.get_permission_service = saved_get_ps
 
 
 @pytest.mark.asyncio
@@ -30,17 +65,33 @@ async def test_get_permission_service_returns_instance():
 async def test_get_current_user_with_permissions_cookie_token_success():
     mock_request = MagicMock(spec=Request)
     mock_request.cookies = {"jwt_token": "token123"}
-    mock_request.headers = {"user-agent": "pytest"}
+    mock_request.headers = {"user-agent": "pytest", "accept": "text/html"}  # Mark as browser request
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
     mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=True)
     with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
-        result = await rbac.get_current_user_with_permissions(mock_request)
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
         assert result["email"] == "user@example.com"
         assert result["auth_method"] == "jwt"
         assert result["request_id"] == "req123"
+
+
+@pytest.mark.asyncio
+async def test_get_current_user_with_permissions_cookie_rejected_for_api_request():
+    """Cookie-only authentication must return 401 for non-browser (API) requests."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"jwt_token": "token123"}
+    mock_request.headers = {"user-agent": "python-requests/2.31", "accept": "application/json"}
+    mock_request.client = MagicMock()
+    mock_request.client.host = "127.0.0.1"
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Cookie authentication not allowed" in exc.value.detail
 
 
 @pytest.mark.asyncio
@@ -50,13 +101,12 @@ async def test_get_current_user_with_permissions_no_token_raises_401():
     mock_request.headers = {}
     mock_request.state = MagicMock()
     mock_request.client = None
-    # Patch security dependency to mock HTTPAuthorizationCredentials behavior
+    # Create proper HTTPAuthorizationCredentials mock
     mock_credentials = MagicMock()
     mock_credentials.credentials = None
-    with patch("mcpgateway.middleware.rbac.security", mock_credentials):
-        with pytest.raises(HTTPException) as exc:
-            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials)
-        assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
 
 
 @pytest.mark.asyncio
@@ -69,7 +119,7 @@ async def test_get_current_user_with_permissions_auth_failure_redirect_html():
     mock_request.client.host = "127.0.0.1"
     with patch("mcpgateway.middleware.rbac.get_current_user", side_effect=Exception("fail")):
         with pytest.raises(HTTPException) as exc:
-            await rbac.get_current_user_with_permissions(mock_request)
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token="token123")
         assert exc.value.status_code == status.HTTP_302_FOUND
 
 
@@ -474,3 +524,855 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
         mock_perm_service.check_permission.assert_called_once()
     finally:
         plugin_framework.get_plugin_manager = original_get_pm
+
+
+# ============================================================================
+# Coverage improvement tests
+# Lines: 61, 63-70, 151-152, 205-216, 416-457, 476-486, 564-566,
+#        671-686, 746-756, 769-770, 797, 799-811, 825
+# ============================================================================
+
+
+def _make_fresh_db(mock_db):
+    """Create a mock fresh_db_session context manager."""
+
+    @contextmanager
+    def _fresh():
+        yield mock_db
+
+    return _fresh
+
+
+# --- get_db() exception handling (lines 61, 63-70) ---
+
+
+@pytest.mark.asyncio
+async def test_get_db_commit_on_success():
+    """get_db() calls commit() after successful generator completion (line 61)."""
+    mock_session = MagicMock()
+    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+        gen = rbac.get_db()
+        next(gen)
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+        mock_session.commit.assert_called_once()
+        mock_session.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_db_rollback_on_exception():
+    """get_db() rolls back and re-raises on exception (lines 63-64)."""
+    mock_session = MagicMock()
+    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+        gen = rbac.get_db()
+        next(gen)
+        with pytest.raises(ValueError, match="boom"):
+            gen.throw(ValueError("boom"))
+        mock_session.rollback.assert_called_once()
+        mock_session.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_db_invalidate_when_rollback_fails():
+    """get_db() calls invalidate() when rollback fails (lines 65-67)."""
+    mock_session = MagicMock()
+    mock_session.rollback.side_effect = Exception("rollback fail")
+    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+        gen = rbac.get_db()
+        next(gen)
+        with pytest.raises(ValueError, match="boom"):
+            gen.throw(ValueError("boom"))
+        mock_session.invalidate.assert_called_once()
+        mock_session.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_db_invalidate_fails_silently():
+    """get_db() swallows invalidate() failure and still re-raises (lines 68-69)."""
+    mock_session = MagicMock()
+    mock_session.rollback.side_effect = Exception("rollback fail")
+    mock_session.invalidate.side_effect = Exception("invalidate fail")
+    with patch("mcpgateway.middleware.rbac.SessionLocal", return_value=mock_session):
+        gen = rbac.get_db()
+        next(gen)
+        with pytest.raises(ValueError, match="boom"):
+            gen.throw(ValueError("boom"))
+        mock_session.invalidate.assert_called_once()
+        mock_session.close.assert_called_once()
+
+
+# --- Proxy user DB lookup exception (lines 151-152) ---
+
+
+@pytest.mark.asyncio
+async def test_proxy_user_db_lookup_exception_continues():
+    """Proxy user DB lookup failure continues with is_admin=False (lines 151-152)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"x-forwarded-user": "user@test.com", "user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        plugin_context_table=None,
+        plugin_global_context=None,
+        request_id="req1",
+        team_id=None,
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.fresh_db_session", side_effect=Exception("DB error")):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "user@test.com"
+    assert result["is_admin"] is False
+    assert result["auth_method"] == "proxy"
+    assert result["full_name"] == "user@test.com"
+
+
+# --- No proxy auth + auth_required (lines 205-216) ---
+
+
+@pytest.mark.asyncio
+async def test_no_proxy_no_trust_auth_required_html_redirect():
+    """mcp_client_auth disabled, no proxy trust, auth_required -> 302 for HTML (lines 205-212)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+    mock_settings.app_root_path = ""
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_302_FOUND
+
+
+@pytest.mark.asyncio
+async def test_no_proxy_no_trust_auth_required_api_401():
+    """mcp_client_auth disabled, no proxy trust, auth_required -> 401 for API (lines 213-216)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"accept": "application/json", "user-agent": "api-client"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = True
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "no auth method configured" in exc.value.detail
+
+
+# --- Plugin hook grant/deny (lines 416-457) ---
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_grants(monkeypatch):
+    """Plugin hook grants permission, skipping RBAC (lines 416-452)."""
+
+    async def dummy_func(user=None):
+        return "plugin-granted"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = True
+    mock_result.modified_payload.reason = "Allowed by test"
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "plugin-granted"
+    mock_pm.invoke_hook.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_hook_denies(monkeypatch):
+    """Plugin hook denies permission, raises 403 (lines 453-457)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    # Use a truthy plugin_global_context to cover line 422 (reuse existing context)
+    mock_global_ctx = MagicMock()
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": mock_global_ctx,
+        "request_id": "r1",
+    }
+
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = False
+    mock_result.modified_payload.reason = "Denied by test"
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user=mock_user)
+
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+# --- Decorator fresh_db_session paths ---
+
+
+@pytest.mark.asyncio
+async def test_require_permission_fresh_db_session(monkeypatch):
+    """require_permission uses fresh_db_session when no db available (lines 476-486)."""
+
+    async def dummy_func(user=None):
+        return "fresh-ok"
+
+    mock_user = {"email": "user@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "fresh-ok"
+    mock_perm_service.check_permission.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_require_admin_permission_fresh_db_session(monkeypatch):
+    """require_admin_permission uses fresh_db_session when no db (lines 564-566)."""
+
+    async def dummy_func(user=None):
+        return "admin-fresh-ok"
+
+    mock_user = {"email": "admin@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_admin_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        decorated = rbac.require_admin_permission()(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "admin-fresh-ok"
+    mock_perm_service.check_admin_permission.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_require_any_permission_fresh_db_session(monkeypatch):
+    """require_any_permission uses fresh_db_session when no db (lines 671-686)."""
+
+    async def dummy_func(user=None):
+        return "any-fresh-ok"
+
+    mock_user = {"email": "user@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.side_effect = [False, True]
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "any-fresh-ok"
+
+
+# --- PermissionChecker fresh_db_session paths ---
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_permission_fresh_db(monkeypatch):
+    """PermissionChecker.has_permission uses fresh_db_session (lines 746-756)."""
+    mock_user = {"email": "user@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_permission("tools.read")
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_admin_permission_fresh_db(monkeypatch):
+    """PermissionChecker.has_admin_permission uses fresh_db_session (lines 769-770)."""
+    mock_user = {"email": "admin@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_admin_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_admin_permission()
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_any_permission_fresh_db(monkeypatch):
+    """PermissionChecker.has_any_permission uses fresh_db_session (lines 799-811)."""
+    mock_user = {"email": "user@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.side_effect = [False, True]
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_any_permission(["tools.read", "tools.execute"])
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_any_permission_none_granted(monkeypatch):
+    """PermissionChecker.has_any_permission returns False when none match (line 797)."""
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    result = await checker.has_any_permission(["tools.read", "tools.execute"])
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_has_any_permission_fresh_db_none_granted(monkeypatch):
+    """PermissionChecker.has_any_permission returns False with fresh_db (line 811)."""
+    mock_user = {"email": "user@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        checker = rbac.PermissionChecker(mock_user)
+        result = await checker.has_any_permission(["tools.read", "tools.execute"])
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_permission_checker_require_permission_denied(monkeypatch):
+    """PermissionChecker.require_permission raises 403 when denied (line 825)."""
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    checker = rbac.PermissionChecker(mock_user)
+    with pytest.raises(HTTPException) as exc:
+        await checker.require_permission("tools.delete")
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+# --- Additional get_current_user_with_permissions paths ---
+
+
+@pytest.mark.asyncio
+async def test_proxy_user_is_platform_admin():
+    """Proxy user matching platform_admin_email gets is_admin=True (lines 134-135)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"x-forwarded-user": "admin@platform.com", "user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "admin@platform.com"
+    assert result["is_admin"] is True
+    assert result["full_name"] == "Platform Admin"
+
+
+@pytest.mark.asyncio
+async def test_proxy_user_db_lookup_succeeds():
+    """Proxy user DB lookup returns user with is_admin and full_name (lines 147-150)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"x-forwarded-user": "user@test.com", "user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    mock_db_user = MagicMock(is_admin=True, full_name="Test User")
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_user
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "user@test.com"
+    assert result["is_admin"] is True
+    assert result["full_name"] == "Test User"
+
+
+@pytest.mark.asyncio
+async def test_trust_proxy_no_header_auth_required_html():
+    """Trust proxy auth, no proxy header, auth_required, HTML → 302 (lines 171-179)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.auth_required = True
+    mock_settings.app_root_path = ""
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_302_FOUND
+
+
+@pytest.mark.asyncio
+async def test_trust_proxy_no_header_auth_required_api():
+    """Trust proxy auth, no proxy header, auth_required, API → 401 (lines 180-183)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.auth_required = True
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_trust_proxy_no_header_anonymous():
+    """Trust proxy auth, no proxy header, auth_required=False → anonymous (lines 187-199)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.auth_required = False
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "anonymous"
+    assert result["auth_method"] == "anonymous"
+
+
+@pytest.mark.asyncio
+async def test_no_proxy_no_trust_anonymous():
+    """No proxy trust, auth_required=False → anonymous (lines 218-230)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = False
+    mock_settings.auth_required = False
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "anonymous"
+    assert result["auth_method"] == "anonymous"
+
+
+@pytest.mark.asyncio
+async def test_bearer_token_from_credentials():
+    """Bearer token from Authorization header (line 239)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {}
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        auth_method="jwt", request_id="req1", team_id=None,
+        plugin_context_table=None, plugin_global_context=None,
+    )
+
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = "valid-token"
+
+    mock_user = MagicMock(email="api@test.com", full_name="API User", is_admin=False)
+    with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+
+    assert result["email"] == "api@test.com"
+
+
+@pytest.mark.asyncio
+async def test_no_token_browser_redirect():
+    """No token for browser request → 302 redirect (lines 272-273)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {}
+    mock_request.headers = {"accept": "text/html", "user-agent": "browser"}
+    mock_request.state = MagicMock()
+    mock_request.client = MagicMock(host="127.0.0.1")
+
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = None
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_302_FOUND
+
+
+@pytest.mark.asyncio
+async def test_no_token_auth_disabled_platform_admin():
+    """No token, auth disabled → platform admin (lines 276-287)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {}
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(request_id="req1", team_id=None)
+
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = None
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = True
+    mock_settings.auth_required = False
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+
+    assert result["email"] == "admin@platform.com"
+    assert result["is_admin"] is True
+    assert result["auth_method"] == "disabled"
+
+
+@pytest.mark.asyncio
+async def test_auth_failure_non_browser_401():
+    """Auth failure for non-browser request → 401 (line 334)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {}
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = MagicMock()
+
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = "bad-token"
+
+    with patch("mcpgateway.middleware.rbac.get_current_user", side_effect=Exception("Invalid token")):
+        with pytest.raises(HTTPException) as exc:
+            await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# --- Decorator denied paths ---
+
+
+@pytest.mark.asyncio
+async def test_require_permission_denied(monkeypatch):
+    """require_permission raises 403 when check_permission returns False (lines 489-490)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_permission("tools.delete")(dummy_func)
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user=mock_user)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_admin_permission_denied(monkeypatch):
+    """require_admin_permission raises 403 when denied (lines 569-570)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_admin_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_admin_permission()(dummy_func)
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user=mock_user)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_any_permission_denied(monkeypatch):
+    """require_any_permission raises 403 when all denied (lines 689-690)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user=mock_user)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+async def test_require_permission_no_user_context():
+    """require_permission raises 401 when no valid user context (line 398)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    decorated = rbac.require_permission("tools.read")(dummy_func)
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_require_admin_permission_no_user_context():
+    """require_admin_permission raises 401 when no valid user context (line 554)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    decorated = rbac.require_admin_permission()(dummy_func)
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_require_any_permission_no_user_context():
+    """require_any_permission raises 401 when no valid user context (line 640)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    decorated = rbac.require_any_permission(["tools.read"])(dummy_func)
+    with pytest.raises(HTTPException) as exc:
+        await decorated(user=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_no_token_auth_required_api_401():
+    """No token, auth required, non-browser → 401 (line 289)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {}
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.state = MagicMock()
+    mock_request.client = MagicMock(host="127.0.0.1")
+
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = None
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authorization token required" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_proxy_user_db_lookup_not_found():
+    """Proxy user DB lookup returns None, keeps defaults (branch 148->155)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.headers = {"x-forwarded-user": "unknown@test.com", "user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(
+        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+    with patch("mcpgateway.middleware.rbac.settings", mock_settings), patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["email"] == "unknown@test.com"
+    assert result["is_admin"] is False
+    assert result["full_name"] == "unknown@test.com"
+
+
+@pytest.mark.asyncio
+async def test_cookies_without_jwt_token():
+    """Cookies exist but no jwt_token/access_token → manual_token is None (branch 245->250)."""
+    mock_request = MagicMock(spec=Request)
+    mock_request.cookies = {"session_id": "abc123"}  # No jwt_token or access_token
+    mock_request.headers = {"accept": "application/json", "user-agent": "api"}
+    mock_request.state = MagicMock()
+    mock_request.client = MagicMock(host="127.0.0.1")
+
+    mock_credentials = MagicMock()
+    mock_credentials.credentials = None
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac.get_current_user_with_permissions(mock_request, credentials=mock_credentials, jwt_token=None)
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_require_permission_plugin_no_decision(monkeypatch):
+    """Plugin hook returns no modified_payload, falls through to RBAC (branch 449->461)."""
+
+    async def dummy_func(user=None):
+        return "rbac-fallthrough"
+
+    mock_user = {
+        "email": "user@test.com",
+        "db": MagicMock(),
+        "plugin_context_table": None,
+        "plugin_global_context": None,
+        "request_id": "r1",
+    }
+
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_result = MagicMock()
+    mock_result.modified_payload = None  # No decision made
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+
+    with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=mock_pm):
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user=mock_user)
+
+    assert result == "rbac-fallthrough"
+    mock_perm_service.check_permission.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_require_permission_team_id_from_kwargs(monkeypatch):
+    """require_permission uses team_id from kwargs (branch 404->410)."""
+
+    async def dummy_func(user=None, team_id=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_permission("tools.read")(dummy_func)
+    result = await decorated(user=mock_user, team_id="team-123")
+    assert result == "ok"
+    assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-123"
+
+
+@pytest.mark.asyncio
+async def test_require_any_permission_team_id_from_kwargs(monkeypatch):
+    """require_any_permission uses team_id from kwargs (branch 646->651)."""
+
+    async def dummy_func(user=None, team_id=None):
+        return "ok"
+
+    mock_db = MagicMock()
+    mock_user = {"email": "user@test.com", "db": mock_db}
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = True
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
+    result = await decorated(user=mock_user, team_id="team-456")
+    assert result == "ok"
+    assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-456"
+
+
+@pytest.mark.asyncio
+async def test_require_any_permission_fresh_db_session_all_denied(monkeypatch):
+    """require_any_permission with fresh_db_session, all denied (branch 675->688)."""
+
+    async def dummy_func(user=None):
+        return "should-not-reach"
+
+    mock_user = {"email": "user@test.com"}  # No 'db' key
+    mock_perm_service = AsyncMock()
+    mock_perm_service.check_permission.return_value = False
+    monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+    mock_db = MagicMock()
+    with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+        decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user=mock_user)
+    assert exc.value.status_code == status.HTTP_403_FORBIDDEN

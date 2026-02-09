@@ -726,12 +726,15 @@ class ToolService:
                 }
             elif tool.auth_type == "authheaders":
                 # Get first key
-                first_key = next(iter(decoded_auth_value))
-                tool_dict["auth"] = {
-                    "auth_type": "authheaders",
-                    "auth_header_key": first_key,
-                    "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
-                }
+                if decoded_auth_value:
+                    first_key = next(iter(decoded_auth_value))
+                    tool_dict["auth"] = {
+                        "auth_type": "authheaders",
+                        "auth_header_key": first_key,
+                        "auth_header_value": settings.masked_auth_value if decoded_auth_value[first_key] else None,
+                    }
+                else:
+                    tool_dict["auth"] = None
             else:
                 tool_dict["auth"] = None
         elif not include_auth and has_encrypted_auth:
@@ -3451,7 +3454,15 @@ class ToolService:
                         params = None
                         if isinstance(arguments, dict) and "query" in arguments and isinstance(arguments["query"], str):
                             message_id = f"admin-test-{int(time.time())}"
-                            params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": arguments["query"]}]}}
+                            # A2A v0.3.x: message.parts use "kind" (not "type").
+                            params = {
+                                "message": {
+                                    "kind": "message",
+                                    "messageId": message_id,
+                                    "role": "user",
+                                    "parts": [{"kind": "text", "text": arguments["query"]}],
+                                }
+                            }
                             method = arguments.get("method", "message/send")
                         else:
                             params = arguments.get("params", arguments) if isinstance(arguments, dict) else arguments
@@ -4520,7 +4531,15 @@ class ToolService:
             if isinstance(parameters, dict) and "query" in parameters and isinstance(parameters["query"], str):
                 # Build the nested message object for JSONRPC protocol
                 message_id = f"admin-test-{int(time.time())}"
-                params = {"message": {"messageId": message_id, "role": "user", "parts": [{"type": "text", "text": parameters["query"]}]}}
+                # A2A v0.3.x: message.parts use "kind" (not "type").
+                params = {
+                    "message": {
+                        "kind": "message",
+                        "messageId": message_id,
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": parameters["query"]}],
+                    }
+                }
                 method = parameters.get("method", "message/send")
             else:
                 # Already in correct format or unknown, pass through

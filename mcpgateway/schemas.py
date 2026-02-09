@@ -3470,6 +3470,8 @@ class FederatedPrompt(BaseModelWithConfigDict):
 class RPCRequest(BaseModel):
     """MCP-compliant RPC request validation"""
 
+    model_config = ConfigDict(hide_input_in_errors=True)
+
     jsonrpc: Literal["2.0"]
     method: str
     params: Optional[Dict[str, Any]] = None
@@ -5188,17 +5190,49 @@ class EmailLoginRequest(BaseModel):
     password: str = Field(..., min_length=1, description="User's password")
 
 
-class EmailRegistrationRequest(BaseModel):
-    """Request schema for user registration.
+class PublicRegistrationRequest(BaseModel):
+    """Public self-registration request — minimal fields, password required.
+
+    Extra fields are rejected (extra="forbid") so clients cannot submit
+    admin-only fields like is_admin or is_active.
 
     Attributes:
         email: User's email address
-        password: User's password
+        password: User's password (required, min 8 chars)
         full_name: Optional full name for display
-        is_admin: Whether user should have admin privileges (default: False)
 
     Examples:
-        >>> request = EmailRegistrationRequest(
+        >>> request = PublicRegistrationRequest(
+        ...     email="new@example.com",
+        ...     password="secure123",
+        ...     full_name="New User"
+        ... )
+        >>> request.email
+        'new@example.com'
+        >>> request.full_name
+        'New User'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    email: EmailStr = Field(..., description="User's email address")
+    password: str = Field(..., min_length=8, description="User's password")
+    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
+
+
+class AdminCreateUserRequest(BaseModel):
+    """Admin user creation request — all fields, password required.
+
+    Attributes:
+        email: User's email address
+        password: User's password (required, min 8 chars)
+        full_name: Optional full name for display
+        is_admin: Whether user should have admin privileges (default: False)
+        is_active: Whether user account is active (default: True)
+        password_change_required: Whether user must change password on next login (default: False)
+
+    Examples:
+        >>> request = AdminCreateUserRequest(
         ...     email="new@example.com",
         ...     password="secure123",
         ...     full_name="New User"
@@ -5209,6 +5243,10 @@ class EmailRegistrationRequest(BaseModel):
         'New User'
         >>> request.is_admin
         False
+        >>> request.is_active
+        True
+        >>> request.password_change_required
+        False
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -5217,24 +5255,12 @@ class EmailRegistrationRequest(BaseModel):
     password: str = Field(..., min_length=8, description="User's password")
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: bool = Field(False, description="Grant admin privileges to user")
+    is_active: bool = Field(True, description="Whether user account is active")
+    password_change_required: bool = Field(False, description="Whether user must change password on next login")
 
-    @field_validator("password")
-    @classmethod
-    def validate_password(cls, v: str) -> str:
-        """Validate password meets minimum requirements.
 
-        Args:
-            v: Password string to validate
-
-        Returns:
-            str: Validated password
-
-        Raises:
-            ValueError: If password doesn't meet requirements
-        """
-        if len(v) < 8:
-            raise ValueError("Password must be at least 8 characters long")
-        return v
+# Deprecated alias — use AdminCreateUserRequest or PublicRegistrationRequest instead
+EmailRegistrationRequest = AdminCreateUserRequest
 
 
 class ChangePasswordRequest(BaseModel):
@@ -5291,6 +5317,7 @@ class EmailUserResponse(BaseModel):
         created_at: Account creation timestamp
         last_login: Last successful login timestamp
         email_verified: Whether email is verified
+        password_change_required: Whether user must change password on next login
 
     Examples:
         >>> user = EmailUserResponse(
@@ -5450,36 +5477,6 @@ class UserListResponse(BaseModel):
     offset: int = Field(..., description="Request offset")
 
 
-class AdminUserCreateRequest(BaseModel):
-    """Request schema for admin user creation.
-
-    Attributes:
-        email: User's email address
-        password: User's password
-        full_name: Optional full name
-        is_admin: Whether user should have admin privileges
-
-    Examples:
-        >>> request = AdminUserCreateRequest(
-        ...     email="admin@example.com",
-        ...     password="admin_password",
-        ...     full_name="Admin User",
-        ...     is_admin=True
-        ... )
-        >>> request.email
-        'admin@example.com'
-        >>> request.is_admin
-        True
-    """
-
-    model_config = ConfigDict(str_strip_whitespace=True)
-
-    email: EmailStr = Field(..., description="User's email address")
-    password: str = Field(..., min_length=8, description="User's password")
-    full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
-    is_admin: bool = Field(default=False, description="Whether user has admin privileges")
-
-
 class AdminUserUpdateRequest(BaseModel):
     """Request schema for admin user updates.
 
@@ -5487,6 +5484,8 @@ class AdminUserUpdateRequest(BaseModel):
         full_name: User's full name
         is_admin: Whether user has admin privileges
         is_active: Whether account is active
+        password_change_required: Whether user must change password on next login
+        password: New password (admin can reset without old password)
 
     Examples:
         >>> request = AdminUserUpdateRequest(
@@ -5505,6 +5504,8 @@ class AdminUserUpdateRequest(BaseModel):
     full_name: Optional[str] = Field(None, max_length=255, description="User's full name")
     is_admin: Optional[bool] = Field(None, description="Whether user has admin privileges")
     is_active: Optional[bool] = Field(None, description="Whether account is active")
+    password_change_required: Optional[bool] = Field(None, description="Whether user must change password on next login")
+    password: Optional[str] = Field(None, min_length=8, description="New password (admin reset)")
 
 
 class ErrorResponse(BaseModel):

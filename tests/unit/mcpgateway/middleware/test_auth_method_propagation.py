@@ -100,7 +100,7 @@ async def test_auth_method_in_user_context():
     mock_request.state.request_id = "test-request-id"
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
-    mock_request.headers = {"user-agent": "TestAgent"}
+    mock_request.headers = {"user-agent": "TestAgent", "accept": "text/html"}  # Mark as browser request
     mock_request.cookies = {"jwt_token": "test-token"}
 
     # Create mock user

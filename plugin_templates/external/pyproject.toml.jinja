@@ -63,6 +63,13 @@ mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
 [project.optional-dependencies]
+# gRPC transport support (higher performance than MCP/HTTP)
+grpc = [
+    "grpcio>=1.70.0",
+    "grpcio-tools>=1.70.0",
+    "protobuf>=5.29.0",
+]
+
 dev = [
     "black>=25.1.0",
     "pytest>=8.4.1",
