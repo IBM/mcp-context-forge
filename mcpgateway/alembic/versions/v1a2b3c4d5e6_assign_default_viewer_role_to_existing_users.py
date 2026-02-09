@@ -47,6 +47,7 @@ ROLE_PERMISSIONS = {
         "teams.read",
         "teams.update",
         "teams.join",
+        "teams.delete",
         "teams.manage_members",
         "tools.read",
         "tools.execute",
@@ -157,9 +158,9 @@ def upgrade() -> None:
         print("email_users table not found. Skipping migration.")
         return
 
-    # Check if email_team_members table exists
-    if "email_team_members" not in existing_tables:
-        print("email_team_members table not found. Skipping migration.")
+    # Check if email_teams table exists
+    if "email_teams" not in existing_tables:
+        print("email_teams table not found. Skipping migration.")
         return
 
     now = datetime.now(timezone.utc)
@@ -271,9 +272,9 @@ def upgrade() -> None:
     if dialect_name == "postgresql":
         users_query = text(
             """
-            SELECT eu.email, eu.is_admin, etm.team_id
+            SELECT eu.email, eu.is_admin, etm.id
             FROM email_users eu
-            LEFT JOIN email_team_members etm ON etm.user_email = eu.email AND etm.is_active = TRUE
+            LEFT JOIN email_teams etm ON etm.created_by = eu.email AND etm.is_active = TRUE and etm.is_personal = TRUE
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = TRUE)
             AND eu.is_active = TRUE
             AND eu.email != :admin_email
@@ -282,9 +283,9 @@ def upgrade() -> None:
     else:
         users_query = text(
             """
-            SELECT eu.email, eu.is_admin, etm.team_id
+            SELECT eu.email, eu.is_admin, etm.id
             FROM email_users eu
-            LEFT JOIN email_team_members etm ON etm.user_email = eu.email AND etm.is_active = 1
+            LEFT JOIN email_teams etm ON etm.created_by = eu.email AND etm.is_active = 1 and etm.is_personal = 1
             WHERE eu.email NOT IN (SELECT DISTINCT user_email FROM user_roles WHERE is_active = 1)
             AND eu.is_active = 1
             AND eu.email != :admin_email

@@ -250,6 +250,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "teams.read",
                         "teams.update",
                         "teams.join",
+                        "teams.delete",
                         "teams.manage_members",
                         "tools.read",
                         "tools.execute",
