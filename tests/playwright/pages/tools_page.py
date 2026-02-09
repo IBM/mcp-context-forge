@@ -8,7 +8,7 @@ Tools page object for Tool management features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class ToolsPage(BasePage):
     """Page object for Tool management features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -138,7 +135,7 @@ class ToolsPage(BasePage):
 
     def wait_for_tools_table_loaded(self, timeout: int = 30000) -> None:
         """Wait for tools table to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
@@ -148,7 +145,7 @@ class ToolsPage(BasePage):
 
     def create_tool(self, name: str, url: str, description: str, integration_type: str) -> None:
         """Create a new tool by filling and submitting the form.
-        
+
         Args:
             name: Tool name
             url: Tool URL
@@ -163,7 +160,7 @@ class ToolsPage(BasePage):
 
     def fill_tool_form(self, name: str, url: str, description: str, integration_type: str) -> None:
         """Fill the add tool form with provided data (without submitting).
-        
+
         Args:
             name: Tool name
             url: Tool URL
@@ -181,10 +178,10 @@ class ToolsPage(BasePage):
 
     def get_tool_row(self, tool_index: int) -> Locator:
         """Get a specific tool row by index.
-        
+
         Args:
             tool_index: Index of the tool row
-            
+
         Returns:
             Locator for the tool row
         """
@@ -192,10 +189,10 @@ class ToolsPage(BasePage):
 
     def tool_exists(self, tool_name: str) -> bool:
         """Check if a tool with the given name exists in the table.
-        
+
         Args:
             tool_name: The name of the tool to check
-            
+
         Returns:
             True if tool exists, False otherwise
         """
@@ -205,7 +202,7 @@ class ToolsPage(BasePage):
 
     def open_tool_view_modal(self, tool_index: int = 0) -> None:
         """Open the tool view modal for a specific tool.
-        
+
         Args:
             tool_index: Index of the tool row (default: 0 for first tool)
         """
@@ -224,7 +221,7 @@ class ToolsPage(BasePage):
 
     def open_tool_edit_modal(self, tool_index: int = 0) -> None:
         """Open the tool edit modal for a specific tool.
-        
+
         Args:
             tool_index: Index of the tool row (default: 0 for first tool)
         """
@@ -237,7 +234,7 @@ class ToolsPage(BasePage):
 
     def edit_tool_name(self, new_name: str) -> None:
         """Edit the tool name in the edit modal.
-        
+
         Args:
             new_name: New name for the tool
         """
@@ -257,7 +254,7 @@ class ToolsPage(BasePage):
 
     def open_tool_test_modal(self, tool_index: int = 0) -> None:
         """Open the tool test modal for a specific tool.
-        
+
         Args:
             tool_index: Index of the tool row (default: 0 for first tool)
         """
@@ -270,7 +267,7 @@ class ToolsPage(BasePage):
 
     def run_tool_test(self, params: dict = None) -> None:
         """Run a tool test with optional parameters.
-        
+
         Args:
             params: Optional dictionary of test parameters to fill in the form
         """
@@ -280,7 +277,7 @@ class ToolsPage(BasePage):
                 input_field = self.tool_test_form.locator(f'[name="{key}"]')
                 if input_field.count() > 0:
                     self.fill_locator(input_field, str(value))
-        
+
         # Submit the test form
         submit_btn = self.tool_test_form.locator('button[type="submit"]')
         if submit_btn.count() > 0:
@@ -294,7 +291,7 @@ class ToolsPage(BasePage):
 
     def wait_for_tool_visible(self, tool_name: str, timeout: int = 30000) -> None:
         """Wait for a tool to be visible in the table.
-        
+
         Args:
             tool_name: The name of the tool
             timeout: Maximum time to wait in milliseconds

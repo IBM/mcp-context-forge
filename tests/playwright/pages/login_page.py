@@ -8,7 +8,7 @@ Login page object for authentication functionality.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator
+from playwright.sync_api import Locator, Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
@@ -73,10 +73,10 @@ class LoginPage(BasePage):
 
     def is_login_form_available(self, timeout: int = 3000) -> bool:
         """Check if login form is available.
-        
+
         Args:
             timeout: Timeout in milliseconds (default: 3000)
-            
+
         Returns:
             True if login form is available, False otherwise
         """
@@ -102,7 +102,7 @@ class LoginPage(BasePage):
 
     def fill_email(self, email: str) -> None:
         """Fill email input field.
-        
+
         Args:
             email: Email address to fill
         """
@@ -110,7 +110,7 @@ class LoginPage(BasePage):
 
     def fill_password(self, password: str) -> None:
         """Fill password input field.
-        
+
         Args:
             password: Password to fill
         """
@@ -127,7 +127,7 @@ class LoginPage(BasePage):
 
     def submit_login(self, email: str, password: str) -> None:
         """Fill and submit login form.
-        
+
         Args:
             email: Email address
             password: Password
@@ -138,7 +138,7 @@ class LoginPage(BasePage):
 
     def submit_password_change(self, current_password: str, new_password: str) -> None:
         """Fill and submit password change form.
-        
+
         Args:
             current_password: Current password
             new_password: New password
@@ -152,12 +152,12 @@ class LoginPage(BasePage):
 
     def login(self, email: str, password: str, new_password: str = None) -> bool:
         """Perform complete login flow with optional password change.
-        
+
         Args:
             email: Email address
             password: Password
             new_password: New password if password change is required
-            
+
         Returns:
             True if login successful, False otherwise
         """

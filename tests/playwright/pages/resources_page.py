@@ -8,7 +8,7 @@ Resources page object for Resource management features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class ResourcesPage(BasePage):
     """Page object for Resource management features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -133,7 +130,7 @@ class ResourcesPage(BasePage):
 
     def wait_for_resources_table_loaded(self, timeout: int = 30000) -> None:
         """Wait for resources table to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
@@ -143,7 +140,7 @@ class ResourcesPage(BasePage):
 
     def create_resource(self, uri: str, name: str, mime_type: str, description: str) -> None:
         """Create a new resource by filling and submitting the form.
-        
+
         Args:
             uri: Resource URI
             name: Resource name
@@ -158,7 +155,7 @@ class ResourcesPage(BasePage):
 
     def fill_resource_form(self, uri: str, name: str, mime_type: str, description: str) -> None:
         """Fill the add resource form with provided data (without submitting).
-        
+
         Args:
             uri: Resource URI
             name: Resource name
@@ -176,10 +173,10 @@ class ResourcesPage(BasePage):
 
     def get_resource_row(self, resource_index: int) -> Locator:
         """Get a specific resource row by index.
-        
+
         Args:
             resource_index: Index of the resource row
-            
+
         Returns:
             Locator for the resource row
         """
@@ -187,10 +184,10 @@ class ResourcesPage(BasePage):
 
     def resource_exists(self, resource_name: str) -> bool:
         """Check if a resource with the given name exists in the table.
-        
+
         Args:
             resource_name: The name of the resource to check
-            
+
         Returns:
             True if resource exists, False otherwise
         """
@@ -198,7 +195,7 @@ class ResourcesPage(BasePage):
 
     def get_resource_count(self) -> int:
         """Get number of resources displayed.
-        
+
         Returns:
             Number of visible resource rows
         """
@@ -209,7 +206,7 @@ class ResourcesPage(BasePage):
 
     def open_resource_view_modal(self, resource_index: int = 0) -> None:
         """Open the resource view modal for a specific resource.
-        
+
         Args:
             resource_index: Index of the resource row (default: 0 for first resource)
         """
@@ -228,7 +225,7 @@ class ResourcesPage(BasePage):
 
     def open_resource_edit_modal(self, resource_index: int = 0) -> None:
         """Open the resource edit modal for a specific resource.
-        
+
         Args:
             resource_index: Index of the resource row (default: 0 for first resource)
         """
@@ -241,7 +238,7 @@ class ResourcesPage(BasePage):
 
     def edit_resource_name(self, new_name: str) -> None:
         """Edit the resource name in the edit modal.
-        
+
         Args:
             new_name: New name for the resource
         """
@@ -249,7 +246,7 @@ class ResourcesPage(BasePage):
 
     def edit_resource_description(self, new_description: str) -> None:
         """Edit the resource description in the edit modal.
-        
+
         Args:
             new_description: New description for the resource
         """
@@ -269,13 +266,13 @@ class ResourcesPage(BasePage):
 
     def delete_resource(self, resource_index: int = 0) -> None:
         """Delete a resource with confirmation.
-        
+
         Args:
             resource_index: Index of the resource row (default: 0 for first resource)
         """
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
-        
+
         # Click delete button
         resource_row = self.resource_rows.nth(resource_index)
         delete_btn = resource_row.locator('button:has-text("Delete")')
@@ -283,7 +280,7 @@ class ResourcesPage(BasePage):
 
     def wait_for_resource_visible(self, resource_name: str, timeout: int = 30000) -> None:
         """Wait for a resource to be visible in the table.
-        
+
         Args:
             resource_name: The name of the resource
             timeout: Maximum time to wait in milliseconds
@@ -293,7 +290,7 @@ class ResourcesPage(BasePage):
 
     def wait_for_resource_hidden(self, resource_name: str) -> None:
         """Wait for a resource to be hidden from the table.
-        
+
         Args:
             resource_name: The name of the resource
         """

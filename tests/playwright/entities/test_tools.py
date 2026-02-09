@@ -9,8 +9,8 @@ Module documentation...
 """
 
 # Local
+from ..pages.admin_utils import cleanup_tool, delete_tool, find_tool
 from ..pages.tools_page import ToolsPage
-from ..pages.admin_utils import find_tool, delete_tool, cleanup_tool
 
 
 class TestToolsCRUD:

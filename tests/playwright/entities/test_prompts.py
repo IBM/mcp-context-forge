@@ -11,8 +11,8 @@ CRUD tests for Prompts entity in MCP Gateway Admin UI.
 import json
 
 # Local
-from ..pages.prompts_page import PromptsPage
 from ..pages.admin_utils import find_prompt
+from ..pages.prompts_page import PromptsPage
 
 
 class TestPromptsCRUD:
@@ -38,10 +38,7 @@ class TestPromptsCRUD:
         self._wait_for_codemirror(prompts_page)
 
         # Fill the basic form fields using Page Object method
-        prompts_page.fill_prompt_form(
-            name=test_prompt_data["name"],
-            description=test_prompt_data["description"]
-        )
+        prompts_page.fill_prompt_form(name=test_prompt_data["name"], description=test_prompt_data["description"])
 
         # Fill arguments using CodeMirror instance (special handling required)
         args_json = test_prompt_data["arguments"]
@@ -76,10 +73,7 @@ class TestPromptsCRUD:
         self._wait_for_codemirror(prompts_page)
 
         # Fill the basic form fields using Page Object method
-        prompts_page.fill_prompt_form(
-            name=test_prompt_data["name"],
-            description=test_prompt_data["description"]
-        )
+        prompts_page.fill_prompt_form(name=test_prompt_data["name"], description=test_prompt_data["description"])
 
         # Fill arguments using CodeMirror instance (special handling required)
         args_json = test_prompt_data["arguments"]
@@ -102,6 +96,6 @@ class TestPromptsCRUD:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         assert delete_response.status < 400
-        
+
         # Verify deletion
         assert find_prompt(prompts_page.page, test_prompt_data["name"]) is None

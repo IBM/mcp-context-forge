@@ -8,8 +8,8 @@ CRUD tests for Resources entity in MCP Gateway Admin UI.
 """
 
 # Local
-from ..pages.resources_page import ResourcesPage
 from ..pages.admin_utils import find_resource
+from ..pages.resources_page import ResourcesPage
 
 
 class TestResourcesCRUD:
@@ -22,12 +22,7 @@ class TestResourcesCRUD:
 
         # Create resource using high-level Page Object method
         with resources_page.page.expect_response(lambda response: "/admin/resources" in response.url and response.request.method == "POST") as response_info:
-            resources_page.create_resource(
-                uri=test_resource_data["uri"],
-                name=test_resource_data["name"],
-                mime_type=test_resource_data["mimeType"],
-                description=test_resource_data["description"]
-            )
+            resources_page.create_resource(uri=test_resource_data["uri"], name=test_resource_data["name"], mime_type=test_resource_data["mimeType"], description=test_resource_data["description"])
         response = response_info.value
         assert response.status < 400
 
@@ -50,12 +45,7 @@ class TestResourcesCRUD:
 
         # Create resource using high-level Page Object method
         with resources_page.page.expect_response(lambda response: "/admin/resources" in response.url and response.request.method == "POST"):
-            resources_page.create_resource(
-                uri=test_resource_data["uri"],
-                name=test_resource_data["name"],
-                mime_type=test_resource_data["mimeType"],
-                description=test_resource_data["description"]
-            )
+            resources_page.create_resource(uri=test_resource_data["uri"], name=test_resource_data["name"], mime_type=test_resource_data["mimeType"], description=test_resource_data["description"])
 
         # Verify creation
         created_resource = find_resource(resources_page.page, test_resource_data["name"])
@@ -68,6 +58,6 @@ class TestResourcesCRUD:
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         assert delete_response.status < 400
-        
+
         # Verify deletion
         assert find_resource(resources_page.page, test_resource_data["name"]) is None

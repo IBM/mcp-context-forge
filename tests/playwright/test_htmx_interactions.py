@@ -17,7 +17,7 @@ import pytest
 
 # Local
 from .pages.admin_page import AdminPage
-from .pages.admin_utils import find_tool, cleanup_tool
+from .pages.admin_utils import cleanup_tool
 from .pages.metrics_page import MetricsPage
 from .pages.servers_page import ServersPage
 from .pages.tools_page import ToolsPage
@@ -117,12 +117,7 @@ class TestHTMXInteractions:
         tools_page.navigate_to_tools_tab()
 
         # Fill the tool form
-        tools_page.fill_tool_form(
-            test_tool_data["name"],
-            test_tool_data["url"],
-            test_tool_data["description"],
-            test_tool_data["integrationType"]
-        )
+        tools_page.fill_tool_form(test_tool_data["name"], test_tool_data["url"], test_tool_data["description"], test_tool_data["integrationType"])
 
         # Submit the form and assert success response
         with tools_page.page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
@@ -158,7 +153,7 @@ class TestHTMXInteractions:
         # Navigate to tools tab
         tools_page.navigate_to_tools_tab()
         tools_page.wait_for_tools_table_loaded()
-        
+
         # Check if any tools exist
         if tools_page.tool_rows.count() == 0:
             pytest.skip("No tools available to edit in this UI configuration.")

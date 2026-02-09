@@ -11,7 +11,7 @@ A2A Agents UI tests for agent management features.
 from typing import Any, Dict
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import expect
 import pytest
 
 # Local
@@ -192,7 +192,7 @@ class TestAgentsUI:
             agent_type=test_agent_data["agent_type"],
             description=test_agent_data["description"],
             tags=test_agent_data["tags"],
-            visibility=test_agent_data["visibility"]
+            visibility=test_agent_data["visibility"],
         )
 
         # Verify fields are filled
@@ -261,7 +261,7 @@ class TestAgentsUI:
             client_id="test-client-id",
             client_secret="test-client-secret",
             token_url="https://oauth.example.com/token",
-            scopes="read write"
+            scopes="read write",
         )
 
         # Verify fields are filled and visible
@@ -300,7 +300,7 @@ class TestAgentsUI:
 
         # Get initial agent count (if any agents exist)
         initial_rows = agents_page.agent_rows.count()
-        
+
         if initial_rows == 0:
             pytest.skip("No agents available to test search functionality")
 
@@ -321,7 +321,7 @@ class TestAgentsUI:
 
         # Get initial agent count
         initial_rows = agents_page.agent_rows.count()
-        
+
         if initial_rows == 0:
             pytest.skip("No agents available to test search functionality")
 
@@ -343,7 +343,7 @@ class TestAgentsUI:
 
         # Get initial agent count
         initial_rows = agents_page.agent_rows.count()
-        
+
         if initial_rows == 0:
             pytest.skip("No agents available to test search functionality")
 
@@ -359,7 +359,7 @@ class TestAgentsUI:
     @pytest.mark.slow
     def test_create_agent_no_auth(self, agents_page: AgentsPage, test_agent_data: Dict[str, Any]):
         """Test creating an agent without authentication (integration test).
-        
+
         Note: This test attempts actual agent creation and may fail if the backend
         is not properly configured or if the endpoint validation is strict.
         """
@@ -373,24 +373,15 @@ class TestAgentsUI:
             agent_type=test_agent_data["agent_type"],
             description=test_agent_data["description"],
             tags=test_agent_data["tags"],
-            visibility=test_agent_data["visibility"]
+            visibility=test_agent_data["visibility"],
         )
 
         # Submit the form and capture response
-        with agents_page.page.expect_response(
-            lambda response: "/admin/a2a" in response.url and response.request.method == "POST"
-        ) as response_info:
+        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST") as response_info:
             agents_page.submit_agent_form()
 
         response = response_info.value
-        
-        # Check if creation was successful or if we got expected validation errors
-        if response.status < 400:
-            # Success - agent was created
-            agents_page.page.wait_for_timeout(1000)
-            # Optionally verify agent appears in list
-            # Note: Cleanup would be needed here in a real test
-        else:
-            # Expected failure due to invalid endpoint or other validation
-            # This is acceptable for a UI test
-            pass
+
+        # The server should respond with either success (2xx) or a validation error (4xx).
+        # A 5xx would indicate an unexpected server error.
+        assert response.status < 500, f"Unexpected server error: {response.status}"

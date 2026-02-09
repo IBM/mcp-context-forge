@@ -8,7 +8,7 @@ Metrics page object for Metrics and Analytics features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class MetricsPage(BasePage):
     """Page object for Metrics and Analytics features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -61,11 +58,11 @@ class MetricsPage(BasePage):
 
     def get_metric_content(self, section_name: str) -> Locator:
         """Get the content area for a specific metrics section.
-        
+
         Args:
             section_name: Name of the section. Valid values:
                          "top-tools", "top-resources", "top-servers", "top-prompts"
-                         
+
         Returns:
             Locator for the content area
         """
@@ -88,7 +85,7 @@ class MetricsPage(BasePage):
 
     def expand_metric_section(self, section_name: str) -> None:
         """Expand a specific metrics section by clicking its summary.
-        
+
         Args:
             section_name: Name of the section to expand. Valid values:
                          "top-tools", "top-resources", "top-servers", "top-prompts"
@@ -99,10 +96,10 @@ class MetricsPage(BasePage):
             "top-servers": self.top_servers_details,
             "top-prompts": self.top_prompts_details,
         }
-        
+
         if section_name not in section_map:
             raise ValueError(f"Invalid section name: {section_name}. Must be one of {list(section_map.keys())}")
-        
+
         details = section_map[section_name]
         if details.is_visible():
             # Click the summary to expand
@@ -113,10 +110,10 @@ class MetricsPage(BasePage):
 
     def is_section_expanded(self, section_name: str) -> bool:
         """Check if a metrics section is currently expanded.
-        
+
         Args:
             section_name: Name of the section to check
-            
+
         Returns:
             True if section is expanded, False otherwise
         """
@@ -125,7 +122,7 @@ class MetricsPage(BasePage):
 
     def wait_for_metrics_loaded(self, timeout: int = 30000) -> None:
         """Wait for metrics panel to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """

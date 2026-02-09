@@ -8,7 +8,7 @@ Admin panel page object with property-based Locators.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator
+from playwright.sync_api import Locator, Page
 
 # Local
 from .base_page import BasePage
@@ -220,7 +220,7 @@ class AdminPage(BasePage):
 
     def click_tab_by_id(self, tab_id: str, panel_id: str = None) -> None:
         """Click on any tab by its ID and wait for corresponding panel (delegated to sidebar).
-        
+
         Args:
             tab_id: Tab element ID (e.g., "tab-catalog", "tab-tools")
             panel_id: Optional panel ID to wait for. If not provided, derives from tab_id
@@ -256,4 +256,3 @@ class AdminPage(BasePage):
             if name in server_items.nth(i).text_content():
                 return True
         return False
-

@@ -8,7 +8,7 @@ Servers page object for Virtual MCP Server management features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,7 +16,7 @@ from .base_page import BasePage
 
 class ServersPage(BasePage):
     """Page object for Virtual MCP Server management features.
-    
+
     This page manages the Virtual Servers (Catalog) tab where users can:
     - View and search virtual MCP servers
     - Create new virtual servers
@@ -24,9 +24,6 @@ class ServersPage(BasePage):
     - Configure OAuth settings
     - Manage server visibility and tags
     """
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -222,7 +219,7 @@ class ServersPage(BasePage):
 
     def wait_for_servers_table_loaded(self, timeout: int = 30000) -> None:
         """Wait for servers table to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
@@ -230,16 +227,9 @@ class ServersPage(BasePage):
         # Wait for table body to exist in DOM (may be empty, so don't require visible)
         self.wait_for_attached(self.servers_table_body, timeout=timeout)
 
-    def create_server(
-        self,
-        name: str,
-        icon: str = "",
-        description: str = "",
-        tags: str = "",
-        visibility: str = "public"
-    ) -> None:
+    def create_server(self, name: str, icon: str = "", description: str = "", tags: str = "", visibility: str = "public") -> None:
         """Create a new virtual server by filling and submitting the form.
-        
+
         Args:
             name: Server name (required)
             icon: Server icon URL (optional)
@@ -254,7 +244,7 @@ class ServersPage(BasePage):
             self.fill_locator(self.server_description_input, description)
         if tags:
             self.fill_locator(self.server_tags_input, tags)
-        
+
         # Set visibility
         if visibility == "team":
             self.click_locator(self.visibility_team_radio)
@@ -262,19 +252,12 @@ class ServersPage(BasePage):
             self.click_locator(self.visibility_private_radio)
         else:
             self.click_locator(self.visibility_public_radio)
-        
+
         self.click_locator(self.add_server_btn)
 
-    def fill_server_form(
-        self,
-        name: str,
-        icon: str = "",
-        description: str = "",
-        tags: str = "",
-        custom_id: str = ""
-    ) -> None:
+    def fill_server_form(self, name: str, icon: str = "", description: str = "", tags: str = "", custom_id: str = "") -> None:
         """Fill the add server form with provided data (without submitting).
-        
+
         Args:
             name: Server name (required)
             icon: Server icon URL (optional)
@@ -298,7 +281,7 @@ class ServersPage(BasePage):
 
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
-        
+
         Args:
             query: Search query string
         """
@@ -310,7 +293,7 @@ class ServersPage(BasePage):
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive servers checkbox.
-        
+
         Args:
             show: True to show inactive servers, False to hide them
         """
@@ -320,7 +303,7 @@ class ServersPage(BasePage):
 
     def get_server_count(self) -> int:
         """Get number of servers displayed.
-        
+
         Returns:
             Number of visible server rows
         """
@@ -329,10 +312,10 @@ class ServersPage(BasePage):
 
     def server_exists(self, server_name: str) -> bool:
         """Check if a server with the given name exists in the table.
-        
+
         Args:
             server_name: The name of the server to check
-            
+
         Returns:
             True if server exists, False otherwise
         """
@@ -340,10 +323,10 @@ class ServersPage(BasePage):
 
     def get_server_row(self, server_index: int) -> Locator:
         """Get a specific server row by index.
-        
+
         Args:
             server_index: Index of the server row
-            
+
         Returns:
             Locator for the server row
         """
@@ -351,14 +334,9 @@ class ServersPage(BasePage):
 
     # ==================== OAuth Configuration Methods ====================
 
-    def enable_oauth(
-        self,
-        authorization_server: str,
-        scopes: str = "openid profile email",
-        token_endpoint: str = ""
-    ) -> None:
+    def enable_oauth(self, authorization_server: str, scopes: str = "openid profile email", token_endpoint: str = "") -> None:
         """Enable and configure OAuth 2.0 for the server.
-        
+
         Args:
             authorization_server: OAuth authorization server URL (required)
             scopes: Space-separated OAuth scopes (default: "openid profile email")
@@ -367,10 +345,10 @@ class ServersPage(BasePage):
         # Enable OAuth
         if not self.oauth_enabled_checkbox.is_checked():
             self.click_locator(self.oauth_enabled_checkbox)
-        
+
         # Wait for config section to be visible
         self.wait_for_visible(self.oauth_config_section)
-        
+
         # Fill OAuth configuration
         self.fill_locator(self.oauth_authorization_server_input, authorization_server)
         self.fill_locator(self.oauth_scopes_input, scopes)
@@ -386,13 +364,11 @@ class ServersPage(BasePage):
 
     def select_tool(self, tool_name: str) -> None:
         """Select a tool to associate with the server.
-        
+
         Args:
             tool_name: Name of the tool to select
         """
-        tool_checkbox = self.associated_tools_container.locator(
-            f'label:has-text("{tool_name}") input[type="checkbox"]'
-        )
+        tool_checkbox = self.associated_tools_container.locator(f'label:has-text("{tool_name}") input[type="checkbox"]')
         if not tool_checkbox.is_checked():
             self.click_locator(tool_checkbox)
 
@@ -406,7 +382,7 @@ class ServersPage(BasePage):
 
     def wait_for_server_visible(self, server_name: str, timeout: int = 30000) -> None:
         """Wait for a server to be visible in the table.
-        
+
         Args:
             server_name: The name of the server
             timeout: Maximum time to wait in milliseconds
@@ -416,7 +392,7 @@ class ServersPage(BasePage):
 
     def wait_for_server_hidden(self, server_name: str) -> None:
         """Wait for a server to be hidden from the table.
-        
+
         Args:
             server_name: The name of the server
         """

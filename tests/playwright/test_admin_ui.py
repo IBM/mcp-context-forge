@@ -16,7 +16,6 @@ import pytest
 
 # Local
 from .pages.admin_page import AdminPage
-from .pages.admin_utils import find_server
 
 
 @pytest.mark.ui
@@ -82,9 +81,7 @@ class TestAdminUI:
 
         # The tabs should still be accessible even in mobile view
         # Check if the page adapts by verifying the main content area
-        assert (admin_page.catalog_panel.locator(":visible").count() > 0 or
-                admin_page.tools_panel.locator(":visible").count() > 0 or
-                admin_page.gateways_panel.locator(":visible").count() > 0)
+        assert admin_page.catalog_panel.locator(":visible").count() > 0 or admin_page.tools_panel.locator(":visible").count() > 0 or admin_page.gateways_panel.locator(":visible").count() > 0
 
         # Test tablet viewport
         admin_page.page.set_viewport_size({"width": 768, "height": 1024})

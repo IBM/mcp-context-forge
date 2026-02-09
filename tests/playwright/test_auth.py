@@ -12,21 +12,17 @@ import os
 import re
 
 # Third-Party
-from playwright.sync_api import expect, Page
+from playwright.sync_api import expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # Local
+from .conftest import ADMIN_ACTIVE_PASSWORD, ADMIN_EMAIL, ADMIN_NEW_PASSWORD, BASE_URL
 from .pages.admin_page import AdminPage
 from .pages.login_page import LoginPage
 
-BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
-ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
-ADMIN_PASSWORD = os.getenv("PLATFORM_ADMIN_PASSWORD", "changeme")
-ADMIN_NEW_PASSWORD = os.getenv("PLATFORM_ADMIN_NEW_PASSWORD", "Changeme123!")
-ADMIN_ACTIVE_PASSWORD = [ADMIN_PASSWORD]
 
-
+@pytest.mark.auth
 class TestAuthentication:
     """Authentication tests for MCP Gateway Admin UI.
 
@@ -39,14 +35,14 @@ class TestAuthentication:
     def _login(self, page, email: str, password: str, allow_password_change: bool = False) -> bool:
         """Submit the admin login form using LoginPage object."""
         login_page = LoginPage(page, BASE_URL)
-        
+
         response = login_page.navigate()
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (login endpoint not found).")
-        
+
         if not login_page.is_login_form_available(timeout=3000):
             pytest.skip("Admin login form not available; email auth likely disabled.")
-        
+
         # Perform login with optional password change
         if allow_password_change:
             success = login_page.login(email, password, ADMIN_NEW_PASSWORD)
@@ -59,9 +55,9 @@ class TestAuthentication:
                 if success:
                     ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             return success
-        else:
-            login_page.submit_login(email, password)
-            return not login_page.has_invalid_credentials_error()
+
+        login_page.submit_login(email, password)
+        return not login_page.has_invalid_credentials_error()
 
     def test_should_login_with_valid_credentials(self, context):
         """Test successful access with valid email/password credentials."""
@@ -132,29 +128,29 @@ class TestAuthentication:
 
     def test_login_with_correct_credentials_must_succeed(self, context):
         """Test that login with correct credentials MUST succeed - this test will FAIL if it doesn't work.
-        
+
         This is a critical test that ensures the authentication system is working properly.
         Unlike other tests that may skip on failure, this one will fail hard to alert of auth issues.
         """
         page = context.new_page()
-        
+
         env_password = os.getenv("PLATFORM_ADMIN_PASSWORD")
 
         # Navigate to login page
         login_page = LoginPage(page, BASE_URL)
         response = login_page.navigate()
-        
+
         # Check if admin UI is enabled
         if response and response.status == 404:
             pytest.fail("Admin UI not enabled (login endpoint not found). Cannot verify authentication.")
-        
+
         # Check if login form is available
         if not login_page.is_login_form_available(timeout=3000):
             pytest.fail("Admin login form not available. Email auth may be disabled.")
-        
+
         # Attempt login with correct credentials
         login_page.submit_login(ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0])
-        
+
         # Check for invalid credentials error
         if login_page.has_invalid_credentials_error():
             error_msg = (
@@ -168,22 +164,18 @@ class TestAuthentication:
                 f"\nTo fix: Verify the correct password on the server and update PLATFORM_ADMIN_PASSWORD"
             )
             pytest.fail(error_msg)
-        
+
         # Verify successful login by checking URL
         try:
             expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=5000)
         except PlaywrightTimeoutError:
             current_url = page.url
-            pytest.fail(
-                f"Login appeared to succeed but did not redirect to admin page.\n"
-                f"Current URL: {current_url}\n"
-                f"Expected URL pattern: .*/admin(?!/login).*"
-            )
-        
+            pytest.fail(f"Login appeared to succeed but did not redirect to admin page.\n" f"Current URL: {current_url}\n" f"Expected URL pattern: .*/admin(?!/login).*")
+
         # Verify JWT cookie is set
         cookies = page.context.cookies()
         jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
         if not jwt_cookie:
             pytest.fail("Login succeeded but JWT token cookie was not set. Authentication may be incomplete.")
-        
+
         assert jwt_cookie["httpOnly"] is True, "JWT cookie should be httpOnly for security"

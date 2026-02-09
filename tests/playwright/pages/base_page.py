@@ -8,7 +8,7 @@ Base page object for common functionality.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator, Page
 
 # Local
 from .components import SidebarComponent

@@ -7,22 +7,24 @@ Authors: Mihai Criveti
 Gateways page object for MCP Server & Federated Gateway management.
 """
 
+# Standard
+import logging
+
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
 
+logger = logging.getLogger(__name__)
+
 
 class GatewaysPage(BasePage):
     """Page object for MCP Servers & Federated Gateways (MCP Registry) management.
-    
+
     This page manages external MCP Servers (SSE/HTTP) registration to retrieve
     their tools/resources/prompts.
     """
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -90,12 +92,12 @@ class GatewaysPage(BasePage):
     @property
     def gateway_name_input(self) -> Locator:
         """MCP Server name input field."""
-        return self.add_gateway_form.locator('#mcp-server-name')
+        return self.add_gateway_form.locator("#mcp-server-name")
 
     @property
     def gateway_url_input(self) -> Locator:
         """MCP Server URL input field."""
-        return self.add_gateway_form.locator('#mcp-server-url')
+        return self.add_gateway_form.locator("#mcp-server-url")
 
     @property
     def gateway_description_input(self) -> Locator:
@@ -115,7 +117,7 @@ class GatewaysPage(BasePage):
     @property
     def auth_type_select(self) -> Locator:
         """Authentication type select field."""
-        return self.add_gateway_form.locator('#auth-type-gw')
+        return self.add_gateway_form.locator("#auth-type-gw")
 
     @property
     def add_gateway_btn(self) -> Locator:
@@ -297,7 +299,7 @@ class GatewaysPage(BasePage):
 
     def wait_for_gateways_table_loaded(self, timeout: int = 30000) -> None:
         """Wait for gateways table to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
@@ -306,7 +308,7 @@ class GatewaysPage(BasePage):
 
     def create_gateway(self, gateway_data: dict) -> None:
         """Create a new MCP Server gateway by filling and submitting the form.
-        
+
         Args:
             gateway_data: Dictionary containing gateway configuration with keys:
                 - name: MCP Server name (required)
@@ -319,16 +321,16 @@ class GatewaysPage(BasePage):
         """
         self.fill_locator(self.gateway_name_input, gateway_data["name"])
         self.fill_locator(self.gateway_url_input, gateway_data["url"])
-        
+
         if gateway_data.get("description"):
             self.fill_locator(self.gateway_description_input, gateway_data["description"])
         if gateway_data.get("tags"):
             self.fill_locator(self.gateway_tags_input, gateway_data["tags"])
-        
+
         # Set transport type
         transport = gateway_data.get("transport", "SSE")
         self.transport_select.select_option(transport)
-        
+
         # Set visibility
         visibility = gateway_data.get("visibility", "public")
         if visibility == "team":
@@ -337,23 +339,16 @@ class GatewaysPage(BasePage):
             self.click_locator(self.visibility_private_radio)
         else:
             self.click_locator(self.visibility_public_radio)
-        
+
         # Set auth type if provided
         if gateway_data.get("auth_type"):
             self.auth_type_select.select_option(gateway_data["auth_type"])
-        
+
         self.click_locator(self.add_gateway_btn)
 
-    def fill_gateway_form(
-        self,
-        name: str,
-        url: str,
-        description: str = "",
-        tags: str = "",
-        transport: str = "SSE"
-    ) -> None:
+    def fill_gateway_form(self, name: str, url: str, description: str = "", tags: str = "", transport: str = "SSE") -> None:
         """Fill the add gateway form with provided data (without submitting).
-        
+
         Args:
             name: MCP Server name
             url: MCP Server URL
@@ -375,16 +370,17 @@ class GatewaysPage(BasePage):
 
     def search_gateways(self, query: str) -> None:
         """Search for gateways using the search input.
-        
+
         Args:
             query: Search query string
         """
         # Fill the search input
         self.search_input.fill(query)
-        
+
         # Trigger the search using JavaScript to ensure the filtering happens
         # The page uses client-side filtering that listens to input events
-        self.page.evaluate("""
+        self.page.evaluate(
+            """
             (searchQuery) => {
                 const searchInput = document.getElementById('gateways-search-input');
                 if (searchInput) {
@@ -394,8 +390,10 @@ class GatewaysPage(BasePage):
                     searchInput.dispatchEvent(new Event('keyup', { bubbles: true }));
                 }
             }
-        """, query)
-        
+        """,
+            query,
+        )
+
         self.page.wait_for_timeout(500)  # Wait for client-side filtering to complete
 
     def clear_search(self) -> None:
@@ -404,7 +402,7 @@ class GatewaysPage(BasePage):
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.
-        
+
         Args:
             show: True to show inactive gateways, False to hide them
         """
@@ -414,10 +412,10 @@ class GatewaysPage(BasePage):
 
     def get_gateway_row(self, gateway_index: int) -> Locator:
         """Get a specific gateway row by index.
-        
+
         Args:
             gateway_index: Index of the gateway row
-            
+
         Returns:
             Locator for the gateway row
         """
@@ -425,10 +423,10 @@ class GatewaysPage(BasePage):
 
     def get_gateway_row_by_name(self, gateway_name: str) -> Locator:
         """Get a gateway row by its name.
-        
+
         Args:
             gateway_name: Name of the gateway
-            
+
         Returns:
             Locator for the gateway row
         """
@@ -436,10 +434,10 @@ class GatewaysPage(BasePage):
 
     def gateway_exists(self, gateway_name: str) -> bool:
         """Check if a gateway with the given name exists in the table.
-        
+
         Args:
             gateway_name: The name of the gateway to check
-            
+
         Returns:
             True if gateway exists, False otherwise
         """
@@ -448,7 +446,7 @@ class GatewaysPage(BasePage):
 
     def get_gateway_count(self) -> int:
         """Get number of gateways displayed.
-        
+
         Returns:
             Number of visible gateway rows
         """
@@ -460,7 +458,7 @@ class GatewaysPage(BasePage):
 
     def click_test_button(self, gateway_index: int = 0) -> None:
         """Click the Test button for a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
@@ -470,7 +468,7 @@ class GatewaysPage(BasePage):
 
     def click_view_button(self, gateway_index: int = 0) -> None:
         """Click the View button for a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
@@ -480,7 +478,7 @@ class GatewaysPage(BasePage):
 
     def click_edit_button(self, gateway_index: int = 0) -> None:
         """Click the Edit button for a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
@@ -490,7 +488,7 @@ class GatewaysPage(BasePage):
 
     def click_deactivate_button(self, gateway_index: int = 0) -> None:
         """Click the Deactivate button for a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
@@ -500,7 +498,7 @@ class GatewaysPage(BasePage):
 
     def click_activate_button(self, gateway_index: int = 0) -> None:
         """Click the Activate button for a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row (default: 0 for first gateway)
         """
@@ -510,131 +508,126 @@ class GatewaysPage(BasePage):
 
     def delete_gateway(self, gateway_index: int = 0, confirm: bool = True) -> None:
         """Delete a gateway with optional confirmation.
-        
+
         Args:
             gateway_index: Index of the gateway row (default: 0 for first gateway)
             confirm: Whether to confirm the deletion dialog (default: True)
         """
         gateway_row = self.gateway_rows.nth(gateway_index)
-        
+
         # Scroll the row into view first
         gateway_row.scroll_into_view_if_needed()
         self.page.wait_for_timeout(500)
-        
+
         # Find the delete button within the row's action column
         delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-        
+
         # Set up dialog handler before clicking
         if confirm:
             self.page.once("dialog", lambda dialog: dialog.accept())
         else:
             self.page.once("dialog", lambda dialog: dialog.dismiss())
-        
+
         # Click with force to handle any overlay issues
         delete_btn.click(force=True)
         self.page.wait_for_timeout(1000)  # Wait for deletion to process
 
     def delete_gateway_by_name(self, gateway_name: str, confirm: bool = True) -> bool:
         """Delete a gateway by searching for its name.
-        
+
         Args:
             gateway_name: Name of the gateway to delete
             confirm: Whether to confirm the deletion dialog (default: True)
-            
+
         Returns:
             True if gateway was found and deleted, False if not found
         """
         # Search for the gateway
         self.search_gateways(gateway_name)
         self.page.wait_for_timeout(500)
-        
+
         # Check if gateway exists
         if not self.gateway_exists(gateway_name):
             self.clear_search()
             return False
-        
+
         # Delete the gateway
         self.delete_gateway(0, confirm=confirm)
         self.page.wait_for_timeout(1000)
-        
+
         # Clear search
         self.clear_search()
         self.page.wait_for_timeout(500)
-        
+
         return True
 
     def delete_gateway_by_url(self, gateway_url: str, confirm: bool = True) -> bool:
         """Delete ALL gateways with the specified URL.
-        
+
         Since the system prevents duplicate URLs, this method will delete all
         gateways that match the URL (there might be multiple from failed test runs).
-        
+
         Args:
             gateway_url: URL of the gateway(s) to delete
             confirm: Whether to confirm the deletion dialog (default: True)
-            
+
         Returns:
             True if at least one gateway was found and deleted, False if none found
         """
         deleted_any = False
-        
+
         # Keep deleting until no more gateways with this URL exist
         while True:
             # Search for the gateway by URL
             self.search_gateways(gateway_url)
             self.page.wait_for_timeout(500)
-            
+
             # Check if any gateway with this URL exists
             gateway_row = self.gateways_table_body.locator(f'tr:has-text("{gateway_url}")')
             if gateway_row.count() == 0:
                 if not deleted_any:
-                    print(f"ℹ️  No gateway found with URL '{gateway_url}' - nothing to delete")
+                    logger.info("No gateway found with URL '%s' - nothing to delete", gateway_url)
                 self.clear_search()
                 return deleted_any
-            
+
             # Get gateway name for logging
             try:
-                gateway_name = gateway_row.first.locator('td').nth(2).text_content().strip()
+                gateway_name = gateway_row.first.locator("td").nth(2).text_content().strip()
             except Exception:
                 gateway_name = "Unknown"
-            
+
             # Get the delete button
             try:
                 delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-                
+
                 # Set up dialog handler before clicking
                 if confirm:
                     self.page.once("dialog", lambda dialog: dialog.accept())
                 else:
                     self.page.once("dialog", lambda dialog: dialog.dismiss())
-                
+
                 # Click delete button
                 delete_btn.click(force=True, timeout=5000)
                 self.page.wait_for_timeout(1000)
-                
-                print(f"✓ Deleted gateway '{gateway_name}' with URL '{gateway_url}'")
+
+                logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
                 deleted_any = True
-                
+
                 # Reload to see updated table
                 self.page.reload()
                 self.wait_for_gateways_table_loaded()
                 self.page.wait_for_timeout(1000)
-                
+
             except Exception as e:
-                print(f"⚠️  Could not delete gateway '{gateway_name}' with URL '{gateway_url}': {e}")
+                logger.warning("Could not delete gateway '%s' with URL '%s': %s", gateway_name, gateway_url, e)
                 self.clear_search()
                 return deleted_any
-        
-        # Clear search before returning
-        self.clear_search()
-        self.page.wait_for_timeout(500)
-        return deleted_any
 
     # ==================== Authentication Configuration Methods ====================
 
     def configure_basic_auth(self, username: str, password: str) -> None:
         """Configure basic authentication.
-        
+
         Args:
             username: Basic auth username
             password: Basic auth password
@@ -646,7 +639,7 @@ class GatewaysPage(BasePage):
 
     def configure_bearer_auth(self, token: str) -> None:
         """Configure bearer token authentication.
-        
+
         Args:
             token: Bearer token
         """
@@ -656,7 +649,7 @@ class GatewaysPage(BasePage):
 
     def configure_query_param_auth(self, param_key: str, param_value: str) -> None:
         """Configure query parameter authentication.
-        
+
         Args:
             param_key: Query parameter name
             param_value: Query parameter value (API key)
@@ -667,18 +660,10 @@ class GatewaysPage(BasePage):
         self.fill_locator(self.auth_query_param_value_input, param_value)
 
     def configure_oauth(
-        self,
-        grant_type: str,
-        issuer: str,
-        client_id: str = "",
-        client_secret: str = "",
-        scopes: str = "openid profile email",
-        token_url: str = "",
-        authorization_url: str = "",
-        redirect_uri: str = ""
+        self, grant_type: str, issuer: str, client_id: str = "", client_secret: str = "", scopes: str = "openid profile email", token_url: str = "", authorization_url: str = "", redirect_uri: str = ""
     ) -> None:
         """Configure OAuth 2.0 authentication.
-        
+
         Args:
             grant_type: OAuth grant type - "authorization_code", "client_credentials", or "password"
             issuer: OAuth issuer URL (required)
@@ -691,10 +676,10 @@ class GatewaysPage(BasePage):
         """
         self.auth_type_select.select_option("oauth")
         self.wait_for_visible(self.oauth_fields)
-        
+
         self.oauth_grant_type_select.select_option(grant_type)
         self.fill_locator(self.oauth_issuer_input, issuer)
-        
+
         if client_id:
             self.fill_locator(self.oauth_client_id_input, client_id)
         if client_secret:
@@ -710,7 +695,7 @@ class GatewaysPage(BasePage):
 
     def toggle_one_time_auth(self, enable: bool = True) -> None:
         """Toggle one-time authentication checkbox.
-        
+
         Args:
             enable: True to enable one-time auth, False to disable
         """
@@ -722,7 +707,7 @@ class GatewaysPage(BasePage):
 
     def wait_for_gateway_visible(self, gateway_name: str, timeout: int = 30000) -> None:
         """Wait for a gateway to be visible in the table.
-        
+
         Args:
             gateway_name: The name of the gateway
             timeout: Maximum time to wait in milliseconds
@@ -732,7 +717,7 @@ class GatewaysPage(BasePage):
 
     def wait_for_gateway_hidden(self, gateway_name: str) -> None:
         """Wait for a gateway to be hidden from the table.
-        
+
         Args:
             gateway_name: The name of the gateway
         """
@@ -740,7 +725,7 @@ class GatewaysPage(BasePage):
 
     def verify_gateway_status(self, gateway_index: int, expected_status: str) -> None:
         """Verify the status of a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row
             expected_status: Expected status text (e.g., "Active", "Inactive")
@@ -751,7 +736,7 @@ class GatewaysPage(BasePage):
 
     def verify_gateway_visibility(self, gateway_index: int, expected_visibility: str) -> None:
         """Verify the visibility setting of a gateway.
-        
+
         Args:
             gateway_index: Index of the gateway row
             expected_visibility: Expected visibility (e.g., "🌍 Public", "👥 Team", "🔒 Private")

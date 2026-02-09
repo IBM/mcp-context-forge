@@ -8,7 +8,7 @@ Tokens page object for API Tokens features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class TokensPage(BasePage):
     """Page object for API Token management features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -32,8 +29,7 @@ class TokensPage(BasePage):
     @property
     def api_token_name_input(self) -> Locator:
         """API token name input field."""
-        # Look for the input with the "Token Name" label
-        return self.page.locator('input[placeholder="Production API Access"]')
+        return self.create_token_form.locator('input[name="name"]')
 
     @property
     def token_expiry_input(self) -> Locator:
@@ -62,10 +58,10 @@ class TokensPage(BasePage):
 
     def get_token_element(self, token_name: str) -> Locator:
         """Get the container element for a specific token.
-        
+
         Args:
             token_name: The name of the token to find
-            
+
         Returns:
             Locator for the token container
         """
@@ -73,10 +69,10 @@ class TokensPage(BasePage):
 
     def get_token_revoke_btn(self, token_name: str) -> Locator:
         """Get the revoke button for a specific token.
-        
+
         Args:
             token_name: The name of the token
-            
+
         Returns:
             Locator for the revoke button
         """
@@ -93,7 +89,7 @@ class TokensPage(BasePage):
 
     def create_token(self, token_name: str, expiry_days: int = None) -> None:
         """Create a new API token.
-        
+
         Args:
             token_name: The name for the new token
             expiry_days: Optional number of days until expiry (default is 30)
@@ -103,14 +99,14 @@ class TokensPage(BasePage):
         token_input.click()
         token_input.fill("")  # Clear any existing value
         token_input.type(token_name)  # Type character by character
-        
+
         # Set expiry if provided
         if expiry_days is not None:
             expiry_input = self.token_expiry_input
             expiry_input.click()
             expiry_input.fill("")
             expiry_input.type(str(expiry_days))
-        
+
         # Submit form (JavaScript will handle the submission)
         self.click_locator(self.create_token_submit_btn)
 
@@ -120,22 +116,22 @@ class TokensPage(BasePage):
 
     def revoke_token(self, token_name: str) -> None:
         """Revoke a token with confirmation.
-        
+
         Args:
             token_name: The name of the token to revoke
         """
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
-        
+
         # Click revoke button
         self.click_locator(self.get_token_revoke_btn(token_name))
 
     def token_exists(self, token_name: str) -> bool:
         """Check if a token with the given name exists.
-        
+
         Args:
             token_name: The name of the token to check
-            
+
         Returns:
             True if token exists, False otherwise
         """
@@ -143,7 +139,7 @@ class TokensPage(BasePage):
 
     def wait_for_token_visible(self, token_name: str, timeout: int = 30000) -> None:
         """Wait for a token to be visible in the list.
-        
+
         Args:
             token_name: The name of the token
             timeout: Maximum time to wait in milliseconds
@@ -153,7 +149,7 @@ class TokensPage(BasePage):
 
     def wait_for_token_created_modal(self, timeout: int = 30000) -> None:
         """Wait for the token created success modal.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """

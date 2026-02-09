@@ -8,7 +8,7 @@ Version/System Information page object for Version Info panel.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class VersionPage(BasePage):
     """Page object for Version Information and System Diagnostics."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -161,10 +158,10 @@ class VersionPage(BasePage):
 
     def get_bundle_content_item(self, item_text: str) -> Locator:
         """Get a specific bundle content item by its text.
-        
+
         Args:
             item_text: Text of the bundle content item (e.g., "Version Information")
-            
+
         Returns:
             Locator for the bundle content item
         """
@@ -180,7 +177,7 @@ class VersionPage(BasePage):
 
     def is_database_healthy(self) -> bool:
         """Check if database status shows as healthy/reachable.
-        
+
         Returns:
             True if database is reachable, False otherwise
         """
@@ -189,7 +186,7 @@ class VersionPage(BasePage):
 
     def is_cache_healthy(self) -> bool:
         """Check if cache/Redis status shows as healthy/connected.
-        
+
         Returns:
             True if cache is connected, False otherwise
         """
@@ -198,7 +195,7 @@ class VersionPage(BasePage):
 
     def get_app_name(self) -> str:
         """Get the application name.
-        
+
         Returns:
             Application name as string
         """
@@ -206,7 +203,7 @@ class VersionPage(BasePage):
 
     def get_app_version(self) -> str:
         """Get the application version.
-        
+
         Returns:
             Application version as string
         """
@@ -214,7 +211,7 @@ class VersionPage(BasePage):
 
     def get_python_version(self) -> str:
         """Get the Python version.
-        
+
         Returns:
             Python version as string
         """
@@ -222,7 +219,7 @@ class VersionPage(BasePage):
 
     def get_fastapi_version(self) -> str:
         """Get the FastAPI version.
-        
+
         Returns:
             FastAPI version as string
         """
@@ -230,7 +227,7 @@ class VersionPage(BasePage):
 
     def get_operating_system(self) -> str:
         """Get the operating system information.
-        
+
         Returns:
             Operating system as string
         """
@@ -238,7 +235,7 @@ class VersionPage(BasePage):
 
     def get_cpu_info(self) -> str:
         """Get CPU information.
-        
+
         Returns:
             CPU info as string
         """
@@ -246,7 +243,7 @@ class VersionPage(BasePage):
 
     def get_memory_info(self) -> str:
         """Get memory information.
-        
+
         Returns:
             Memory info as string
         """
@@ -254,7 +251,7 @@ class VersionPage(BasePage):
 
     def get_disk_info(self) -> str:
         """Get disk information.
-        
+
         Returns:
             Disk info as string
         """
@@ -262,7 +259,7 @@ class VersionPage(BasePage):
 
     def get_boot_time(self) -> str:
         """Get system boot time.
-        
+
         Returns:
             Boot time as string
         """
@@ -270,19 +267,12 @@ class VersionPage(BasePage):
 
     def verify_bundle_contents_visible(self) -> bool:
         """Verify that all expected bundle content items are visible.
-        
+
         Returns:
             True if all items are visible, False otherwise
         """
-        expected_items = [
-            "Version Information",
-            "System Diagnostics",
-            "Configuration (sanitized)",
-            "Application Logs",
-            "Platform Details",
-            "Service Status"
-        ]
-        
+        expected_items = ["Version Information", "System Diagnostics", "Configuration (sanitized)", "Application Logs", "Platform Details", "Service Status"]
+
         for item in expected_items:
             if not self.get_bundle_content_item(item).is_visible():
                 return False
@@ -290,7 +280,7 @@ class VersionPage(BasePage):
 
     def wait_for_version_panel_loaded(self, timeout: int = 30000) -> None:
         """Wait for version panel to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """

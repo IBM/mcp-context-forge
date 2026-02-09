@@ -12,6 +12,7 @@ This assumes environment variables are loaded by the Makefile.
 import os
 import re
 from typing import Dict, Generator, Optional
+import uuid
 
 # Third-Party
 from playwright.sync_api import APIRequestContext, BrowserContext, expect, Page, Playwright
@@ -127,7 +128,7 @@ def _set_admin_jwt_cookie(page: Page, email: str) -> None:
 
 def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     """Ensure the page is logged into the admin interface using LoginPage.
-    
+
     This helper function handles all login scenarios including:
     - Password change requirements
     - Initial login
@@ -136,36 +137,36 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     """
     settings = Settings()
     admin_email = settings.platform_admin_email or ADMIN_EMAIL
-    
+
     # Create LoginPage instance
     login_page = LoginPage(page, base_url)
-    
+
     # Go directly to admin
     page.goto("/admin")
-    
+
     # Handle password change requirement
     if login_page.is_on_change_password_page():
         current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
         login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
         ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
         _wait_for_admin_transition(page)
-    
+
     # Handle login page redirect if auth is required
     if login_page.is_on_login_page() or login_page.is_login_form_available():
         current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
         login_page.submit_login(admin_email, current_password)
-        
+
         status = _wait_for_login_response(page)
         if status is not None and status >= 400:
             raise AssertionError(f"Login failed with status {status}")
         _wait_for_admin_transition(page)
-        
+
         # Handle password change after login
         if login_page.is_on_change_password_page():
             login_page.submit_password_change(current_password, ADMIN_NEW_PASSWORD)
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page)
-        
+
         # Retry with new password if credentials were invalid
         if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
             login_page.submit_login(admin_email, ADMIN_NEW_PASSWORD)
@@ -174,7 +175,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
                 raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
             _wait_for_admin_transition(page)
-        
+
         # If login still failed, fallback to JWT cookie unless disabled
         if login_page.is_on_login_page():
             if DISABLE_JWT_FALLBACK:
@@ -182,10 +183,10 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             _set_admin_jwt_cookie(page, admin_email)
             page.goto("/admin/")
             _wait_for_admin_transition(page)
-    
+
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
-    
+
     # Wait for the application shell to load
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
@@ -349,9 +350,6 @@ def mcp_registry_page(page: Page, base_url: str) -> MCPRegistryPage:
 @pytest.fixture
 def test_tool_data():
     """Provide test data for tool creation."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     return {
         "name": f"test-api-tool-{unique_id}",
@@ -367,9 +365,6 @@ def test_tool_data():
 @pytest.fixture
 def test_server_data():
     """Provide test data for server creation."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     return {
         "name": f"test-server-{unique_id}",
@@ -380,9 +375,6 @@ def test_server_data():
 @pytest.fixture
 def test_resource_data():
     """Provide test data for resource creation."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     return {
         "uri": f"file:///tmp/test-resource-{unique_id}.txt",
@@ -395,9 +387,6 @@ def test_resource_data():
 @pytest.fixture
 def test_prompt_data():
     """Provide test data for prompt creation."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     return {
         "name": f"test-prompt-{unique_id}",
@@ -409,9 +398,6 @@ def test_prompt_data():
 @pytest.fixture
 def test_agent_data():
     """Provide test data for A2A agent creation."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     return {
         "name": f"test-agent-{unique_id}",
@@ -438,13 +424,10 @@ VALID_MCP_SERVER_URLS = [
 @pytest.fixture
 def test_gateway_data():
     """Provide test data for gateway creation."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     # Use specific URL for simple gateway test
     url = VALID_MCP_SERVER_URLS[0]
-    
+
     return {
         "name": f"test-gateway-{unique_id}",
         "url": url,
@@ -458,13 +441,10 @@ def test_gateway_data():
 @pytest.fixture
 def test_gateway_with_basic_auth_data():
     """Provide test data for gateway with basic authentication."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     # Use specific URL for basic auth test (index 1 after removing Astro)
     url = VALID_MCP_SERVER_URLS[1]
-    
+
     return {
         "name": f"test-gateway-basic-{unique_id}",
         "url": url,
@@ -481,13 +461,10 @@ def test_gateway_with_basic_auth_data():
 @pytest.fixture
 def test_gateway_with_bearer_auth_data():
     """Provide test data for gateway with bearer token authentication."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     # Use specific URL for bearer auth test
     url = VALID_MCP_SERVER_URLS[2]
-    
+
     return {
         "name": f"test-gateway-bearer-{unique_id}",
         "url": url,
@@ -503,13 +480,10 @@ def test_gateway_with_bearer_auth_data():
 @pytest.fixture
 def test_gateway_with_oauth_data():
     """Provide test data for gateway with OAuth 2.0 authentication."""
-    # Standard
-    import uuid
-
     unique_id = uuid.uuid4()
     # Use specific URL for OAuth test
     url = VALID_MCP_SERVER_URLS[3]
-    
+
     return {
         "name": f"test-gateway-oauth-{unique_id}",
         "url": url,

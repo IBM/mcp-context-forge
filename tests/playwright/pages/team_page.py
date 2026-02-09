@@ -8,7 +8,7 @@ Team page object for Teams features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class TeamPage(BasePage):
     """Page object for Team management features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -56,22 +53,22 @@ class TeamPage(BasePage):
 
     def get_team_card(self, team_name: str) -> Locator:
         """Get the team card div containing the specified team name.
-        
+
         Args:
             team_name: The name of the team to find
-            
+
         Returns:
             Locator for the team card
         """
         # Use filter with has_text to match partial text (works with emoji prefix)
-        return self.page.locator('div.team-card').filter(has=self.page.locator(f'h4.team-name:has-text("{team_name}")')).first
+        return self.page.locator("div.team-card").filter(has=self.page.locator(f'h4.team-name:has-text("{team_name}")')).first
 
     def get_team_delete_btn(self, team_name: str) -> Locator:
         """Get the delete button for a specific team.
-        
+
         Args:
             team_name: The name of the team
-            
+
         Returns:
             Locator for the delete button
         """
@@ -80,10 +77,10 @@ class TeamPage(BasePage):
 
     def get_team_manage_members_btn(self, team_name: str) -> Locator:
         """Get the Manage Members button for a specific team.
-        
+
         Args:
             team_name: The name of the team
-            
+
         Returns:
             Locator for the Manage Members button
         """
@@ -91,10 +88,10 @@ class TeamPage(BasePage):
 
     def get_team_edit_settings_btn(self, team_name: str) -> Locator:
         """Get the Edit Settings button for a specific team.
-        
+
         Args:
             team_name: The name of the team
-            
+
         Returns:
             Locator for the Edit Settings button
         """
@@ -110,38 +107,38 @@ class TeamPage(BasePage):
 
     def create_team(self, team_name: str) -> None:
         """Create a new team.
-        
+
         Args:
             team_name: The name for the new team
         """
         # Open create team modal
         self.click_locator(self.create_team_btn)
         self.wait_for_visible(self.create_team_modal)
-        
+
         # Fill form
         self.fill_locator(self.team_name_input, team_name)
-        
+
         # Submit
         self.click_locator(self.create_team_submit_btn)
 
     def delete_team(self, team_name: str) -> None:
         """Delete a team with confirmation.
-        
+
         Args:
             team_name: The name of the team to delete
         """
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
-        
+
         # Click delete button
         self.click_locator(self.get_team_delete_btn(team_name))
 
     def team_exists(self, team_name: str) -> bool:
         """Check if a team with the given name exists.
-        
+
         Args:
             team_name: The name of the team to check
-            
+
         Returns:
             True if team exists, False otherwise
         """
@@ -149,7 +146,7 @@ class TeamPage(BasePage):
 
     def wait_for_team_visible(self, team_name: str, timeout: int = 30000) -> None:
         """Wait for a team to be visible in the list.
-        
+
         Args:
             team_name: The name of the team
             timeout: Maximum time to wait in milliseconds
@@ -160,7 +157,7 @@ class TeamPage(BasePage):
 
     def wait_for_team_hidden(self, team_name: str) -> None:
         """Wait for a team to be hidden from the list.
-        
+
         Args:
             team_name: The name of the team
         """

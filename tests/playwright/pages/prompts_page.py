@@ -8,7 +8,7 @@ Prompts page object for Prompt management features.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class PromptsPage(BasePage):
     """Page object for Prompt management features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -158,7 +155,7 @@ class PromptsPage(BasePage):
 
     def wait_for_prompts_table_loaded(self, timeout: int = 30000) -> None:
         """Wait for prompts table to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
@@ -168,7 +165,7 @@ class PromptsPage(BasePage):
 
     def create_prompt(self, name: str, description: str, content: str = None, arguments: str = None) -> None:
         """Create a new prompt by filling and submitting the form.
-        
+
         Args:
             name: Prompt name
             description: Prompt description
@@ -185,7 +182,7 @@ class PromptsPage(BasePage):
 
     def fill_prompt_form(self, name: str, description: str, content: str = None, arguments: str = None) -> None:
         """Fill the add prompt form with provided data (without submitting).
-        
+
         Args:
             name: Prompt name
             description: Prompt description
@@ -205,10 +202,10 @@ class PromptsPage(BasePage):
 
     def get_prompt_row(self, prompt_index: int) -> Locator:
         """Get a specific prompt row by index.
-        
+
         Args:
             prompt_index: Index of the prompt row
-            
+
         Returns:
             Locator for the prompt row
         """
@@ -216,10 +213,10 @@ class PromptsPage(BasePage):
 
     def prompt_exists(self, prompt_name: str) -> bool:
         """Check if a prompt with the given name exists in the table.
-        
+
         Args:
             prompt_name: The name of the prompt to check
-            
+
         Returns:
             True if prompt exists, False otherwise
         """
@@ -227,7 +224,7 @@ class PromptsPage(BasePage):
 
     def get_prompt_count(self) -> int:
         """Get number of prompts displayed.
-        
+
         Returns:
             Number of visible prompt rows
         """
@@ -238,7 +235,7 @@ class PromptsPage(BasePage):
 
     def open_prompt_view_modal(self, prompt_index: int = 0) -> None:
         """Open the prompt view modal for a specific prompt.
-        
+
         Args:
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
@@ -257,7 +254,7 @@ class PromptsPage(BasePage):
 
     def open_prompt_edit_modal(self, prompt_index: int = 0) -> None:
         """Open the prompt edit modal for a specific prompt.
-        
+
         Args:
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
@@ -270,7 +267,7 @@ class PromptsPage(BasePage):
 
     def edit_prompt_name(self, new_name: str) -> None:
         """Edit the prompt name in the edit modal.
-        
+
         Args:
             new_name: New name for the prompt
         """
@@ -278,7 +275,7 @@ class PromptsPage(BasePage):
 
     def edit_prompt_description(self, new_description: str) -> None:
         """Edit the prompt description in the edit modal.
-        
+
         Args:
             new_description: New description for the prompt
         """
@@ -286,7 +283,7 @@ class PromptsPage(BasePage):
 
     def edit_prompt_content(self, new_content: str) -> None:
         """Edit the prompt content in the edit modal.
-        
+
         Args:
             new_content: New content for the prompt
         """
@@ -306,7 +303,7 @@ class PromptsPage(BasePage):
 
     def open_prompt_test_modal(self, prompt_index: int = 0) -> None:
         """Open the prompt test modal for a specific prompt.
-        
+
         Args:
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
@@ -319,7 +316,7 @@ class PromptsPage(BasePage):
 
     def run_prompt_test(self, params: dict = None) -> None:
         """Run a prompt test with optional parameters.
-        
+
         Args:
             params: Optional dictionary of test parameters to fill in the form
         """
@@ -329,7 +326,7 @@ class PromptsPage(BasePage):
                 input_field = self.prompt_test_form.locator(f'[name="{key}"]')
                 if input_field.count() > 0:
                     self.fill_locator(input_field, str(value))
-        
+
         # Submit the test form
         submit_btn = self.prompt_test_form.locator('button[type="submit"]')
         if submit_btn.count() > 0:
@@ -343,13 +340,13 @@ class PromptsPage(BasePage):
 
     def delete_prompt(self, prompt_index: int = 0) -> None:
         """Delete a prompt with confirmation.
-        
+
         Args:
             prompt_index: Index of the prompt row (default: 0 for first prompt)
         """
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
-        
+
         # Click delete button
         prompt_row = self.prompt_rows.nth(prompt_index)
         delete_btn = prompt_row.locator('button:has-text("Delete")')
@@ -357,7 +354,7 @@ class PromptsPage(BasePage):
 
     def wait_for_prompt_visible(self, prompt_name: str, timeout: int = 30000) -> None:
         """Wait for a prompt to be visible in the table.
-        
+
         Args:
             prompt_name: The name of the prompt
             timeout: Maximum time to wait in milliseconds
@@ -367,7 +364,7 @@ class PromptsPage(BasePage):
 
     def wait_for_prompt_hidden(self, prompt_name: str) -> None:
         """Wait for a prompt to be hidden from the table.
-        
+
         Args:
             prompt_name: The name of the prompt
         """

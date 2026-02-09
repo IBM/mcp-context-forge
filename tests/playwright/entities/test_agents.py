@@ -7,9 +7,6 @@ Authors: Mihai Criveti
 Entity-level tests for A2A Agents.
 """
 
-# Standard
-from typing import Any, Dict
-
 # Third-Party
 import pytest
 
@@ -272,11 +269,14 @@ class TestAgentsEntity:
         assert warning.count() > 0, "Query param auth should show security warning"
         assert warning.is_visible(), "Security warning should be visible"
 
-    @pytest.mark.parametrize("auth_type,expected_fields", [
-        ("basic", ["auth_username", "auth_password"]),
-        ("bearer", ["auth_token"]),
-        ("query_param", ["auth_query_param_key", "auth_query_param_value"]),
-    ])
+    @pytest.mark.parametrize(
+        "auth_type,expected_fields",
+        [
+            ("basic", ["auth_username", "auth_password"]),
+            ("bearer", ["auth_token"]),
+            ("query_param", ["auth_query_param_key", "auth_query_param_value"]),
+        ],
+    )
     def test_auth_type_field_mapping(self, agents_page: AgentsPage, auth_type: str, expected_fields: list):
         """Test that each auth type shows correct fields."""
         # Navigate to agents tab

@@ -8,7 +8,7 @@ Sidebar component for admin panel navigation.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator
+from playwright.sync_api import Locator, Page
 
 
 class SidebarComponent:
@@ -147,7 +147,7 @@ class SidebarComponent:
 
     def click_tab_by_id(self, tab_id: str, panel_id: str = None) -> None:
         """Click on any tab by its ID and wait for corresponding panel.
-        
+
         Args:
             tab_id: Tab element ID (e.g., "tab-catalog", "tab-tools")
             panel_id: Optional panel ID to wait for. If not provided, derives from tab_id

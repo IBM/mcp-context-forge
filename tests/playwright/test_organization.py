@@ -12,7 +12,6 @@ import uuid
 
 # Third-Party
 from playwright.sync_api import expect
-import pytest
 
 
 class TestTeams:
@@ -60,7 +59,7 @@ class TestTeams:
         # Create test team
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
-        
+
         # Wait and reload to see the new team
         team_page.page.wait_for_timeout(2000)
         team_page.page.reload()
@@ -82,11 +81,11 @@ class TestTeams:
         # Verify team edit modal opens with member management content
         team_edit_modal = team_page.page.locator("#team-edit-modal")
         expect(team_edit_modal).to_be_visible(timeout=5000)
-        
+
         # Verify it's the member management interface (has "Team Members:" title)
         modal_content = team_page.page.locator("#team-edit-modal-content")
         expect(modal_content).to_contain_text("Team Members:")
-        
+
         # Verify member management form elements are present
         expect(modal_content.locator('form[id^="team-members-form-"]')).to_be_visible()
 
@@ -110,7 +109,7 @@ class TestTeams:
         # Create test team
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
-        
+
         # Wait and reload to see the new team
         team_page.page.wait_for_timeout(2000)
         team_page.page.reload()
@@ -132,7 +131,7 @@ class TestTeams:
         # Verify team edit modal opens with settings form
         team_edit_modal = team_page.page.locator("#team-edit-modal")
         expect(team_edit_modal).to_be_visible(timeout=5000)
-        
+
         # Verify it's the edit settings interface (has "Edit Team" title)
         modal_content = team_page.page.locator("#team-edit-modal-content")
         expect(modal_content).to_contain_text("Edit Team")
@@ -166,7 +165,7 @@ class TestTeams:
         # Create test team
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
-        
+
         # Wait and reload to see the new team
         team_page.page.wait_for_timeout(2000)
         team_page.page.reload()
@@ -202,7 +201,7 @@ class TestTokens:
         # Create token and wait for API response to /tokens
         with tokens_page.page.expect_response(lambda response: response.url.endswith("/tokens") and response.request.method == "POST") as response_info:
             tokens_page.create_token(token_name)
-        
+
         response = response_info.value
         assert response.status < 400, f"Token creation failed with status {response.status}"
 

@@ -16,13 +16,13 @@ from playwright.sync_api import Page
 
 def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
     """Generic function to find any entity by name via admin API.
-    
+
     Args:
         page: Playwright page object
         endpoint: API endpoint (e.g., "servers", "tools", "resources")
         name: Entity name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Entity dict if found, None otherwise
     """
@@ -45,12 +45,12 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
 
 def find_server(page: Page, server_name: str, retries: int = 5):
     """Find server by name.
-    
+
     Args:
         page: Playwright page object
         server_name: Server name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Server dict if found, None otherwise
     """
@@ -59,12 +59,12 @@ def find_server(page: Page, server_name: str, retries: int = 5):
 
 def find_tool(page: Page, tool_name: str, retries: int = 5):
     """Find tool by name.
-    
+
     Args:
         page: Playwright page object
         tool_name: Tool name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Tool dict if found, None otherwise
     """
@@ -73,12 +73,12 @@ def find_tool(page: Page, tool_name: str, retries: int = 5):
 
 def find_resource(page: Page, resource_name: str, retries: int = 5):
     """Find resource by name.
-    
+
     Args:
         page: Playwright page object
         resource_name: Resource name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Resource dict if found, None otherwise
     """
@@ -87,12 +87,12 @@ def find_resource(page: Page, resource_name: str, retries: int = 5):
 
 def find_prompt(page: Page, prompt_name: str, retries: int = 5):
     """Find prompt by name.
-    
+
     Args:
         page: Playwright page object
         prompt_name: Prompt name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Prompt dict if found, None otherwise
     """
@@ -101,12 +101,12 @@ def find_prompt(page: Page, prompt_name: str, retries: int = 5):
 
 def find_agent(page: Page, agent_name: str, retries: int = 5):
     """Find A2A agent by name.
-    
+
     Args:
         page: Playwright page object
         agent_name: Agent name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Agent dict if found, None otherwise
     """
@@ -115,12 +115,12 @@ def find_agent(page: Page, agent_name: str, retries: int = 5):
 
 def find_gateway(page: Page, gateway_name: str, retries: int = 5):
     """Find gateway by name.
-    
+
     Args:
         page: Playwright page object
         gateway_name: Gateway name to search for
         retries: Number of retry attempts
-        
+
     Returns:
         Gateway dict if found, None otherwise
     """
@@ -132,13 +132,13 @@ def find_gateway(page: Page, gateway_name: str, retries: int = 5):
 
 def delete_entity_by_id(page: Page, endpoint: str, entity_id: str, mark_inactive: bool = False) -> bool:
     """Generic function to delete any entity by ID via admin API.
-    
+
     Args:
         page: Playwright page object
         endpoint: API endpoint (e.g., "tools", "servers", "resources")
         entity_id: Entity ID to delete
         mark_inactive: If True, mark as inactive instead of hard delete
-        
+
     Returns:
         True if deletion successful, False otherwise
     """
@@ -153,12 +153,12 @@ def delete_entity_by_id(page: Page, endpoint: str, entity_id: str, mark_inactive
 
 def delete_tool(page: Page, tool_id: str, mark_inactive: bool = False) -> bool:
     """Delete tool by ID.
-    
+
     Args:
         page: Playwright page object
         tool_id: Tool ID to delete
         mark_inactive: If True, mark as inactive instead of hard delete
-        
+
     Returns:
         True if deletion successful, False otherwise
     """
@@ -167,12 +167,12 @@ def delete_tool(page: Page, tool_id: str, mark_inactive: bool = False) -> bool:
 
 def delete_server(page: Page, server_id: str, mark_inactive: bool = False) -> bool:
     """Delete server by ID.
-    
+
     Args:
         page: Playwright page object
         server_id: Server ID to delete
         mark_inactive: If True, mark as inactive instead of hard delete
-        
+
     Returns:
         True if deletion successful, False otherwise
     """
@@ -181,12 +181,12 @@ def delete_server(page: Page, server_id: str, mark_inactive: bool = False) -> bo
 
 def delete_resource(page: Page, resource_id: str, mark_inactive: bool = False) -> bool:
     """Delete resource by ID.
-    
+
     Args:
         page: Playwright page object
         resource_id: Resource ID to delete
         mark_inactive: If True, mark as inactive instead of hard delete
-        
+
     Returns:
         True if deletion successful, False otherwise
     """
@@ -195,12 +195,12 @@ def delete_resource(page: Page, resource_id: str, mark_inactive: bool = False) -
 
 def delete_prompt(page: Page, prompt_id: str, mark_inactive: bool = False) -> bool:
     """Delete prompt by ID.
-    
+
     Args:
         page: Playwright page object
         prompt_id: Prompt ID to delete
         mark_inactive: If True, mark as inactive instead of hard delete
-        
+
     Returns:
         True if deletion successful, False otherwise
     """
@@ -209,12 +209,12 @@ def delete_prompt(page: Page, prompt_id: str, mark_inactive: bool = False) -> bo
 
 def delete_agent(page: Page, agent_id: str, mark_inactive: bool = False) -> bool:
     """Delete A2A agent by ID.
-    
+
     Args:
         page: Playwright page object
         agent_id: Agent ID to delete
         mark_inactive: If True, mark as inactive instead of hard delete
-        
+
     Returns:
         True if deletion successful, False otherwise
     """
@@ -226,12 +226,12 @@ def delete_agent(page: Page, agent_id: str, mark_inactive: bool = False) -> bool
 
 def cleanup_entity(page: Page, endpoint: str, entity_name: str) -> bool:
     """Find and delete an entity by name (convenience method for test cleanup).
-    
+
     Args:
         page: Playwright page object
         endpoint: API endpoint (e.g., "tools", "servers")
         entity_name: Entity name to find and delete
-        
+
     Returns:
         True if entity was found and deleted, False otherwise
     """
@@ -243,11 +243,11 @@ def cleanup_entity(page: Page, endpoint: str, entity_name: str) -> bool:
 
 def cleanup_tool(page: Page, tool_name: str) -> bool:
     """Find and delete a tool by name.
-    
+
     Args:
         page: Playwright page object
         tool_name: Tool name to find and delete
-        
+
     Returns:
         True if tool was found and deleted, False otherwise
     """
@@ -256,11 +256,11 @@ def cleanup_tool(page: Page, tool_name: str) -> bool:
 
 def cleanup_server(page: Page, server_name: str) -> bool:
     """Find and delete a server by name.
-    
+
     Args:
         page: Playwright page object
         server_name: Server name to find and delete
-        
+
     Returns:
         True if server was found and deleted, False otherwise
     """
@@ -269,11 +269,11 @@ def cleanup_server(page: Page, server_name: str) -> bool:
 
 def cleanup_resource(page: Page, resource_name: str) -> bool:
     """Find and delete a resource by name.
-    
+
     Args:
         page: Playwright page object
         resource_name: Resource name to find and delete
-        
+
     Returns:
         True if resource was found and deleted, False otherwise
     """
@@ -282,11 +282,11 @@ def cleanup_resource(page: Page, resource_name: str) -> bool:
 
 def cleanup_prompt(page: Page, prompt_name: str) -> bool:
     """Find and delete a prompt by name.
-    
+
     Args:
         page: Playwright page object
         prompt_name: Prompt name to find and delete
-        
+
     Returns:
         True if prompt was found and deleted, False otherwise
     """
@@ -295,11 +295,11 @@ def cleanup_prompt(page: Page, prompt_name: str) -> bool:
 
 def cleanup_agent(page: Page, agent_name: str) -> bool:
     """Find and delete an A2A agent by name.
-    
+
     Args:
         page: Playwright page object
         agent_name: Agent name to find and delete
-        
+
     Returns:
         True if agent was found and deleted, False otherwise
     """

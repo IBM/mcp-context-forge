@@ -8,7 +8,7 @@ MCP Registry page object for browsing and registering MCP servers.
 """
 
 # Third-Party
-from playwright.sync_api import Page, Locator, expect
+from playwright.sync_api import expect, Locator
 
 # Local
 from .base_page import BasePage
@@ -16,9 +16,6 @@ from .base_page import BasePage
 
 class MCPRegistryPage(BasePage):
     """Page object for MCP Registry features."""
-
-    def __init__(self, page: Page):
-        super().__init__(page)
 
     # ==================== Panel Elements ====================
 
@@ -100,10 +97,10 @@ class MCPRegistryPage(BasePage):
 
     def get_category_badge(self, category: str) -> Locator:
         """Get a specific category badge by name.
-        
+
         Args:
             category: Category name (e.g., "Software Development")
-            
+
         Returns:
             Locator for the category badge
         """
@@ -111,10 +108,10 @@ class MCPRegistryPage(BasePage):
 
     def get_auth_type_item(self, auth_type: str) -> Locator:
         """Get a specific auth type item by name.
-        
+
         Args:
             auth_type: Auth type name (e.g., "OAuth2.1", "API Key")
-            
+
         Returns:
             Locator for the auth type item
         """
@@ -122,10 +119,10 @@ class MCPRegistryPage(BasePage):
 
     def get_provider_badge(self, provider: str) -> Locator:
         """Get a specific provider badge by name.
-        
+
         Args:
             provider: Provider name (e.g., "GitHub", "Stripe")
-            
+
         Returns:
             Locator for the provider badge
         """
@@ -145,10 +142,10 @@ class MCPRegistryPage(BasePage):
 
     def get_server_card_by_name(self, server_name: str) -> Locator:
         """Get a specific server card by name.
-        
+
         Args:
             server_name: Server name (e.g., "GitHub", "Stripe")
-            
+
         Returns:
             Locator for the server card
         """
@@ -156,10 +153,10 @@ class MCPRegistryPage(BasePage):
 
     def get_server_add_button(self, server_name: str) -> Locator:
         """Get the 'Add Server' button for a specific server.
-        
+
         Args:
             server_name: Server name
-            
+
         Returns:
             Locator for the add button
         """
@@ -207,7 +204,7 @@ class MCPRegistryPage(BasePage):
 
     def select_category(self, category: str) -> None:
         """Select a category from the filter dropdown.
-        
+
         Args:
             category: Category name to select
         """
@@ -217,7 +214,7 @@ class MCPRegistryPage(BasePage):
 
     def select_auth_type(self, auth_type: str) -> None:
         """Select an auth type from the filter dropdown.
-        
+
         Args:
             auth_type: Auth type to select (e.g., "OAuth2.1", "API Key")
         """
@@ -227,7 +224,7 @@ class MCPRegistryPage(BasePage):
 
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
-        
+
         Args:
             query: Search query string
         """
@@ -244,7 +241,7 @@ class MCPRegistryPage(BasePage):
 
     def click_category_badge(self, category: str) -> None:
         """Click on a category badge to filter by that category.
-        
+
         Args:
             category: Category name to filter by
         """
@@ -254,7 +251,7 @@ class MCPRegistryPage(BasePage):
 
     def click_auth_type_item(self, auth_type: str) -> None:
         """Click on an auth type item to filter by that type.
-        
+
         Args:
             auth_type: Auth type to filter by
         """
@@ -266,7 +263,7 @@ class MCPRegistryPage(BasePage):
 
     def get_server_count(self) -> int:
         """Get the number of servers currently displayed.
-        
+
         Returns:
             Number of visible server cards
         """
@@ -274,7 +271,7 @@ class MCPRegistryPage(BasePage):
 
     def get_total_servers_count(self) -> int:
         """Get the total servers count from overview card.
-        
+
         Returns:
             Total servers count as integer
         """
@@ -283,7 +280,7 @@ class MCPRegistryPage(BasePage):
 
     def get_registered_servers_count(self) -> int:
         """Get the registered servers count from overview card.
-        
+
         Returns:
             Registered servers count as integer
         """
@@ -292,7 +289,7 @@ class MCPRegistryPage(BasePage):
 
     def get_categories_count(self) -> int:
         """Get the categories count from overview card.
-        
+
         Returns:
             Categories count as integer
         """
@@ -306,10 +303,10 @@ class MCPRegistryPage(BasePage):
 
     def server_exists(self, server_name: str) -> bool:
         """Check if a server with the given name exists in the grid.
-        
+
         Args:
             server_name: Server name to check
-            
+
         Returns:
             True if server exists, False otherwise
         """
@@ -319,7 +316,7 @@ class MCPRegistryPage(BasePage):
 
     def open_add_server_modal(self, server_name: str) -> None:
         """Open the API key modal for a specific server.
-        
+
         Args:
             server_name: Server name to add
         """
@@ -329,7 +326,7 @@ class MCPRegistryPage(BasePage):
 
     def is_modal_visible(self) -> bool:
         """Check if the API key modal is visible.
-        
+
         Returns:
             True if modal is visible, False otherwise
         """
@@ -342,7 +339,7 @@ class MCPRegistryPage(BasePage):
 
     def fill_api_key_form(self, api_key: str, custom_name: str = None) -> None:
         """Fill the API key form in the modal.
-        
+
         Args:
             api_key: API key to enter
             custom_name: Optional custom name for the server
@@ -357,7 +354,7 @@ class MCPRegistryPage(BasePage):
 
     def register_server_with_api_key(self, server_name: str, api_key: str, custom_name: str = None) -> None:
         """Complete flow to register a server with API key.
-        
+
         Args:
             server_name: Server name to register
             api_key: API key for authentication
@@ -373,15 +370,15 @@ class MCPRegistryPage(BasePage):
 
     def get_server_card_info(self, server_name: str) -> dict:
         """Get information from a server card.
-        
+
         Args:
             server_name: Server name
-            
+
         Returns:
             Dictionary with server card information
         """
         card = self.get_server_card_by_name(server_name)
-        
+
         return {
             "name": card.locator("h3").text_content().strip(),
             "description": card.locator("p.text-sm").text_content().strip(),
@@ -393,7 +390,7 @@ class MCPRegistryPage(BasePage):
 
     def wait_for_registry_loaded(self, timeout: int = 30000) -> None:
         """Wait for MCP Registry panel to be loaded and ready.
-        
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
@@ -403,18 +400,18 @@ class MCPRegistryPage(BasePage):
 
     def verify_filter_applied(self, filter_type: str, filter_value: str) -> bool:
         """Verify that a filter has been applied correctly.
-        
+
         Args:
             filter_type: Type of filter ("category" or "auth")
             filter_value: Expected filter value
-            
+
         Returns:
             True if filter is applied correctly
         """
         if filter_type == "category":
             selected = self.category_filter.input_value()
             return selected == filter_value
-        elif filter_type == "auth":
+        if filter_type == "auth":
             selected = self.auth_filter.input_value()
             return selected == filter_value
         return False
