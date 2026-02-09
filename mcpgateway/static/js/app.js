@@ -6582,16 +6582,6 @@ document.addEventListener("DOMContentLoaded", function () {
       }
     });
   }
-  
-  // Handle HTMX events to show/hide modal
-  document.body.addEventListener("htmx:afterRequest", function (event) {
-    if (
-      event.detail.pathInfo.requestPath.includes("/admin/users/") &&
-      event.detail.pathInfo.requestPath.includes("/edit")
-    ) {
-      Admin.showUserEditModal();
-    }
-  });
 });
 
 // Team edit modal functions
@@ -7229,12 +7219,6 @@ Admin.handleAdminTeamAction = function (event) {
       const modals = document.querySelectorAll('[id$="-modal"]');
       modals.forEach((modal) => modal.classList.add("hidden"));
     }
-    if (detail.refreshTeamsList) {
-      const teamsList = safeGetElement("teams-list");
-      if (teamsList && window.htmx) {
-        window.htmx.trigger(teamsList, "load");
-      }
-    }
     if (detail.refreshUnifiedTeamsList && window.htmx) {
       const unifiedList = safeGetElement("unified-teams-list");
       if (unifiedList) {
@@ -7753,7 +7737,7 @@ Admin.rejectJoinRequest = async function (teamId, requestId) {
 * Validate password match in user edit form
 */
 Admin.getPasswordPolicy = function () {
-  const policyEl = safeGetElement("password-policy-data");
+  const policyEl = safeGetElement("edit-password-policy-data");
   if (!policyEl) {
     return null;
   }
@@ -7795,22 +7779,22 @@ Admin.validatePasswordRequirements = function () {
   
   const password = passwordField.value || "";
   const lengthCheck = password.length >= policy.minLength;
-  Admin.updateRequirementIcon("req-length", lengthCheck);
+  Admin.updateRequirementIcon("edit-req-length", lengthCheck);
   
   const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
-  Admin.updateRequirementIcon("req-uppercase", uppercaseCheck);
+  Admin.updateRequirementIcon("edit-req-uppercase", uppercaseCheck);
   
   const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
-  Admin.updateRequirementIcon("req-lowercase", lowercaseCheck);
+  Admin.updateRequirementIcon("edit-req-lowercase", lowercaseCheck);
   
   const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
-  Admin.updateRequirementIcon("req-numbers", numbersCheck);
+  Admin.updateRequirementIcon("edit-req-numbers", numbersCheck);
   
   const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
   const specialCheck =
   !policy.requireSpecial ||
   [...password].some((char) => specialChars.includes(char));
-  Admin.updateRequirementIcon("req-special", specialCheck);
+  Admin.updateRequirementIcon("edit-req-special", specialCheck);
   
   const submitButton = document.querySelector(
     '#user-edit-modal-content button[type="submit"]',

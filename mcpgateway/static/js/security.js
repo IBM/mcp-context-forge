@@ -32,7 +32,7 @@ export function escapeHtml(unsafe) {
  * @returns {string} Human-readable error message
  */
 export function extractApiError(error, fallback = "An error occurred") {
-    if (!error || !error.detail) {
+    if (!error || (!error.detail && !error.message)) {
         return fallback;
     }
     if (typeof error.detail === "string") {

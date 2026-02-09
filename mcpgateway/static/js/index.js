@@ -80,6 +80,9 @@ import {
   editGateway,
   viewServer,
   editServer,
+  viewRoot,
+  editRoot,
+  exportRoot,
 } from './mcpController.js';
 
 Admin.editTool = editTool;
@@ -95,6 +98,9 @@ Admin.viewGateway = viewGateway;
 Admin.editGateway = editGateway;
 Admin.viewServer = viewServer;
 Admin.editServer = editServer;
+Admin.viewRoot = viewRoot;
+Admin.editRoot = editRoot;
+Admin.exportRoot = exportRoot;
 
 // Tools
 import {
