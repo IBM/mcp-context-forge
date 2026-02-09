@@ -441,7 +441,7 @@ class Settings(BaseSettings):
     )
     protect_all_admins: bool = Field(
         default=True,
-        description="When true (default), prevent any admin from being demoted or deactivated via API/UI. When false, only the last active admin is protected.",
+        description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
     )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
@@ -469,8 +469,8 @@ class Settings(BaseSettings):
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
-    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
-    account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
+    max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
