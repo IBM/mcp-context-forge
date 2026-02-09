@@ -422,3 +422,213 @@ async def test_register_catalog_server_oauth_without_credentials(service):
             db.add.assert_called_once()
             db.commit.assert_called_once()
             db.refresh.assert_called_once()
+
+
+# ---------- Exception mapping in register_catalog_server ----------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error_msg,expected_keyword",
+    [
+        ("SSL: CERTIFICATE_VERIFY_FAILED", "SSL certificate"),
+        ("Read timed out waiting", "took too long"),
+        ("401 Unauthorized access", "Authentication failed"),
+        ("403 Forbidden resource", "Access forbidden"),
+        ("404 Not Found endpoint", "endpoint not found"),
+        ("500 Internal Server Error", "server error"),
+        ("IPv6 address not supported", "IPv6"),
+    ],
+)
+async def test_register_exception_mapping_parametrized(service, error_msg, expected_keyword):
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", AsyncMock(side_effect=Exception(error_msg))):
+            result = await service.register_catalog_server("1", None, db)
+            assert not result.success
+            assert expected_keyword in result.message
+
+
+# ---------- Transport auto-detection ----------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url,expected_result",
+    [
+        # WebSocket URLs currently fail validation because WEBSOCKET is not a valid transport type in the schema
+        # The schema only supports: SSE, HTTP, STDIO, STREAMABLEHTTP
+        ("ws://localhost:9000", False),  # Fails with validation error
+        ("wss://secure.example.com/mcp", False),  # Fails with validation error
+        ("http://example.com/sse", "SSE"),
+        ("http://example.com/path/sse/endpoint", "SSE"),
+        ("http://example.com/mcp", "STREAMABLEHTTP"),
+        ("http://example.com/api/", "STREAMABLEHTTP"),
+        ("http://example.com/other", "SSE"),
+    ],
+)
+async def test_transport_auto_detection(service, url, expected_result):
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": url, "description": "desc"}]}
+    captured_data = {}
+
+    async def mock_register(db, gateway, **kwargs):
+        captured_data["transport"] = gateway.transport
+        return MagicMock(id=1, name="srv")
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", mock_register):
+            result = await service.register_catalog_server("1", None, db)
+            if expected_result is False:
+                # WebSocket URLs should fail validation
+                assert not result.success, f"Expected registration to fail for {url}"
+                assert "Invalid transport type: WEBSOCKET" in result.error or "WEBSOCKET" in result.error
+            else:
+                # HTTP URLs should succeed
+                assert result.success, f"Registration failed: {result.error}"
+                assert captured_data["transport"] == expected_result, f"Expected {expected_result}, got {captured_data['transport']}"
+
+
+# ---------- get_catalog_servers edge cases ----------
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_db_exception(service):
+    """Test that DB exception is handled gracefully in get_catalog_servers."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "1", "name": "srv1", "url": "http://a", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": ["t1"], "description": "desc"},
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.side_effect = Exception("DB connection failed")
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 1
+        assert result.servers[0].is_registered is False
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_cache_hit(service):
+    """Test cache hit path."""
+    mock_cache = AsyncMock()
+    cached_response = {
+        "servers": [],
+        "total": 0,
+        "categories": [],
+        "auth_types": [],
+        "providers": [],
+        "all_tags": [],
+    }
+    mock_cache.get = AsyncMock(return_value=cached_response)
+    mock_cache.hash_filters = MagicMock(return_value="hash123")
+    with patch.object(service, "_get_registry_cache", return_value=mock_cache):
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, MagicMock())
+        assert result.total == 0
+        mock_cache.get.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_cache_store_exception(service):
+    """Test that cache store exception is handled gracefully."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "1", "name": "srv1", "url": "http://a", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": ["t1"], "description": "desc"},
+        ]
+    }
+    mock_cache = AsyncMock()
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_cache.hash_filters = MagicMock(return_value="hash123")
+    mock_cache.set = AsyncMock(side_effect=Exception("Redis error"))
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
+        db = MagicMock()
+        db.execute.return_value = [("http://a", True, None, None)]
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, db)
+        assert result.total == 1
+
+
+# ---------- Register with different auth types ----------
+
+
+@pytest.mark.asyncio
+async def test_register_with_custom_auth_type(service):
+    """Test registration with unrecognized auth type falls back to authheaders."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc", "auth_type": "Custom"}]}
+    req = CatalogServerRegisterRequest(server_id="1", name="srv", api_key="mykey", oauth_credentials=None)
+    captured_data = {}
+
+    async def mock_register(db, gateway, **kwargs):
+        captured_data["auth_type"] = gateway.auth_type
+        return MagicMock(id=1, name="srv")
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", mock_register):
+            result = await service.register_catalog_server("1", req, db)
+            assert result.success
+            assert captured_data["auth_type"] == "authheaders"
+
+
+@pytest.mark.asyncio
+async def test_register_with_explicit_transport(service):
+    """Test that explicit transport in catalog data takes priority."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a/sse", "description": "desc", "transport": "STREAMABLEHTTP"}]}
+    captured_data = {}
+
+    async def mock_register(db, gateway, **kwargs):
+        captured_data["transport"] = gateway.transport
+        return MagicMock(id=1, name="srv")
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", mock_register):
+            result = await service.register_catalog_server("1", None, db)
+            assert result.success
+            assert captured_data["transport"] == "STREAMABLEHTTP"
+
+
+@pytest.mark.asyncio
+async def test_register_with_tool_count(service):
+    """Test message includes discovered tools count."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_tools = [MagicMock(), MagicMock(), MagicMock()]
+        db.execute.return_value.scalars.return_value.all.return_value = mock_tools
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", AsyncMock(return_value=MagicMock(id=1, name="srv"))):
+            result = await service.register_catalog_server("1", None, db)
+            assert result.success
+            assert "3 tools" in result.message
+
+
+@pytest.mark.asyncio
+async def test_register_check_existing_exception(service):
+    """Test graceful handling when checking existing registration fails."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.side_effect = Exception("DB error")
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", AsyncMock(return_value=MagicMock(id=1, name="srv"))):
+            result = await service.register_catalog_server("1", None, db)
+            assert result.success
+
+
+@pytest.mark.asyncio
+async def test_bulk_register_exception_per_server(service):
+    """Test bulk register when individual server raises exception."""
+    fake_request = CatalogBulkRegisterRequest(server_ids=["1", "2"], skip_errors=True)
+    with patch.object(service, "register_catalog_server", AsyncMock(side_effect=[Exception("boom"), MagicMock(success=True)])):
+        db = MagicMock()
+        result = await service.bulk_register_servers(fake_request, db)
+        assert result.total_attempted == 2
+        assert len(result.failed) == 1
+        assert result.total_successful == 1

@@ -353,6 +353,27 @@ def test_gateway_provider_openai(monkeypatch):
     assert llm is not None
 
 
+def test_gateway_provider_openai_completion_branch(monkeypatch):
+    class DummyChat:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class DummyCompletion:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    _patch_gateway_llms(monkeypatch)
+    monkeypatch.setattr(svc, "ChatOpenAI", DummyChat)
+    monkeypatch.setattr(svc, "OpenAI", DummyCompletion)
+    model, provider = _make_model_and_provider("openai", config={}, api_base="https://api")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert isinstance(llm, DummyCompletion)
+
+
 def test_gateway_provider_openai_compatible(monkeypatch):
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("openai_compatible", api_base="https://compat")
@@ -991,3 +1012,529 @@ def test_optional_langchain_import_block_executes():
                 sys.modules.pop(name, None)
             else:
                 sys.modules[name] = original
+
+
+def test_optional_provider_import_blocks_execute():
+    module_names = ["langchain_anthropic", "langchain_aws", "langchain_ibm"]
+    original_modules = {name: sys.modules.get(name) for name in module_names}
+
+    try:
+        langchain_anthropic = types.ModuleType("langchain_anthropic")
+        langchain_anthropic.ChatAnthropic = object
+        langchain_anthropic.AnthropicLLM = object
+
+        langchain_aws = types.ModuleType("langchain_aws")
+        langchain_aws.ChatBedrock = object
+        langchain_aws.BedrockLLM = object
+
+        langchain_ibm = types.ModuleType("langchain_ibm")
+        langchain_ibm.ChatWatsonx = object
+        langchain_ibm.WatsonxLLM = object
+
+        sys.modules.update(
+            {
+                "langchain_anthropic": langchain_anthropic,
+                "langchain_aws": langchain_aws,
+                "langchain_ibm": langchain_ibm,
+            }
+        )
+
+        spec = importlib.util.spec_from_file_location("mcp_client_chat_service_optdeps", svc.__file__)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["mcp_client_chat_service_optdeps"] = module
+        assert spec and spec.loader
+        spec.loader.exec_module(module)
+
+        assert module._ANTHROPIC_AVAILABLE is True
+        assert module._BEDROCK_AVAILABLE is True
+        assert module._WATSONX_AVAILABLE is True
+    finally:
+        sys.modules.pop("mcp_client_chat_service_optdeps", None)
+        for name, original in original_modules.items():
+            if original is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = original
+
+
+# --------------------------------------------------------------------------- #
+# PROVIDER get_llm() DIRECT CALLS (chat and completion model_type branches)
+# --------------------------------------------------------------------------- #
+
+
+def test_azure_openai_provider_chat(monkeypatch):
+    """AzureOpenAIProvider.get_llm(model_type='chat') creates AzureChatOpenAI."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "AzureChatOpenAI", DummyLLM)
+    cfg = svc.AzureOpenAIConfig(api_key="k", azure_endpoint="https://ep", azure_deployment="dep")
+    provider = svc.AzureOpenAIProvider(cfg)
+    llm = provider.get_llm(model_type="chat")
+    assert isinstance(llm, DummyLLM)
+    # Second call returns cached instance
+    assert provider.get_llm(model_type="chat") is llm
+
+
+def test_azure_openai_provider_completion(monkeypatch):
+    """AzureOpenAIProvider.get_llm(model_type='completion') creates AzureOpenAI."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "AzureOpenAI", DummyLLM)
+    cfg = svc.AzureOpenAIConfig(api_key="k", azure_endpoint="https://ep", azure_deployment="dep")
+    provider = svc.AzureOpenAIProvider(cfg)
+    llm = provider.get_llm(model_type="completion")
+    assert isinstance(llm, DummyLLM)
+
+
+def test_azure_openai_provider_error(monkeypatch):
+    """AzureOpenAIProvider.get_llm raises on error."""
+    monkeypatch.setattr(svc, "AzureChatOpenAI", MagicMock(side_effect=RuntimeError("init fail")))
+    cfg = svc.AzureOpenAIConfig(api_key="k", azure_endpoint="https://ep", azure_deployment="dep")
+    provider = svc.AzureOpenAIProvider(cfg)
+    with pytest.raises(RuntimeError, match="init fail"):
+        provider.get_llm()
+
+
+def test_ollama_provider_completion(monkeypatch):
+    """OllamaProvider.get_llm(model_type='completion') creates OllamaLLM."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "OllamaLLM", DummyLLM)
+    cfg = svc.OllamaConfig(model="llama2", num_ctx=4096)
+    provider = svc.OllamaProvider(cfg)
+    llm = provider.get_llm(model_type="completion")
+    assert isinstance(llm, DummyLLM)
+    assert llm.kw["num_ctx"] == 4096
+
+
+def test_ollama_provider_chat_no_num_ctx(monkeypatch):
+    """OllamaProvider.get_llm(model_type='chat') without num_ctx."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "ChatOllama", DummyLLM)
+    cfg = svc.OllamaConfig(model="llama2", num_ctx=None)
+    provider = svc.OllamaProvider(cfg)
+    llm = provider.get_llm(model_type="chat")
+    assert isinstance(llm, DummyLLM)
+    assert "num_ctx" not in llm.kw
+
+
+def test_ollama_provider_error(monkeypatch):
+    """OllamaProvider.get_llm raises on error."""
+    monkeypatch.setattr(svc, "ChatOllama", MagicMock(side_effect=RuntimeError("boom")))
+    cfg = svc.OllamaConfig(model="llama2")
+    provider = svc.OllamaProvider(cfg)
+    with pytest.raises(RuntimeError, match="boom"):
+        provider.get_llm()
+
+
+def test_openai_provider_completion(monkeypatch):
+    """OpenAIProvider.get_llm(model_type='completion') creates OpenAI."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "OpenAI", DummyLLM)
+    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4", base_url="https://custom", default_headers={"X-Custom": "val"})
+    provider = svc.OpenAIProvider(cfg)
+    llm = provider.get_llm(model_type="completion")
+    assert isinstance(llm, DummyLLM)
+    assert llm.kw["base_url"] == "https://custom"
+    assert llm.kw["default_headers"] == {"X-Custom": "val"}
+
+
+def test_openai_provider_error(monkeypatch):
+    """OpenAIProvider.get_llm raises on error."""
+    monkeypatch.setattr(svc, "ChatOpenAI", MagicMock(side_effect=RuntimeError("err")))
+    cfg = svc.OpenAIConfig(api_key="sk", model="gpt-4")
+    provider = svc.OpenAIProvider(cfg)
+    with pytest.raises(RuntimeError, match="err"):
+        provider.get_llm()
+
+
+def test_anthropic_provider_completion(monkeypatch):
+    """AnthropicProvider.get_llm(model_type='completion') creates AnthropicLLM."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatAnthropic", DummyLLM)
+    monkeypatch.setattr(svc, "AnthropicLLM", DummyLLM)
+    cfg = svc.AnthropicConfig(api_key="ant")
+    provider = svc.AnthropicProvider(cfg)
+    llm = provider.get_llm(model_type="completion")
+    assert isinstance(llm, DummyLLM)
+
+
+def test_anthropic_provider_not_available():
+    """AnthropicProvider raises ImportError when not available."""
+    import mcpgateway.services.mcp_client_chat_service as m
+    orig = m._ANTHROPIC_AVAILABLE
+    try:
+        m._ANTHROPIC_AVAILABLE = False
+        with pytest.raises(ImportError, match="langchain-anthropic"):
+            svc.AnthropicProvider(svc.AnthropicConfig(api_key="ant"))
+    finally:
+        m._ANTHROPIC_AVAILABLE = orig
+
+
+def test_anthropic_provider_error(monkeypatch):
+    """AnthropicProvider.get_llm raises on init error."""
+    monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatAnthropic", MagicMock(side_effect=RuntimeError("auth fail")))
+    cfg = svc.AnthropicConfig(api_key="ant")
+    provider = svc.AnthropicProvider(cfg)
+    with pytest.raises(RuntimeError, match="auth fail"):
+        provider.get_llm()
+
+
+def test_bedrock_provider_completion_with_credentials(monkeypatch):
+    """AWSBedrockProvider.get_llm(model_type='completion') with all credentials."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatBedrock", DummyLLM)
+    monkeypatch.setattr(svc, "BedrockLLM", DummyLLM)
+    cfg = svc.AWSBedrockConfig(
+        model_id="anthropic.claude-v2",
+        region_name="us-east-1",
+        aws_access_key_id="AKID",
+        aws_secret_access_key="SECRET",
+        aws_session_token="TOKEN",
+    )
+    provider = svc.AWSBedrockProvider(cfg)
+    llm = provider.get_llm(model_type="completion")
+    assert isinstance(llm, DummyLLM)
+    assert llm.kw["aws_access_key_id"] == "AKID"
+    assert llm.kw["aws_secret_access_key"] == "SECRET"
+    assert llm.kw["aws_session_token"] == "TOKEN"
+
+
+def test_bedrock_provider_not_available():
+    """AWSBedrockProvider raises ImportError when not available."""
+    import mcpgateway.services.mcp_client_chat_service as m
+    orig = m._BEDROCK_AVAILABLE
+    try:
+        m._BEDROCK_AVAILABLE = False
+        with pytest.raises(ImportError, match="langchain-aws"):
+            svc.AWSBedrockProvider(svc.AWSBedrockConfig(model_id="m", region_name="us-east-1"))
+    finally:
+        m._BEDROCK_AVAILABLE = orig
+
+
+def test_bedrock_provider_error(monkeypatch):
+    """AWSBedrockProvider.get_llm raises on error."""
+    monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatBedrock", MagicMock(side_effect=RuntimeError("aws err")))
+    cfg = svc.AWSBedrockConfig(model_id="m", region_name="us-east-1")
+    provider = svc.AWSBedrockProvider(cfg)
+    with pytest.raises(RuntimeError, match="aws err"):
+        provider.get_llm()
+
+
+def test_watsonx_provider_chat(monkeypatch):
+    """WatsonxProvider.get_llm(model_type='chat') creates ChatWatsonx."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
+    monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
+    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")
+    provider = svc.WatsonxProvider(cfg)
+    llm = provider.get_llm(model_type="chat")
+    assert isinstance(llm, DummyLLM)
+
+
+def test_watsonx_provider_completion_with_params(monkeypatch):
+    """WatsonxProvider.get_llm(model_type='completion') with top_k/top_p."""
+    class DummyLLM:
+        def __init__(self, **kw):
+            self.kw = kw
+    monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
+    monkeypatch.setattr(svc, "WatsonxLLM", DummyLLM)
+    monkeypatch.setattr(svc, "ChatWatsonx", DummyLLM)
+    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p", top_k=40, top_p=0.9)
+    provider = svc.WatsonxProvider(cfg)
+    llm = provider.get_llm(model_type="completion")
+    assert isinstance(llm, DummyLLM)
+    assert "params" in llm.kw
+    assert llm.kw["params"]["top_k"] == 40
+    assert llm.kw["params"]["top_p"] == 0.9
+
+
+def test_watsonx_provider_not_available():
+    """WatsonxProvider raises ImportError when not available."""
+    import mcpgateway.services.mcp_client_chat_service as m
+    orig = m._WATSONX_AVAILABLE
+    try:
+        m._WATSONX_AVAILABLE = False
+        with pytest.raises(ImportError, match="langchain-ibm"):
+            svc.WatsonxProvider(svc.WatsonxConfig(api_key="k", url="https://s", project_id="p"))
+    finally:
+        m._WATSONX_AVAILABLE = orig
+
+
+def test_watsonx_provider_error(monkeypatch):
+    """WatsonxProvider.get_llm raises on error."""
+    monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", True)
+    monkeypatch.setattr(svc, "ChatWatsonx", MagicMock(side_effect=RuntimeError("wx err")))
+    cfg = svc.WatsonxConfig(api_key="key", url="https://s", project_id="p")
+    provider = svc.WatsonxProvider(cfg)
+    with pytest.raises(RuntimeError, match="wx err"):
+        provider.get_llm()
+
+
+# --------------------------------------------------------------------------- #
+# GATEWAY PROVIDER: additional branches
+# --------------------------------------------------------------------------- #
+
+
+def test_gateway_provider_bedrock_completion(monkeypatch):
+    """GatewayProvider bedrock completion with credentials."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider(
+        "bedrock",
+        config={"region_name": "eu-west-1", "aws_access_key_id": "AKID", "aws_secret_access_key": "SECRET", "aws_session_token": "TOK"},
+    )
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_anthropic_completion(monkeypatch):
+    """GatewayProvider anthropic completion branch."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("anthropic")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_anthropic_completion_no_anthropic_llm(monkeypatch):
+    """GatewayProvider anthropic completion when AnthropicLLM is None → ImportError."""
+    _patch_gateway_llms(monkeypatch)
+    monkeypatch.setattr(svc, "AnthropicLLM", None)  # Override to None
+    model, provider = _make_model_and_provider("anthropic")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ImportError, match="AnthropicLLM"):
+        gateway.get_llm(model_type="completion")
+
+
+def test_gateway_provider_ollama_completion(monkeypatch):
+    """GatewayProvider ollama completion with num_ctx."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("ollama", api_base="http://ollama:11434", config={"num_ctx": 8192})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_watsonx_chat(monkeypatch):
+    """GatewayProvider watsonx chat branch."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider(
+        "watsonx", config={"project_id": "proj", "min_new_tokens": 5, "decoding_method": "greedy", "top_k": 30, "top_p": 0.8},
+    )
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_watsonx_completion(monkeypatch):
+    """GatewayProvider watsonx completion branch."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="completion")
+    assert llm is not None
+
+
+def test_gateway_provider_openai_compatible_chat(monkeypatch):
+    """GatewayProvider openai_compatible chat branch."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai_compatible", api_base="https://compat")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: "decoded")
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_unsupported_type(monkeypatch):
+    """GatewayProvider raises ValueError on unsupported provider_type."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("some_unknown_provider")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ValueError, match="Unsupported LLM provider"):
+        gateway.get_llm()
+
+
+def test_gateway_provider_cached_llm(monkeypatch):
+    """GatewayProvider returns cached LLM on second call."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm1 = gateway.get_llm(model_type="chat")
+    llm2 = gateway.get_llm(model_type="chat")
+    assert llm1 is llm2
+
+
+def test_gateway_provider_get_model_name_before_llm():
+    """GatewayProvider.get_model_name() before get_llm() returns config.model."""
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="my-model"))
+    assert gateway.get_model_name() == "my-model"
+
+
+def test_gateway_provider_bedrock_not_available(monkeypatch):
+    """GatewayProvider raises ImportError when bedrock not available."""
+    _patch_gateway_llms(monkeypatch)
+    monkeypatch.setattr(svc, "_BEDROCK_AVAILABLE", False)
+    model, provider = _make_model_and_provider("bedrock", config={"region_name": "us-east-1"})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ImportError, match="langchain-aws"):
+        gateway.get_llm()
+
+
+def test_gateway_provider_anthropic_not_available(monkeypatch):
+    """GatewayProvider raises ImportError when anthropic not available."""
+    _patch_gateway_llms(monkeypatch)
+    monkeypatch.setattr(svc, "_ANTHROPIC_AVAILABLE", False)
+    model, provider = _make_model_and_provider("anthropic")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ImportError, match="langchain-anthropic"):
+        gateway.get_llm()
+
+
+def test_gateway_provider_watsonx_not_available(monkeypatch):
+    """GatewayProvider raises ImportError when watsonx not available."""
+    _patch_gateway_llms(monkeypatch)
+    monkeypatch.setattr(svc, "_WATSONX_AVAILABLE", False)
+    model, provider = _make_model_and_provider("watsonx", config={"project_id": "proj"})
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    with pytest.raises(ImportError, match="langchain-ibm"):
+        gateway.get_llm()
+
+
+def test_gateway_provider_openai_default_headers_from_config(monkeypatch):
+    """GatewayProvider picks up default_headers from provider.config."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai", config={"default_headers": {"X-Api-Version": "v2"}}, api_base="https://api")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_openai_no_api_key(monkeypatch):
+    """GatewayProvider with no api_key in provider → api_key=None."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("openai")
+    provider.api_key = None  # No encrypted key
+    _patch_gateway_session(monkeypatch, model, provider)
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+def test_gateway_provider_azure_completion_branch(monkeypatch):
+    """GatewayProvider azure_openai completion branch."""
+    _patch_gateway_llms(monkeypatch)
+    model, provider = _make_model_and_provider("azure_openai", config={"azure_deployment": "dep", "api_version": "2024-01"}, api_base="https://azure")
+    _patch_gateway_session(monkeypatch, model, provider)
+    monkeypatch.setattr("mcpgateway.utils.services_auth.decode_auth", lambda _v: {"api_key": "decoded"})
+
+    gateway = svc.GatewayProvider(svc.GatewayConfig(model="gpt-4"))
+    llm = gateway.get_llm(model_type="chat")
+    assert llm is not None
+
+
+# --------------------------------------------------------------------------- #
+# LLMProviderFactory: gateway provider
+# --------------------------------------------------------------------------- #
+
+
+def test_llmproviderfactory_gateway(monkeypatch):
+    """LLMProviderFactory creates GatewayProvider."""
+    cfg = svc.LLMConfig(provider="gateway", config=svc.GatewayConfig(model="my-model"))
+    provider = svc.LLMProviderFactory.create(cfg)
+    assert isinstance(provider, svc.GatewayProvider)
+
+
+# --------------------------------------------------------------------------- #
+# MCPServerConfig: auth_token in headers
+# --------------------------------------------------------------------------- #
+
+
+def test_mcpserverconfig_auth_token_adds_bearer():
+    """auth_token should be added as Bearer token to headers."""
+    cfg = svc.MCPServerConfig(url="https://srv", transport="sse", auth_token="my-token")
+    assert cfg.headers["Authorization"] == "Bearer my-token"
+
+
+def test_mcpserverconfig_auth_token_no_override():
+    """Existing Authorization header should not be overridden."""
+    cfg = svc.MCPServerConfig(
+        url="https://srv", transport="sse",
+        auth_token="my-token", headers={"Authorization": "Basic abc"},
+    )
+    assert cfg.headers["Authorization"] == "Basic abc"
+
+
+def test_mcpserverconfig_stdio_no_url_required():
+    """stdio transport should not require URL."""
+    cfg = svc.MCPServerConfig(command="python", args=["s.py"], transport="stdio")
+    assert cfg.url is None
+
+
+def test_mcpserverconfig_sse_without_url():
+    """SSE transport without URL sets url=None."""
+    cfg = svc.MCPServerConfig(transport="sse")
+    assert cfg.url is None
+
+
+def test_mcpserverconfig_stdio_without_command():
+    """stdio transport without command sets command=None."""
+    cfg = svc.MCPServerConfig(transport="stdio")
+    assert cfg.command is None

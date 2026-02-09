@@ -1376,3 +1376,266 @@ async def test_require_any_permission_fresh_db_session_all_denied(monkeypatch):
         with pytest.raises(HTTPException) as exc:
             await decorated(user=mock_user)
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+
+# ============================================================================
+# Tests for team derivation helpers and _is_mutate_permission
+# ============================================================================
+
+
+class TestDeriveTeamFromResource:
+    """Tests for _derive_team_from_resource helper."""
+
+    def test_resource_found_returns_team_id(self):
+        """When resource exists with team_id, return it."""
+        mock_db = MagicMock()
+        mock_resource = MagicMock()
+        mock_resource.team_id = "team-abc"
+        mock_db.get.return_value = mock_resource
+
+        with patch("mcpgateway.middleware.rbac._get_resource_param_to_model") as mock_mapping:
+            mock_model = MagicMock()
+            mock_mapping.return_value = {"tool_id": mock_model}
+            result = rbac._derive_team_from_resource({"tool_id": "t-1"}, mock_db)
+
+        assert result == "team-abc"
+        mock_db.get.assert_called_once_with(mock_model, "t-1")
+
+    def test_resource_not_found_returns_none(self):
+        """When resource not found in DB, return None for 404 handling."""
+        mock_db = MagicMock()
+        mock_db.get.return_value = None
+
+        with patch("mcpgateway.middleware.rbac._get_resource_param_to_model") as mock_mapping:
+            mock_model = MagicMock()
+            mock_mapping.return_value = {"tool_id": mock_model}
+            result = rbac._derive_team_from_resource({"tool_id": "t-missing"}, mock_db)
+
+        assert result is None
+
+    def test_no_resource_param_returns_none(self):
+        """When no resource ID param in kwargs, return None."""
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.middleware.rbac._get_resource_param_to_model") as mock_mapping:
+            mock_mapping.return_value = {"tool_id": MagicMock()}
+            result = rbac._derive_team_from_resource({"other_param": "val"}, mock_db)
+
+        assert result is None
+
+    def test_db_exception_returns_none(self):
+        """When DB lookup raises, return None gracefully."""
+        mock_db = MagicMock()
+        mock_db.get.side_effect = Exception("DB error")
+
+        with patch("mcpgateway.middleware.rbac._get_resource_param_to_model") as mock_mapping:
+            mock_model = MagicMock()
+            mock_mapping.return_value = {"tool_id": mock_model}
+            result = rbac._derive_team_from_resource({"tool_id": "t-1"}, mock_db)
+
+        assert result is None
+
+    def test_resource_no_team_id_attr(self):
+        """When resource has no team_id attribute, getattr returns None."""
+        mock_db = MagicMock()
+        mock_resource = MagicMock(spec=[])  # No attributes
+        mock_db.get.return_value = mock_resource
+
+        with patch("mcpgateway.middleware.rbac._get_resource_param_to_model") as mock_mapping:
+            mock_model = MagicMock()
+            mock_mapping.return_value = {"tool_id": mock_model}
+            result = rbac._derive_team_from_resource({"tool_id": "t-1"}, mock_db)
+
+        assert result is None
+
+
+class TestDeriveTeamFromPayload:
+    """Tests for _derive_team_from_payload helper."""
+
+    @pytest.mark.asyncio
+    async def test_pydantic_payload_with_team_id(self):
+        """Extract team_id from Pydantic payload object."""
+        payload = SimpleNamespace(team_id="team-from-payload")
+        result = await rbac._derive_team_from_payload({"tool": payload})
+        assert result == "team-from-payload"
+
+    @pytest.mark.asyncio
+    async def test_pydantic_payload_team_id_none(self):
+        """Return None when payload team_id is None."""
+        payload = SimpleNamespace(team_id=None)
+        result = await rbac._derive_team_from_payload({"tool": payload})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_no_matching_payload(self):
+        """Return None when no recognized payload param."""
+        result = await rbac._derive_team_from_payload({"unrelated": "data"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_form_data_team_id(self):
+        """Extract team_id from form data in request."""
+        mock_form = AsyncMock(return_value={"team_id": "team-from-form"})
+        mock_request = MagicMock()
+        mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
+        mock_request.form = mock_form
+
+        result = await rbac._derive_team_from_payload({"request": mock_request})
+        assert result == "team-from-form"
+
+    @pytest.mark.asyncio
+    async def test_form_data_no_team_id(self):
+        """Return None when form data has no team_id."""
+        mock_form = AsyncMock(return_value={})
+        mock_request = MagicMock()
+        mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
+        mock_request.form = mock_form
+
+        result = await rbac._derive_team_from_payload({"request": mock_request})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_form_parse_exception(self):
+        """Return None when form parsing fails."""
+        mock_request = MagicMock()
+        mock_request.headers = {"content-type": "multipart/form-data"}
+        mock_request.form = AsyncMock(side_effect=Exception("parse error"))
+
+        result = await rbac._derive_team_from_payload({"request": mock_request})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_non_form_content_type(self):
+        """Skip form parsing for non-form content types."""
+        mock_request = MagicMock()
+        mock_request.headers = {"content-type": "application/json"}
+
+        result = await rbac._derive_team_from_payload({"request": mock_request})
+        assert result is None
+
+
+class TestIsMutatePermission:
+    """Tests for _is_mutate_permission helper."""
+
+    def test_dot_separated_create(self):
+        assert rbac._is_mutate_permission("tools.create") is True
+
+    def test_dot_separated_read(self):
+        assert rbac._is_mutate_permission("tools.read") is False
+
+    def test_colon_separated_create(self):
+        assert rbac._is_mutate_permission("admin.sso_providers:create") is True
+
+    def test_colon_separated_read(self):
+        assert rbac._is_mutate_permission("admin.sso_providers:read") is False
+
+    def test_single_word(self):
+        assert rbac._is_mutate_permission("create") is False
+
+    def test_dot_execute(self):
+        assert rbac._is_mutate_permission("tools.execute") is True
+
+    def test_dot_delete(self):
+        assert rbac._is_mutate_permission("resources.delete") is True
+
+    def test_dot_toggle(self):
+        assert rbac._is_mutate_permission("tools.toggle") is True
+
+    def test_colon_manage(self):
+        assert rbac._is_mutate_permission("admin.teams:manage") is True
+
+    def test_colon_invoke(self):
+        assert rbac._is_mutate_permission("tools.a2a:invoke") is True
+
+
+class TestMultiTeamSessionTokenDerivation:
+    """Tests for multi-team session token team derivation in require_permission."""
+
+    @pytest.mark.asyncio
+    async def test_session_token_derive_from_resource(self, monkeypatch):
+        """Session token derives team_id from resource via _derive_team_from_resource."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-derived"
+
+    @pytest.mark.asyncio
+    async def test_session_token_derive_from_payload(self, monkeypatch):
+        """Session token falls back to _derive_team_from_payload when resource returns None."""
+
+        async def dummy_func(user=None, db=None, tool=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        payload = SimpleNamespace(team_id="team-payload")
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("tools.create")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db, tool=payload)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-payload"
+
+    @pytest.mark.asyncio
+    async def test_session_token_read_check_any_team(self, monkeypatch):
+        """Session token with no team context uses check_any_team for read ops."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
+             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_token_mutate_no_team_passes_none(self, monkeypatch):
+        """Session token with mutate permission and no team derives passes team_id=None."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
+             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("tools.create")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        # For mutate with no team context, team_id should be None (fail-closed for team grants)
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
