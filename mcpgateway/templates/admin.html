@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) {} })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -136,7 +136,16 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        window.history.replaceState({}, '', newUrl);
+        safeReplaceState({}, '', newUrl);
+      }
+
+      // Safe wrapper for history.replaceState — skips in restricted contexts (e.g. sandboxed iframes)
+      function safeReplaceState(data, title, url) {
+        try {
+          window.history.replaceState(data, title, url);
+        } catch (e) {
+          // Restricted context — skip URL update
+        }
       }
     </script>
 
@@ -11512,7 +11521,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            window.history.replaceState({}, '', cleanUrl);
+            safeReplaceState({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -11876,7 +11885,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) {}
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12099,7 +12109,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) {}
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
