@@ -415,6 +415,19 @@ class NotificationService:
         elif "PromptListChangedNotification" in root_class or "PromptsListChangedNotification" in root_class:
             notification_type = NotificationType.PROMPTS_LIST_CHANGED
 
+        # Fallback: some MCP implementations may not use the exact class names
+        # but will set the `method` attribute on the notification root. Use
+        # that as a secondary heuristic to determine the notification type.
+        if notification_type is None:
+            method_attr = getattr(notification_root, "method", None)
+            if isinstance(method_attr, str):
+                if method_attr.endswith("notifications/tools/list_changed"):
+                    notification_type = NotificationType.TOOLS_LIST_CHANGED
+                elif method_attr.endswith("notifications/resources/list_changed"):
+                    notification_type = NotificationType.RESOURCES_LIST_CHANGED
+                elif method_attr.endswith("notifications/prompts/list_changed"):
+                    notification_type = NotificationType.PROMPTS_LIST_CHANGED
+
         if notification_type:
             logger.info(
                 "Received %s notification from gateway %s (%s)",

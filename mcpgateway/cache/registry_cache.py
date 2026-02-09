@@ -286,9 +286,13 @@ class RegistryCache:
         # Fall back to in-memory cache
         with self._lock:
             entry = self._cache.get(cache_key)
-            if entry and not entry.is_expired():
-                self._hit_count += 1
-                return entry.value
+            if entry:
+                if entry.is_expired():
+                    # Remove expired entry to avoid returning stale data later
+                    self._cache.pop(cache_key, None)
+                else:
+                    self._hit_count += 1
+                    return entry.value
 
         self._miss_count += 1
         return None

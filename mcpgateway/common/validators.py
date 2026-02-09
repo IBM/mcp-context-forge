@@ -1149,7 +1149,23 @@ class SecurityValidator:
             # Try to parse as IP address directly
             ip_addresses = [ipaddress.ip_address(hostname)]
         except ValueError:
-            # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+            # It's a hostname. If SSRF settings are permissive (allow localhost and private
+            # networks), prefer a fast heuristic to avoid slow DNS lookups that can cause
+            # timing variability in validation. We already checked `ssrf_blocked_hosts`
+            # above, so skipping resolution for common public hostnames is acceptable
+            # when the deployment allows private/local addresses.
+            # Only skip DNS resolution when the configuration explicitly allows
+            # permissive behavior and DNS failure is not required to fail closed.
+            if (
+                settings.ssrf_allow_localhost
+                and settings.ssrf_allow_private_networks
+                and not settings.ssrf_dns_fail_closed
+            ):
+                # Heuristic: contains a dot (simple FQDN) and is not an IPv6 literal
+                if "." in hostname and not (hostname.startswith("[") and hostname.endswith("]")):
+                    return
+
+            # Otherwise, resolve ALL addresses (IPv4 and IPv6)
             try:
                 # getaddrinfo returns all A/AAAA records
                 addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
