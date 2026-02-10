@@ -84,6 +84,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.gateway_access import check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -2712,6 +2713,13 @@ class ToolService:
             # Look up gateway to check if it's in direct_proxy mode
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
             if gateway and gateway.gateway_mode == "direct_proxy":
+                # SECURITY: Check gateway access before allowing direct proxy
+                # This prevents RBAC bypass where any authenticated user could invoke tools
+                # on any gateway just by knowing the gateway ID
+                if not await check_gateway_access(db, gateway, user_email, token_teams):
+                    logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
+                    raise ToolNotFoundError(f"Tool not found: {name}")
+
                 is_direct_proxy = True
                 # Build minimal gateway payload for direct proxy (no tool lookup needed)
                 gateway_payload = {
