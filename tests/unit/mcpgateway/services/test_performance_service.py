@@ -92,6 +92,30 @@ class TestSystemMetrics:
             if result.load_avg_1m is not None:
                 assert result.load_avg_1m >= 0
 
+    def test_get_system_metrics_load_average_exception_sets_none(self):
+        """When os.getloadavg fails, load averages should be None."""
+        service = PerformanceService()
+
+        mock_psutil = MagicMock()
+        mock_psutil.cpu_percent.return_value = 1.0
+        mock_psutil.cpu_count.return_value = 1
+        mock_psutil.cpu_freq.return_value = None
+        mock_psutil.virtual_memory.return_value = MagicMock(total=1_048_576, used=0, available=1_048_576, percent=0.0)
+        mock_psutil.swap_memory.return_value = MagicMock(total=0, used=0)
+        mock_psutil.disk_usage.return_value = MagicMock(total=1_073_741_824, used=0, percent=0.0)
+        mock_psutil.net_io_counters.return_value = MagicMock(bytes_sent=0, bytes_recv=0)
+        mock_psutil.boot_time.return_value = 0
+
+        with patch("mcpgateway.services.performance_service.PSUTIL_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.psutil", mock_psutil):
+                with patch.object(service, "_get_net_connections_cached", return_value=0):
+                    with patch("mcpgateway.services.performance_service.os.getloadavg", side_effect=OSError("nope")):
+                        result = service.get_system_metrics()
+
+        assert result.load_avg_1m is None
+        assert result.load_avg_5m is None
+        assert result.load_avg_15m is None
+
 
 class TestWorkerMetrics:
     """Tests for worker process metrics collection."""
@@ -120,6 +144,55 @@ class TestWorkerMetrics:
         assert worker.threads >= 1
 
     @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_get_worker_metrics_under_gunicorn_uses_parent_children(self):
+        import psutil
+
+        service = PerformanceService()
+
+        mock_child1 = MagicMock(spec=psutil.Process)
+        mock_child2 = MagicMock(spec=psutil.Process)
+        mock_parent = MagicMock(spec=psutil.Process)
+        mock_parent.name.return_value = "gunicorn: master"
+        mock_parent.children.return_value = [mock_child1, mock_child2]
+
+        mock_current = MagicMock(spec=psutil.Process)
+        mock_current.parent.return_value = mock_parent
+
+        with patch("mcpgateway.services.performance_service.psutil.Process", return_value=mock_current):
+            with patch.object(
+                service,
+                "_get_process_metrics",
+                side_effect=[
+                    WorkerMetrics(pid=1, cpu_percent=0.0, memory_rss_mb=0.0, memory_vms_mb=0.0, threads=1),
+                    WorkerMetrics(pid=2, cpu_percent=0.0, memory_rss_mb=0.0, memory_vms_mb=0.0, threads=1),
+                ],
+            ) as mock_pm:
+                workers = service.get_worker_metrics()
+
+        assert [w.pid for w in workers] == [1, 2]
+        assert mock_pm.call_count == 2
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_get_worker_metrics_parent_access_denied_falls_back_to_current(self):
+        import psutil
+
+        service = PerformanceService()
+
+        mock_current = MagicMock(spec=psutil.Process)
+        mock_current.parent.side_effect = psutil.AccessDenied()
+
+        with patch("mcpgateway.services.performance_service.psutil.Process", return_value=mock_current):
+            with patch.object(
+                service,
+                "_get_process_metrics",
+                return_value=WorkerMetrics(pid=123, cpu_percent=0.0, memory_rss_mb=0.0, memory_vms_mb=0.0, threads=1),
+            ) as mock_pm:
+                workers = service.get_worker_metrics()
+
+        assert [w.pid for w in workers] == [123]
+        mock_pm.assert_called_once_with(mock_current)
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
     def test_get_process_metrics(self):
         """Test metrics collection for a specific process."""
         import psutil
@@ -133,6 +206,35 @@ class TestWorkerMetrics:
         assert result.cpu_percent >= 0
         assert result.memory_rss_mb >= 0
         assert result.threads >= 1
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_get_process_metrics_open_fds_and_connections_fail(self):
+        import psutil
+        import time
+
+        service = PerformanceService()
+
+        mock_proc = MagicMock(spec=psutil.Process)
+        mock_proc.pid = 12345
+
+        mock_oneshot = MagicMock()
+        mock_oneshot.__enter__.return_value = None
+        mock_oneshot.__exit__.return_value = False
+        mock_proc.oneshot.return_value = mock_oneshot
+
+        mock_proc.memory_info.return_value = MagicMock(rss=0, vms=0)
+        mock_proc.create_time.return_value = time.time()
+        mock_proc.num_fds.side_effect = AttributeError("no fds")
+        mock_proc.net_connections = None
+        mock_proc.connections.side_effect = psutil.AccessDenied()
+        mock_proc.cpu_percent.return_value = 0.0
+        mock_proc.num_threads.return_value = 1
+        mock_proc.status.return_value = "running"
+
+        result = service._get_process_metrics(mock_proc)
+
+        assert result.open_fds is None
+        assert result.connections == 0
 
     @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
     def test_get_process_metrics_with_exception(self):
@@ -195,6 +297,44 @@ class TestGunicornMetrics:
         assert isinstance(result, GunicornMetricsSchema)
         assert result.master_pid == 1000
         assert result.workers_total == 2
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_get_gunicorn_metrics_ignores_child_cpu_percent_errors(self):
+        import psutil
+
+        service = PerformanceService()
+
+        good_child = MagicMock(pid=1001, cpu_percent=MagicMock(return_value=0.0))
+        bad_child = MagicMock(pid=1002)
+        bad_child.cpu_percent.side_effect = psutil.AccessDenied()
+
+        mock_parent = MagicMock(spec=psutil.Process)
+        mock_parent.pid = 1000
+        mock_parent.name.return_value = "gunicorn: master"
+        mock_parent.children.return_value = [good_child, bad_child]
+
+        mock_current = MagicMock(spec=psutil.Process)
+        mock_current.parent.return_value = mock_parent
+
+        with patch("mcpgateway.services.performance_service.psutil.Process", return_value=mock_current):
+            result = service.get_gunicorn_metrics()
+
+        assert result.master_pid == 1000
+        assert result.workers_total == 2
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_get_gunicorn_metrics_parent_access_denied_falls_back(self):
+        import psutil
+
+        service = PerformanceService()
+
+        mock_current = MagicMock(spec=psutil.Process)
+        mock_current.parent.side_effect = psutil.AccessDenied()
+
+        with patch("mcpgateway.services.performance_service.psutil.Process", return_value=mock_current):
+            result = service.get_gunicorn_metrics()
+
+        assert result.master_pid is None
 
 
 class TestRequestMetrics:
@@ -343,6 +483,44 @@ class TestCacheMetrics:
         assert result.used_memory_mb > 0
         assert result.hit_rate > 0
 
+    @pytest.mark.asyncio
+    async def test_get_cache_metrics_returns_default_when_no_client(self):
+        """When Redis client factory returns None, metrics should stay default."""
+        service = PerformanceService()
+
+        async def mock_get_redis_client():
+            return None
+
+        with patch("mcpgateway.services.performance_service.REDIS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.get_redis_client", mock_get_redis_client):
+                with patch("mcpgateway.services.performance_service.settings") as mock_settings:
+                    mock_settings.redis_url = "redis://localhost:6379"
+                    mock_settings.cache_type = "redis"
+                    result = await service.get_cache_metrics()
+
+        assert isinstance(result, CacheMetricsSchema)
+        assert result.connected is False
+
+    @pytest.mark.asyncio
+    async def test_get_cache_metrics_exception_sets_connected_false(self):
+        """Errors collecting Redis metrics should be swallowed and connected set to False."""
+        service = PerformanceService()
+
+        mock_client = AsyncMock()
+        mock_client.info = AsyncMock(side_effect=RuntimeError("boom"))
+
+        async def mock_get_redis_client():
+            return mock_client
+
+        with patch("mcpgateway.services.performance_service.REDIS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.get_redis_client", mock_get_redis_client):
+                with patch("mcpgateway.services.performance_service.settings") as mock_settings:
+                    mock_settings.redis_url = "redis://localhost:6379"
+                    mock_settings.cache_type = "redis"
+                    result = await service.get_cache_metrics()
+
+        assert result.connected is False
+
 
 class TestDashboard:
     """Tests for the complete performance dashboard."""
@@ -419,6 +597,42 @@ class TestSnapshotOperations:
         assert result.host == HOSTNAME
         assert "system" in result.metrics_json
         assert "requests" in result.metrics_json
+
+    def test_save_snapshot_converts_datetimes_to_isoformat(self):
+        """save_snapshot should JSON-serialize datetimes as ISO 8601 strings."""
+        service = PerformanceService()
+        mock_db = MagicMock()
+
+        boot_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        worker_create_time = datetime(2026, 1, 2, tzinfo=timezone.utc)
+
+        system = SystemMetricsSchema(
+            cpu_percent=0.0,
+            cpu_count=1,
+            memory_total_mb=0,
+            memory_used_mb=0,
+            memory_available_mb=0,
+            memory_percent=0.0,
+            disk_total_gb=0.0,
+            disk_used_gb=0.0,
+            disk_percent=0.0,
+            boot_time=boot_time,
+        )
+
+        with patch.object(service, "get_system_metrics", return_value=system):
+            with patch.object(service, "get_request_metrics", return_value=RequestMetricsSchema()):
+                with patch.object(service, "get_database_metrics", return_value=DatabaseMetricsSchema()):
+                    with patch.object(service, "get_gunicorn_metrics", return_value=GunicornMetricsSchema()):
+                        with patch.object(
+                            service,
+                            "get_worker_metrics",
+                            return_value=[WorkerMetrics(pid=1, cpu_percent=0.0, memory_rss_mb=0.0, memory_vms_mb=0.0, threads=1, create_time=worker_create_time)],
+                        ):
+                            service.save_snapshot(mock_db)
+
+        snapshot = mock_db.add.call_args[0][0]
+        assert snapshot.metrics_json["system"]["boot_time"] == boot_time.isoformat()
+        assert snapshot.metrics_json["workers"][0]["create_time"] == worker_create_time.isoformat()
 
     def test_save_snapshot_with_exception(self, test_db):
         """Test snapshot save with database error."""
@@ -521,6 +735,20 @@ class TestHistoryOperations:
         )
 
         assert isinstance(result, PerformanceHistoryResponse)
+        assert result.period_type == "hourly"
+
+    @pytest.mark.asyncio
+    async def test_get_history_cache_hit_returns_cached_value(self):
+        service = PerformanceService()
+
+        cached = PerformanceHistoryResponse(aggregates=[], period_type="hourly", total_count=0).model_dump()
+
+        mock_cache = MagicMock()
+        mock_cache.get_performance_history = AsyncMock(return_value=cached)
+
+        with patch("mcpgateway.services.performance_service._get_admin_stats_cache", return_value=mock_cache):
+            result = await service.get_history(MagicMock())
+
         assert result.period_type == "hourly"
 
 
@@ -683,6 +911,36 @@ class TestNetConnectionsCache:
                 result = service._get_net_connections_cached()
 
         assert result == 42
+
+    @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
+    def test_net_connections_cache_double_check_returns_cached_after_lock(self):
+        """Covers the double-check locking fast-return path inside the lock."""
+        import mcpgateway.services.performance_service as ps
+        import psutil
+
+        service = PerformanceService()
+
+        ps._net_connections_cache = 42
+        ps._net_connections_cache_time = 0.0
+
+        class FakeLock:
+            def __enter__(self):
+                # Simulate another thread refreshing the cache while we waited for the lock.
+                ps._net_connections_cache_time = 1000.0
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        with patch.object(ps.settings, "mcpgateway_performance_net_connections_enabled", True):
+            with patch.object(ps.settings, "mcpgateway_performance_net_connections_cache_ttl", 15):
+                with patch.object(ps, "_net_connections_lock", FakeLock()):
+                    with patch.object(ps.time, "time", return_value=1000.0):
+                        with patch.object(psutil, "net_connections") as mock_nc:
+                            result = service._get_net_connections_cached()
+
+        assert result == 42
+        mock_nc.assert_not_called()
 
     @pytest.mark.skipif(not PSUTIL_AVAILABLE, reason="psutil not available")
     def test_net_connections_cache_refreshes_when_expired(self):
@@ -863,3 +1121,49 @@ class TestRequestMetricsEdgeCases:
 
         assert isinstance(result, RequestMetricsSchema)
         assert result.requests_total == 0
+
+    def test_get_request_metrics_counts_1xx_and_3xx(self):
+        service = PerformanceService()
+
+        samples = [
+            MagicMock(name="http_requests_total", labels={"status": "100"}, value=5),
+            MagicMock(name="http_requests_total", labels={"status": "302"}, value=7),
+        ]
+        for s in samples:
+            s.name = "http_requests_total"
+
+        mock_metric = MagicMock()
+        mock_metric.name = "http_requests_total"
+        mock_metric.samples = samples
+
+        mock_registry = MagicMock()
+        mock_registry.collect.return_value = [mock_metric]
+
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
+                result = service.get_request_metrics()
+
+        assert result.requests_total == 12
+        assert result.requests_1xx == 5
+        assert result.requests_3xx == 7
+
+    def test_get_request_metrics_calculates_requests_per_second(self):
+        service = PerformanceService()
+        service._request_count_cache["total"] = 100
+        service._last_request_time = 990.0
+
+        sample = MagicMock(name="http_requests_total", labels={"status": "200"}, value=200)
+        sample.name = "http_requests_total"
+        mock_metric = MagicMock()
+        mock_metric.name = "http_requests_total"
+        mock_metric.samples = [sample]
+
+        mock_registry = MagicMock()
+        mock_registry.collect.return_value = [mock_metric]
+
+        with patch("mcpgateway.services.performance_service.PROMETHEUS_AVAILABLE", True):
+            with patch("mcpgateway.services.performance_service.REGISTRY", mock_registry):
+                with patch("mcpgateway.services.performance_service.time.time", return_value=1000.0):
+                    result = service.get_request_metrics()
+
+        assert result.requests_per_second == 10.0

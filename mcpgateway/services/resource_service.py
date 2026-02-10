@@ -1009,7 +1009,7 @@ class ResourceService:
 
         # Apply team-based access control if user_email is provided OR token_teams is explicitly set
         # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email or token_teams is not None:
+        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
@@ -1300,7 +1300,7 @@ class ResourceService:
 
         # Add visibility filtering if user context OR token_teams provided
         # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email or token_teams is not None:
+        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams

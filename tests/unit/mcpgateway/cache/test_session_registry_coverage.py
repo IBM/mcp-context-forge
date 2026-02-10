@@ -734,6 +734,72 @@ class TestGetRemoveSessionEdgeCases:
             assert result is None
 
     @pytest.mark.asyncio
+    async def test_get_session_redis_exists_in_backend_but_not_local(self, registry, caplog):
+        """Lines 744-746: Exists in Redis but not local cache (informational log)."""
+        caplog.set_level(logging.INFO, logger="mcpgateway.cache.session_registry")
+        registry._backend = "redis"
+        registry._sessions.clear()
+        registry._redis = AsyncMock()
+        registry._redis.exists = AsyncMock(return_value=1)
+
+        result = await registry.get_session("sid_exists")
+        assert result is None
+        assert "exists in Redis but not in local cache" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_get_session_redis_not_in_backend_returns_none(self, registry):
+        """Line 744->746: False branch of `if session_exists` (no log)."""
+        registry._backend = "redis"
+        registry._sessions.clear()
+        registry._redis = AsyncMock()
+        registry._redis.exists = AsyncMock(return_value=0)
+
+        result = await registry.get_session("sid_missing")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_session_database_exists_in_backend_but_not_local(self, monkeypatch, registry, caplog):
+        """Lines 780-782: Exists in database but not local cache (informational log)."""
+        caplog.set_level(logging.INFO, logger="mcpgateway.cache.session_registry")
+        registry._backend = "database"
+        registry._sessions.clear()
+
+        mock_db = Mock()
+        mock_db.query.return_value.filter.return_value.first.return_value = Mock()
+        mock_db.close = Mock()
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]))
+
+        async def immediate_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
+
+        result = await registry.get_session("sid_exists")
+        assert result is None
+        assert "exists in database but not in local cache" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_get_session_database_not_in_backend_returns_none(self, monkeypatch, registry):
+        """Line 780->782: False branch of `if exists` (no log)."""
+        registry._backend = "database"
+        registry._sessions.clear()
+
+        mock_db = Mock()
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db.close = Mock()
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]))
+
+        async def immediate_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
+
+        result = await registry.get_session("sid_missing")
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_remove_session_redis_no_client(self, monkeypatch):
         """Line 855: remove_session when redis client is None."""
         monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
@@ -788,6 +854,791 @@ class TestBroadcastEdgeCases:
             await registry.broadcast("test", {"msg": "test"})
             assert "Redis client not initialized" in caplog.text
 
+    @pytest.mark.asyncio
+    async def test_broadcast_unknown_backend_falls_through(self, registry):
+        """Line 968->exit: Unknown backend falls through without raising (branch coverage)."""
+        registry._backend = "unknown"
+        await registry.broadcast("sid", {"msg": "noop"})
+
+
+# ---------------------------------------------------------------------------
+# initialize edge case: redis client factory returns None (line 496->511)
+# ---------------------------------------------------------------------------
+class TestInitializeEdgeCases:
+    """Cover initialize edge cases."""
+
+    @pytest.mark.asyncio
+    async def test_initialize_redis_client_none(self, monkeypatch):
+        """Line 496->511: get_redis_client returns None so pubsub isn't set, but reaper still starts."""
+        monkeypatch.setattr("mcpgateway.cache.session_registry.REDIS_AVAILABLE", True)
+
+        async def mock_get_redis_client():
+            return None
+
+        with patch("mcpgateway.cache.session_registry.get_redis_client", mock_get_redis_client):
+            reg = SessionRegistry(backend="redis", redis_url="redis://localhost:6379")
+            await reg.initialize()
+            try:
+                assert reg._redis is None
+                assert reg._stuck_task_reaper is not None
+            finally:
+                await reg.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_initialize_unknown_backend_branch_arc(self):
+        """Line 506->511: Force an unexpected _backend value to cover the final-elif false branch."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "unknown"
+        await reg.initialize()
+        try:
+            assert reg._stuck_task_reaper is not None
+        finally:
+            await reg.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# respond: redis + database backend coverage (lines 1185-1251, 1305-1480)
+# ---------------------------------------------------------------------------
+class TestRespondBackends:
+    """Cover respond() loops for redis/database backends without real external services."""
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_no_client_warns_and_returns(self, caplog):
+        """Lines 1185-1187: Redis respond should warn and return when _redis is None."""
+        caplog.set_level(logging.WARNING, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._redis = None
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        assert "Redis client not initialized, cannot respond to sid" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_processes_one_message_and_cleans_up(self, monkeypatch):
+        """Happy-path through redis respond loop with pubsub cleanup."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+
+        captured: Dict[str, Any] = {}
+
+        async def fake_generate_response(*, message, transport, **kwargs):
+            captured["message"] = message
+            captured["transport"] = transport
+            # Ensure loop exits on next iteration.
+            reg._sessions.pop("sid", None)
+
+        monkeypatch.setattr(reg, "generate_response", fake_generate_response)
+
+        class _OneShotPubSub:
+            def __init__(self):
+                self.unsubscribed: str | None = None
+                self.closed = False
+                self._sent = False
+
+            async def subscribe(self, channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                if self._sent:
+                    return None
+                self._sent = True
+                payload = {"message": {"method": "ping", "id": 1, "params": {}}, "timestamp": 0}
+                return {"type": "message", "data": json.dumps(payload).encode("utf-8")}
+
+            async def unsubscribe(self, channel):
+                self.unsubscribed = channel
+
+            async def aclose(self):
+                self.closed = True
+
+        pubsub = _OneShotPubSub()
+
+        class _MockRedis:
+            def pubsub(self):
+                return pubsub
+
+        reg._redis = _MockRedis()
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        assert captured["transport"] is tr
+        assert captured["message"]["method"] == "ping"
+        assert pubsub.unsubscribed == "sid"
+        assert pubsub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_timeout_error_continues_then_exits(self):
+        """Lines 1207-1209: TimeoutError from pubsub.get_message should continue loop."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+
+        class _TimeoutPubSub:
+            def __init__(self):
+                self._called = False
+                self.unsubscribed: str | None = None
+                self.closed = False
+
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                if not self._called:
+                    self._called = True
+                    # Trigger timeout path, then force loop exit next iteration.
+                    reg._sessions.pop("sid", None)
+                    raise asyncio.TimeoutError()
+                return None
+
+            async def unsubscribe(self, channel):
+                self.unsubscribed = channel
+
+            async def aclose(self):
+                self.closed = True
+
+        pubsub = _TimeoutPubSub()
+
+        class _MockRedis:
+            def pubsub(self):
+                return pubsub
+
+        reg._redis = _MockRedis()
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        assert pubsub.unsubscribed == "sid"
+        assert pubsub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_msg_none_sleeps_and_continues(self):
+        """Lines 1211-1215: None message should sleep briefly to prevent tight loop."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+
+        class _NonePubSub:
+            def __init__(self):
+                self._called = False
+                self.unsubscribed: str | None = None
+                self.closed = False
+
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                if not self._called:
+                    self._called = True
+                    # Ensure loop breaks after the sleep/continue.
+                    reg._sessions.pop("sid", None)
+                    return None
+                return None
+
+            async def unsubscribe(self, channel):
+                self.unsubscribed = channel
+
+            async def aclose(self):
+                self.closed = True
+
+        pubsub = _NonePubSub()
+
+        class _MockRedis:
+            def pubsub(self):
+                return pubsub
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)) as mock_sleep:
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            mock_sleep.assert_any_await(0.1)
+
+        assert pubsub.unsubscribed == "sid"
+        assert pubsub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_non_message_type_sleeps_and_continues(self):
+        """Lines 1216-1219: Non-message types should also sleep briefly."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+
+        class _NonMessagePubSub:
+            def __init__(self):
+                self._called = False
+                self.unsubscribed: str | None = None
+                self.closed = False
+
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                if not self._called:
+                    self._called = True
+                    reg._sessions.pop("sid", None)
+                    return {"type": "subscribe", "data": b"{}"}
+                return None
+
+            async def unsubscribe(self, channel):
+                self.unsubscribed = channel
+
+            async def aclose(self):
+                self.closed = True
+
+        pubsub = _NonMessagePubSub()
+
+        class _MockRedis:
+            def pubsub(self):
+                return pubsub
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)) as mock_sleep:
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+            mock_sleep.assert_any_await(0.1)
+
+        assert pubsub.unsubscribed == "sid"
+        assert pubsub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_pubsub_close_fallback(self):
+        """Lines 1243-1245: If pubsub lacks aclose(), use close()."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+
+        class _CloseOnlyPubSub:
+            def __init__(self):
+                self._called = False
+                self.closed = False
+                self.unsubscribed: str | None = None
+
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                if not self._called:
+                    self._called = True
+                    # Exit quickly.
+                    reg._sessions.pop("sid", None)
+                    return None
+                return None
+
+            async def unsubscribe(self, channel):
+                self.unsubscribed = channel
+
+            async def close(self):
+                self.closed = True
+
+        pubsub = _CloseOnlyPubSub()
+
+        class _MockRedis:
+            def pubsub(self):
+                return pubsub
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert pubsub.unsubscribed == "sid"
+        assert pubsub.closed is True
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_transport_missing_skips_generate_response(self):
+        """Line 1224->1196: transport is falsy, so generate_response isn't called and loop continues."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+
+        # Keep the key present so the loop starts, but make transport falsy.
+        reg._sessions["sid"] = None
+
+        class _PubSub:
+            def __init__(self):
+                self._called = False
+                self.unsubscribed: str | None = None
+
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                if not self._called:
+                    self._called = True
+                    # Remove session so the loop exits next iteration.
+                    reg._sessions.pop("sid", None)
+                    payload = {"message": {"method": "ping", "id": 1, "params": {}}, "timestamp": 0}
+                    return {"type": "message", "data": json.dumps(payload).encode("utf-8")}
+                return None
+
+            async def unsubscribe(self, channel):
+                self.unsubscribed = channel
+
+            async def aclose(self):
+                return None
+
+        pubsub = _PubSub()
+
+        class _MockRedis:
+            def pubsub(self):
+                return pubsub
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert pubsub.unsubscribed == "sid"
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_logs_error_on_exception(self, caplog):
+        """Lines 1229-1230: Exceptions in Redis respond loop are logged."""
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._sessions["sid"] = FakeSSETransport("sid")
+
+        class _BoomPubSub:
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                raise RuntimeError("boom")
+
+            async def unsubscribe(self, _channel):
+                return None
+
+            async def aclose(self):
+                return None
+
+        class _MockRedis:
+            def pubsub(self):
+                return _BoomPubSub()
+
+        reg._redis = _MockRedis()
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        assert "PubSub listener error for session sid: boom" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_cancelled_error_is_logged_and_propagates(self, caplog):
+        """Lines 1226-1228: CancelledError path logs and re-raises."""
+        caplog.set_level(logging.INFO, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._sessions["sid"] = FakeSSETransport("sid")
+
+        class _CancelPubSub:
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                raise asyncio.CancelledError()
+
+            async def unsubscribe(self, _channel):
+                return None
+
+            async def aclose(self):
+                return None
+
+        class _MockRedis:
+            def pubsub(self):
+                return _CancelPubSub()
+
+        reg._redis = _MockRedis()
+
+        with pytest.raises(asyncio.CancelledError):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert "PubSub listener for session sid cancelled" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_cleanup_unsubscribe_timeout_logged(self, caplog):
+        """Lines 1236-1237: unsubscribe TimeoutError is logged at debug."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._sessions["sid"] = FakeSSETransport("sid")
+
+        class _TimeoutUnsubPubSub:
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                # Exit loop quickly.
+                reg._sessions.pop("sid", None)
+                return None
+
+            async def unsubscribe(self, _channel):
+                raise asyncio.TimeoutError()
+
+            async def aclose(self):
+                return None
+
+        class _MockRedis:
+            def pubsub(self):
+                return _TimeoutUnsubPubSub()
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert "Pubsub unsubscribe timed out for session sid" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_cleanup_unsubscribe_exception_logged(self, caplog):
+        """Lines 1238-1239: unsubscribe Exception is logged at debug."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._sessions["sid"] = FakeSSETransport("sid")
+
+        class _BoomUnsubPubSub:
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                reg._sessions.pop("sid", None)
+                return None
+
+            async def unsubscribe(self, _channel):
+                raise RuntimeError("unsub boom")
+
+            async def aclose(self):
+                return None
+
+        class _MockRedis:
+            def pubsub(self):
+                return _BoomUnsubPubSub()
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert "Error unsubscribing pubsub for session sid: unsub boom" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_cleanup_close_timeout_logged(self, caplog):
+        """Lines 1245-1246: close TimeoutError is logged at debug."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._sessions["sid"] = FakeSSETransport("sid")
+
+        class _TimeoutClosePubSub:
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                reg._sessions.pop("sid", None)
+                return None
+
+            async def unsubscribe(self, _channel):
+                return None
+
+            async def aclose(self):
+                raise asyncio.TimeoutError()
+
+        class _MockRedis:
+            def pubsub(self):
+                return _TimeoutClosePubSub()
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert "Pubsub close timed out for session sid" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_redis_cleanup_close_exception_logged(self, caplog):
+        """Lines 1247-1248: close Exception is logged at debug."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "redis"
+        reg._sessions["sid"] = FakeSSETransport("sid")
+
+        class _BoomClosePubSub:
+            async def subscribe(self, _channel):
+                return None
+
+            async def get_message(self, **_kwargs):
+                reg._sessions.pop("sid", None)
+                return None
+
+            async def unsubscribe(self, _channel):
+                return None
+
+            async def aclose(self):
+                raise RuntimeError("close boom")
+
+        class _MockRedis:
+            def pubsub(self):
+                return _BoomClosePubSub()
+
+        reg._redis = _MockRedis()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert "Error closing pubsub for session sid: close boom" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_database_session_closing_breaks_early(self, caplog):
+        """Lines 1426-1427: Closing sessions should stop DB poll loop early."""
+        caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+        reg._closing_sessions.add("sid")
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        assert "closing, stopping poll loop early" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_database_processes_record_and_removes_message(self, monkeypatch):
+        """Cover _db_read_session_and_message, message extraction, transport branch, and _db_remove."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+
+        # DB mocks for read + remove.
+        read_query = Mock()
+        read_query.outerjoin.return_value = read_query
+        read_query.filter.return_value = read_query
+        read_query.order_by.return_value = read_query
+
+        record = Mock()
+        record.message = json.dumps({"message": {"method": "ping", "id": 1, "params": {}}, "timestamp": 0})
+
+        session_obj = Mock()
+        read_query.first.side_effect = [(session_obj, record), None]
+
+        remove_query = Mock()
+        remove_query.filter.return_value = remove_query
+        remove_query.delete.return_value = 1
+
+        mock_db = Mock()
+        mock_db.rollback = Mock()
+        mock_db.commit = Mock()
+        mock_db.close = Mock()
+
+        def _query_side_effect(*args):
+            if len(args) == 2:
+                return read_query
+            return remove_query
+
+        mock_db.query.side_effect = _query_side_effect
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]))
+
+        async def immediate_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
+        monkeypatch.setattr(reg, "generate_response", AsyncMock(return_value=None))
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        reg.generate_response.assert_awaited()
+        assert mock_db.commit.called
+        assert mock_db.close.called
+
+    @pytest.mark.asyncio
+    async def test_respond_database_record_but_no_transport_backoffs(self, monkeypatch):
+        """Cover transport-missing branch when a DB record is present."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+
+        read_query = Mock()
+        read_query.outerjoin.return_value = read_query
+        read_query.filter.return_value = read_query
+        read_query.order_by.return_value = read_query
+
+        record = Mock()
+        record.message = json.dumps({"message": {"method": "ping"}, "timestamp": 0})
+        session_obj = Mock()
+        read_query.first.side_effect = [(session_obj, record), None]
+
+        mock_db = Mock()
+        mock_db.rollback = Mock()
+        mock_db.close = Mock()
+        mock_db.query.return_value = read_query
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]))
+
+        async def immediate_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", AsyncMock(return_value=None)):
+            await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert mock_db.close.called
+
+    @pytest.mark.asyncio
+    async def test_respond_database_logs_error_on_exception(self, monkeypatch, caplog):
+        """Lines 1466-1467: Unexpected exceptions in DB poll loop are logged."""
+        caplog.set_level(logging.ERROR, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+
+        async def boom_to_thread(*_args, **_kwargs):
+            raise RuntimeError("db poll boom")
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", boom_to_thread)
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        assert "Message check loop error for session sid" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_database_db_read_rolls_back_on_exception(self, monkeypatch):
+        """Lines 1321-1323: _db_read_session_and_message rolls back and re-raises."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+
+        read_query = Mock()
+        read_query.outerjoin.return_value = read_query
+        read_query.filter.return_value = read_query
+        read_query.order_by.return_value = read_query
+        read_query.first.side_effect = RuntimeError("read boom")
+
+        mock_db = Mock()
+        mock_db.query.return_value = read_query
+        mock_db.rollback = Mock()
+        mock_db.close = Mock()
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]))
+
+        async def immediate_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+        mock_db.rollback.assert_called()
+        mock_db.close.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_respond_database_db_remove_rolls_back_on_exception(self, monkeypatch):
+        """Lines 1354-1356: _db_remove rolls back and re-raises."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+
+        tr = FakeSSETransport("sid")
+        reg._sessions["sid"] = tr
+        monkeypatch.setattr(reg, "generate_response", AsyncMock(return_value=None))
+
+        read_query = Mock()
+        read_query.outerjoin.return_value = read_query
+        read_query.filter.return_value = read_query
+        read_query.order_by.return_value = read_query
+
+        record = Mock()
+        record.message = json.dumps({"message": {"method": "ping", "id": 1, "params": {}}, "timestamp": 0})
+        session_obj = Mock()
+        read_query.first.side_effect = [(session_obj, record)]
+
+        remove_query = Mock()
+        remove_query.filter.return_value = remove_query
+        remove_query.delete.return_value = 1
+
+        mock_db = Mock()
+        mock_db.rollback = Mock()
+        mock_db.commit = Mock(side_effect=RuntimeError("commit boom"))
+        mock_db.close = Mock()
+
+        def _query_side_effect(*args):
+            if len(args) == 2:
+                return read_query
+            return remove_query
+
+        mock_db.query.side_effect = _query_side_effect
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.get_db", lambda: iter([mock_db]))
+
+        async def immediate_to_thread(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", immediate_to_thread)
+
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        mock_db.rollback.assert_called()
+        mock_db.close.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_respond_database_cancelled_error_propagates(self, monkeypatch, caplog):
+        """Lines 1463-1465 and 1474-1476: CancelledError is logged and re-raised."""
+        caplog.set_level(logging.INFO, logger="mcpgateway.cache.session_registry")
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "database"
+
+        async def ok_to_thread(func, *args, **kwargs):
+            # Always report session exists with no message so we reach sleep.
+            return (Mock(), None)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.to_thread", ok_to_thread)
+
+        async def cancel_sleep(_interval):
+            raise asyncio.CancelledError()
+
+        with patch("mcpgateway.cache.session_registry.asyncio.sleep", cancel_sleep):
+            with pytest.raises(asyncio.CancelledError):
+                await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+        assert "Message check loop cancelled for session sid" in caplog.text
+        assert "Database respond cancelled for session sid" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_respond_unknown_backend_branch_arc(self):
+        """Line 1253->exit: Force respond() backend chain fall-through for branch coverage."""
+        reg = SessionRegistry(backend="memory")
+        reg._backend = "unknown"
+        await reg.respond(server_id=None, user={}, session_id="sid", base_url="http://localhost")
+
+
+# ---------------------------------------------------------------------------
+# shutdown branch arcs (lines 541->549, 558->566, 575->584)
+# ---------------------------------------------------------------------------
+class TestShutdownBranchArcs:
+    """Cover hard-to-hit shutdown branch arcs for coverage."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_without_initialize_skips_reaper(self):
+        """Line 541->549: _stuck_task_reaper is None, so the block is skipped."""
+        reg = SessionRegistry(backend="memory")
+        await reg.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_truthy_respond_tasks_but_no_values(self):
+        """Line 558->566: _respond_tasks is truthy but values() is empty (branch coverage)."""
+        reg = SessionRegistry(backend="memory")
+        reg._respond_tasks = MagicMock()
+        reg._respond_tasks.__bool__ = Mock(return_value=True)
+        reg._respond_tasks.values = Mock(return_value=[])
+        reg._respond_tasks.clear = Mock()
+        await reg.shutdown()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_truthy_stuck_tasks_but_no_values(self):
+        """Line 575->584: _stuck_tasks is truthy but values() is empty (branch coverage)."""
+        reg = SessionRegistry(backend="memory")
+        reg._stuck_tasks = MagicMock()
+        reg._stuck_tasks.__bool__ = Mock(return_value=True)
+        reg._stuck_tasks.values = Mock(return_value=[])
+        reg._stuck_tasks.clear = Mock()
+        await reg.shutdown()
 
 # ---------------------------------------------------------------------------
 # _register_session_mapping and get_all_session_ids (lines 1028-1079, 1087-1088)
@@ -1496,17 +2347,20 @@ class TestCancelRespondTaskDoneStates:
         """Lines 356-357: task.cancel() + wait_for succeeds normally."""
         caplog.set_level(logging.DEBUG, logger="mcpgateway.cache.session_registry")
 
-        async def sleeper():
-            await asyncio.sleep(999)
+        async def swallow_cancel():
+            """Swallow CancelledError so wait_for() completes normally (covers 356-357)."""
+            try:
+                await asyncio.sleep(999)
+            except asyncio.CancelledError:
+                return
 
-        task = asyncio.create_task(sleeper())
+        task = asyncio.create_task(swallow_cancel())
         await asyncio.sleep(0)
         registry.register_respond_task("cancel_ok", task)
 
-        # Real cancellation should work here since the task is just sleeping
         await registry._cancel_respond_task("cancel_ok")
         assert "cancel_ok" not in registry._respond_tasks
-        assert "Respond task cancelled for session cancel_ok" in caplog.text or "cancel_ok" not in registry._respond_tasks
+        assert "Respond task cancelled for session cancel_ok" in caplog.text
 
 
 # ---------------------------------------------------------------------------
@@ -1582,6 +2436,60 @@ class TestGenerateResponseServersPath:
                 user={"auth_token": "tok"},
                 base_url="http://host/servers/abc123",
             )
+
+        call_args = mock_client.post.call_args
+        url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")
+        assert url == "http://host/rpc"
+
+    @pytest.mark.asyncio
+    async def test_generate_response_servers_index_value_error(self, registry, stub_db, stub_services):
+        """Lines 1966-1967: ValueError in path_parts.index('servers') falls back to empty root_path."""
+        tr = FakeSSETransport("valerr_srv")
+        await registry.add_session("valerr_srv", tr)
+
+        mock_response = Mock()
+        mock_response.json.return_value = {"result": {}, "id": 56}
+
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+
+        class MockAsyncClient:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return mock_client
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class _Parts(list):
+            def index(self, *_args, **_kwargs):  # noqa: A003 - match list.index signature
+                raise ValueError("servers not found")
+
+        class _Path(str):
+            def split(self, sep=None, maxsplit=-1):  # noqa: D401
+                return _Parts(super().split(sep, maxsplit))
+
+        class _Parsed:
+            scheme = "http"
+            netloc = "host"
+            path = _Path("/servers/abc123")
+
+        def fake_urlparse(_url: str):  # noqa: D401
+            return _Parsed()
+
+        msg = {"method": "ping", "id": 56, "params": {}}
+
+        with patch("mcpgateway.cache.session_registry.urlparse", fake_urlparse):
+            with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+                await registry.generate_response(
+                    message=msg,
+                    transport=tr,
+                    server_id=None,
+                    user={"auth_token": "tok"},
+                    base_url="http://ignored/servers/abc123",
+                )
 
         call_args = mock_client.post.call_args
         url = call_args.args[0] if call_args.args else call_args.kwargs.get("url", "")

@@ -6,8 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
@@ -193,6 +194,52 @@ class TestCleanupTable:
         assert result.table_name == "tool_metrics"
         assert result.error is None
 
+    def test_cleanup_table_deletes_records_in_batches(self, cleanup_service):
+        mock_session = MagicMock()
+        mock_session.__enter__ = MagicMock(return_value=mock_session)
+        mock_session.__exit__ = MagicMock(return_value=False)
+
+        ids_res = MagicMock()
+        ids_res.fetchall.return_value = [(1,), (2,)]
+
+        del_res = MagicMock()
+        del_res.rowcount = 2
+
+        count_res = MagicMock()
+        count_res.scalar.return_value = 0
+
+        mock_session.execute.side_effect = [ids_res, del_res, count_res]
+        mock_session.commit = MagicMock()
+
+        with patch(
+            "mcpgateway.services.metrics_cleanup_service.fresh_db_session",
+            return_value=mock_session,
+        ):
+            result = cleanup_service._cleanup_table(
+                ToolMetric,
+                "tool_metrics",
+                datetime.now(timezone.utc) - timedelta(days=7),
+            )
+
+        assert result.deleted_count == 2
+        assert result.remaining_count == 0
+        assert result.error is None
+
+    def test_cleanup_table_handles_db_exception(self, cleanup_service):
+        with patch(
+            "mcpgateway.services.metrics_cleanup_service.fresh_db_session",
+            side_effect=Exception("boom"),
+        ):
+            result = cleanup_service._cleanup_table(
+                ToolMetric,
+                "tool_metrics",
+                datetime.now(timezone.utc) - timedelta(days=7),
+            )
+
+        assert result.deleted_count == 0
+        assert result.remaining_count == -1
+        assert result.error == "boom"
+
 
 def test_delete_metrics_in_batches_counts_rows():
     """Test delete_metrics_in_batches aggregates row counts and stops."""
@@ -264,10 +311,146 @@ async def test_cleanup_all_retention_zero_includes_rollup(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_cleanup_all_retention_nonzero_includes_rollup(monkeypatch: pytest.MonkeyPatch):
+    """Test cleanup_all uses hour-aligned cutoff and rollup retention cutoff."""
+    service = MetricsCleanupService()
+    monkeypatch.setattr(service, "METRIC_TABLES", [("tool_metrics", ToolMetric, ToolMetric, "tool_id")])
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.to_thread", fake_to_thread)
+
+    seen = []
+
+    def fake_cleanup(model_class, table_name, cutoff, timestamp_column="timestamp"):
+        seen.append((table_name, cutoff, timestamp_column))
+        return CleanupResult(table_name=table_name, deleted_count=1, remaining_count=0, cutoff_date=cutoff, duration_seconds=0.01)
+
+    monkeypatch.setattr(service, "_cleanup_table", fake_cleanup)
+
+    summary = await service.cleanup_all(retention_days=7, include_rollup=True)
+
+    assert summary.total_deleted == 2
+    assert "tool_metrics" in summary.tables
+    assert "tool_metrics_hourly" in summary.tables
+    assert seen[0][2] == "timestamp"
+    assert seen[1][2] == "hour_start"
+    assert seen[0][1].minute == 0
+    assert seen[0][1].second == 0
+    assert seen[0][1].microsecond == 0
+
+
+@pytest.mark.asyncio
 async def test_cleanup_table_invalid_type(cleanup_service):
     """Test cleanup_table raises for unknown table types."""
     with pytest.raises(ValueError, match="Unknown table type"):
         await cleanup_service.cleanup_table("unknown")
+
+
+@pytest.mark.asyncio
+async def test_cleanup_table_retention_zero_future_cutoff(monkeypatch: pytest.MonkeyPatch, cleanup_service):
+    seen = {}
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.to_thread", fake_to_thread)
+
+    def fake_cleanup(model_class, table_name, cutoff, timestamp_column="timestamp"):
+        seen["cutoff"] = cutoff
+        return CleanupResult(table_name=table_name, deleted_count=0, remaining_count=0, cutoff_date=cutoff, duration_seconds=0.01)
+
+    monkeypatch.setattr(cleanup_service, "_cleanup_table", fake_cleanup)
+
+    result = await cleanup_service.cleanup_table("tool", retention_days=0)
+    assert result.table_name == "tool_metrics"
+    assert seen["cutoff"] > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_table_retention_nonzero_hour_aligned_cutoff(monkeypatch: pytest.MonkeyPatch, cleanup_service):
+    seen = {}
+
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.to_thread", fake_to_thread)
+
+    def fake_cleanup(model_class, table_name, cutoff, timestamp_column="timestamp"):
+        seen["cutoff"] = cutoff
+        return CleanupResult(table_name=table_name, deleted_count=0, remaining_count=0, cutoff_date=cutoff, duration_seconds=0.01)
+
+    monkeypatch.setattr(cleanup_service, "_cleanup_table", fake_cleanup)
+
+    result = await cleanup_service.cleanup_table("tool", retention_days=1)
+    assert result.table_name == "tool_metrics"
+    assert seen["cutoff"].minute == 0
+    assert seen["cutoff"].second == 0
+    assert seen["cutoff"].microsecond == 0
+
+
+@pytest.mark.asyncio
+async def test_cleanup_loop_breaks_on_shutdown(monkeypatch: pytest.MonkeyPatch):
+    service = MetricsCleanupService(cleanup_interval_hours=0.001)
+    task = asyncio.create_task(service._cleanup_loop())
+    await asyncio.sleep(0)
+    service._shutdown_event.set()
+    await asyncio.wait_for(task, timeout=1)
+
+
+@pytest.mark.asyncio
+async def test_cleanup_loop_runs_cleanup_on_timeout_and_updates_stats(monkeypatch: pytest.MonkeyPatch):
+    service = MetricsCleanupService(cleanup_interval_hours=1)
+
+    now = datetime.now(timezone.utc)
+    summary = CleanupSummary(
+        total_deleted=3,
+        tables={"tool_metrics": CleanupResult(table_name="tool_metrics", deleted_count=3, remaining_count=0, cutoff_date=now, duration_seconds=0.01)},
+        duration_seconds=0.01,
+        started_at=now,
+        completed_at=now,
+    )
+
+    async def fake_cleanup_all(*_a, **_kw):
+        service._shutdown_event.set()
+        return summary
+
+    async def fake_wait_for(awaitable, timeout=None):  # noqa: ARG001
+        # Avoid unawaited coroutine warnings when forcing a TimeoutError branch.
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.wait_for", fake_wait_for)
+    monkeypatch.setattr(service, "cleanup_all", fake_cleanup_all)
+    await service._cleanup_loop()
+    assert service._cleanup_runs == 1
+    assert service._total_cleaned == 3
+
+
+@pytest.mark.asyncio
+async def test_cleanup_loop_sleeps_and_continues_on_error(monkeypatch: pytest.MonkeyPatch):
+    service = MetricsCleanupService(cleanup_interval_hours=1)
+
+    async def fake_cleanup_all(*_a, **_kw):
+        service._shutdown_event.set()
+        raise RuntimeError("boom")
+
+    async def fake_wait_for(awaitable, timeout=None):  # noqa: ARG001
+        close = getattr(awaitable, "close", None)
+        if callable(close):
+            close()
+        raise asyncio.TimeoutError
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.wait_for", fake_wait_for)
+    monkeypatch.setattr(service, "cleanup_all", fake_cleanup_all)
+    sleep_mock = AsyncMock()
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.sleep", sleep_mock)
+
+    await service._cleanup_loop()
+    sleep_mock.assert_awaited_once_with(60)
 
 
 @pytest.mark.asyncio

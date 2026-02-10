@@ -2,14 +2,14 @@
 """Coverage tests for mcpgateway.plugins.framework.models — world-writable UDS, gRPC configs, edge cases."""
 
 # Standard
-import os
-import stat
-from pathlib import Path
+from pathlib import Path, PurePath
+from unittest.mock import patch
 
 # Third-Party
 import pytest
 
 # First-Party
+from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE
 from mcpgateway.plugins.framework.models import (
     GRPCClientConfig,
     GRPCClientTLSConfig,
@@ -17,6 +17,9 @@ from mcpgateway.plugins.framework.models import (
     GRPCServerTLSConfig,
     MCPClientConfig,
     MCPServerConfig,
+    MCPServerTLSConfig,
+    PluginConfig,
+    UnixSocketClientConfig,
     UnixSocketServerConfig,
 )
 from mcpgateway.common.models import TransportType
@@ -299,6 +302,20 @@ class TestMCPServerConfigFromEnv:
         assert config is not None
         assert config.tls is not None
 
+    def test_from_env_ssl_enabled_without_tls_data(self, monkeypatch):
+        """Cover branch where SSL is enabled but no TLS env vars are set (tls stays None)."""
+        monkeypatch.setenv("PLUGINS_SERVER_HOST", "127.0.0.1")
+        monkeypatch.setenv("PLUGINS_SERVER_SSL_ENABLED", "true")
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CERTFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_KEYFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CA_CERTS", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_KEYFILE_PASSWORD", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CERT_REQS", raising=False)
+
+        config = MCPServerConfig.from_env()
+        assert config is not None
+        assert config.tls is None
+
 
 # ===========================================================================
 # MCPServerTLSConfig from_env
@@ -306,9 +323,162 @@ class TestMCPServerConfigFromEnv:
 
 
 class TestMCPServerTLSConfigFromEnv:
-    def test_invalid_cert_reqs(self, monkeypatch):
-        from mcpgateway.plugins.framework.models import MCPServerTLSConfig
+    def test_from_env_with_ca_bundle_and_password(self, monkeypatch, tmp_path):
+        ca = _write_file(tmp_path, "server-ca.pem")
+        monkeypatch.setenv("PLUGINS_SERVER_SSL_CA_CERTS", ca)
+        monkeypatch.setenv("PLUGINS_SERVER_SSL_KEYFILE_PASSWORD", "pw")
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_KEYFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CERTFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CERT_REQS", raising=False)
 
+        config = MCPServerTLSConfig.from_env()
+        assert config is not None
+        assert config.ca_bundle is not None
+        assert config.keyfile_password == "pw"
+
+    def test_from_env_empty_returns_none(self, monkeypatch):
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_KEYFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CERTFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CA_CERTS", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_KEYFILE_PASSWORD", raising=False)
+        monkeypatch.delenv("PLUGINS_SERVER_SSL_CERT_REQS", raising=False)
+        assert MCPServerTLSConfig.from_env() is None
+
+    def test_invalid_cert_reqs(self, monkeypatch):
         monkeypatch.setenv("PLUGINS_SERVER_SSL_CERT_REQS", "invalid")
         with pytest.raises(ValueError, match="Invalid PLUGINS_SERVER_SSL_CERT_REQS"):
             MCPServerTLSConfig.from_env()
+
+
+# ===========================================================================
+# Validators / edge branches (UDS, env parsing, PluginConfig)
+# ===========================================================================
+
+
+class TestMCPServerConfigValidators:
+    def test_uds_none(self):
+        config = MCPServerConfig(uds=None)
+        assert config.uds is None
+
+    def test_uds_is_absolute_check_branch(self, tmp_path):
+        uds_path = tmp_path / "socket.sock"
+        with patch.object(PurePath, "is_absolute", return_value=False):
+            with pytest.raises(ValueError, match="must be absolute"):
+                MCPServerConfig(uds=str(uds_path))
+
+    def test_uds_parent_stat_oserror_is_ignored(self, tmp_path):
+        uds_path = tmp_path / "socket.sock"
+        with patch.object(Path, "is_dir", return_value=True), patch.object(Path, "stat", side_effect=OSError("boom")):
+            config = MCPServerConfig(uds=str(uds_path))
+        assert config.uds is not None
+
+    def test_parse_bool_false_and_invalid(self):
+        assert MCPServerConfig._parse_bool("false") is False
+        with pytest.raises(ValueError, match="Invalid boolean value"):
+            MCPServerConfig._parse_bool("maybe")
+
+
+class TestMCPClientConfigMoreBranches:
+    def test_validate_script_missing_file_raises(self, tmp_path):
+        missing = tmp_path / "missing.py"
+        with pytest.raises(ValueError, match="does not exist"):
+            MCPClientConfig(proto=TransportType.STDIO, script=str(missing))
+
+    def test_validate_script_py_file_allows_non_executable(self, tmp_path):
+        script = tmp_path / "script.py"
+        script.write_text("print('hi')")
+        config = MCPClientConfig(proto=TransportType.STDIO, script=str(script))
+        assert config.script == str(script)
+
+    def test_validate_env_empty_key_raises(self):
+        with pytest.raises(ValueError, match="env keys must be non-empty"):
+            MCPClientConfig(proto=TransportType.STDIO, cmd=["python"], env={"": "x"})
+
+    def test_validate_env_non_string_value_raises(self):
+        with pytest.raises(ValueError, match="env values must be strings"):
+            MCPClientConfig.validate_env({"KEY": 1})  # type: ignore[arg-type]
+
+    def test_validate_uds_is_absolute_check_branch(self):
+        with patch.object(PurePath, "is_absolute", return_value=False):
+            with pytest.raises(ValueError, match="must be absolute"):
+                MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds="/tmp/socket.sock")
+
+    def test_validate_uds_parent_stat_oserror_is_ignored(self, tmp_path):
+        uds_path = tmp_path / "client.sock"
+        with patch.object(Path, "is_dir", return_value=True), patch.object(Path, "stat", side_effect=OSError("boom")):
+            config = MCPClientConfig(proto=TransportType.STREAMABLEHTTP, url="http://localhost/mcp", uds=str(uds_path))
+        assert config.uds is not None
+
+
+class TestGRPCUDSMoreBranches:
+    def test_grpc_client_uds_none(self):
+        config = GRPCClientConfig(target="localhost:50051", uds=None)
+        assert config.uds is None
+
+    def test_grpc_client_uds_empty_string_raises(self):
+        with pytest.raises(ValueError, match="must be a non-empty string"):
+            GRPCClientConfig(uds="")
+
+    def test_grpc_client_uds_is_absolute_check_branch(self):
+        with patch.object(PurePath, "is_absolute", return_value=False):
+            with pytest.raises(ValueError, match="must be absolute"):
+                GRPCClientConfig(uds="/tmp/grpc.sock")
+
+    def test_grpc_client_uds_parent_stat_oserror_is_ignored(self):
+        with patch.object(Path, "is_dir", return_value=True), patch.object(Path, "stat", side_effect=OSError("boom")):
+            config = GRPCClientConfig(uds="/tmp/grpc.sock")
+        assert config.uds is not None
+
+    def test_grpc_server_uds_none(self):
+        config = GRPCServerConfig(uds=None)
+        assert config.uds is None
+
+    def test_grpc_server_uds_empty_string_raises(self):
+        with pytest.raises(ValueError, match="must be a non-empty string"):
+            GRPCServerConfig(uds="")
+
+    def test_grpc_server_uds_is_absolute_check_branch(self):
+        with patch.object(PurePath, "is_absolute", return_value=False):
+            with pytest.raises(ValueError, match="must be absolute"):
+                GRPCServerConfig(uds="/tmp/grpc.sock")
+
+    def test_grpc_server_uds_parent_stat_oserror_is_ignored(self):
+        with patch.object(Path, "is_dir", return_value=True), patch.object(Path, "stat", side_effect=OSError("boom")):
+            config = GRPCServerConfig(uds="/tmp/grpc.sock")
+        assert config.uds is not None
+
+    def test_grpc_server_from_env_ssl_enabled_without_tls_data(self, monkeypatch):
+        monkeypatch.setenv("PLUGINS_GRPC_SERVER_HOST", "localhost")
+        monkeypatch.setenv("PLUGINS_GRPC_SERVER_SSL_ENABLED", "true")
+        monkeypatch.delenv("PLUGINS_GRPC_SERVER_SSL_CERTFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_GRPC_SERVER_SSL_KEYFILE", raising=False)
+        monkeypatch.delenv("PLUGINS_GRPC_SERVER_SSL_CA_CERTS", raising=False)
+        monkeypatch.delenv("PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD", raising=False)
+        monkeypatch.delenv("PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH", raising=False)
+
+        config = GRPCServerConfig.from_env()
+        assert config is not None
+        assert config.tls is None
+
+
+class TestUnixSocketClientConfigBranches:
+    def test_unix_socket_client_path_empty_raises(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            UnixSocketClientConfig(path="")
+
+    def test_unix_socket_client_path_not_absolute_raises(self):
+        with pytest.raises(ValueError, match="must be absolute"):
+            UnixSocketClientConfig(path="relative.sock")
+
+
+class TestPluginConfigBranches:
+    def test_plugin_config_rejects_unknown_mcp_transport_type(self):
+        mcp = MCPClientConfig(proto=TransportType.HTTP, url="http://localhost/mcp")
+        with pytest.raises(ValueError, match="must set transport type"):
+            PluginConfig(name="plug", kind="internal", mcp=mcp)
+
+    def test_external_plugin_cannot_have_multiple_transports(self):
+        mcp = MCPClientConfig(proto=TransportType.SSE, url="http://localhost/mcp")
+        grpc = GRPCClientConfig(target="localhost:50051")
+        with pytest.raises(ValueError, match="only have one transport configured"):
+            PluginConfig(name="external", kind=EXTERNAL_PLUGIN_TYPE, mcp=mcp, grpc=grpc)
