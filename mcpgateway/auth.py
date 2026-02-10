@@ -706,7 +706,11 @@ async def get_current_user(
             request.state.auth_method = "api_token"
             jti = payload.get("jti")
             if jti:
-                await asyncio.to_thread(_update_api_token_last_used_sync, jti)
+                try:
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti)
+                except Exception as e:
+                    logger.debug(f"Failed to update API token last_used: {e}")
+                    # Continue authentication - last_used update is not critical
             return
 
         if auth_provider:
@@ -723,7 +727,11 @@ async def get_current_user(
                 request.state.auth_method = "api_token"
                 request.state.jti = jti_for_check
                 logger.debug(f"Legacy API token detected via DB lookup (JTI: ...{jti_for_check[-8:]})")
-                await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
+                try:
+                    await asyncio.to_thread(_update_api_token_last_used_sync, jti_for_check)
+                except Exception as e:
+                    logger.debug(f"Failed to update legacy API token last_used: {e}")
+                    # Continue authentication - last_used update is not critical
             else:
                 request.state.auth_method = "jwt"
         else:
