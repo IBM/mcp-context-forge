@@ -17366,6 +17366,7 @@ window.testSearchInit = function () {
 
 /**
  * Clear search functionality for different entity types
+ * Uses server-side reload to clear filters across all pages
  */
 function clearSearch(entityType) {
     try {
@@ -17411,11 +17412,13 @@ function clearSearch(entityType) {
                 searchInput.value = "";
                 filterGatewaysTable(""); // Clear the filter
             }
-        } else if (entityType === "tokens") {
-            const searchInput = document.getElementById("tokens-search-input");
+        } else if (entityType === "gateways") {
+            const searchInput = document.getElementById(
+                "gateways-search-input",
+            );
             if (searchInput) {
                 searchInput.value = "";
-                performTokenSearch(""); // Clear the search and reload
+                filterGatewaysTable(""); // Clear the filter
             }
         }
     } catch (error) {
@@ -17423,15 +17426,16 @@ function clearSearch(entityType) {
     }
 }
 
-// Make clearSearch function available globally
-window.clearSearch = clearSearch;
+// Make server-side search functions available globally
+window.performServerSideSearch = performServerSideSearch;
+window.debouncedServerSearch = debouncedServerSearch;
 
 /**
  * Initialize search inputs for all entity types
  * This function also handles re-initialization after HTMX content loads
  */
 function initializeSearchInputs() {
-    console.log("🔍 Initializing search inputs...");
+    console.log("🔍 Initializing search inputs with server-side search...");
 
     // Clone inputs to remove existing event listeners before re-adding.
     // This prevents duplicate listeners when re-initializing after reset.
@@ -17453,21 +17457,16 @@ function initializeSearchInputs() {
         }
     });
 
-    // Virtual Servers search
+    // Virtual Servers search (server-side)
     const catalogSearchInput = document.getElementById("catalog-search-input");
     if (catalogSearchInput) {
         catalogSearchInput.addEventListener("input", function () {
-            filterServerTable(this.value);
+            debouncedServerSearch('catalog', this.value);
         });
-        console.log("✅ Virtual Servers search initialized");
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = catalogSearchInput.value || "";
-        if (currentSearch) {
-            filterServerTable(currentSearch);
-        }
+        console.log("✅ Virtual Servers search initialized (server-side)");
     }
 
-    // MCP Servers (Gateways) search
+    // MCP Servers (Gateways) search - still client-side for now
     const gatewaysSearchInput = document.getElementById(
         "gateways-search-input",
     );
@@ -17515,44 +17514,44 @@ function initializeSearchInputs() {
         );
     }
 
-    // Tools search
+    // Tools search (server-side)
     const toolsSearchInput = document.getElementById("tools-search-input");
     if (toolsSearchInput) {
         toolsSearchInput.addEventListener("input", function () {
-            filterToolsTable(this.value);
+            debouncedServerSearch('tools', this.value);
         });
-        console.log("✅ Tools search initialized");
+        console.log("✅ Tools search initialized (server-side)");
     }
 
-    // Resources search
+    // Resources search (server-side)
     const resourcesSearchInput = document.getElementById(
         "resources-search-input",
     );
     if (resourcesSearchInput) {
         resourcesSearchInput.addEventListener("input", function () {
-            filterResourcesTable(this.value);
+            debouncedServerSearch('resources', this.value);
         });
-        console.log("✅ Resources search initialized");
+        console.log("✅ Resources search initialized (server-side)");
     }
 
-    // Prompts search
+    // Prompts search (server-side)
     const promptsSearchInput = document.getElementById("prompts-search-input");
     if (promptsSearchInput) {
         promptsSearchInput.addEventListener("input", function () {
-            filterPromptsTable(this.value);
+            debouncedServerSearch('prompts', this.value);
         });
-        console.log("✅ Prompts search initialized");
+        console.log("✅ Prompts search initialized (server-side)");
     }
 
-    // A2A Agents search
+    // A2A Agents search (server-side)
     const agentsSearchInput = document.getElementById(
         "a2a-agents-search-input",
     );
     if (agentsSearchInput) {
         agentsSearchInput.addEventListener("input", function () {
-            filterA2AAgentsTable(this.value);
+            debouncedServerSearch('a2a-agents', this.value);
         });
-        console.log("✅ A2A Agents search initialized");
+        console.log("✅ A2A Agents search initialized (server-side)");
     }
 
     // Tokens search
