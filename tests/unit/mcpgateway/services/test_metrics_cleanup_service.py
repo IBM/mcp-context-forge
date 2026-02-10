@@ -193,6 +193,22 @@ class TestCleanupTable:
         assert result.table_name == "tool_metrics"
         assert result.error is None
 
+    def test_cleanup_table_exception_path(self, cleanup_service):
+        """Test _cleanup_table handles exceptions and reports an error."""
+        # Make fresh_db_session raise to trigger the exception handling branch
+        with patch(
+            "mcpgateway.services.metrics_cleanup_service.fresh_db_session",
+            side_effect=RuntimeError("boom"),
+        ):
+            result = cleanup_service._cleanup_table(
+                ToolMetric,
+                "tool_metrics",
+                datetime.now(timezone.utc) - timedelta(days=7),
+            )
+
+        assert result.error is not None
+        assert result.remaining_count == -1
+
 
 def test_delete_metrics_in_batches_counts_rows():
     """Test delete_metrics_in_batches aggregates row counts and stops."""
