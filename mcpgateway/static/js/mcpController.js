@@ -5,7 +5,7 @@ import { updateEditToolRequestTypes } from './formFieldHandlers';
 import { openModal } from './modals';
 import { initResourceSelect } from './resources';
 import { validateInputName, validateJson, validateUrl } from './security';
-import { safeGetElement, fetchWithTimeout, isInactiveChecked, handleFetchError, showErrorMessage, parseUriTemplate } from './utils';
+import { safeGetElement, fetchWithTimeout, isInactiveChecked, handleFetchError, showErrorMessage, parseUriTemplate, updateEditToolUrl } from './utils';
 
 // ===================================================================
 // SECURE CRUD OPERATIONS with Input Validation
@@ -210,7 +210,7 @@ export const editTool = async function (toolId) {
                 typeField.disabled = false;
             }
             updateEditToolRequestTypes(tool.requestType || null); // preselect from DB
-            Admin.updateEditToolUrl(tool.url || null);
+            updateEditToolUrl(tool.url || null);
         }
 
         // Request Type field handling (disable for MCP)
@@ -318,7 +318,7 @@ export const editTool = async function (toolId) {
             }
             // Update request types and URL field
             updateEditToolRequestTypes(tool.requestType || null);
-            Admin.updateEditToolUrl(tool.url || null);
+            updateEditToolUrl(tool.url || null);
         }
 
         // Auth containers

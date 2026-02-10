@@ -1,13 +1,42 @@
-import { DEFAULT_TEAMS_PER_PAGE, PERFORMANCE_AGGREGATION_OPTIONS, PERFORMANCE_HISTORY_HOURS } from './constants.js';
-import { displayImportResults, refreshCurrentTabData, showImportProgress } from './fileTransfer.js';
-import { initializeSearchInputs, setupIntegrationTypeHandlers, setupSchemaModeHandlers } from './initialization.js';
-import { closeModal, openModal, showCopyableModal } from './modals.js';
-import { showNotification } from './notifications.js';
-import { initPromptSelect } from './prompts.js';
-import { initResourceSelect } from './resources.js';
-import { escapeHtml, parseErrorResponse, safeSetInnerHTML, validateJson, validateUrl } from './security.js';
-import { initToolSelect } from './tools.js';
-import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getCurrentTeamName, isAdminUser, safeGetElement, showErrorMessage, showSuccessMessage } from './utils.js';
+import {
+  DEFAULT_TEAMS_PER_PAGE,
+  PERFORMANCE_AGGREGATION_OPTIONS,
+  PERFORMANCE_HISTORY_HOURS,
+} from "./constants.js";
+import {
+  displayImportResults,
+  refreshCurrentTabData,
+  showImportProgress,
+} from "./fileTransfer.js";
+import {
+  initializeSearchInputs,
+  setupIntegrationTypeHandlers,
+  setupSchemaModeHandlers,
+} from "./initialization.js";
+import { closeModal, openModal } from "./modals.js";
+import { initPromptSelect } from "./prompts.js";
+import { initResourceSelect } from "./resources.js";
+import {
+  escapeHtml,
+  safeSetInnerHTML,
+  validateJson,
+  validateUrl,
+} from "./security.js";
+import { fetchWithAuth, getAuthToken, getTeamNameById } from "./tokens.js";
+import { initToolSelect } from "./tools.js";
+import {
+  createMemoizedInit,
+  fetchWithTimeout,
+  getCookie,
+  getCurrentTeamId,
+  getRootPath,
+  isAdminUser,
+  safeGetElement,
+  showErrorMessage,
+  showNotification,
+  showSuccessMessage,
+  showToast,
+} from "./utils.js";
 
 ((Admin) => {
   // ===================================================================
@@ -16,7 +45,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   // Centralized chart management to prevent "Canvas is already in use" errors
   Admin.chartRegistry = {
     charts: new Map(),
-    
+
     register(id, chart) {
       // Destroy existing chart with same ID before registering new one
       if (this.charts.has(id)) {
@@ -25,7 +54,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       this.charts.set(id, chart);
       console.log(`Chart registered: ${id}`);
     },
-    
+
     destroy(id) {
       const chart = this.charts.get(id);
       if (chart) {
@@ -38,14 +67,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         this.charts.delete(id);
       }
     },
-    
+
     destroyAll() {
       console.log(`Destroying all charts (${this.charts.size} total)`);
       this.charts.forEach((chart, id) => {
         this.destroy(id);
       });
     },
-    
+
     destroyByPrefix(prefix) {
       const toDestroy = [];
       this.charts.forEach((chart, id) => {
@@ -58,28 +87,28 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       );
       toDestroy.forEach((id) => this.destroy(id));
     },
-    
+
     has(id) {
       return this.charts.has(id);
     },
-    
+
     get(id) {
       return this.charts.get(id);
     },
-    
+
     size() {
       return this.charts.size;
     },
   };
-  
+
   // ===================================================================
   // HTMX HANDLERS for dynamic content loading
   // ===================================================================
-  
+
   // Set up HTMX handler for auto-checking newly loaded tools when Select All is active or Edit Server mode
   if (window.htmx && !window._toolsHtmxHandlerAttached) {
     Admin._toolsHtmxHandlerAttached = true;
-    
+
     window.htmx.on("htmx:afterSettle", function (evt) {
       // Only handle tool pagination requests
       if (
@@ -92,7 +121,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           // Find which container actually triggered the request by checking the target
           let container = null;
           const target = evt.detail.target;
-          
+
           // Check if the target itself is the edit server tools container (most common case for infinite scroll)
           if (target && target.id === "edit-server-tools") {
             container = target;
@@ -104,33 +133,29 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           // Otherwise try to find the container using closest
           else if (target) {
             container =
-            target.closest("#associatedTools") ||
-            target.closest("#edit-server-tools");
+              target.closest("#associatedTools") ||
+              target.closest("#edit-server-tools");
           }
-          
+
           // Fallback logic if container still not found
           if (!container) {
             // Check which modal/dialog is currently open to determine the correct container
-            const editModal =
-            safeGetElement("server-edit-modal");
+            const editModal = safeGetElement("server-edit-modal");
             const isEditModalOpen =
-            editModal && !editModal.classList.contains("hidden");
-            
+              editModal && !editModal.classList.contains("hidden");
+
             if (isEditModalOpen) {
-              container =
-              safeGetElement("edit-server-tools");
+              container = safeGetElement("edit-server-tools");
             } else {
               container = safeGetElement("associatedTools");
             }
           }
-          
+
           // Final safety check - use direct lookup if still not found
           if (!container) {
-            const addServerContainer =
-            safeGetElement("associatedTools");
-            const editServerContainer =
-            safeGetElement("edit-server-tools");
-            
+            const addServerContainer = safeGetElement("associatedTools");
+            const editServerContainer = safeGetElement("edit-server-tools");
+
             // Check if edit server container has the server tools data attribute set
             if (
               editServerContainer &&
@@ -152,17 +177,17 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               container = addServerContainer || editServerContainer;
             }
           }
-          
+
           if (container) {
             // Update tool mapping for newly loaded tools
             const newCheckboxes = container.querySelectorAll(
               "input[data-auto-check=true]",
             );
-            
+
             if (!Admin.toolMapping) {
               Admin.toolMapping = {};
             }
-            
+
             newCheckboxes.forEach((cb) => {
               const toolId = cb.value;
               const toolName = cb.getAttribute("data-tool-name");
@@ -170,18 +195,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 Admin.toolMapping[toolId] = toolName;
               }
             });
-            
+
             const selectAllInput = container.querySelector(
               'input[name="selectAllTools"]',
             );
-            
+
             // Check if Select All is active
             if (selectAllInput && selectAllInput.value === "true") {
               newCheckboxes.forEach((cb) => {
                 cb.checked = true;
                 cb.removeAttribute("data-auto-check");
               });
-              
+
               if (newCheckboxes.length > 0) {
                 const event = new Event("change", {
                   bubbles: true,
@@ -193,25 +218,21 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             else if (container.id === "edit-server-tools") {
               // Try to get server tools from data attribute (primary source)
               let serverTools = null;
-              const dataAttr =
-              container.getAttribute("data-server-tools");
-              
+              const dataAttr = container.getAttribute("data-server-tools");
+
               if (dataAttr) {
                 try {
                   serverTools = JSON.parse(dataAttr);
                 } catch (e) {
-                  console.error(
-                    "Failed to parse data-server-tools:",
-                    e,
-                  );
+                  console.error("Failed to parse data-server-tools:", e);
                 }
               }
-              
+
               if (serverTools && serverTools.length > 0) {
                 newCheckboxes.forEach((cb) => {
                   const toolId = cb.value;
-                  const toolName =
-                  cb.getAttribute("data-tool-name"); // Use the data attribute directly
+                  // Use the data attribute directly
+                  const toolName = cb.getAttribute("data-tool-name");
                   if (toolId && toolName) {
                     // Check if this tool name exists in server associated tools
                     if (serverTools.includes(toolName)) {
@@ -220,7 +241,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   }
                   cb.removeAttribute("data-auto-check");
                 });
-                
+
                 // Trigger an update to display the correct count based on server.associatedTools
                 // This will make sure the pill counters reflect the total associated tools count
                 const event = new Event("change", {
@@ -232,22 +253,17 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             // If we're in the Add Server tools container, restore persisted selections
             else if (container.id === "associatedTools") {
               try {
-                const dataAttr = container.getAttribute(
-                  "data-selected-tools",
-                );
+                const dataAttr = container.getAttribute("data-selected-tools");
                 if (dataAttr) {
                   const selectedIds = JSON.parse(dataAttr);
-                  if (
-                    Array.isArray(selectedIds) &&
-                    selectedIds.length > 0
-                  ) {
+                  if (Array.isArray(selectedIds) && selectedIds.length > 0) {
                     newCheckboxes.forEach((cb) => {
                       if (selectedIds.includes(cb.value)) {
                         cb.checked = true;
                       }
                       cb.removeAttribute("data-auto-check");
                     });
-                    
+
                     const event = new Event("change", {
                       bubbles: true,
                     });
@@ -255,22 +271,19 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   }
                 }
               } catch (e) {
-                console.warn(
-                  "Error restoring associatedTools selections:",
-                  e,
-                );
+                console.warn("Error restoring associatedTools selections:", e);
               }
             }
           }
         }, 10); // Small delay to ensure DOM is updated
       }
     });
-  };
-  
+  }
+
   // Set up HTMX handler for auto-checking newly loaded resources when Select All is active
   if (window.htmx && !window._resourcesHtmxHandlerAttached) {
     Admin._resourcesHtmxHandlerAttached = true;
-    
+
     window.htmx.on("htmx:afterSettle", function (evt) {
       // Only handle resource pagination requests
       if (
@@ -282,50 +295,45 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           // Find the container
           let container = null;
           const target = evt.detail.target;
-          
+
           if (target && target.id === "edit-server-resources") {
             container = target;
           } else if (target && target.id === "associatedResources") {
             container = target;
           } else if (target) {
             container =
-            target.closest("#associatedResources") ||
-            target.closest("#edit-server-resources");
+              target.closest("#associatedResources") ||
+              target.closest("#edit-server-resources");
           }
-          
+
           if (!container) {
-            const editModal =
-            safeGetElement("server-edit-modal");
+            const editModal = safeGetElement("server-edit-modal");
             const isEditModalOpen =
-            editModal && !editModal.classList.contains("hidden");
-            
+              editModal && !editModal.classList.contains("hidden");
+
             if (isEditModalOpen) {
-              container = safeGetElement(
-                "edit-server-resources",
-              );
+              container = safeGetElement("edit-server-resources");
             } else {
-              container = safeGetElement(
-                "associatedResources",
-              );
+              container = safeGetElement("associatedResources");
             }
           }
-          
+
           if (container) {
             const newCheckboxes = container.querySelectorAll(
               "input[data-auto-check=true]",
             );
-            
+
             const selectAllInput = container.querySelector(
               'input[name="selectAllResources"]',
             );
-            
+
             // Check if Select All is active
             if (selectAllInput && selectAllInput.value === "true") {
               newCheckboxes.forEach((cb) => {
                 cb.checked = true;
                 cb.removeAttribute("data-auto-check");
               });
-              
+
               if (newCheckboxes.length > 0) {
                 const event = new Event("change", {
                   bubbles: true,
@@ -333,26 +341,20 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 container.dispatchEvent(event);
               }
             }
-            
+
             // Also check for edit mode: pre-select items based on server's associated resources
-            const dataAttr = container.getAttribute(
-              "data-server-resources",
-            );
+            const dataAttr = container.getAttribute("data-server-resources");
             if (dataAttr) {
               try {
                 const associatedResourceIds = JSON.parse(dataAttr);
                 newCheckboxes.forEach((cb) => {
                   const checkboxValue = cb.value;
-                  if (
-                    associatedResourceIds.includes(
-                      checkboxValue,
-                    )
-                  ) {
+                  if (associatedResourceIds.includes(checkboxValue)) {
                     cb.checked = true;
                   }
                   cb.removeAttribute("data-auto-check");
                 });
-                
+
                 if (newCheckboxes.length > 0) {
                   const event = new Event("change", {
                     bubbles: true,
@@ -360,13 +362,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   container.dispatchEvent(event);
                 }
               } catch (e) {
-                console.error(
-                  "Error parsing data-server-resources:",
-                  e,
-                );
+                console.error("Error parsing data-server-resources:", e);
               }
             }
-            
+
             // If we're in the Add Server resources container, restore persisted selections
             else if (container.id === "associatedResources") {
               try {
@@ -375,17 +374,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 );
                 if (dataAttr) {
                   const selectedIds = JSON.parse(dataAttr);
-                  if (
-                    Array.isArray(selectedIds) &&
-                    selectedIds.length > 0
-                  ) {
+                  if (Array.isArray(selectedIds) && selectedIds.length > 0) {
                     newCheckboxes.forEach((cb) => {
                       if (selectedIds.includes(cb.value)) {
                         cb.checked = true;
                       }
                       cb.removeAttribute("data-auto-check");
                     });
-                    
+
                     const event = new Event("change", {
                       bubbles: true,
                     });
@@ -403,12 +399,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }, 10);
       }
     });
-  };
-  
+  }
+
   // Set up HTMX handler for auto-checking newly loaded prompts when Select All is active
   if (window.htmx && !window._promptsHtmxHandlerAttached) {
     Admin._promptsHtmxHandlerAttached = true;
-    
+
     window.htmx.on("htmx:afterSettle", function (evt) {
       // Only handle prompt pagination requests
       if (
@@ -420,23 +416,22 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           // Find the container
           let container = null;
           const target = evt.detail.target;
-          
+
           if (target && target.id === "edit-server-prompts") {
             container = target;
           } else if (target && target.id === "associatedPrompts") {
             container = target;
           } else if (target) {
             container =
-            target.closest("#associatedPrompts") ||
-            target.closest("#edit-server-prompts");
+              target.closest("#associatedPrompts") ||
+              target.closest("#edit-server-prompts");
           }
-          
+
           if (!container) {
-            const editModal =
-            safeGetElement("server-edit-modal");
+            const editModal = safeGetElement("server-edit-modal");
             const isEditModalOpen =
-            editModal && !editModal.classList.contains("hidden");
-            
+              editModal && !editModal.classList.contains("hidden");
+
             if (isEditModalOpen) {
               container = safeGetElement(
                 "edit-server-prompts",
@@ -446,23 +441,23 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               safeGetElement("associatedPrompts");
             }
           }
-          
+
           if (container) {
             const newCheckboxes = container.querySelectorAll(
               "input[data-auto-check=true]",
             );
-            
+
             const selectAllInput = container.querySelector(
               'input[name="selectAllPrompts"]',
             );
-            
+
             // Check if Select All is active
             if (selectAllInput && selectAllInput.value === "true") {
               newCheckboxes.forEach((cb) => {
                 cb.checked = true;
                 cb.removeAttribute("data-auto-check");
               });
-              
+
               if (newCheckboxes.length > 0) {
                 const event = new Event("change", {
                   bubbles: true,
@@ -470,7 +465,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 container.dispatchEvent(event);
               }
             }
-            
+
             // Also check for edit mode: pre-select items based on server's associated prompts
             const dataAttr = container.getAttribute(
               "data-server-prompts",
@@ -487,7 +482,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   }
                   cb.removeAttribute("data-auto-check");
                 });
-                
+
                 if (newCheckboxes.length > 0) {
                   const event = new Event("change", {
                     bubbles: true,
@@ -501,7 +496,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 );
               }
             }
-            
+
             // If we're in the Add Server prompts container, restore persisted selections
             else if (container.id === "associatedPrompts") {
               try {
@@ -520,7 +515,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                       }
                       cb.removeAttribute("data-auto-check");
                     });
-                    
+
                     const event = new Event("change", {
                       bubbles: true,
                     });
@@ -539,7 +534,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       }
     });
   };
-  
+
   // ===================================================================
   // GATEWAY SELECT (Associated MCP Servers) - search/select/clear
   // ===================================================================
@@ -560,28 +555,28 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const searchInput = searchInputId
     ? safeGetElement(searchInputId)
     : null;
-    
+
     if (!container || !pillsBox || !warnBox) {
       console.warn(
         `Gateway select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
       );
       return;
     }
-    
+
     const pillClasses =
     "inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full dark:bg-indigo-900 dark:text-indigo-200";
-    
+
     // Search functionality
     Admin.applySearch = function () {
       if (!searchInput) {
         return;
       }
-      
+
       try {
         const query = searchInput.value.toLowerCase().trim();
         const items = container.querySelectorAll(".tool-item");
         let visibleCount = 0;
-        
+
         items.forEach((item) => {
           const text = item.textContent.toLowerCase();
           if (!query || text.includes(query)) {
@@ -591,12 +586,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             item.style.display = "none";
           }
         });
-        
+
         // Update "no results" message if it exists
         const noMsg = safeGetElement("noGatewayMessage");
         const searchQuerySpan =
         safeGetElement("searchQueryServers");
-        
+
         if (noMsg) {
           if (query && visibleCount === 0) {
             noMsg.style.display = "block";
@@ -611,20 +606,20 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.error("Error applying gateway search:", error);
       }
     }
-    
+
     // Bind search input
     if (searchInput && !searchInput.dataset.searchBound) {
       searchInput.addEventListener("input", Admin.applySearch);
       searchInput.dataset.searchBound = "true";
     }
-    
+
     Admin.update = function () {
       try {
         const checkboxes = container.querySelectorAll(
           'input[type="checkbox"]',
         );
         const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-        
+
         // Check if "Select All" mode is active
         const selectAllInput = container.querySelector(
           'input[name="selectAllGateways"]',
@@ -632,9 +627,9 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         const allIdsInput = container.querySelector(
           'input[name="allGatewayIds"]',
         );
-        
+
         let count = checked.length;
-        
+
         // If Select All mode is active, use the count from allGatewayIds
         if (
           selectAllInput &&
@@ -648,11 +643,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             console.error("Error parsing allGatewayIds:", e);
           }
         }
-        
+
         // Rebuild pills safely - show first 3, then summarize the rest
         pillsBox.innerHTML = "";
         const maxPillsToShow = 3;
-        
+
         checked.slice(0, maxPillsToShow).forEach((cb) => {
           const span = document.createElement("span");
           span.className = pillClasses;
@@ -660,7 +655,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           cb.nextElementSibling?.textContent?.trim() || "Unnamed";
           pillsBox.appendChild(span);
         });
-        
+
         // If more than maxPillsToShow, show a summary pill
         if (count > maxPillsToShow) {
           const span = document.createElement("span");
@@ -670,7 +665,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           span.textContent = `+${remaining} more`;
           pillsBox.appendChild(span);
         }
-        
+
         // Warning when > max
         if (count > max) {
           warnBox.textContent = `Selected ${count} MCP servers. Selecting more than ${max} servers may impact performance.`;
@@ -681,20 +676,20 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.error("Error updating gateway select:", error);
       }
     }
-    
+
     // Remove old event listeners by cloning and replacing (preserving ID)
     if (clearBtn && !clearBtn.dataset.listenerAttached) {
       clearBtn.dataset.listenerAttached = "true";
       const newClearBtn = clearBtn.cloneNode(true);
       newClearBtn.dataset.listenerAttached = "true";
       clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-      
+
       newClearBtn.addEventListener("click", () => {
         const checkboxes = container.querySelectorAll(
           'input[type="checkbox"]',
         );
         checkboxes.forEach((cb) => (cb.checked = false));
-        
+
         // Clear the "select all" flag
         const selectAllInput = container.querySelector(
           'input[name="selectAllGateways"]',
@@ -708,26 +703,26 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         if (allIdsInput) {
           allIdsInput.remove();
         }
-        
+
         Admin.update();
-        
+
         // Reload associated items after clearing selection
         Admin.reloadAssociatedItems();
       });
     }
-    
+
     if (selectBtn && !selectBtn.dataset.listenerAttached) {
       selectBtn.dataset.listenerAttached = "true";
       const newSelectBtn = selectBtn.cloneNode(true);
       newSelectBtn.dataset.listenerAttached = "true";
       selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
-      
+
       newSelectBtn.addEventListener("click", async () => {
         // Disable button and show loading state
         const originalText = newSelectBtn.textContent;
         newSelectBtn.disabled = true;
         newSelectBtn.textContent = "Selecting all gateways...";
-        
+
         try {
           // Fetch all gateway IDs from the server
           const selectedTeamId = getCurrentTeamId();
@@ -742,13 +737,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           if (!response.ok) {
             throw new Error("Failed to fetch gateway IDs");
           }
-          
+
           const data = await response.json();
           const allGatewayIds = data.gateway_ids || [];
-          
+
           // Apply search filter first to determine which items are visible
           Admin.applySearch();
-          
+
           // Check only currently visible checkboxes
           const loadedCheckboxes = container.querySelectorAll(
             'input[type="checkbox"]',
@@ -761,7 +756,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               cb.checked = true;
             }
           });
-          
+
           // Add a hidden input to indicate "select all" mode
           // Remove any existing one first
           let selectAllInput = container.querySelector(
@@ -774,7 +769,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             container.appendChild(selectAllInput);
           }
           selectAllInput.value = "true";
-          
+
           // Also store the IDs as a JSON array for the backend
           // Ensure the special 'null' sentinel is included when selecting all
           try {
@@ -794,7 +789,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               err,
             );
           }
-          
+
           let allIdsInput = container.querySelector(
             'input[name="allGatewayIds"]',
           );
@@ -805,14 +800,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             container.appendChild(allIdsInput);
           }
           allIdsInput.value = JSON.stringify(allGatewayIds);
-          
+
           Admin.update();
-          
+
           newSelectBtn.textContent = `✓ All ${allGatewayIds.length} gateways selected`;
           setTimeout(() => {
             newSelectBtn.textContent = originalText;
           }, 2000);
-          
+
           // Reload associated items after selecting all
           Admin.reloadAssociatedItems();
         } catch (error) {
@@ -825,9 +820,9 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     }
-    
+
     Admin.update(); // Initial render
-    
+
     // Attach change listeners to checkboxes (using delegation for dynamic content)
     if (!container.dataset.changeListenerAttached) {
       container.dataset.changeListenerAttached = "true";
@@ -846,11 +841,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           e.target.nextElementSibling?.textContent?.trim() ||
           "Unknown";
           const isChecked = e.target.checked;
-          
+
           console.log(
             `[MCP Server Selection] Gateway ID: ${gatewayId}, Name: ${gatewayName}, Checked: ${isChecked}`,
           );
-          
+
           // Check if we're in "Select All" mode
           const selectAllInput = container.querySelector(
             'input[name="selectAllGateways"]',
@@ -858,7 +853,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           const allIdsInput = container.querySelector(
             'input[name="allGatewayIds"]',
           );
-          
+
           if (
             selectAllInput &&
             selectAllInput.value === "true" &&
@@ -868,7 +863,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             // Update the allGatewayIds array to reflect the change
             try {
               let allIds = JSON.parse(allIdsInput.value);
-              
+
               if (e.target.checked) {
                 // Add the ID if it's not already there
                 if (!allIds.includes(gatewayId)) {
@@ -878,31 +873,31 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 // Remove the ID from the array
                 allIds = allIds.filter((id) => id !== gatewayId);
               }
-              
+
               // Update the hidden field
               allIdsInput.value = JSON.stringify(allIds);
             } catch (error) {
               console.error("Error updating allGatewayIds:", error);
             }
           }
-          
+
           // No exclusivity: allow the special 'null' gateway (RestTool/Prompts/Resources) to be
           // selected together with real gateways. Server-side filtering already
           // supports mixed lists like `gateway_id=abc,null`.
-          
+
           Admin.update();
-          
+
           // Trigger reload of associated tools, resources, and prompts with selected gateway filter
           Admin.reloadAssociatedItems();
         }
       });
     }
-    
+
     // Initial render
     Admin.applySearch();
     Admin.update();
   };
-  
+
   /**
   * Get all selected gateway IDs from the gateway selection container
   * @returns {string[]} Array of selected gateway IDs
@@ -915,11 +910,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     // for both Add and Edit flows.
     let container = safeGetElement("associatedGateways");
     const editContainer = safeGetElement("associatedEditGateways");
-    
+
     const editModal = safeGetElement("server-edit-modal");
     const isEditModalOpen =
     editModal && !editModal.classList.contains("hidden");
-    
+
     if (isEditModalOpen && editContainer) {
       container = editContainer;
     } else if (
@@ -931,25 +926,25 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       // not present, prefer edit container.
       container = editContainer;
     }
-    
+
     console.log(
       "[Gateway Selection DEBUG] Container used:",
       container ? container.id : null,
     );
-    
+
     if (!container) {
       console.warn(
         "[Gateway Selection DEBUG] No gateway container found (associatedGateways or associatedEditGateways)",
       );
       return [];
     }
-    
+
     // Check if "Select All" mode is active
     const selectAllInput = container.querySelector(
       "input[name='selectAllGateways']",
     );
     const allIdsInput = container.querySelector("input[name='allGatewayIds']");
-    
+
     console.log(
       "[Gateway Selection DEBUG] Select All mode:",
       selectAllInput?.value === "true",
@@ -968,7 +963,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         );
       }
     }
-    
+
     // Otherwise, get all checked checkboxes. If the special 'null' gateway
     // checkbox is selected, include the sentinel 'null' alongside any real
     // gateway ids. This allows requests like `gateway_id=abc,null` which the
@@ -976,7 +971,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const checkboxes = container.querySelectorAll(
       "input[type='checkbox']:checked",
     );
-    
+
     const selectedIds = Array.from(checkboxes)
     .map((cb) => {
       // Convert the special null-gateway checkbox to the literal 'null'
@@ -987,15 +982,15 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     })
     // Filter out any empty values to avoid sending empty CSV entries
     .filter((id) => id !== "" && id !== null && id !== undefined);
-    
+
     console.log(
       `[Gateway Selection DEBUG] Found ${selectedIds.length} checked gateway checkboxes`,
     );
     console.log("[Gateway Selection DEBUG] Selected gateway IDs:", selectedIds);
-    
+
     return selectedIds;
   };
-  
+
   /**
   * Reload associated tools, resources, and prompts filtered by selected gateway IDs
   */
@@ -1007,7 +1002,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (selectedGatewayIds.length > 0) {
       gatewayIdParam = selectedGatewayIds.join(",");
     }
-    
+
     console.log(
       `[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || "none (showing all)"}`,
     );
@@ -1015,7 +1010,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       "[Filter Update DEBUG] Selected gateway IDs array:",
       selectedGatewayIds,
     );
-    
+
     // Determine whether to reload the 'create server' containers (associated*)
     // or the 'edit server' containers (edit-server-*). Prefer the edit
     // containers when the edit modal is open or the edit-gateway selector
@@ -1024,10 +1019,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const isEditModalOpen =
     editModal && !editModal.classList.contains("hidden");
     const editGateways = safeGetElement("associatedEditGateways");
-    
+
     const useEditContainers =
     isEditModalOpen || (editGateways && editGateways.offsetParent !== null);
-    
+
     const toolsContainerId = useEditContainers
     ? "edit-server-tools"
     : "associatedTools";
@@ -1037,21 +1032,21 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const promptsContainerId = useEditContainers
     ? "edit-server-prompts"
     : "associatedPrompts";
-    
+
     // Reload tools
     const toolsContainer = safeGetElement(toolsContainerId);
     if (toolsContainer) {
       const toolsUrl = gatewayIdParam
       ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
       : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
-      
+
       console.log(
         "[Filter Update DEBUG] Tools URL:",
         toolsUrl,
         "-> target:",
         `#${toolsContainerId}`,
       );
-      
+
       // Use HTMX to reload the content into the chosen container
       if (window.htmx) {
         htmx.ajax("GET", toolsUrl, {
@@ -1075,7 +1070,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           const clearBtn = useEditContainers
           ? "clearAllEditToolsBtn"
           : "clearAllToolsBtn";
-          
+
           initToolSelect(
             toolsContainerId,
             pillsId,
@@ -1102,16 +1097,16 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         toolsContainerId,
       );
     }
-    
+
     // Reload resources - use fetch directly to avoid HTMX race conditions
     const resourcesContainer = safeGetElement(resourcesContainerId);
     if (resourcesContainer) {
       const resourcesUrl = gatewayIdParam
       ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
       : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
-      
+
       console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
-      
+
       // Use fetch() directly instead of htmx.ajax() to avoid race conditions
       fetch(resourcesUrl, {
         method: "GET",
@@ -1120,306 +1115,275 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           "HX-Current-URL": window.location.href,
         },
       })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(
-            `HTTP ${response.status}: ${response.statusText}`,
-          );
-        }
-        return response.text();
-      })
-      .then((html) => {
-        console.log(
-          "[Filter Update DEBUG] Resources fetch successful, HTML length:",
-          html.length,
-        );
-        // Persist current selections to window fallback before replacing container
-        // AND preserve the data-selected-resources attribute
-        let persistedResourceIds = [];
-        try {
-          // First, try to get from the container's data attribute
-          const dataAttr = resourcesContainer.getAttribute(
-            "data-selected-resources",
-          );
-          if (dataAttr) {
-            try {
-              const parsed = JSON.parse(dataAttr);
-              if (Array.isArray(parsed)) {
-                persistedResourceIds = parsed.slice();
-              }
-            } catch (e) {
-              console.error(
-                "Error parsing data-selected-resources:",
-                e,
-              );
-            }
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
           }
-          
-          // Merge with currently checked items
-          const currentChecked = Array.from(
-            resourcesContainer.querySelectorAll(
-              'input[type="checkbox"]:checked',
-            ),
-          ).map((cb) => cb.value);
-          const merged = new Set([
-            ...persistedResourceIds,
-            ...currentChecked,
-          ]);
-          persistedResourceIds = Array.from(merged);
-          
-          // Update window fallback
-          Admin._selectedAssociatedResources =
-          persistedResourceIds.slice();
-        } catch (e) {
-          console.error(
-            "Error capturing current resource selections before reload:",
-            e,
+          return response.text();
+        })
+        .then((html) => {
+          console.log(
+            "[Filter Update DEBUG] Resources fetch successful, HTML length:",
+            html.length,
           );
-        }
-        
-        resourcesContainer.innerHTML = html;
-        
-        // Immediately restore the data-selected-resources attribute after innerHTML replacement
-        if (persistedResourceIds.length > 0) {
-          resourcesContainer.setAttribute(
-            "data-selected-resources",
-            JSON.stringify(persistedResourceIds),
-          );
-        }
-        // If HTMX is available, process the newly-inserted HTML so hx-*
-        // triggers (like the infinite-scroll 'intersect' trigger) are
-        // initialized. To avoid HTMX re-triggering the container's
-        // own `hx-get`/`hx-trigger="load"` (which would issue a second
-        // request without the gateway filter), temporarily remove those
-        // attributes from the container while we call `htmx.process`.
-        if (window.htmx && typeof window.htmx.process === "function") {
+          // Persist current selections to window fallback before replacing container
+          // AND preserve the data-selected-resources attribute
+          let persistedResourceIds = [];
           try {
-            // Backup and remove attributes that could auto-fire
-            const hadHxGet =
-            resourcesContainer.hasAttribute("hx-get");
-            const hadHxTrigger =
-            resourcesContainer.hasAttribute("hx-trigger");
-            const oldHxGet =
-            resourcesContainer.getAttribute("hx-get");
-            const oldHxTrigger =
-            resourcesContainer.getAttribute("hx-trigger");
-            
-            if (hadHxGet) {
-              resourcesContainer.removeAttribute("hx-get");
-            }
-            if (hadHxTrigger) {
-              resourcesContainer.removeAttribute("hx-trigger");
-            }
-            
-            // Process only the newly-inserted inner nodes to initialize
-            // any hx-* behavior (infinite scroll, after-swap hooks, etc.)
-            window.htmx.process(resourcesContainer);
-            
-            // Restore original attributes so the container retains its
-            // declarative behavior for future operations, but don't
-            // re-process (we already processed child nodes).
-            if (hadHxGet && oldHxGet !== null) {
-              resourcesContainer.setAttribute("hx-get", oldHxGet);
-            }
-            if (hadHxTrigger && oldHxTrigger !== null) {
-              resourcesContainer.setAttribute(
-                "hx-trigger",
-                oldHxTrigger,
-              );
-            }
-            
-            console.log(
-              "[Filter Update DEBUG] htmx.process called on resources container (attributes temporarily removed)",
+            // First, try to get from the container's data attribute
+            const dataAttr = resourcesContainer.getAttribute(
+              "data-selected-resources",
             );
+            if (dataAttr) {
+              try {
+                const parsed = JSON.parse(dataAttr);
+                if (Array.isArray(parsed)) {
+                  persistedResourceIds = parsed.slice();
+                }
+              } catch (e) {
+                console.error("Error parsing data-selected-resources:", e);
+              }
+            }
+
+            // Merge with currently checked items
+            const currentChecked = Array.from(
+              resourcesContainer.querySelectorAll(
+                'input[type="checkbox"]:checked',
+              ),
+            ).map((cb) => cb.value);
+            const merged = new Set([
+              ...persistedResourceIds,
+              ...currentChecked,
+            ]);
+            persistedResourceIds = Array.from(merged);
+
+            // Update window fallback
+            Admin._selectedAssociatedResources =
+            persistedResourceIds.slice();
           } catch (e) {
-            console.warn(
-              "[Filter Update DEBUG] htmx.process failed:",
+            console.error(
+              "Error capturing current resource selections before reload:",
               e,
             );
           }
-        }
-        
-        // Re-initialize the resource select after content is loaded
-        const resPills = useEditContainers
-        ? "selectedEditResourcesPills"
-        : "selectedResourcesPills";
-        const resWarn = useEditContainers
-        ? "selectedEditResourcesWarning"
-        : "selectedResourcesWarning";
-        const resSelectBtn = useEditContainers
-        ? "selectAllEditResourcesBtn"
-        : "selectAllResourcesBtn";
-        const resClearBtn = useEditContainers
-        ? "clearAllEditResourcesBtn"
-        : "clearAllResourcesBtn";
-        
-        // The data-selected-resources attribute should already be restored above,
-        // but double-check and merge with window fallback if needed
-        try {
-          const dataAttr = resourcesContainer.getAttribute(
-            "data-selected-resources",
-          );
-          let selectedIds = [];
-          if (dataAttr) {
+
+          resourcesContainer.innerHTML = html;
+
+          // Immediately restore the data-selected-resources attribute after innerHTML replacement
+          if (persistedResourceIds.length > 0) {
+            resourcesContainer.setAttribute(
+              "data-selected-resources",
+              JSON.stringify(persistedResourceIds),
+            );
+          }
+          // If HTMX is available, process the newly-inserted HTML so hx-*
+          // triggers (like the infinite-scroll 'intersect' trigger) are
+          // initialized. To avoid HTMX re-triggering the container's
+          // own `hx-get`/`hx-trigger="load"` (which would issue a second
+          // request without the gateway filter), temporarily remove those
+          // attributes from the container while we call `htmx.process`.
+          if (window.htmx && typeof window.htmx.process === "function") {
             try {
-              const parsed = JSON.parse(dataAttr);
-              if (Array.isArray(parsed)) {
-                selectedIds = parsed.slice();
+              // Backup and remove attributes that could auto-fire
+              const hadHxGet =
+              resourcesContainer.hasAttribute("hx-get");
+              const hadHxTrigger =
+              resourcesContainer.hasAttribute("hx-trigger");
+              const oldHxGet =
+              resourcesContainer.getAttribute("hx-get");
+              const oldHxTrigger =
+              resourcesContainer.getAttribute("hx-trigger");
+
+              if (hadHxGet) {
+                resourcesContainer.removeAttribute("hx-get");
               }
+              if (hadHxTrigger) {
+                resourcesContainer.removeAttribute("hx-trigger");
+              }
+
+              // Process only the newly-inserted inner nodes to initialize
+              // any hx-* behavior (infinite scroll, after-swap hooks, etc.)
+              window.htmx.process(resourcesContainer);
+
+              // Restore original attributes so the container retains its
+              // declarative behavior for future operations, but don't
+              // re-process (we already processed child nodes).
+              if (hadHxGet && oldHxGet !== null) {
+                resourcesContainer.setAttribute("hx-get", oldHxGet);
+              }
+              if (hadHxTrigger && oldHxTrigger !== null) {
+                resourcesContainer.setAttribute(
+                  "hx-trigger",
+                  oldHxTrigger,
+                );
+              }
+
+              console.log(
+                "[Filter Update DEBUG] htmx.process called on resources container (attributes temporarily removed)",
+              );
             } catch (e) {
-              console.error(
-                "Error parsing data-selected-resources:",
+              console.warn(
+                "[Filter Update DEBUG] htmx.process failed:",
                 e,
               );
             }
           }
-          
-          // Merge with window fallback if it has additional selections
-          if (
-            Array.isArray(Admin._selectedAssociatedResources) &&
-            Admin._selectedAssociatedResources.length > 0
-          ) {
-            const merged = new Set([
-              ...selectedIds,
-              ...Admin._selectedAssociatedResources,
-            ]);
-            const mergedArray = Array.from(merged);
-            if (mergedArray.length > selectedIds.length) {
-              resourcesContainer.setAttribute(
-                "data-selected-resources",
-                JSON.stringify(mergedArray),
-              );
-              console.log(
-                "[Filter Update DEBUG] Merged additional selections from window fallback",
-              );
-            }
-          }
-        } catch (e) {
-          console.error(
-            "Error restoring data-selected-resources after fetch reload:",
-            e,
-          );
-        }
-        
-        // First restore persisted selections from data-selected-resources (Add Server mode)
-        try {
-          const dataAttr = resourcesContainer.getAttribute(
-            "data-selected-resources",
-          );
-          if (
-            dataAttr &&
-            resourcesContainerId === "associatedResources"
-          ) {
-            const selectedIds = JSON.parse(dataAttr);
-            if (
-              Array.isArray(selectedIds) &&
-              selectedIds.length > 0
-            ) {
-              const resourceCheckboxes =
-              resourcesContainer.querySelectorAll(
-                'input[type="checkbox"][name="associatedResources"]',
-              );
-              resourceCheckboxes.forEach((cb) => {
-                if (selectedIds.includes(cb.value)) {
-                  cb.checked = true;
+
+          // Re-initialize the resource select after content is loaded
+          const resPills = useEditContainers
+          ? "selectedEditResourcesPills"
+          : "selectedResourcesPills";
+          const resWarn = useEditContainers
+          ? "selectedEditResourcesWarning"
+          : "selectedResourcesWarning";
+          const resSelectBtn = useEditContainers
+          ? "selectAllEditResourcesBtn"
+          : "selectAllResourcesBtn";
+          const resClearBtn = useEditContainers
+          ? "clearAllEditResourcesBtn"
+          : "clearAllResourcesBtn";
+
+          // The data-selected-resources attribute should already be restored above,
+          // but double-check and merge with window fallback if needed
+          try {
+            const dataAttr = resourcesContainer.getAttribute(
+              "data-selected-resources",
+            );
+            let selectedIds = [];
+            if (dataAttr) {
+              try {
+                const parsed = JSON.parse(dataAttr);
+                if (Array.isArray(parsed)) {
+                  selectedIds = parsed.slice();
                 }
-              });
-              console.log(
-                "[Filter Update DEBUG] Restored",
-                selectedIds.length,
-                "persisted resource selections",
-              );
+              } catch (e) {
+                console.error("Error parsing data-selected-resources:", e);
+              }
             }
-          }
-        } catch (e) {
-          console.warn(
-            "Error restoring persisted resource selections:",
-            e,
-          );
-        }
-        
-        initResourceSelect(
-          resourcesContainerId,
-          resPills,
-          resWarn,
-          6,
-          resSelectBtn,
-          resClearBtn,
-        );
-        
-        // Re-apply server-associated resource selections so selections
-        // persist across gateway-filtered reloads (Edit Server mode).
-        // The resources partial replaces checkbox inputs; use the container's
-        // `data-server-resources` attribute (set when opening edit modal)
-        // to restore checked state.
-        try {
-          const dataAttr = resourcesContainer.getAttribute(
-            "data-server-resources",
-          );
-          if (dataAttr) {
-            const associated = JSON.parse(dataAttr);
+
+            // Merge with window fallback if it has additional selections
             if (
-              Array.isArray(associated) &&
-              associated.length > 0
+              Array.isArray(Admin._selectedAssociatedResources) &&
+              Admin._selectedAssociatedResources.length > 0
             ) {
-              const resourceCheckboxes =
-              resourcesContainer.querySelectorAll(
-                'input[type="checkbox"][name="associatedResources"]',
-              );
-              resourceCheckboxes.forEach((cb) => {
-                const val = cb.value;
-                if (
-                  !Number.isNaN(val) &&
-                  associated.includes(val)
-                ) {
-                  cb.checked = true;
-                }
-              });
-              
-              // Trigger change so pills and counts update
-              const event = new Event("change", {
-                bubbles: true,
-              });
-              resourcesContainer.dispatchEvent(event);
+              const merged = new Set([
+                ...selectedIds,
+                ...Admin._selectedAssociatedResources,
+              ]);
+              const mergedArray = Array.from(merged);
+              if (mergedArray.length > selectedIds.length) {
+                resourcesContainer.setAttribute(
+                  "data-selected-resources",
+                  JSON.stringify(mergedArray),
+                );
+                console.log(
+                  "[Filter Update DEBUG] Merged additional selections from window fallback",
+                );
+              }
             }
+          } catch (e) {
+            console.error(
+              "Error restoring data-selected-resources after fetch reload:",
+              e,
+            );
           }
-        } catch (e) {
-          console.warn("Error restoring associated resources:", e);
-        }
-        console.log(
-          "[Filter Update DEBUG] Resources reloaded successfully via fetch",
-        );
-      })
-      .catch((err) => {
-        console.error(
-          "[Filter Update DEBUG] Resources reload failed:",
-          err,
-        );
-      });
+
+          // First restore persisted selections from data-selected-resources (Add Server mode)
+          try {
+            const dataAttr = resourcesContainer.getAttribute(
+              "data-selected-resources",
+            );
+            if (dataAttr && resourcesContainerId === "associatedResources") {
+              const selectedIds = JSON.parse(dataAttr);
+              if (Array.isArray(selectedIds) && selectedIds.length > 0) {
+                const resourceCheckboxes = resourcesContainer.querySelectorAll(
+                  'input[type="checkbox"][name="associatedResources"]',
+                );
+                resourceCheckboxes.forEach((cb) => {
+                  if (selectedIds.includes(cb.value)) {
+                    cb.checked = true;
+                  }
+                });
+                console.log(
+                  "[Filter Update DEBUG] Restored",
+                  selectedIds.length,
+                  "persisted resource selections",
+                );
+              }
+            }
+          } catch (e) {
+            console.warn("Error restoring persisted resource selections:", e);
+          }
+
+          initResourceSelect(
+            resourcesContainerId,
+            resPills,
+            resWarn,
+            6,
+            resSelectBtn,
+            resClearBtn,
+          );
+
+          // Re-apply server-associated resource selections so selections
+          // persist across gateway-filtered reloads (Edit Server mode).
+          // The resources partial replaces checkbox inputs; use the container's
+          // `data-server-resources` attribute (set when opening edit modal)
+          // to restore checked state.
+          try {
+            const dataAttr = resourcesContainer.getAttribute(
+              "data-server-resources",
+            );
+            if (dataAttr) {
+              const associated = JSON.parse(dataAttr);
+              if (Array.isArray(associated) && associated.length > 0) {
+                const resourceCheckboxes = resourcesContainer.querySelectorAll(
+                  'input[type="checkbox"][name="associatedResources"]',
+                );
+                resourceCheckboxes.forEach((cb) => {
+                  const val = cb.value;
+                  if (!Number.isNaN(val) && associated.includes(val)) {
+                    cb.checked = true;
+                  }
+                });
+
+                // Trigger change so pills and counts update
+                const event = new Event("change", {
+                  bubbles: true,
+                });
+                resourcesContainer.dispatchEvent(event);
+              }
+            }
+          } catch (e) {
+            console.warn("Error restoring associated resources:", e);
+          }
+          console.log(
+            "[Filter Update DEBUG] Resources reloaded successfully via fetch",
+          );
+        })
+        .catch((err) => {
+          console.error("[Filter Update DEBUG] Resources reload failed:", err);
+        });
     } else {
       console.warn("[Filter Update DEBUG] Resources container not found");
     }
-    
+
     // Reload prompts
     const promptsContainer = safeGetElement(promptsContainerId);
     if (promptsContainer) {
       const promptsUrl = gatewayIdParam
-      ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-      : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
-      
+        ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
+        : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
+
       // Persist current prompt selections before HTMX replaces the container
       try {
         const currentCheckedPrompts = Array.from(
-          promptsContainer.querySelectorAll(
-            'input[type="checkbox"]:checked',
-          ),
+          promptsContainer.querySelectorAll('input[type="checkbox"]:checked'),
         ).map((cb) => cb.value);
         if (
           !Array.isArray(window._selectedAssociatedPrompts) ||
           window._selectedAssociatedPrompts.length === 0
         ) {
-          window._selectedAssociatedPrompts =
-          currentCheckedPrompts.slice();
+          window._selectedAssociatedPrompts = currentCheckedPrompts.slice();
         } else {
           const merged = new Set([
             ...(window._selectedAssociatedPrompts || []),
@@ -1433,118 +1397,118 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           e,
         );
       }
-      
+
       if (window.htmx) {
-        htmx.ajax("GET", promptsUrl, {
-          target: `#${promptsContainerId}`,
-          swap: "innerHTML",
-        }).then(() => {
-          try {
-            const containerEl =
-            safeGetElement(promptsContainerId);
-            if (containerEl) {
-              const existingAttr = containerEl.getAttribute(
-                "data-selected-prompts",
-              );
-              let existingIds = null;
-              if (existingAttr) {
-                try {
-                  existingIds = JSON.parse(existingAttr);
-                } catch (e) {
-                  console.error(
-                    "Error parsing existing data-selected-prompts after reload:",
-                    e,
+        window.htmx
+          .ajax("GET", promptsUrl, {
+            target: `#${promptsContainerId}`,
+            swap: "innerHTML",
+          })
+          .then(() => {
+            try {
+              const containerEl =
+              safeGetElement(promptsContainerId);
+              if (containerEl) {
+                const existingAttr = containerEl.getAttribute(
+                  "data-selected-prompts",
+                );
+                let existingIds = null;
+                if (existingAttr) {
+                  try {
+                    existingIds = JSON.parse(existingAttr);
+                  } catch (e) {
+                    console.error(
+                      "Error parsing existing data-selected-prompts after reload:",
+                      e,
+                    );
+                  }
+                }
+
+                if (
+                  (!existingIds ||
+                    !Array.isArray(existingIds) ||
+                    existingIds.length === 0) &&
+                  Array.isArray(window._selectedAssociatedPrompts) &&
+                  window._selectedAssociatedPrompts.length > 0
+                ) {
+                  containerEl.setAttribute(
+                    "data-selected-prompts",
+                    JSON.stringify(window._selectedAssociatedPrompts.slice()),
+                  );
+                } else if (
+                  Array.isArray(existingIds) &&
+                  Array.isArray(window._selectedAssociatedPrompts) &&
+                  window._selectedAssociatedPrompts.length > 0
+                ) {
+                  const merged = new Set([
+                    ...(existingIds || []),
+                    ...window._selectedAssociatedPrompts,
+                  ]);
+                  containerEl.setAttribute(
+                    "data-selected-prompts",
+                    JSON.stringify(Array.from(merged)),
                   );
                 }
               }
-              
-              if (
-                (!existingIds ||
-                  !Array.isArray(existingIds) ||
-                  existingIds.length === 0) &&
-                  Array.isArray(window._selectedAssociatedPrompts) &&
-                  window._selectedAssociatedPrompts.length > 0
-              ) {
-                containerEl.setAttribute(
-                  "data-selected-prompts",
-                  JSON.stringify(
-                    window._selectedAssociatedPrompts.slice(),
-                  ),
-                );
-              } else if (
-                Array.isArray(existingIds) &&
-                Array.isArray(window._selectedAssociatedPrompts) &&
-                window._selectedAssociatedPrompts.length > 0
-              ) {
-                const merged = new Set([
-                  ...(existingIds || []),
-                  ...window._selectedAssociatedPrompts,
-                ]);
-                containerEl.setAttribute(
-                  "data-selected-prompts",
-                  JSON.stringify(Array.from(merged)),
-                );
-              }
+            } catch (e) {
+              console.error(
+                "Error restoring data-selected-prompts after HTMX reload:",
+                e,
+              );
             }
-          } catch (e) {
-            console.error(
-              "Error restoring data-selected-prompts after HTMX reload:",
-              e,
+            // Re-initialize the prompt select after content is loaded
+            const pPills = useEditContainers
+              ? "selectedEditPromptsPills"
+              : "selectedPromptsPills";
+            const pWarn = useEditContainers
+              ? "selectedEditPromptsWarning"
+              : "selectedPromptsWarning";
+            const pSelectBtn = useEditContainers
+              ? "selectAllEditPromptsBtn"
+              : "selectAllPromptsBtn";
+            const pClearBtn = useEditContainers
+              ? "clearAllEditPromptsBtn"
+              : "clearAllPromptsBtn";
+
+            initPromptSelect(
+              promptsContainerId,
+              pPills,
+              pWarn,
+              6,
+              pSelectBtn,
+              pClearBtn,
             );
-          }
-          // Re-initialize the prompt select after content is loaded
-          const pPills = useEditContainers
-          ? "selectedEditPromptsPills"
-          : "selectedPromptsPills";
-          const pWarn = useEditContainers
-          ? "selectedEditPromptsWarning"
-          : "selectedPromptsWarning";
-          const pSelectBtn = useEditContainers
-          ? "selectAllEditPromptsBtn"
-          : "selectAllPromptsBtn";
-          const pClearBtn = useEditContainers
-          ? "clearAllEditPromptsBtn"
-          : "clearAllPromptsBtn";
-          
-          initPromptSelect(
-            promptsContainerId,
-            pPills,
-            pWarn,
-            6,
-            pSelectBtn,
-            pClearBtn,
-          );
-        });
+          });
       }
     }
   };
-    
+
   // ===================================================================
   // ENHANCED GATEWAY TEST FUNCTIONALITY
   // ===================================================================
-  
+
   Admin.gatewayTestHeadersEditor = null;
   Admin.gatewayTestBodyEditor = null;
   Admin.gatewayTestFormHandler = null;
   Admin.gatewayTestCloseHandler = null;
-  
+
   Admin.testGateway = async function (gatewayURL) {
     try {
       console.log("Opening gateway test modal for:", gatewayURL);
-      
+
       // Validate URL
       const urlValidation = validateUrl(gatewayURL);
       if (!urlValidation.valid) {
         showErrorMessage(`Invalid gateway URL: ${urlValidation.error}`);
         return;
       }
-      
+
       // Clean up any existing event listeners first
       Admin.cleanupGatewayTestModal();
-      
+
       // Open the modal
       openModal("gateway-test-modal");
-      
+
       // Initialize CodeMirror editors if they don't exist
       if (!Admin.gatewayTestHeadersEditor) {
         const headersElement = safeGetElement("gateway-test-headers");
@@ -1561,7 +1525,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.log("✓ Initialized gateway test headers editor");
         }
       }
-      
+
       if (!Admin.gatewayTestBodyEditor) {
         const bodyElement = safeGetElement("gateway-test-body");
         if (bodyElement && window.CodeMirror) {
@@ -1577,18 +1541,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.log("✓ Initialized gateway test body editor");
         }
       }
-      
+
       // Set form action and URL
       const form = safeGetElement("gateway-test-form");
       const urlInput = safeGetElement("gateway-test-url");
-      
+
       if (form) {
         form.action = `${window.ROOT_PATH}/admin/gateways/test`;
       }
       if (urlInput) {
         urlInput.value = urlValidation.value;
       }
-      
+
       // Set up form submission handler
       if (form) {
         Admin.gatewayTestFormHandler = async (e) => {
@@ -1596,7 +1560,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         };
         form.addEventListener("submit", Admin.gatewayTestFormHandler);
       }
-      
+
       // Set up close button handler
       const closeButton = safeGetElement("gateway-test-close");
       if (closeButton) {
@@ -1610,15 +1574,15 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       showErrorMessage("Failed to open gateway test modal");
     }
   }
-  
+
   Admin.handleGatewayTestSubmit = async function (e) {
     e.preventDefault();
-    
+
     const loading = safeGetElement("gateway-test-loading");
     const responseDiv = safeGetElement("gateway-test-response-json");
     const resultDiv = safeGetElement("gateway-test-result");
     const testButton = safeGetElement("gateway-test-submit");
-    
+
     try {
       // Show loading
       if (loading) {
@@ -1631,27 +1595,27 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         testButton.disabled = true;
         testButton.textContent = "Testing...";
       }
-      
+
       const form = e.target;
       const url = form.action;
-      
+
       // Get form data with validation
       const formData = new FormData(form);
       const baseUrl = formData.get("url");
       const method = formData.get("method");
       const path = formData.get("path");
       const contentType = formData.get("content_type") || "application/json";
-      
+
       // Validate URL
       const urlValidation = validateUrl(baseUrl);
       if (!urlValidation.valid) {
         throw new Error(`Invalid URL: ${urlValidation.error}`);
       }
-      
+
       // Get CodeMirror content safely
       let headersRaw = "";
       let bodyRaw = "";
-      
+
       if (Admin.gatewayTestHeadersEditor) {
         try {
           headersRaw = Admin.gatewayTestHeadersEditor.getValue() || "";
@@ -1659,7 +1623,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.error("Error getting headers value:", error);
         }
       }
-      
+
       if (Admin.gatewayTestBodyEditor) {
         try {
           bodyRaw = Admin.gatewayTestBodyEditor.getValue() || "";
@@ -1667,19 +1631,19 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.error("Error getting body value:", error);
         }
       }
-      
+
       // Validate and parse JSON safely
       const headersValidation = validateJson(headersRaw, "Headers");
       const bodyValidation = validateJson(bodyRaw, "Body");
-      
+
       if (!headersValidation.valid) {
         throw new Error(headersValidation.error);
       }
-      
+
       if (!bodyValidation.valid) {
         throw new Error(bodyValidation.error);
       }
-      
+
       // Process body based on content type
       let processedBody = bodyValidation.value;
       if (
@@ -1694,7 +1658,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         });
         processedBody = params.toString();
       }
-      
+
       const payload = {
         base_url: urlValidation.value,
         method,
@@ -1703,21 +1667,21 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         body: processedBody,
         content_type: contentType,
       };
-      
+
       // Make the request with timeout
       const response = await fetchWithTimeout(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      
+
       const result = await response.json();
-      
+
       const isSuccess =
       result.statusCode &&
       result.statusCode >= 200 &&
       result.statusCode < 300;
-      
+
       const alertType = isSuccess ? "success" : "error";
       const icon = isSuccess ? "✅" : "❌";
       const title = isSuccess ? "Connection Successful" : "Connection Failed";
@@ -1730,7 +1694,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
               </details>`
       : "";
-      
+
       responseDiv.innerHTML = `
           <div class="alert alert-${alertType}">
               <h4><strong>${icon} ${title}</strong></h4>
@@ -1755,12 +1719,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       if (resultDiv) {
         resultDiv.classList.remove("hidden");
       }
-      
+
       testButton.disabled = false;
       testButton.textContent = "Test";
     }
   }
-  
+
   Admin.handleGatewayTestClose = function () {
     try {
       // Reset form
@@ -1768,7 +1732,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       if (form) {
         form.reset();
       }
-      
+
       // Clear editors
       if (Admin.gatewayTestHeadersEditor) {
         try {
@@ -1777,7 +1741,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.error("Error clearing headers editor:", error);
         }
       }
-      
+
       if (Admin.gatewayTestBodyEditor) {
         try {
           Admin.gatewayTestBodyEditor.setValue("");
@@ -1785,99 +1749,99 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.error("Error clearing body editor:", error);
         }
       }
-      
+
       // Clear response
       const responseDiv = safeGetElement("gateway-test-response-json");
       const resultDiv = safeGetElement("gateway-test-result");
-      
+
       if (responseDiv) {
         responseDiv.innerHTML = "";
       }
       if (resultDiv) {
         resultDiv.classList.add("hidden");
       }
-      
+
       // Close modal
       closeModal("gateway-test-modal");
     } catch (error) {
       console.error("Error closing gateway test modal:", error);
     }
   }
-  
+
   Admin.cleanupGatewayTestModal = function () {
     try {
       const form = safeGetElement("gateway-test-form");
       const closeButton = safeGetElement("gateway-test-close");
-      
+
       // Remove existing event listeners
       if (form && Admin.gatewayTestFormHandler) {
         form.removeEventListener("submit", Admin.gatewayTestFormHandler);
         Admin.gatewayTestFormHandler = null;
       }
-      
+
       if (closeButton && Admin.gatewayTestCloseHandler) {
         closeButton.removeEventListener("click", Admin.gatewayTestCloseHandler);
         Admin.gatewayTestCloseHandler = null;
       }
-      
+
       console.log("✓ Cleaned up gateway test modal listeners");
     } catch (error) {
       console.error("Error cleaning up gateway test modal:", error);
     }
   }
-  
+
   // ===================================================================
   // Tool Tips for components with Alpine.js
   // ===================================================================
-  
+
   /* global Alpine, htmx */
   Admin.setupTooltipsWithAlpine = function () {
     document.addEventListener("alpine:init", () => {
       console.log("Initializing Alpine tooltip directive...");
-      
+
       Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
         let tooltipEl = null;
         let animationFrameId = null; // Track animation frame
-        
+
         const moveTooltip = (e) => {
           if (!tooltipEl) {
             return;
           }
-          
+
           const paddingX = 12;
           const paddingY = 20;
           const tipRect = tooltipEl.getBoundingClientRect();
-          
+
           let left = e.clientX + paddingX;
           let top = e.clientY + paddingY;
-          
+
           if (left + tipRect.width > window.innerWidth - 8) {
             left = e.clientX - tipRect.width - paddingX;
           }
           if (top + tipRect.height > window.innerHeight - 8) {
             top = e.clientY - tipRect.height - paddingY;
           }
-          
+
           tooltipEl.style.left = `${left}px`;
           tooltipEl.style.top = `${top}px`;
         };
-        
+
         const showTooltip = (event) => {
           const text = evaluate(expression);
           if (!text) {
             return;
           }
-          
+
           hideTooltip(); // Clean up any existing tooltip
-          
+
           tooltipEl = document.createElement("div");
           tooltipEl.textContent = text;
           tooltipEl.setAttribute("role", "tooltip");
           tooltipEl.className =
           "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
-          
+
           document.body.appendChild(tooltipEl);
-          
+
           if (event?.clientX && event?.clientY) {
             moveTooltip(event);
             el.addEventListener("mousemove", moveTooltip);
@@ -1888,12 +1852,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             tooltipEl.style.left = `${rect.left + scrollX}px`;
             tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
           }
-          
+
           // FIX: Cancel any pending animation frame before setting a new one
           if (animationFrameId) {
             cancelAnimationFrame(animationFrameId);
           }
-          
+
           animationFrameId = requestAnimationFrame(() => {
             // FIX: Check if tooltipEl still exists before accessing its style
             if (tooltipEl) {
@@ -1901,7 +1865,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             }
             animationFrameId = null;
           });
-          
+
           window.addEventListener("scroll", hideTooltip, {
             passive: true,
           });
@@ -1909,34 +1873,34 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             passive: true,
           });
         };
-        
+
         const hideTooltip = () => {
           if (!tooltipEl) {
             return;
           }
-          
+
           // FIX: Cancel any pending animation frame
           if (animationFrameId) {
             cancelAnimationFrame(animationFrameId);
             animationFrameId = null;
           }
-          
+
           tooltipEl.style.opacity = "0";
           el.removeEventListener("mousemove", moveTooltip);
           window.removeEventListener("scroll", hideTooltip);
           window.removeEventListener("resize", hideTooltip);
           el.removeEventListener("click", hideTooltip);
-          
+
           const toRemove = tooltipEl;
           tooltipEl = null; // Set to null immediately
-          
+
           setTimeout(() => {
             if (toRemove && toRemove.parentNode) {
               toRemove.parentNode.removeChild(toRemove);
             }
           }, 200);
         };
-        
+
         el.addEventListener("mouseenter", showTooltip);
         el.addEventListener("mouseleave", hideTooltip);
         el.addEventListener("focus", showTooltip);
@@ -1945,13 +1909,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       });
     });
   }
-  
+
   Admin.setupTooltipsWithAlpine();
-  
+
   // ===================================================================
   // SEARCH & FILTERING FUNCTIONS
   // ===================================================================
-  
+
   /**
   * Filter server table rows based on search text
   */
@@ -1959,23 +1923,23 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     try {
       // Try to find the table using multiple strategies
       let tbody = document.querySelector("#servers-table-body");
-      
+
       // Fallback to data-testid selector for backward compatibility
       if (!tbody) {
         tbody = document.querySelector('tbody[data-testid="server-list"]');
       }
-      
+
       if (!tbody) {
         console.warn("Server table not found");
         return;
       }
-      
+
       const rows = tbody.querySelectorAll('tr[data-testid="server-item"]');
       const search = searchText.toLowerCase().trim();
-      
+
       rows.forEach((row) => {
         let textContent = "";
-        
+
         // Get text from all searchable cells (exclude Actions, Icon, and S.No. columns)
         // Table columns: Admin.Actions(0), Admin.Icon(1), S.No.(2), Admin.UUID(3), Admin.Name(4), Admin.Description(5), Admin.Tools(6), Admin.Resources(7), Admin.Prompts(8), Admin.Tags(9), Admin.Owner(10), Admin.Team(11), Admin.Visibility(12)
         const cells = row.querySelectorAll("td");
@@ -1984,7 +1948,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         for (let i = 3; i < cells.length; i++) {
           searchableColumnIndices.push(i);
         }
-        
+
         searchableColumnIndices.forEach((index) => {
           if (cells[index]) {
             // Clean the text content and make it searchable
@@ -1994,7 +1958,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             textContent += " " + cellText;
           }
         });
-        
+
         if (search === "" || textContent.toLowerCase().includes(search)) {
           row.style.display = "";
         } else {
@@ -2005,7 +1969,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Error filtering server table:", error);
     }
   }
-  
+
   /**
   * Filter Tools table based on search text
   */
@@ -2016,18 +1980,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.warn("Tools table body not found");
         return;
       }
-      
+
       const rows = tbody.querySelectorAll("tr");
       const search = searchText.toLowerCase().trim();
-      
+
       rows.forEach((row) => {
         let textContent = "";
-        
+
         // Get text from searchable cells (exclude Actions and S.No. columns)
         // Tools columns: Admin.Actions(0), S.No.(1), Admin.Source(2), Admin.Name(3), Admin.RequestType(4), Admin.Description(5), Admin.Annotations(6), Admin.Tags(7), Admin.Owner(8), Admin.Team(9), Admin.Status(10)
         const cells = row.querySelectorAll("td");
         const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10]; // Exclude Admin.Actions(0) and S.No.(1)
-        
+
         searchableColumns.forEach((index) => {
           if (cells[index]) {
             // Clean the text content and make it searchable
@@ -2037,7 +2001,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             textContent += " " + cellText;
           }
         });
-        
+
         const isMatch =
         search === "" || textContent.toLowerCase().includes(search);
         if (isMatch) {
@@ -2050,7 +2014,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Error filtering tools table:", error);
     }
   }
-  
+
   /**
   * Filter Resources table based on search text
   */
@@ -2061,24 +2025,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.warn("Resources table body not found");
         return;
       }
-      
+
       const rows = tbody.querySelectorAll("tr");
       const search = searchText.toLowerCase().trim();
-      
+
       rows.forEach((row) => {
         let textContent = "";
-        
+
         // Get text from searchable cells (exclude Actions column)
         // Resources columns: Admin.Actions(0), Admin.Source(1), Admin.Name(2), Admin.Description(3), Admin.Tags(4), Admin.Owner(5), Admin.Team(6), Admin.Status(7)
         const cells = row.querySelectorAll("td");
         const searchableColumns = [1, 2, 3, 4, 5, 6, 7]; // All except Admin.Actions(0)
-        
+
         searchableColumns.forEach((index) => {
           if (cells[index]) {
             textContent += " " + cells[index].textContent;
           }
         });
-        
+
         if (search === "" || textContent.toLowerCase().includes(search)) {
           row.style.display = "";
         } else {
@@ -2089,7 +2053,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Error filtering resources table:", error);
     }
   }
-  
+
   /**
   * Filter Prompts table based on search text
   */
@@ -2100,24 +2064,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.warn("Prompts table body not found");
         return;
       }
-      
+
       const rows = tbody.querySelectorAll("tr");
       const search = searchText.toLowerCase().trim();
-      
+
       rows.forEach((row) => {
         let textContent = "";
-        
+
         // Get text from searchable cells (exclude Actions and S.No. columns)
         // Prompts columns: Admin.Actions(0), S.No.(1), Admin.GatewayName(2), Admin.Name(3), Admin.Description(4), Admin.Tags(5), Admin.Owner(6), Admin.Team(7), Admin.Status(8)
         const cells = row.querySelectorAll("td");
         const searchableColumns = [2, 3, 4, 5, 6, 7, 8]; // All except Admin.Actions(0) and S.No.(1)
-        
+
         searchableColumns.forEach((index) => {
           if (cells[index]) {
             textContent += " " + cells[index].textContent;
           }
         });
-        
+
         if (search === "" || textContent.toLowerCase().includes(search)) {
           row.style.display = "";
         } else {
@@ -2128,7 +2092,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Error filtering prompts table:", error);
     }
   }
-  
+
   /**
   * Filter A2A Agents table based on search text
   */
@@ -2136,34 +2100,34 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     try {
       // Try to find the table using multiple strategies
       let tbody = document.querySelector("#agents-table tbody");
-      
+
       // Fallback to panel selector for backward compatibility
       if (!tbody) {
         tbody = document.querySelector("#a2a-agents-panel tbody");
       }
-      
+
       if (!tbody) {
         console.warn("A2A Agents table body not found");
         return;
       }
-      
+
       const rows = tbody.querySelectorAll("tr");
       const search = searchText.toLowerCase().trim();
-      
+
       rows.forEach((row) => {
         let textContent = "";
-        
+
         // Get text from searchable cells (exclude Actions and ID columns)
         // A2A Agents columns: Admin.Actions(0), Admin.ID(1), Admin.Name(2), Admin.Description(3), Admin.Endpoint(4), Admin.Tags(5), Admin.Type(6), Admin.Status(7), Admin.Reachability(8), Admin.Owner(9), Admin.Team(10), Admin.Visibility(11)
         const cells = row.querySelectorAll("td");
         const searchableColumns = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11]; // Exclude Admin.Actions(0) and Admin.ID(1)
-        
+
         searchableColumns.forEach((index) => {
           if (cells[index]) {
             textContent += " " + cells[index].textContent;
           }
         });
-        
+
         if (search === "" || textContent.toLowerCase().includes(search)) {
           row.style.display = "";
         } else {
@@ -2174,24 +2138,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Error filtering A2A agents table:", error);
     }
   }
-  
+
   /**
   * Filter MCP Servers (Gateways) table based on search text
   */
   Admin.filterGatewaysTable = function (searchText) {
       try {
         console.log("🔍 Starting MCP Servers search for:", searchText);
-        
+
         // Find the MCP servers table - use multiple strategies
         let table = null;
-        
+
         // Strategy 1: Direct selector for gateways panel
         const gatewaysPanel = document.querySelector("#gateways-panel");
         if (gatewaysPanel) {
           table = gatewaysPanel.querySelector("table");
           console.log("✅ Found table in gateways panel");
         }
-        
+
         // Strategy 2: Look for table in currently visible tab
         if (!table) {
           const visiblePanel = document.querySelector(
@@ -2202,7 +2166,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             console.log("✅ Found table in visible panel");
           }
         }
-        
+
         // Strategy 3: Just look for any table with MCP server structure
         if (!table) {
           const allTables = document.querySelectorAll("table");
@@ -2225,36 +2189,36 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           }
         }
       }
-      
+
       if (!table) {
         console.warn("❌ No MCP servers table found");
         return;
       }
-      
+
       const tbody = table.querySelector("tbody");
       if (!tbody) {
         console.warn("❌ No tbody found");
         return;
       }
-      
+
       const rows = tbody.querySelectorAll("tr");
       if (rows.length === 0) {
         console.warn("❌ No rows found");
         return;
       }
-      
+
       const search = searchText.toLowerCase().trim();
       console.log(`🔍 Searching ${rows.length} rows for: "${search}"`);
-      
+
       let visibleCount = 0;
-      
+
       rows.forEach((row, index) => {
         const cells = row.querySelectorAll("td");
-        
+
         if (cells.length === 0) {
           return;
         }
-        
+
         // Combine text from all cells except Admin.Actions(0) and S.No.(1) columns
         // Gateways columns: Admin.Actions(0), S.No.(1), Admin.Name(2), Admin.URL(3), Admin.Tags(4), Admin.Status(5), Admin.LastSeen(6), Admin.Owner(7), Admin.Team(8), Admin.Visibility(9)
         let searchContent = "";
@@ -2264,26 +2228,26 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             searchContent += " " + cellText;
           }
         }
-        
+
         const fullText = searchContent.trim().toLowerCase();
         const matchesSearch = search === "" || fullText.includes(search);
-        
+
         // Check if row should be visible based on inactive filter
         const checkbox = safeGetElement("show-inactive-gateways");
         const showInactive = checkbox ? checkbox.checked : true;
         const isEnabled = row.getAttribute("data-enabled") === "true";
         const matchesFilter = showInactive || isEnabled;
-        
+
         // Only show row if it matches BOTH search AND filter
         const shouldShow = matchesSearch && matchesFilter;
-        
+
         // Debug first few rows
         if (index < 3) {
           console.log(
             `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Search: ${matchesSearch}, Filter: ${matchesFilter}, Show: ${shouldShow}`,
           );
         }
-        
+
         // Show/hide the row
         if (shouldShow) {
           row.style.removeProperty("display");
@@ -2294,7 +2258,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           row.style.visibility = "hidden";
         }
       });
-      
+
       console.log(
         `✅ Search complete: ${visibleCount}/${rows.length} rows visible`,
       );
@@ -2302,67 +2266,67 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("❌ Error in filterGatewaysTable:", error);
     }
   }
-  
+
   // Add a test function for debugging
   Admin.testGatewaySearch = function (searchTerm = "Cou") {
     console.log("🧪 Testing gateway search with:", searchTerm);
     console.log("Available tables:", document.querySelectorAll("table").length);
-    
+
     // Test the search input exists
     const searchInput = safeGetElement("gateways-search-input");
     console.log("Search input found:", !!searchInput);
-    
+
     if (searchInput) {
       searchInput.value = searchTerm;
       console.log("Set search input value to:", searchInput.value);
     }
-    
+
     Admin.filterGatewaysTable(searchTerm);
   };
-  
+
   // Simple fallback search function
   Admin.simpleGatewaySearch = function (searchTerm) {
     console.log("🔧 Simple gateway search for:", searchTerm);
-    
+
     // Find any table in the current tab/page
     const tables = document.querySelectorAll("table");
     console.log("Found tables:", tables.length);
-    
+
     tables.forEach((table, tableIndex) => {
       const tbody = table.querySelector("tbody");
       if (!tbody) {
         return;
       }
-      
+
       const rows = tbody.querySelectorAll("tr");
       console.log(`Table ${tableIndex}: ${rows.length} rows`);
-      
+
       if (rows.length > 0) {
         // Check if this looks like the MCP servers table
         const firstRow = rows[0];
         const cells = firstRow.querySelectorAll("td");
-        
+
         if (cells.length >= 8) {
           // MCP servers table should have many columns
           console.log(
             `Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`,
           );
-          
+
           const search = searchTerm.toLowerCase().trim();
           let visibleCount = 0;
-          
+
           rows.forEach((row) => {
             const cells = row.querySelectorAll("td");
             let rowText = "";
-            
+
             // Get text from all cells except Admin.Actions(0) and S.No.(1)
             for (let i = 2; i < cells.length; i++) {
               rowText += " " + cells[i].textContent.trim();
             }
-            
+
             const shouldShow =
             search === "" || rowText.toLowerCase().includes(search);
-            
+
             if (shouldShow) {
               row.style.display = "";
               visibleCount++;
@@ -2370,7 +2334,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               row.style.display = "none";
             }
           });
-          
+
           console.log(
             `✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`,
           );
@@ -2379,13 +2343,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       }
     });
   };
-  
+
   // Add initialization test function
   Admin.testSearchInit = function () {
     console.log("🧪 Testing search initialization...");
     initializeSearchInputs();
   };
-  
+
   /**
   * Clear search functionality for different entity types
   */
@@ -2446,7 +2410,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Error clearing search:", error);
     }
   }
-  
+
   /**
   * Create memoized version of search inputs initialization
   * This prevents repeated initialization and provides explicit reset capability
@@ -2455,7 +2419,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     init: initializeSearchInputsMemoized,
     debouncedInit: initializeSearchInputsDebounced,
     reset: resetSearchInputsState,
-  } = createMemoizedInit(Admin.initializeSearchInputs, 300, "SearchInputs");
+  } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
 
   // ===================================================================
   // A2A AGENT TEST MODAL FUNCTIONALITY
@@ -2473,20 +2437,20 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   Admin.testA2AAgent = async function (agentId, agentName, endpointUrl) {
     try {
       console.log("Opening A2A test modal for:", agentName);
-      
+
       // Clean up any existing event listeners
       Admin.cleanupA2ATestModal();
-      
+
       // Open the modal
       openModal("a2a-test-modal");
-      
+
       // Set modal title and description
       const titleElement = safeGetElement("a2a-test-modal-title");
       const descElement = safeGetElement("a2a-test-modal-description");
       const agentIdInput = safeGetElement("a2a-test-agent-id");
       const queryInput = safeGetElement("a2a-test-query");
       const resultDiv = safeGetElement("a2a-test-result");
-      
+
       if (titleElement) {
         titleElement.textContent = `Test A2A Agent: ${agentName}`;
       }
@@ -2503,7 +2467,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       if (resultDiv) {
         resultDiv.classList.add("hidden");
       }
-      
+
       // Set up form submission handler
       const form = safeGetElement("a2a-test-form");
       if (form) {
@@ -2512,7 +2476,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         };
         form.addEventListener("submit", Admin.a2aTestFormHandler);
       }
-      
+
       // Set up close button handler
       const closeButton = safeGetElement("a2a-test-close");
       if (closeButton) {
@@ -2533,12 +2497,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.handleA2ATestSubmit = async function (e) {
     e.preventDefault();
-    
+
     const loading = safeGetElement("a2a-test-loading");
     const responseDiv = safeGetElement("a2a-test-response-json");
     const resultDiv = safeGetElement("a2a-test-result");
     const testButton = safeGetElement("a2a-test-submit");
-    
+
     try {
       // Show loading
       if (loading) {
@@ -2551,18 +2515,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         testButton.disabled = true;
         testButton.textContent = "Testing...";
       }
-      
+
       const agentId = safeGetElement("a2a-test-agent-id")?.value;
       const query =
       safeGetElement("a2a-test-query")?.value ||
       "Hello from MCP Gateway Admin UI test!";
-      
+
       if (!agentId) {
         throw new Error("Agent ID is missing");
       }
-      
+
       // Get auth token
-      const token = await Admin.getAuthToken();
+      const token = await getAuthToken();
       const headers = { "Content-Type": "application/json" };
       if (token) {
         headers.Authorization = `Bearer ${token}`;
@@ -2571,7 +2535,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.warn("JWT token not found, attempting basic auth fallback");
         headers.Authorization = "Basic " + btoa("admin:changeme");
       }
-      
+
       // Send test request with user query
       const response = await fetchWithTimeout(
         `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
@@ -2582,18 +2546,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         },
         window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
       );
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const result = await response.json();
-      
+
       // Display result
       const isSuccess = result.success && !result.error;
       const icon = isSuccess ? "✅" : "❌";
       const title = isSuccess ? "Test Successful" : "Test Failed";
-      
+
       let bodyHtml = "";
       if (result.result) {
         bodyHtml = `<details open>
@@ -2601,7 +2565,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                       <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto whitespace-pre-wrap">${escapeHtml(JSON.stringify(result.result, null, 2))}</pre>
                   </details>`;
       }
-      
+
       responseDiv.innerHTML = `
                   <div class="p-3 rounded ${isSuccess ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"}">
                       <h4 class="font-bold ${isSuccess ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}">${icon} ${title}</h4>
@@ -2638,7 +2602,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       if (form) {
         form.reset();
       }
-      
+
       // Clear response
       const responseDiv = safeGetElement("a2a-test-response-json");
       const resultDiv = safeGetElement("a2a-test-result");
@@ -2648,7 +2612,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       if (resultDiv) {
         resultDiv.classList.add("hidden");
       }
-      
+
       // Close modal
       closeModal("a2a-test-modal");
     } catch (error) {
@@ -2663,1020 +2627,21 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     try {
       const form = safeGetElement("a2a-test-form");
       const closeButton = safeGetElement("a2a-test-close");
-      
+
       if (form && Admin.a2aTestFormHandler) {
         form.removeEventListener("submit", Admin.a2aTestFormHandler);
         Admin.a2aTestFormHandler = null;
       }
-      
+
       if (closeButton && a2aTestCloseHandler) {
         closeButton.removeEventListener("click", a2aTestCloseHandler);
         a2aTestCloseHandler = null;
       }
-      
+
       console.log("✓ Cleaned up A2A test modal listeners");
     } catch (error) {
       console.error("Error cleaning up A2A test modal:", error);
     }
-  }
-
-  /**
-  * Token Management Functions
-  */
-
-  /**
-  * Load tokens list from API
-  */
-  Admin.loadTokensList = async function () {
-    const tokensList = safeGetElement("tokens-list");
-    if (!tokensList) {
-      return;
-    }
-    
-    try {
-      tokensList.innerHTML =
-      '<p class="text-gray-500 dark:text-gray-400">Loading tokens...</p>';
-      
-      const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
-        headers: {
-          Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          "Content-Type": "application/json",
-        },
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Failed to load tokens: (${response.status})`);
-      }
-      
-      const data = await response.json();
-      Admin.displayTokensList(data.tokens);
-    } catch (error) {
-      console.error("Error loading tokens:", error);
-      tokensList.innerHTML =
-      '<div class="text-red-500">Error loading tokens: ' +
-      escapeHtml(error.message) +
-      "</div>";
-    }
-  }
-
-  /**
-  * Display tokens list in the UI
-  */
-  Admin.displayTokensList = function (tokens) {
-    const tokensList = safeGetElement("tokens-list");
-    if (!tokensList) {
-      return;
-    }
-    
-    if (!tokens || tokens.length === 0) {
-      tokensList.innerHTML =
-      '<p class="text-gray-500 dark:text-gray-400">No tokens found. Create your first token above.</p>';
-      return;
-    }
-    
-    let tokensHTML = "";
-    tokens.forEach((token) => {
-      const expiresText = token.expires_at
-      ? new Date(token.expires_at).toLocaleDateString()
-      : "Never";
-      const createdText = token.created_at
-      ? new Date(token.created_at).toLocaleDateString()
-      : "Never";
-      const lastUsedText = token.last_used
-      ? new Date(token.last_used).toLocaleDateString()
-      : "Never";
-      const statusBadge = token.is_active
-      ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">Active</span>'
-      : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100">Inactive</span>';
-      
-      // Build scope badges
-      const teamName = token.team_id ? Admin.getTeamNameById(token.team_id) : null;
-      const teamBadge = teamName
-      ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-100">Team: ${escapeHtml(teamName)}</span>`
-      : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">Public-only</span>';
-      
-      const ipBadge =
-      token.ip_restrictions && token.ip_restrictions.length > 0
-      ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-100">${token.ip_restrictions.length} IP${token.ip_restrictions.length > 1 ? "s" : ""}</span>`
-      : "";
-      
-      const serverBadge = token.server_id
-      ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100">Server-scoped</span>'
-      : "";
-      
-      // Safely encode token data for data attribute (URL encoding preserves all characters)
-      const tokenDataEncoded = encodeURIComponent(JSON.stringify(token));
-      
-      tokensHTML += `
-                  <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
-                      <div class="flex justify-between items-start">
-                          <div class="flex-1">
-                              <div class="flex items-center flex-wrap gap-2">
-                                  <h4 class="text-lg font-medium text-gray-900 dark:text-white">${escapeHtml(token.name)}</h4>
-                                  ${statusBadge}
-                                  ${teamBadge}
-                                  ${serverBadge}
-                                  ${ipBadge}
-                              </div>
-                              ${token.description ? `<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">${escapeHtml(token.description)}</p>` : ""}
-                              <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
-                                  <div>
-                                      <span class="font-medium">Created:</span> ${createdText}
-                                  </div>
-                                  <div>
-                                      <span class="font-medium">Expires:</span> ${expiresText}
-                                  </div>
-                                  <div>
-                                      <span class="font-medium">Last Used:</span> ${lastUsedText}
-                                  </div>
-                              </div>
-                              ${token.server_id ? `<div class="mt-2 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Scoped to Server:</span> ${escapeHtml(token.server_id)}</div>` : ""}
-                              ${token.resource_scopes && token.resource_scopes.length > 0 ? `<div class="mt-1 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span> ${token.resource_scopes.map((p) => escapeHtml(p)).join(", ")}</div>` : ""}
-                          </div>
-                          <div class="flex flex-wrap gap-2 ml-4">
-                              <button
-                                  data-action="token-details"
-                                  data-token="${tokenDataEncoded}"
-                                  class="px-3 py-1 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 border border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 rounded-md"
-                              >
-                                  Details
-                              </button>
-                              <button
-                                  data-action="token-usage"
-                                  data-token-id="${escapeHtml(token.id)}"
-                                  class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md"
-                              >
-                                  Usage Stats
-                              </button>
-                              <button
-                                  data-action="token-revoke"
-                                  data-token-id="${escapeHtml(token.id)}"
-                                  data-token-name="${escapeHtml(token.name)}"
-                                  class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md"
-                              >
-                                  Revoke
-                              </button>
-                          </div>
-                      </div>
-                  </div>
-              `;
-    });
-    
-    tokensList.innerHTML = tokensHTML;
-    
-    // Attach event handlers via delegation (avoids inline JS and XSS risks)
-    Admin.setupTokenListEventHandlers(tokensList);
-  }
-
-  /**
-  * Set up event handlers for token list buttons using event delegation.
-  * This avoids inline onclick handlers and associated XSS risks.
-  * Uses a one-time guard to prevent duplicate handlers on repeated renders.
-  * @param {HTMLElement} container - The tokens list container element
-  */
-  Admin.setupTokenListEventHandlers = function (container) {
-    // Guard against duplicate handlers on repeated renders
-    if (container.dataset.handlersAttached === "true") {
-      return;
-    }
-    container.dataset.handlersAttached = "true";
-    
-    container.addEventListener("click", (event) => {
-      const button = event.target.closest("button[data-action]");
-      if (!button) {
-        return;
-      }
-      
-      const action = button.dataset.action;
-      
-      if (action === "token-details") {
-        const tokenData = button.dataset.token;
-        if (tokenData) {
-          try {
-            const token = JSON.parse(decodeURIComponent(tokenData));
-            Admin.showTokenDetailsModal(token);
-          } catch (e) {
-            console.error("Failed to parse token data:", e);
-          }
-        }
-      } else if (action === "token-usage") {
-        const tokenId = button.dataset.tokenId;
-        if (tokenId) {
-          Admin.viewTokenUsage(tokenId);
-        }
-      } else if (action === "token-revoke") {
-        const tokenId = button.dataset.tokenId;
-        const tokenName = button.dataset.tokenName;
-        if (tokenId) {
-          Admin.revokeToken(tokenId, tokenName || "");
-        }
-      }
-    });
-  }
-
-  /**
-  * Update the team scoping warning/info visibility based on team selection
-  */
-  Admin.updateTeamScopingWarning = function () {
-    const warningDiv = safeGetElement("team-scoping-warning");
-    const infoDiv = safeGetElement("team-scoping-info");
-    const teamNameSpan = safeGetElement("selected-team-name");
-    
-    if (!warningDiv || !infoDiv) {
-      return;
-    }
-    
-    const currentTeamId = getCurrentTeamId();
-    
-    if (!currentTeamId) {
-      // Show warning when "All Teams" is selected
-      warningDiv.classList.remove("hidden");
-      infoDiv.classList.add("hidden");
-    } else {
-      // Hide warning and show info when a specific team is selected
-      warningDiv.classList.add("hidden");
-      infoDiv.classList.remove("hidden");
-      
-      // Get team name to display
-      const teamName = getCurrentTeamName() || currentTeamId;
-      if (teamNameSpan) {
-        teamNameSpan.textContent = teamName;
-      }
-    }
-  }
-
-  /**
-  * Monitor team selection changes using Alpine.js watcher
-  */
-  Admin.initializeTeamScopingMonitor = function () {
-    // Use Alpine.js $watch to monitor team selection changes
-    document.addEventListener("alpine:init", () => {
-      const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-      if (teamSelector && window.Alpine) {
-        // The Alpine component will notify us of changes
-        const checkInterval = setInterval(() => {
-          Admin.updateTeamScopingWarning();
-        }, 500); // Check every 500ms
-        
-        // Store interval ID for cleanup if needed
-        Admin._teamMonitorInterval = checkInterval;
-      }
-    });
-    
-    // Also update when tokens tab is shown
-    document.addEventListener("DOMContentLoaded", () => {
-      const tokensTab = document.querySelector('a[href="#tokens"]');
-      if (tokensTab) {
-        tokensTab.addEventListener("click", () => {
-          setTimeout(updateTeamScopingWarning, 100);
-        });
-      }
-    });
-  }
-
-  /**
-  * Set up create token form handling
-  */
-  Admin.setupCreateTokenForm = function () {
-    const form = safeGetElement("create-token-form");
-    if (!form) {
-      return;
-    }
-    
-    // Update team scoping warning/info display
-    Admin.updateTeamScopingWarning();
-    
-    form.addEventListener("submit", async (e) => {
-      e.preventDefault();
-      
-      // User can create public-only tokens in that context
-      await Admin.createToken(form);
-    });
-  }
-
-  /**
-  * Validate an IP address or CIDR notation string.
-  * @param {string} value - The IP/CIDR string to validate
-  * @returns {boolean} True if valid IPv4/IPv6 address or CIDR notation
-  */
-  Admin.isValidIpOrCidr = function (value) {
-    if (!value || typeof value !== "string") {
-      return false;
-    }
-    
-    const trimmed = value.trim();
-    
-    // IPv4 with optional CIDR (e.g., 192.168.1.0/24 or 192.168.1.1)
-    const ipv4Segment = "(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
-    const ipv4Pattern = new RegExp(
-      `^(?:${ipv4Segment}\\.){3}${ipv4Segment}(?:\\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$`,
-    );
-    
-    // IPv6 with optional CIDR (supports compressed forms and IPv4-embedded)
-    const ipv6Segment = "[0-9A-Fa-f]{1,4}";
-    const ipv4Embedded = `(?:${ipv4Segment}\\.){3}${ipv4Segment}`;
-    const ipv6Pattern = new RegExp(
-      "^(?:" +
-      `(?:${ipv6Segment}:){7}${ipv6Segment}|` +
-      `(?:${ipv6Segment}:){1,7}:|` +
-      `(?:${ipv6Segment}:){1,6}:${ipv6Segment}|` +
-      `(?:${ipv6Segment}:){1,5}(?::${ipv6Segment}){1,2}|` +
-      `(?:${ipv6Segment}:){1,4}(?::${ipv6Segment}){1,3}|` +
-      `(?:${ipv6Segment}:){1,3}(?::${ipv6Segment}){1,4}|` +
-      `(?:${ipv6Segment}:){1,2}(?::${ipv6Segment}){1,5}|` +
-      `${ipv6Segment}:(?::${ipv6Segment}){1,6}|` +
-      `:(?::${ipv6Segment}){1,7}|` +
-      "::|" +
-      `(?:${ipv6Segment}:){1,4}:${ipv4Embedded}|` +
-      `::(?:ffff(?::0{1,4}){0,1}:)?${ipv4Embedded}` +
-      ")(?:\\/(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))?$",
-    );
-    
-    return ipv4Pattern.test(trimmed) || ipv6Pattern.test(trimmed);
-  }
-
-  /**
-  * Validate a permission scope string.
-  * Permissions should follow format: resource.action (e.g., tools.read, resources.write)
-  * Also allows wildcard (*) for full access.
-  * @param {string} value - The permission string to validate
-  * @returns {boolean} True if valid permission format
-  */
-  Admin.isValidPermission = function (value) {
-    if (!value || typeof value !== "string") {
-      return false;
-    }
-    
-    const trimmed = value.trim();
-    
-    // Allow wildcard
-    if (trimmed === "*") {
-      return true;
-    }
-    
-    // Permission format: resource.action (alphanumeric with underscores, dot-separated)
-    // Examples: tools.read, resources.write, prompts.list, tools.execute
-    const permissionPattern = /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/i;
-    
-    return permissionPattern.test(trimmed);
-  }
-
-  /**
-  * Create a new API token
-  */
-  // Create a new API token
-  Admin.createToken = async function (form) {
-    const formData = new FormData(form);
-    const submitButton = form.querySelector('button[type="submit"]');
-    const originalText = submitButton.textContent;
-    
-    try {
-      submitButton.textContent = "Creating...";
-      submitButton.disabled = true;
-      
-      // Get current team ID (null means "All Teams" = public-only token)
-      const currentTeamId = getCurrentTeamId();
-      
-      // Build request payload
-      const payload = {
-        name: formData.get("name"),
-        description: formData.get("description") || null,
-        expires_in_days: formData.get("expires_in_days")
-        ? parseInt(formData.get("expires_in_days"))
-        : null,
-        tags: [],
-        team_id: currentTeamId || null, // null = public-only token
-      };
-      
-      // Add scoping if provided
-      const scope = {};
-      
-      if (formData.get("server_id")) {
-        scope.server_id = formData.get("server_id");
-      }
-      
-      // Parse and validate IP restrictions
-      if (formData.get("ip_restrictions")) {
-        const ipRestrictions = formData.get("ip_restrictions").trim();
-        if (ipRestrictions) {
-          const ipList = ipRestrictions
-          .split(",")
-          .map((ip) => ip.trim())
-          .filter((ip) => ip.length > 0);
-          
-          // Validate each IP/CIDR
-          const invalidIps = ipList.filter((ip) => !isValidIpOrCidr(ip));
-          if (invalidIps.length > 0) {
-            throw new Error(
-              `Invalid IP address or CIDR format: ${invalidIps.join(", ")}. ` +
-              "Use formats like 192.168.1.0/24 or 10.0.0.1",
-            );
-          }
-          scope.ip_restrictions = ipList;
-        } else {
-          scope.ip_restrictions = [];
-        }
-      } else {
-        scope.ip_restrictions = [];
-      }
-      
-      // Parse and validate permissions
-      if (formData.get("permissions")) {
-        const permList = formData
-        .get("permissions")
-        .split(",")
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0);
-        
-        // Validate each permission
-        const invalidPerms = permList.filter((p) => !isValidPermission(p));
-        if (invalidPerms.length > 0) {
-          throw new Error(
-            `Invalid permission format: ${invalidPerms.join(", ")}. ` +
-            "Use formats like tools.read, resources.write, or * for full access",
-          );
-        }
-        scope.permissions = permList;
-      } else {
-        scope.permissions = [];
-      }
-      
-      scope.time_restrictions = {};
-      scope.usage_limits = {};
-      payload.scope = scope;
-      
-      const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      
-      if (!response.ok) {
-        const errorMsg = await parseErrorResponse(
-          response,
-          `Failed to create token (${response.status})`,
-        );
-        throw new Error(errorMsg);
-      }
-      
-      const result = await response.json();
-      Admin.showTokenCreatedModal(result);
-      form.reset();
-      await Admin.loadTokensList();
-      
-      // Show appropriate success message
-      const tokenType = currentTeamId ? "team-scoped" : "public-only";
-      showNotification(`${tokenType} token created successfully!`, "success");
-    } catch (error) {
-      console.error("Error creating token:", error);
-      showNotification(`Error creating token: ${error.message}`, "error");
-    } finally {
-      submitButton.textContent = originalText;
-      submitButton.disabled = false;
-    }
-  }
-
-  /**
-  * Show modal with new token (one-time display)
-  */
-  Admin.showTokenCreatedModal = function (tokenData) {
-    const modal = document.createElement("div");
-    modal.className =
-    "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
-    modal.innerHTML = `
-              <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-lg shadow-lg rounded-md bg-white dark:bg-gray-800">
-                  <div class="mt-3">
-                      <div class="flex items-center justify-between mb-4">
-                          <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Created Successfully</h3>
-                          <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
-                              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                              </svg>
-                          </button>
-                      </div>
-    
-                      <div class="bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded-md p-4 mb-4">
-                          <div class="flex">
-                              <div class="flex-shrink-0">
-                                  <svg class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
-                                      <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-                                  </svg>
-                              </div>
-                              <div class="ml-3">
-                                  <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-                                      Important: Save your token now!
-                                  </h3>
-                                  <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
-                                      This is the only time you will be able to see this token. Make sure to save it in a secure location.
-                                  </div>
-                              </div>
-                          </div>
-                      </div>
-    
-                      <div class="mb-4">
-                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                              Your API Token:
-                          </label>
-                          <div class="flex">
-                              <input
-                                  type="text"
-                                  value="${tokenData.access_token}"
-                                  readonly
-                                  class="flex-1 p-2 border border-gray-300 dark:border-gray-600 rounded-l-md bg-gray-50 dark:bg-gray-700 text-sm font-mono"
-                                  id="new-token-value"
-                              />
-                              <button
-                                  onclick="Admin.copyToClipboard('new-token-value')"
-                                  class="px-3 py-2 bg-indigo-600 text-white text-sm rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                              >
-                                  Copy
-                              </button>
-                          </div>
-                      </div>
-    
-                      <div class="text-sm text-gray-600 dark:text-gray-400 mb-4">
-                          <strong>Token Name:</strong> ${escapeHtml(tokenData.token.name || "Unnamed Token")}<br/>
-                          <strong>Expires:</strong> ${tokenData.token.expires_at ? new Date(tokenData.token.expires_at).toLocaleDateString() : "Never"}
-                      </div>
-    
-                      <div class="flex justify-end">
-                          <button
-                              onclick="this.closest('.fixed').remove()"
-                              class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                          >
-                              I've Saved It
-                          </button>
-                      </div>
-                  </div>
-              </div>
-          `;
-    
-    document.body.appendChild(modal);
-    
-    // Focus the token input for easy selection
-    const tokenInput = modal.querySelector("#new-token-value");
-    tokenInput.focus();
-    tokenInput.select();
-  }
-
-  /**
-  * Copy text to clipboard
-  */
-  Admin.copyToClipboard = function (elementId) {
-    const element = safeGetElement(elementId);
-    if (element) {
-      element.select();
-      document.execCommand("copy");
-      showNotification("Token copied to clipboard", "success");
-    }
-  }
-
-  /**
-  * Revoke a token
-  */
-  Admin.revokeToken = async function (tokenId, tokenName) {
-    if (
-      !confirm(
-        `Are you sure you want to revoke the token "${tokenName}"? This action cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    
-    try {
-      const response = await fetchWithTimeout(
-        `${window.ROOT_PATH}/tokens/${tokenId}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            reason: "Revoked by user via admin interface",
-          }),
-        },
-      );
-      
-      if (!response.ok) {
-        const errorMsg = await parseErrorResponse(
-          response,
-          `Failed to revoke token: ${response.status}`,
-        );
-        throw new Error(errorMsg);
-      }
-      
-      showNotification("Token revoked successfully", "success");
-      await Admin.loadTokensList();
-    } catch (error) {
-      console.error("Error revoking token:", error);
-      showNotification(`Error revoking token: ${error.message}`, "error");
-    }
-  }
-
-  /**
-  * View token usage statistics
-  */
-  Admin.viewTokenUsage = async function (tokenId) {
-    try {
-      const response = await fetchWithTimeout(
-        `${window.ROOT_PATH}/tokens/${tokenId}/usage`,
-        {
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-      
-      if (!response.ok) {
-        throw new Error(`Failed to load usage stats: ${response.status}`);
-      }
-      
-      const stats = await response.json();
-      Admin.showUsageStatsModal(stats);
-    } catch (error) {
-      console.error("Error loading usage stats:", error);
-      showNotification(
-        `Error loading usage stats: ${error.message}`,
-        "error",
-      );
-    }
-  }
-
-  /**
-  * Show usage statistics modal
-  */
-  Admin.showUsageStatsModal = function (stats) {
-    const modal = document.createElement("div");
-    modal.className =
-    "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
-    modal.innerHTML = `
-              <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800">
-                  <div class="flex items-center justify-between mb-4">
-                      <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Usage Statistics (Last ${stats.period_days} Days)</h3>
-                      <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
-                          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                          </svg>
-                      </button>
-                  </div>
-    
-                  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                      <div class="bg-blue-50 dark:bg-blue-900 p-4 rounded-lg">
-                          <div class="text-2xl font-bold text-blue-600 dark:text-blue-300">${stats.total_requests}</div>
-                          <div class="text-sm text-blue-600 dark:text-blue-400">Total Requests</div>
-                      </div>
-                      <div class="bg-green-50 dark:bg-green-900 p-4 rounded-lg">
-                          <div class="text-2xl font-bold text-green-600 dark:text-green-300">${stats.successful_requests}</div>
-                          <div class="text-sm text-green-600 dark:text-green-400">Successful</div>
-                      </div>
-                      <div class="bg-red-50 dark:bg-red-900 p-4 rounded-lg">
-                          <div class="text-2xl font-bold text-red-600 dark:text-red-300">${stats.blocked_requests}</div>
-                          <div class="text-sm text-red-600 dark:text-red-400">Blocked</div>
-                      </div>
-                      <div class="bg-purple-50 dark:bg-purple-900 p-4 rounded-lg">
-                          <div class="text-2xl font-bold text-purple-600 dark:text-purple-300">${Math.round(stats.success_rate * 100)}%</div>
-                          <div class="text-sm text-purple-600 dark:text-purple-400">Success Rate</div>
-                      </div>
-                  </div>
-    
-                  <div class="mb-4">
-                      <h4 class="text-md font-medium text-gray-900 dark:text-white mb-2">Average Response Time</h4>
-                      <div class="text-lg text-gray-700 dark:text-gray-300">${stats.average_response_time_ms}ms</div>
-                  </div>
-    
-                  ${
-    stats.top_endpoints && stats.top_endpoints.length > 0
-    ? `
-                      <div class="mb-4">
-                          <h4 class="text-md font-medium text-gray-900 dark:text-white mb-2">Top Endpoints</h4>
-                          <div class="space-y-2">
-                              ${stats.top_endpoints
-    .map(
-      ([endpoint, count]) => `
-                                  <div class="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700 rounded">
-                                      <span class="font-mono text-sm">${escapeHtml(endpoint)}</span>
-                                      <span class="text-sm font-medium">${count} requests</span>
-                                  </div>
-                              `,
-    )
-    .join("")}
-                          </div>
-                      </div>
-                  `
-    : ""
-  }
-
-                  <div class="flex justify-end">
-                      <button
-                          onclick="this.closest('.fixed').remove()"
-                          class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500"
-                      >
-                          Close
-                      </button>
-                  </div>
-              </div>
-          `;
-
-  document.body.appendChild(modal);
-  }
-
-  /**
-  * Get team name by team ID from cached team data
-  * @param {string} teamId - The team ID to look up
-  * @returns {string} Team name or truncated ID if not found
-  */
-  Admin.getTeamNameById = function (teamId) {
-    if (!teamId) {
-      return null;
-    }
-    
-    // Try from window.USERTEAMSDATA (most reliable source)
-    if (window.USERTEAMSDATA && Array.isArray(window.USERTEAMSDATA)) {
-      const teamObj = window.USERTEAMSDATA.find((t) => t.id === teamId);
-      if (teamObj) {
-        return teamObj.name;
-      }
-    }
-    
-    // Try from Alpine.js component
-    const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-    if (
-      teamSelector &&
-      teamSelector._x_dataStack &&
-      teamSelector._x_dataStack[0]
-    ) {
-      const alpineData = teamSelector._x_dataStack[0];
-      if (alpineData.teams && Array.isArray(alpineData.teams)) {
-        const teamObj = alpineData.teams.find((t) => t.id === teamId);
-        if (teamObj) {
-          return teamObj.name;
-        }
-      }
-    }
-    
-    // Fallback: return truncated ID
-    return teamId.substring(0, 8) + "...";
-  }
-
-  /**
-  * Show token details modal with full token information
-  * @param {Object} token - The token object with all fields
-  */
-  Admin.showTokenDetailsModal = function (token) {
-    const formatDate = (dateStr) => {
-      if (!dateStr) {
-        return "Never";
-      }
-      return new Date(dateStr).toLocaleString();
-    };
-    
-    const formatList = (list) => {
-      if (!list || list.length === 0) {
-        return "None";
-      }
-      return list
-      .map((item) => `<li class="ml-4">• ${escapeHtml(item)}</li>`)
-      .join("");
-    };
-    
-    const formatJson = (obj) => {
-      if (!obj || Object.keys(obj).length === 0) {
-        return "None";
-      }
-      return `<pre class="bg-gray-100 dark:bg-gray-700 p-2 rounded text-xs overflow-x-auto">${escapeHtml(JSON.stringify(obj, null, 2))}</pre>`;
-    };
-    
-    const teamName = token.team_id ? Admin.getTeamNameById(token.team_id) : null;
-    const statusClass = token.is_active
-    ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
-    : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100";
-    const statusText = token.is_active ? "Active" : "Inactive";
-    
-    const modal = document.createElement("div");
-    modal.className =
-    "fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50";
-    modal.innerHTML = `
-              <div class="relative top-10 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white dark:bg-gray-800 mb-10">
-                  <div class="flex items-center justify-between mb-4">
-                      <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Details</h3>
-                      <button data-action="close-modal" class="text-gray-400 hover:text-gray-600">
-                          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
-                          </svg>
-                      </button>
-                  </div>
-    
-                  <!-- Basic Information -->
-                  <div class="mb-6">
-                      <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Basic Information</h4>
-                      <div class="grid grid-cols-1 gap-2 text-sm">
-                          <div class="flex items-center">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">ID:</span>
-                              <code class="bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded text-xs flex-1 overflow-hidden text-ellipsis">${escapeHtml(token.id)}</code>
-                              <button data-action="copy-id" data-copy-value="${escapeHtml(token.id)}"
-                                      class="ml-2 px-2 py-0.5 text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 border border-blue-300 dark:border-blue-600 rounded">
-                                  Copy
-                              </button>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Name:</span>
-                              <span class="text-gray-900 dark:text-white">${escapeHtml(token.name)}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Description:</span>
-                              <span class="text-gray-600 dark:text-gray-400">${token.description ? escapeHtml(token.description) : "None"}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created by:</span>
-                              <span class="text-gray-900 dark:text-white">${escapeHtml(token.user_email || "Unknown")}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Team:</span>
-                              <span class="text-gray-900 dark:text-white">${teamName ? `${escapeHtml(teamName)} <code class="text-xs text-gray-500">(${escapeHtml(token.team_id.substring(0, 8))}...)</code>` : "None (Public-only)"}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Created:</span>
-                              <span class="text-gray-600 dark:text-gray-400">${formatDate(token.created_at)}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Expires:</span>
-                              <span class="text-gray-600 dark:text-gray-400">${formatDate(token.expires_at)}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Last Used:</span>
-                              <span class="text-gray-600 dark:text-gray-400">${formatDate(token.last_used)}</span>
-                          </div>
-                          <div class="flex items-center">
-                              <span class="font-medium text-gray-700 dark:text-gray-300 w-28">Status:</span>
-                              <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${statusClass}">${statusText}</span>
-                          </div>
-                      </div>
-                  </div>
-    
-                  <!-- Scope & Restrictions -->
-                  <div class="mb-6">
-                      <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Scope & Restrictions</h4>
-                      <div class="grid grid-cols-1 gap-3 text-sm">
-                          <div>
-                              <span class="font-medium text-gray-700 dark:text-gray-300">Server:</span>
-                              <span class="ml-2 text-gray-600 dark:text-gray-400">${token.server_id ? escapeHtml(token.server_id) : "All servers"}</span>
-                          </div>
-                          <div>
-                              <span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span>
-                              ${
-    token.resource_scopes &&
-    token.resource_scopes.length > 0
-    ? `<ul class="mt-1 text-gray-600 dark:text-gray-400">${formatList(token.resource_scopes)}</ul>`
-    : '<span class="ml-2 text-gray-600 dark:text-gray-400">All (no restrictions)</span>'
-  }
-                          </div>
-                          <div>
-                              <span class="font-medium text-gray-700 dark:text-gray-300">IP Restrictions:</span>
-                              ${
-  token.ip_restrictions &&
-  token.ip_restrictions.length > 0
-  ? `<ul class="mt-1 text-gray-600 dark:text-gray-400">${formatList(token.ip_restrictions)}</ul>`
-  : '<span class="ml-2 text-gray-600 dark:text-gray-400">None</span>'
-  }
-                          </div>
-                          <div>
-                              <span class="font-medium text-gray-700 dark:text-gray-300">Time Restrictions:</span>
-                              <div class="mt-1">${formatJson(token.time_restrictions)}</div>
-                          </div>
-                          <div>
-                              <span class="font-medium text-gray-700 dark:text-gray-300">Usage Limits:</span>
-                              <div class="mt-1">${formatJson(token.usage_limits)}</div>
-                          </div>
-                      </div>
-                  </div>
-
-                  <!-- Tags -->
-                  ${
-  token.tags && token.tags.length > 0
-  ? `
-                  <div class="mb-6">
-                      <h4 class="text-md font-semibold text-gray-900 dark:text-white mb-3 border-b border-gray-200 dark:border-gray-600 pb-2">Tags</h4>
-                      <div class="flex flex-wrap gap-2">
-                          ${token.tags
-  .map((tag) => {
-    const raw =
-    typeof tag === "object" && tag !== null
-    ? tag.id || tag.label || JSON.stringify(tag)
-    : tag;
-    return `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(raw)}</span>`;
-  })
-  .join("")}
-                      </div>
-                  </div>
-                  `
-  : ""
-  }
-
-                  <!-- Revocation Details (if revoked) -->
-                  ${
-  token.is_revoked
-  ? `
-                  <div class="mb-6">
-                      <h4 class="text-md font-semibold text-red-600 dark:text-red-400 mb-3 border-b border-red-200 dark:border-red-600 pb-2">Revocation Details</h4>
-                      <div class="grid grid-cols-1 gap-2 text-sm bg-red-50 dark:bg-red-900/20 p-3 rounded">
-                          <div class="flex">
-                              <span class="font-medium text-red-700 dark:text-red-300 w-28">Revoked at:</span>
-                              <span class="text-red-600 dark:text-red-400">${formatDate(token.revoked_at)}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-red-700 dark:text-red-300 w-28">Revoked by:</span>
-                              <span class="text-red-600 dark:text-red-400">${token.revoked_by ? escapeHtml(token.revoked_by) : "Unknown"}</span>
-                          </div>
-                          <div class="flex">
-                              <span class="font-medium text-red-700 dark:text-red-300 w-28">Reason:</span>
-                              <span class="text-red-600 dark:text-red-400">${token.revocation_reason ? escapeHtml(token.revocation_reason) : "No reason provided"}</span>
-                          </div>
-                      </div>
-                  </div>
-                  `
-  : ""
-  }
-
-                  <div class="flex justify-end">
-                      <button
-                          data-action="close-modal"
-                          class="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500"
-                      >
-                          Close
-                      </button>
-                  </div>
-              </div>
-          `;
-
-  document.body.appendChild(modal);
-
-  // Attach event handlers (avoids inline JS and XSS risks)
-  modal.addEventListener("click", (event) => {
-    const button = event.target.closest("button[data-action]");
-    if (!button) {
-      return;
-    }
-    
-    const action = button.dataset.action;
-    
-    if (action === "close-modal") {
-      modal.remove();
-    } else if (action === "copy-id") {
-      const value = button.dataset.copyValue;
-      if (value) {
-        navigator.clipboard.writeText(value).then(() => {
-          button.textContent = "Copied!";
-          setTimeout(() => {
-            button.textContent = "Copy";
-          }, 1500);
-        });
-      }
-    }
-  });
-  }
-
-  /**
-  * Get auth token from storage or user input
-  */
-  Admin.getAuthToken = async function () {
-    // Use the same authentication method as the rest of the admin interface
-    let token = getCookie("jwt_token");
-    
-    // Try alternative cookie names if primary not found
-    if (!token) {
-      token = getCookie("token");
-    }
-    
-    // Fallback to localStorage for compatibility
-    if (!token) {
-      token = localStorage.getItem("auth_token");
-    }
-    return token || "";
-  }
-
-  /**
-  * Fetch helper that always includes auth context.
-  * Ensures HTTP-only cookies are sent even when JS cannot read them.
-  */
-  Admin.fetchWithAuth = async function (url, options = {}) {
-    const opts = { ...options };
-    // Always send same-origin cookies unless caller overrides explicitly
-    opts.credentials = options.credentials || "same-origin";
-    
-    // Clone headers to avoid mutating caller-provided object
-    const headers = new Headers(options.headers || {});
-    const token = await Admin.getAuthToken();
-    if (token) {
-      headers.set("Authorization", `Bearer ${token}`);
-    }
-    opts.headers = headers;
-    
-    return fetch(url, opts);
   }
 
   // ===================================================================
@@ -3684,8 +2649,8 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   // ===================================================================
 
   /**
-  * Show user edit modal and load edit form
-  */
+   * Show user edit modal and load edit form
+   */
   Admin.showUserEditModal = function (userEmail) {
     const modal = safeGetElement("user-edit-modal");
     if (modal) {
@@ -3695,19 +2660,19 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   }
 
   /**
-  * Hide user edit modal
-  */
+   * Hide user edit modal
+   */
   Admin.hideUserEditModal = function () {
     const modal = safeGetElement("user-edit-modal");
     if (modal) {
       modal.style.display = "none";
       modal.classList.add("hidden");
     }
-  }
+  };
 
   /**
-  * Close modal when clicking outside of it
-  */
+   * Close modal when clicking outside of it
+   */
   document.addEventListener("DOMContentLoaded", function () {
     const userModal = safeGetElement("user-edit-modal");
     if (userModal) {
@@ -3717,7 +2682,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     }
-    
+
     const teamModal = safeGetElement("team-edit-modal");
     if (teamModal) {
       teamModal.addEventListener("click", function (event) {
@@ -3738,15 +2703,15 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     } else {
       rootPath = "";
     }
-    
+
     // Construct the full URL - ensure it starts with /
     const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit";
-    
+
     // Load the team edit form via HTMX
     fetch(url, {
       method: "GET",
       headers: {
-        Authorization: "Bearer " + (await Admin.getAuthToken()),
+        Authorization: "Bearer " + (await getAuthToken()),
       },
     })
     .then((response) => response.text())
@@ -3842,7 +2807,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   // Perform server-side user search and build HTML from JSON (like tools search)
   Admin.performUserSearch = async function (teamId, query, container, teamMemberData) {
     console.log(`[Team ${teamId}] Performing user search: "${query}"`);
-    
+
     // Step 1: Capture current selections before replacing HTML
     const selections = {};
     const roleSelections = {};
@@ -3867,7 +2832,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     } catch (e) {
       console.error(`[Team ${teamId}] Error capturing selections:`, e);
     }
-    
+
     // Step 2: Show loading state
     container.innerHTML = `
               <div class="text-center py-4">
@@ -3878,7 +2843,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   <p class="mt-2 text-sm text-gray-500">Searching users...</p>
               </div>
           `;
-    
+
     // Step 3: If query is empty, reload default list from /admin/users/partial
     if (query === "") {
       try {
@@ -3886,12 +2851,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.log(
           `[Team ${teamId}] Loading default users with URL: ${usersUrl}`,
         );
-        
-        const response = await Admin.fetchWithAuth(usersUrl);
+
+        const response = await fetchWithAuth(usersUrl);
         if (response.ok) {
           const html = await response.text();
           container.innerHTML = html;
-          
+
           // Restore selections
           Admin.restoreUserSelections(container, selections, roleSelections);
         } else {
@@ -3908,22 +2873,22 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       }
       return;
     }
-    
+
     // Step 4: Call /admin/users/search API
     try {
       const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(query)}&limit=50`;
       console.log(`[Team ${teamId}] Searching users with URL: ${searchUrl}`);
-      
-      const response = await Admin.fetchWithAuth(searchUrl);
+
+      const response = await fetchWithAuth(searchUrl);
       if (!response.ok) {
         console.error(
           `[Team ${teamId}] Search failed: ${response.status} ${response.statusText}`,
         );
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
       }
-      
+
       const data = await response.json();
-      
+
       if (data.users && data.users.length > 0) {
         // Step 5: Build HTML manually from JSON
         let searchResultsHtml = "";
@@ -3939,11 +2904,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           ? selections[user.email]
           : isMember;
           const selectedRole = roleSelections[user.email] || memberRole;
-          
+
           const borderClass = isMember
           ? "border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20"
           : "border-transparent";
-          
+
           searchResultsHtml += `
                           <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border ${borderClass}" data-user-email="${escapeHtml(user.email)}">
                               <!-- Avatar Circle -->
@@ -3952,7 +2917,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                                       <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(user.email[0].toUpperCase())}</span>
                                   </div>
                               </div>
-          
+
                               <!-- Checkbox -->
                               <input
                                   type="checkbox"
@@ -3963,7 +2928,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                                   data-auto-check="true"
                                   ${isChecked ? "checked" : ""}
                               />
-          
+
                               <!-- User Info with Badges -->
                               <div class="flex-grow min-w-0">
                                   <div class="flex items-center gap-2 flex-wrap">
@@ -3975,7 +2940,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                                   <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(user.email)}</div>
                                   ${isMember && joinedAt ? `<div class="text-xs text-gray-400 dark:text-gray-500">Joined: ${formatDate(joinedAt)}</div>` : ""}
                               </div>
-          
+
                               <!-- Role Selector -->
                               <select
                                   name="role_${encodeURIComponent(user.email)}"
@@ -3987,10 +2952,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                           </div>
                       `;
         });
-        
+
         // Step 6: Replace container innerHTML
         container.innerHTML = searchResultsHtml;
-        
+
         // Step 7: No need to restore selections - they're already built into the HTML
         console.log(
           `[Team ${teamId}] Rendered ${data.users.length} users from search`,
@@ -4017,7 +2982,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           cb.checked = selections[cb.value];
         }
       });
-      
+
       const roleSelects = container.querySelectorAll(".role-select");
       roleSelects.forEach((select) => {
         const email = select.name.replace("role_", "");
@@ -4026,7 +2991,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           select.value = roleSelections[decodedEmail];
         }
       });
-      
+
       console.log(`Restored ${Object.keys(selections).length} selections`);
     } catch (e) {
       console.error("Error restoring selections:", e);
@@ -4052,18 +3017,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       return;
     }
     form.dataset.initialized = "true";
-    
+
     // Support both old add-members-form pattern and new team-members-form pattern
     const teamId =
     form.dataset.teamId ||
     Admin.extractTeamId("add-members-form-", form.id) ||
     Admin.extractTeamId("team-members-form-", form.id) ||
     "";
-    
+
     console.log(
       `[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`,
     );
-    
+
     if (!teamId) {
       console.warn(
         `[initializeAddMembersForm] No team ID found for form:`,
@@ -4071,7 +3036,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       );
       return;
     }
-    
+
     const searchInput = safeGetElement(`user-search-${teamId}`);
     const searchResults = safeGetElement(
       `user-search-results-${teamId}`,
@@ -4079,16 +3044,16 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const searchLoading = safeGetElement(
       `user-search-loading-${teamId}`,
     );
-    
+
     // For unified view, find the list container for client-side filtering
     const userListContainer = safeGetElement(
       `team-members-list-${teamId}`,
     );
-    
+
     console.log(
       `[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`,
     );
-    
+
     const memberEmails = [];
     if (searchResults?.dataset.memberEmails) {
       try {
@@ -4101,22 +3066,22 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       }
     }
     const memberEmailSet = new Set(memberEmails);
-    
+
     form.addEventListener("change", function (event) {
       if (event.target?.name === "associatedUsers") {
         Admin.updateAddMembersCount(teamId);
         // Role dropdown state is not managed client-side - all logic is server-side
       }
     });
-    
+
     Admin.updateAddMembersCount(teamId);
-    
+
     // If we have searchInput and userListContainer, use server-side search like tools (unified view)
     if (searchInput && userListContainer) {
       console.log(
         `[Team ${teamId}] Initializing server-side search for unified view`,
       );
-      
+
       // Get team member data from the initial page load (embedded in the form)
       const teamMemberDataScript = safeGetElement(
         `team-member-data-${teamId}`,
@@ -4137,12 +3102,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           );
         }
       }
-      
+
       let searchTimeout;
       searchInput.addEventListener("input", function () {
         clearTimeout(searchTimeout);
         const query = this.value.trim();
-        
+
         searchTimeout = setTimeout(async () => {
           await Admin.performUserSearch(
             teamId,
@@ -4152,19 +3117,19 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           );
         }, 300);
       });
-      
+
       return;
     }
-    
+
     if (!searchInput || !searchResults) {
       return;
     }
-    
+
     let searchTimeout;
     searchInput.addEventListener("input", function () {
       clearTimeout(searchTimeout);
       const query = this.value.trim();
-      
+
       if (query.length < 2) {
         searchResults.innerHTML = "";
         if (searchLoading) {
@@ -4172,7 +3137,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
         return;
       }
-      
+
       searchTimeout = setTimeout(async () => {
         if (searchLoading) {
           searchLoading.classList.remove("hidden");
@@ -4183,20 +3148,20 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           if (!searchUrl) {
             throw new Error("Search URL missing");
           }
-          const response = await Admin.fetchWithAuth(
+          const response = await fetchWithAuth(
             `${searchUrl}?q=${encodeURIComponent(query)}&limit=${limit}`,
           );
           if (!response.ok) {
             throw new Error(`Search failed: ${response.status}`);
           }
           const data = await response.json();
-          
+
           searchResults.innerHTML = "";
           if (data.users && data.users.length > 0) {
             const container = document.createElement("div");
             container.className =
             "bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1";
-            
+
             data.users.forEach((user) => {
               if (memberEmailSet.has(user.email)) {
                 return;
@@ -4215,7 +3180,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                 const checkbox = container.querySelector(
                   `input[value="${user.email}"]`,
                 );
-                
+
                 if (checkbox) {
                   checkbox.checked = true;
                   checkbox.dispatchEvent(
@@ -4229,7 +3194,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                     "data-user-email",
                     user.email,
                   );
-                  
+
                   const newCheckbox =
                   document.createElement("input");
                   newCheckbox.type = "checkbox";
@@ -4246,11 +3211,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                     "true",
                   );
                   newCheckbox.checked = true;
-                  
+
                   const label = document.createElement("span");
                   label.className = "select-none flex-grow";
                   label.textContent = `${user.full_name || ""} (${user.email})`;
-                  
+
                   const roleSelect =
                   document.createElement("select");
                   roleSelect.name = `role_${encodeURIComponent(
@@ -4258,25 +3223,25 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   )}`;
                   roleSelect.className =
                   "role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0";
-                  
+
                   const memberOption =
                   document.createElement("option");
                   memberOption.value = "member";
                   memberOption.textContent = "Member";
                   memberOption.selected = true;
-                  
+
                   const ownerOption =
                   document.createElement("option");
                   ownerOption.value = "owner";
                   ownerOption.textContent = "Owner";
-                  
+
                   roleSelect.appendChild(memberOption);
                   roleSelect.appendChild(ownerOption);
-                  
+
                   userItem.appendChild(newCheckbox);
                   userItem.appendChild(label);
                   userItem.appendChild(roleSelect);
-                  
+
                   const firstChild = container.firstChild;
                   if (firstChild) {
                     container.insertBefore(
@@ -4286,18 +3251,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   } else {
                     container.appendChild(userItem);
                   }
-                  
+
                   newCheckbox.dispatchEvent(
                     new Event("change", { bubbles: true }),
                   );
                 }
-                
+
                 searchInput.value = "";
                 searchResults.innerHTML = "";
               });
               container.appendChild(item);
             });
-            
+
             if (container.childElementCount > 0) {
               searchResults.appendChild(container);
             } else {
@@ -4456,13 +3421,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       return;
     }
     document.body.dataset.adminActionListeners = "1";
-    
+
     document.body.addEventListener("adminTeamAction", Admin.handleAdminTeamAction);
     document.body.addEventListener("adminUserAction", Admin.handleAdminUserAction);
     document.body.addEventListener("userCreated", function () {
       Admin.handleAdminUserAction({ detail: { refreshUsersList: true } });
     });
-    
+
     document.body.addEventListener("htmx:afterSwap", function (event) {
       const target = event.target;
       Admin.initializeAddMembersForms(target);
@@ -4482,7 +3447,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       }
     });
-    
+
     document.body.addEventListener("htmx:load", function (event) {
       const target = event.target;
       Admin.initializeAddMembersForms(target);
@@ -4519,12 +3484,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (window.USER_TEAMS && window.USER_TEAMS.length > 0) {
       const membersList = safeGetElement("team-members-list");
       const rolesList = safeGetElement("role-assignments-list");
-      
+
       if (membersList) {
         membersList.innerHTML =
         '<div class="text-sm text-gray-500 dark:text-gray-400">Use the Teams Management tab to view and manage team members.</div>';
       }
-      
+
       if (rolesList) {
         rolesList.innerHTML =
         '<div class="text-sm text-gray-500 dark:text-gray-400">Use the Teams Management tab to assign roles to team members.</div>';
@@ -4545,17 +3510,17 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Public teams list container not found");
       return;
     }
-    
+
     // Show loading state
     container.innerHTML =
     '<div class="animate-pulse text-gray-500 dark:text-gray-400">Loading public teams...</div>';
-    
+
     try {
       const response = await fetchWithTimeout(
         `${window.ROOT_PATH || ""}/teams/discover`,
         {
           headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
+            Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
         },
@@ -4563,7 +3528,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       if (!response.ok) {
         throw new Error(`Failed to load teams: ${response.status}`);
       }
-      
+
       const teams = await response.json();
       Admin.displayPublicTeams(teams);
     } catch (error) {
@@ -4599,7 +3564,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (!container) {
       return;
     }
-    
+
     if (!teams || teams.length === 0) {
       container.innerHTML = `
                   <div class="text-center py-8">
@@ -4612,7 +3577,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               `;
       return;
     }
-    
+
     // Create teams grid
     const teamsHtml = teams
     .map(
@@ -4626,7 +3591,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                           Public
                       </span>
                   </div>
-      
+
                   ${
       team.description
       ? `
@@ -4636,7 +3601,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                   `
       : ""
     }
-    
+
                   <div class="mt-4 flex items-center justify-between">
                       <div class="flex items-center text-sm text-gray-500 dark:text-gray-400">
                           <svg class="flex-shrink-0 mr-1.5 h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
@@ -4672,17 +3637,17 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Team ID is required");
       return;
     }
-    
+
     // Show confirmation dialog
     const message = prompt("Optional: Enter a message to the team owners:");
-    
+
     try {
       const response = await fetchWithTimeout(
         `${window.ROOT_PATH || ""}/teams/${teamId}/join`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
+            Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
@@ -4690,7 +3655,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           }),
         },
       );
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
@@ -4698,14 +3663,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           `Failed to request join: ${response.status}`,
         );
       }
-      
+
       const result = await response.json();
-      
+
       // Show success message
       showSuccessMessage(
         `Join request sent to ${result.team_name}! Team owners will review your request.`,
       );
-      
+
       // Refresh the public teams list
       setTimeout(loadPublicTeams, 1000);
     } catch (error) {
@@ -4724,7 +3689,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Team ID is required");
       return;
     }
-    
+
     // Show confirmation dialog
     const confirmed = confirm(
       `Are you sure you want to leave the team "${teamName}"? This action cannot be undone.`,
@@ -4732,37 +3697,37 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (!confirmed) {
       return;
     }
-    
+
     try {
       const response = await fetchWithTimeout(
         `${window.ROOT_PATH || ""}/teams/${teamId}/leave`,
         {
           method: "DELETE",
           headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
+            Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
         },
       );
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
           errorData?.detail || `Failed to leave team: ${response.status}`,
         );
       }
-      
+
       await response.json();
-      
+
       // Show success message
       showSuccessMessage(`Successfully left ${teamName}`);
-      
+
       // Refresh teams list
       const teamsList = safeGetElement("teams-list");
       if (teamsList && window.htmx) {
         window.htmx.trigger(teamsList, "load");
       }
-      
+
       // Refresh team selector if available
       if (typeof updateTeamContext === "function") {
         // Force reload teams data
@@ -4786,19 +3751,19 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Team ID and request ID are required");
       return;
     }
-    
+
     try {
       const response = await fetchWithTimeout(
         `${window.ROOT_PATH || ""}/teams/${teamId}/join-requests/${requestId}/approve`,
         {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
+            Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
         },
       );
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
@@ -4806,14 +3771,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           `Failed to approve join request: ${response.status}`,
         );
       }
-      
+
       const result = await response.json();
-      
+
       // Show success message
       showSuccessMessage(
         `Join request approved! ${result.user_email} is now a member.`,
       );
-      
+
       // Refresh teams list
       const teamsList = safeGetElement("teams-list");
       if (teamsList && window.htmx) {
@@ -4835,26 +3800,26 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       console.error("Team ID and request ID are required");
       return;
     }
-    
+
     const confirmed = confirm(
       "Are you sure you want to reject this join request?",
     );
     if (!confirmed) {
       return;
     }
-    
+
     try {
       const response = await fetchWithTimeout(
         `${window.ROOT_PATH || ""}/teams/${teamId}/join-requests/${requestId}`,
         {
           method: "DELETE",
           headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
+            Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
         },
       );
-      
+
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
@@ -4862,10 +3827,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           `Failed to reject join request: ${response.status}`,
         );
       }
-      
+
       // Show success message
       showSuccessMessage("Join request rejected.");
-      
+
       // Refresh teams list
       const teamsList = safeGetElement("teams-list");
       if (teamsList && window.htmx) {
@@ -4920,26 +3885,26 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (!policy || !passwordField) {
       return;
     }
-    
+
     const password = passwordField.value || "";
     const lengthCheck = password.length >= policy.minLength;
     Admin.updateRequirementIcon("edit-req-length", lengthCheck);
-    
+
     const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
     Admin.updateRequirementIcon("edit-req-uppercase", uppercaseCheck);
-    
+
     const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
     Admin.updateRequirementIcon("edit-req-lowercase", lowercaseCheck);
-    
+
     const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
     Admin.updateRequirementIcon("edit-req-numbers", numbersCheck);
-    
+
     const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
     const specialCheck =
     !policy.requireSpecial ||
     [...password].some((char) => specialChars.includes(char));
     Admin.updateRequirementIcon("edit-req-special", specialCheck);
-    
+
     const submitButton = document.querySelector(
       '#user-edit-modal-content button[type="submit"]',
     );
@@ -4950,7 +3915,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     numbersCheck &&
     specialCheck;
     const passwordEmpty = password.length === 0;
-    
+
     if (submitButton) {
       if (passwordEmpty || allRequirementsMet) {
         submitButton.disabled = false;
@@ -4984,14 +3949,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const submitButton = document.querySelector(
       '#user-edit-modal-content button[type="submit"]',
     );
-    
+
     if (!passwordField || !confirmPasswordField || !messageElement) {
       return;
     }
-    
+
     const password = passwordField.value;
     const confirmPassword = confirmPasswordField.value;
-    
+
     // Only show validation if both fields have content or if confirm field has content
     if (
       (password.length > 0 || confirmPassword.length > 0) &&
@@ -5022,26 +3987,26 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.displayImportPreview = function (preview) {
     console.log("📋 Displaying import preview:", preview);
-    
+
     // Find or create preview container
     let previewContainer = safeGetElement("import-preview-container");
     if (!previewContainer) {
       previewContainer = document.createElement("div");
       previewContainer.id = "import-preview-container";
       previewContainer.className = "mt-6 border-t pt-6";
-      
+
       // Insert after import options in the import section
       const importSection =
       document.querySelector("#import-drop-zone").parentElement
       .parentElement;
       importSection.appendChild(previewContainer);
     }
-    
+
     previewContainer.innerHTML = `
               <h4 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
                   📋 Selective Import - Choose What to Import
               </h4>
-    
+
               <!-- Summary -->
               <div class="bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
                   <div class="flex items-center">
@@ -5057,7 +4022,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                       </div>
                   </div>
               </div>
-    
+
               <!-- Selection Controls -->
               <div class="flex justify-between items-center mb-4">
                   <div class="space-x-4">
@@ -5074,12 +4039,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                           Custom Items Only
                       </button>
                   </div>
-    
+
                   <div class="text-sm text-gray-500 dark:text-gray-400">
                       <span id="selection-count">0 items selected</span>
                   </div>
               </div>
-    
+
               <!-- Gateway Bundles -->
               ${
     Object.keys(preview.bundles || {}).length > 0
@@ -5233,18 +4198,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.handleSelectiveImport = async function (dryRun = false) {
     console.log(`🎯 Starting selective import (dry_run=${dryRun})`);
-    
+
     if (!window.currentImportData) {
       showNotification("❌ Please select an import file first", "error");
       return;
     }
-    
+
     try {
       showImportProgress(true);
-      
+
       // Collect user selections
       const selectedEntities = Admin.collectUserSelections();
-      
+
       if (Object.keys(selectedEntities).length === 0) {
         showNotification(
           "❌ Please select at least one item to import",
@@ -5253,13 +4218,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         showImportProgress(false);
         return;
       }
-      
+
       const conflictStrategy =
       safeGetElement("import-conflict-strategy")?.value ||
       "update";
       const rekeySecret =
       safeGetElement("import-rekey-secret")?.value || null;
-      
+
       const requestData = {
         import_data: window.currentImportData,
         conflict_strategy: conflictStrategy,
@@ -5267,31 +4232,31 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         rekey_secret: rekeySecret,
         selectedEntities,
       };
-      
+
       console.log("🎯 Selected entities for import:", selectedEntities);
-      
+
       const response = await fetch(
         (window.ROOT_PATH || "") + "/admin/import/configuration",
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
+            Authorization: `Bearer ${await getAuthToken()}`,
           },
           body: JSON.stringify(requestData),
         },
       );
-      
+
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
           errorData.detail || `Import failed: ${response.statusText}`,
         );
       }
-      
+
       const result = await response.json();
       displayImportResults(result, dryRun);
-      
+
       if (!dryRun) {
         refreshCurrentTabData();
         showNotification(
@@ -5314,7 +4279,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.collectUserSelections = function () {
     const selections = {};
-    
+
     // Collect gateway selections
     document
     .querySelectorAll(".gateway-checkbox:checked")
@@ -5325,7 +4290,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       }
       selections.gateways.push(gatewayName);
     });
-    
+
     // Collect individual item selections
     document.querySelectorAll(".item-checkbox:checked").forEach((checkbox) => {
       const entityType = checkbox.dataset.type;
@@ -5335,7 +4300,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       }
       selections[entityType].push(itemId);
     });
-    
+
     return selections;
   }
 
@@ -5350,7 +4315,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       ".item-checkbox:checked",
     ).length;
     const totalCount = gatewayCount + itemCount;
-    
+
     const countElement = safeGetElement("selection-count");
     if (countElement) {
       countElement.textContent = `${totalCount} items selected (${gatewayCount} gateways, ${itemCount} individual items)`;
@@ -5424,7 +4389,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       "gateways",
       "catalog",
     ];
-    
+
     // Save initial markup on first full load so we can restore exactly if needed
     document.addEventListener("DOMContentLoaded", () => {
       Admin.__initialSectionMarkup = window.__initialSectionMarkup || {};
@@ -5436,14 +4401,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     });
-    
+
     // Helper: try to re-run common initializers after a section's DOM is replaced
     Admin.reinitializeSection = function (sectionEl, sectionName) {
       try {
         if (!sectionEl) {
           return;
         }
-        
+
         // 1) Re-init Alpine for the new subtree (if Alpine is present)
         try {
           if (window.Alpine) {
@@ -5465,7 +4430,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             err,
           );
         }
-        
+
         // 2) Re-initialize tool/resource/pill helpers that expect DOM structure
         try {
           // these functions exist elsewhere in admin.js; call them if present
@@ -5513,7 +4478,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         } catch (err) {
           console.warn("Select/pill reinit error", err);
         }
-        
+
         // 3) Re-run integration & schema handlers which attach behaviour to new inputs
         try {
           if (typeof setupIntegrationTypeHandlers === "function") {
@@ -5525,7 +4490,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         } catch (err) {
           console.warn("Integration/schema handler reinit failed", err);
         }
-        
+
         // 4) Reinitialize CodeMirror editors within the replaced DOM (if CodeMirror used)
         try {
           if (window.CodeMirror) {
@@ -5557,7 +4522,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         } catch (err) {
           console.warn("CodeMirror reinit failed", err);
         }
-        
+
         // 5) Re-attach generic event wiring that is expected by the UI (checkboxes, buttons)
         try {
           // checkbox-driven pill updates
@@ -5570,7 +4535,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             // If there were checkbox-specific change functions on page, they will now re-run
             cb.dispatchEvent(checkboxChangeEvent);
           });
-          
+
           // Reconnect any HTMX triggers that expect a load event
           if (window.htmx && typeof window.htmx.trigger === "function") {
             // find elements with data-htmx or that previously had an HTMX load
@@ -5588,7 +4553,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         } catch (err) {
           console.warn("Event wiring re-attach failed", err);
         }
-        
+
         // 6) Accessibility / visual: force a small layout reflow, useful in some browsers
         try {
           // eslint-disable-next-line no-unused-expressions
@@ -5600,7 +4565,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         console.error("Error reinitializing section", sectionName, err);
       }
     }
-    
+
     Admin.updateSectionHeaders = function (teamId) {
       const sections = [
         "tools",
@@ -5609,7 +4574,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         "servers",
         "gateways",
       ];
-      
+
       sections.forEach((section) => {
         const header = document.querySelector(
           "#" + section + "-section h2",
@@ -5620,10 +4585,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           if (existingBadge) {
             existingBadge.remove();
           }
-          
+
           // Add team badge if team is selected
           if (teamId && teamId !== "") {
-            const teamName = Admin.getTeamNameById(teamId);
+            const teamName = getTeamNameById(teamId);
             if (teamName) {
               const badge = document.createElement("span");
               badge.className =
@@ -5635,23 +4600,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     }
-    
-    Admin.getTeamNameById = function (teamId) {
-      // Get team name from Alpine.js data or fallback
-      const teamSelector = document.querySelector('[x-data*="selectedTeam"]');
-      if (
-        teamSelector &&
-        teamSelector._x_dataStack &&
-        teamSelector._x_dataStack[0].teams
-      ) {
-        const team = teamSelector._x_dataStack[0].teams.find(
-          (t) => t.id === teamId,
-        );
-        return team ? team.name : null;
-      }
-      return null;
-    }
-    
+
     // The exported function: reloadAllResourceSections
     Admin.reloadAllResourceSections = async function (teamId) {
       const sections = [
@@ -5661,7 +4610,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         "servers",
         "gateways",
       ];
-      
+
       // ensure there is a ROOT_PATH set
       if (!window.ROOT_PATH) {
         console.warn(
@@ -5669,7 +4618,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         );
         return;
       }
-      
+
       // Iterate sections sequentially to avoid overloading the server and to ensure consistent order.
       for (const section of sections) {
         const sectionEl = safeGetElement(`${section}-section`);
@@ -5677,14 +4626,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           console.warn(`Section element not found: ${section}-section`);
           continue;
         }
-        
+
         // Build server partial URL (server should return the *full HTML fragment* for the section)
         // Server endpoint pattern: /admin/sections/{section}?partial=true
         let url = `${window.ROOT_PATH}/admin/sections/${section}?partial=true`;
         if (teamId && teamId !== "") {
           url += `&team_id=${encodeURIComponent(teamId)}`;
         }
-        
+
         try {
           const resp = await fetchWithTimeout(
             url,
@@ -5695,11 +4644,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             throw new Error(`HTTP ${resp.status}`);
           }
           const html = await resp.text();
-          
+
           // Replace entire section's innerHTML with server-provided HTML to keep DOM identical.
           // Use safeSetInnerHTML with isTrusted = true because this is server-rendered trusted content.
           safeSetInnerHTML(sectionEl, html, true);
-          
+
           // After replacement, re-run local initializers so the new DOM behaves like initial load
           Admin.reinitializeSection(sectionEl, section);
         } catch (err) {
@@ -5707,7 +4656,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             `Failed to load section ${section} from server:`,
             err,
           );
-          
+
           // Restore the original markup exactly as it was on initial load (fallback)
           if (
             window.__initialSectionMarkup &&
@@ -5728,7 +4677,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           }
         }
       }
-      
+
       // Update headers (team badges) after reload
       try {
         if (typeof updateSectionHeaders === "function") {
@@ -5737,7 +4686,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       } catch (err) {
         console.warn("updateSectionHeaders failed after reload", err);
       }
-      
+
       console.log("✓ reloadAllResourceSections completed");
     }
   }
@@ -5752,14 +4701,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       const hookSet = new Set();
       const tagSet = new Set();
       const authorSet = new Set();
-      
+
       cards.forEach((card) => {
         const hooks = card.dataset.hooks
         ? card.dataset.hooks.split(",")
         : [];
         const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
         const author = card.dataset.author;
-        
+
         hooks.forEach((hook) => {
           if (hook.trim()) {
             hookSet.add(hook.trim());
@@ -5774,11 +4723,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           authorSet.add(author.trim());
         }
       });
-      
+
       const hookFilter = safeGetElement("plugin-hook-filter");
       const tagFilter = safeGetElement("plugin-tag-filter");
       const authorFilter = safeGetElement("plugin-author-filter");
-      
+
       if (hookFilter) {
         hookSet.forEach((hook) => {
           const option = document.createElement("option");
@@ -5789,7 +4738,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           hookFilter.appendChild(option);
         });
       }
-      
+
       if (tagFilter) {
         tagSet.forEach((tag) => {
           const option = document.createElement("option");
@@ -5798,7 +4747,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           tagFilter.appendChild(option);
         });
       }
-      
+
       if (authorFilter) {
         // Convert authorSet to array and sort for consistent ordering
         const sortedAuthors = Array.from(authorSet).sort();
@@ -5812,7 +4761,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         });
       }
     };
-    
+
     // Filter plugins based on search and filters
     Admin.filterPlugins = function () {
       const searchInput = safeGetElement("plugin-search");
@@ -5821,21 +4770,21 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       const hookFilter = safeGetElement("plugin-hook-filter");
       const tagFilter = safeGetElement("plugin-tag-filter");
       const authorFilter = safeGetElement("plugin-author-filter");
-      
+
       const searchQuery = searchInput ? searchInput.value.toLowerCase() : "";
       const selectedMode = modeFilter ? modeFilter.value : "";
       const selectedStatus = statusFilter ? statusFilter.value : "";
       const selectedHook = hookFilter ? hookFilter.value : "";
       const selectedTag = tagFilter ? tagFilter.value : "";
       const selectedAuthor = authorFilter ? authorFilter.value : "";
-      
+
       // Update visual highlighting for all filter types
       Admin.updateBadgeHighlighting("hook", selectedHook);
       Admin.updateBadgeHighlighting("tag", selectedTag);
       Admin.updateBadgeHighlighting("author", selectedAuthor);
-      
+
       const cards = document.querySelectorAll(".plugin-card");
-      
+
       cards.forEach((card) => {
         const name = card.dataset.name
         ? card.dataset.name.toLowerCase()
@@ -5852,9 +4801,9 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         ? card.dataset.hooks.split(",")
         : [];
         const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
-        
+
         let visible = true;
-        
+
         // Search filter
         if (
           searchQuery &&
@@ -5864,27 +4813,27 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         ) {
           visible = false;
         }
-        
+
         // Mode filter
         if (selectedMode && mode !== selectedMode) {
           visible = false;
         }
-        
+
         // Status filter
         if (selectedStatus && status !== selectedStatus) {
           visible = false;
         }
-        
+
         // Hook filter
         if (selectedHook && !hooks.includes(selectedHook)) {
           visible = false;
         }
-        
+
         // Tag filter
         if (selectedTag && !tags.includes(selectedTag)) {
           visible = false;
         }
-        
+
         // Author filter
         if (
           selectedAuthor &&
@@ -5892,7 +4841,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         ) {
           visible = false;
         }
-        
+
         if (visible) {
           card.style.display = "block";
         } else {
@@ -5900,7 +4849,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     };
-    
+
     // Filter by hook when clicking on hook point
     Admin.filterByHook = function (hook) {
       const hookFilter = safeGetElement("plugin-hook-filter");
@@ -5908,12 +4857,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         hookFilter.value = hook;
         Admin.filterPlugins();
         hookFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        
+
         // Update visual highlighting
         Admin.updateBadgeHighlighting("hook", hook);
       }
     };
-    
+
     // Filter by tag when clicking on tag
     Admin.filterByTag = function (tag) {
       const tagFilter = safeGetElement("plugin-tag-filter");
@@ -5921,12 +4870,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         tagFilter.value = tag;
         Admin.filterPlugins();
         tagFilter.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        
+
         // Update visual highlighting
         Admin.updateBadgeHighlighting("tag", tag);
       }
     };
-    
+
     // Filter by author when clicking on author
     Admin.filterByAuthor = function (author) {
       const authorFilter = safeGetElement("plugin-author-filter");
@@ -5938,12 +4887,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           behavior: "smooth",
           block: "nearest",
         });
-        
+
         // Update visual highlighting
         Admin.updateBadgeHighlighting("author", author);
       }
     };
-    
+
     // Helper function to update badge highlighting
     Admin.updateBadgeHighlighting = function (type, value) {
       // Define selectors for each type
@@ -5952,19 +4901,19 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         tag: "[onclick^='filterByTag']",
         author: "[onclick^='filterByAuthor']",
       };
-      
+
       const selector = selectors[type];
       if (!selector) {
         return;
       }
-      
+
       // Get all badges of this type
       const badges = document.querySelectorAll(selector);
-      
+
       badges.forEach((badge) => {
         // Check if this is the "All" badge (empty value)
         const isAllBadge = badge.getAttribute("onclick").includes("('')");
-        
+
         // Check if this badge matches the selected value
         const badgeValue = badge
         .getAttribute("onclick")
@@ -5973,7 +4922,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         value === ""
         ? isAllBadge
         : badgeValue?.toLowerCase() === value?.toLowerCase();
-        
+
         if (isSelected) {
           // Apply active/selected styling
           badge.classList.remove(
@@ -6023,24 +4972,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     }
-    
+
     // Show plugin details modal
     Admin.showPluginDetails = async function (pluginName) {
       const modal = safeGetElement("plugin-details-modal");
       const modalName = safeGetElement("modal-plugin-name");
       const modalContent = safeGetElement("modal-plugin-content");
-      
+
       if (!modal || !modalName || !modalContent) {
         console.error("Plugin details modal elements not found");
         return;
       }
-      
+
       // Show loading state
       modalName.textContent = pluginName;
       modalContent.innerHTML =
       '<div class="text-center py-4">Loading...</div>';
       modal.classList.remove("hidden");
-      
+
       try {
         const rootPath = window.ROOT_PATH || "";
         // Fetch plugin details
@@ -6053,15 +5002,15 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
             },
           },
         );
-        
+
         if (!response.ok) {
           throw new Error(
             `Failed to load plugin details: ${response.statusText}`,
           );
         }
-        
+
         const plugin = await response.json();
-        
+
         // Render plugin details
         modalContent.innerHTML = `
                       <div class="space-y-4">
@@ -6069,7 +5018,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                               <h4 class="font-medium text-gray-700 dark:text-gray-300">Description</h4>
                               <p class="mt-1">${plugin.description || "No description available"}</p>
                           </div>
-        
+
                           <div class="grid grid-cols-2 gap-4">
                               <div>
                                   <h4 class="font-medium text-gray-700 dark:text-gray-300">Author</h4>
@@ -6080,7 +5029,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                                   <p class="mt-1">${plugin.version || "0.0.0"}</p>
                               </div>
                           </div>
-        
+
                           <div class="grid grid-cols-2 gap-4">
                               <div>
                                   <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
@@ -6101,7 +5050,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
                                   <p class="mt-1">${plugin.priority}</p>
                               </div>
                           </div>
-      
+
                           <div>
                               <h4 class="font-medium text-gray-700 dark:text-gray-300">Hooks</h4>
                               <div class="mt-1 flex flex-wrap gap-1">
@@ -6113,7 +5062,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       .join("")}
                               </div>
                           </div>
-      
+
                           <div>
                               <h4 class="font-medium text-gray-700 dark:text-gray-300">Tags</h4>
                               <div class="mt-1 flex flex-wrap gap-1">
@@ -6125,7 +5074,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       .join("")}
                               </div>
                           </div>
-      
+
                           ${
       plugin.config && Object.keys(plugin.config).length > 0
       ? `
@@ -6198,7 +5147,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const serverId = safeGetElement("modal-server-id").value;
     const customName = safeGetElement("modal-custom-name").value;
     const apiKey = safeGetElement("modal-api-key").value;
-    
+
     // Prepare request data
     const requestData = {};
     if (customName) {
@@ -6207,9 +5156,9 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (apiKey) {
       requestData.api_key = apiKey;
     }
-    
+
     const rootPath = window.ROOT_PATH || "";
-    
+
     // Send registration request
     fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
       method: "POST",
@@ -6253,7 +5202,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     safeGetElement("grpc-tls-enabled")?.checked || false;
     const certField = safeGetElement("grpc-tls-cert-field");
     const keyField = safeGetElement("grpc-tls-key-field");
-    
+
     if (tlsEnabled) {
       certField?.classList.remove("hidden");
       keyField?.classList.remove("hidden");
@@ -6269,7 +5218,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.viewGrpcMethods = function (serviceId) {
     const rootPath = window.ROOT_PATH || "";
-    
+
     fetch(`${rootPath}/grpc/${serviceId}/methods`, {
       method: "GET",
       headers: {
@@ -6313,12 +5262,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   Admin.validateCACertFiles = async function (event) {
     const files = Array.from(event.target.files);
     const feedbackEl = safeGetElement("ca-certificate-feedback");
-    
+
     if (!files.length) {
       feedbackEl.textContent = "No files selected.";
       return;
     }
-    
+
     // Check file size (max 10MB for cert files)
     const maxSize = 10 * 1024 * 1024; // 10MB
     const oversizedFiles = files.filter((f) => f.size > maxSize);
@@ -6335,14 +5284,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       event.target.value = "";
       return;
     }
-    
+
     // Check file extensions
     const validExtensions = [".pem", ".crt", ".cer", ".cert"];
     const invalidFiles = files.filter((file) => {
       const fileName = file.name.toLowerCase();
       return !validExtensions.some((ext) => fileName.endsWith(ext));
     });
-    
+
     if (invalidFiles.length > 0) {
       if (feedbackEl) {
         feedbackEl.innerHTML = `
@@ -6356,7 +5305,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       event.target.value = "";
       return;
     }
-    
+
     // Read and validate all files
     const certResults = [];
     for (const file of files) {
@@ -6364,7 +5313,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         const content = await Admin.readFileAsync(file);
         const isValid = Admin.isValidCertificate(content);
         const certInfo = isValid ? Admin.parseCertificateInfo(content) : null;
-        
+
         certResults.push({
           file,
           content,
@@ -6381,10 +5330,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         });
       }
     }
-    
+
     // Display per-file validation results
     Admin.displayCertValidationResults(certResults, feedbackEl);
-    
+
     // If all valid, order and concatenate
     const allValid = certResults.every((r) => r.isValid);
     if (allValid) {
@@ -6392,7 +5341,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       const concatenated = orderedCerts
       .map((r) => r.content.trim())
       .join("\n");
-      
+
       // Store concatenated result in a hidden field
       let hiddenInput = safeGetElement(
         "ca_certificate_concatenated",
@@ -6405,7 +5354,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         event.target.form.appendChild(hiddenInput);
       }
       hiddenInput.value = concatenated;
-      
+
       // Update drop zone
       Admin.updateDropZoneWithFiles(files);
     } else {
@@ -6437,15 +5386,15 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     // In a real implementation, you'd parse the ASN.1 structure properly
     const subjectMatch = content.match(/Subject:([^\n]+)/i);
     const issuerMatch = content.match(/Issuer:([^\n]+)/i);
-    
+
     // If we can't parse, assume it's an intermediate
     if (!subjectMatch || !issuerMatch) {
       return { isRoot: false };
     }
-    
+
     const subject = subjectMatch[1].trim();
     const issuer = issuerMatch[1].trim();
-    
+
     return {
       isRoot: subject === issuer,
       subject,
@@ -6463,7 +5412,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const nonRoots = certResults.filter(
       (r) => r.certInfo && !r.certInfo.isRoot,
     );
-    
+
     // Simple ordering: roots first, then rest
     // In production, you'd build a proper chain by matching issuer/subject
     return [...roots, ...nonRoots];
@@ -6476,9 +5425,9 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.displayCertValidationResults = function (certResults, feedbackEl) {
     const allValid = certResults.every((r) => r.isValid);
-    
+
     let html = '<div class="space-y-2">';
-    
+
     // Overall status
     if (allValid) {
       html += `
@@ -6495,18 +5444,18 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   </div>
   `;
     }
-    
+
     // Per-file results
     html += '<div class="mt-3 space-y-1">';
     for (const result of certResults) {
       const icon = result.isValid
       ? '<svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
       : '<svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
-      
+
       const statusClass = result.isValid ? "text-gray-700" : "text-red-700";
       const typeLabel =
       result.certInfo && result.certInfo.isRoot ? " (Root CA)" : "";
-      
+
       html += `
   <div class="flex items-center ${statusClass}">
   ${icon}
@@ -6515,7 +5464,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   `;
     }
     html += "</div></div>";
-    
+
     feedbackEl.innerHTML = html;
     feedbackEl.className = "mt-2 text-sm";
   }
@@ -6528,42 +5477,42 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   Admin.isValidCertificate = function (content) {
     // Trim whitespace
     content = content.trim();
-    
+
     // Check for PEM certificate markers
     const beginCertPattern = /-----BEGIN CERTIFICATE-----/;
     const endCertPattern = /-----END CERTIFICATE-----/;
-    
+
     if (!beginCertPattern.test(content) || !endCertPattern.test(content)) {
       return false;
     }
-    
+
     // Check for proper structure
     const certPattern =
     /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
     const matches = content.match(certPattern);
-    
+
     if (!matches || matches.length === 0) {
       return false;
     }
-    
+
     // Validate base64 content between markers
     for (const cert of matches) {
       const base64Content = cert
       .replace(/-----BEGIN CERTIFICATE-----/, "")
       .replace(/-----END CERTIFICATE-----/, "")
       .replace(/\s/g, "");
-      
+
       // Check if content is valid base64
       if (!isValidBase64(base64Content)) {
         return false;
       }
-      
+
       // Basic length check (certificates are typically > 100 chars of base64)
       if (base64Content.length < 100) {
         return false;
       }
     }
-    
+
     return true;
   }
 
@@ -6576,7 +5525,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (str.length === 0) {
       return false;
     }
-    
+
     // Base64 regex pattern
     const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
     return base64Pattern.test(str);
@@ -6591,14 +5540,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (!dropZone) {
       return;
     }
-    
+
     const fileListHTML = Array.from(files)
     .map(
       (file) =>
         `<div>${escapeHtml(file.name)} • ${formatFileSize(file.size)}</div>`,
     )
     .join("");
-    
+
     dropZone.innerHTML = `
         <div class="space-y-2">
             <svg class="mx-auto h-12 w-12 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -6611,7 +5560,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         </div>
     `;
   }
-                        
+
   /**
   * Format file size for display
   * @param {number} bytes - File size in bytes
@@ -6634,13 +5583,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   Admin.initializeCACertUpload = function () {
     const dropZone = safeGetElement("ca-certificate-upload-drop-zone");
     const fileInput = safeGetElement("upload-ca-certificate");
-    
+
     if (dropZone && fileInput) {
       // Click to upload
       dropZone.addEventListener("click", function (e) {
         fileInput.click();
       });
-      
+
       // Drag and drop handlers
       dropZone.addEventListener("dragover", function (e) {
         e.preventDefault();
@@ -6651,7 +5600,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           "dark:bg-indigo-900/20",
         );
       });
-      
+
       dropZone.addEventListener("dragleave", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -6661,7 +5610,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           "dark:bg-indigo-900/20",
         );
       });
-      
+
       dropZone.addEventListener("drop", function (e) {
         e.preventDefault();
         e.stopPropagation();
@@ -6670,7 +5619,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           "bg-indigo-50",
           "dark:bg-indigo-900/20",
         );
-        
+
         const files = e.dataTransfer.files;
         if (files.length > 0) {
           fileInput.files = files;
@@ -6688,7 +5637,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const contentType = safeGetElement(
       "gateway-test-content-type",
     )?.value;
-    
+
     if (bodyLabel) {
       bodyLabel.innerHTML =
       contentType === "application/x-www-form-urlencoded"
@@ -6696,7 +5645,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       : "Body (JSON)";
     }
   }
-                        
+
   /**
   * ====================================================================
   * REAL-TIME GATEWAY & TOOL MONITORING (SSE)
@@ -6712,13 +5661,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (!window.EventSource) {
       return;
     }
-    
+
     // Connect to the admin events endpoint
     const eventSource = new EventSource(`${window.ROOT_PATH}/admin/events`);
-    
+
     // --- Gateway Events ---
     // Handlers for specific states
-    
+
     // eventSource.addEventListener("gateway_deactivated", (e) => Admin.handleEntityEvent("gateway", e));
     eventSource.addEventListener("gateway_activated", (e) =>
       Admin.handleEntityEvent("gateway", e),
@@ -6726,10 +5675,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     eventSource.addEventListener("gateway_offline", (e) =>
       Admin.handleEntityEvent("gateway", e),
     );
-        
+
     // --- Tool Events ---
     // Handlers for specific states
-    
+
     // eventSource.addEventListener("tool_deactivated", (e) => Admin.handleEntityEvent("tool", e));
     eventSource.addEventListener("tool_activated", (e) =>
       Admin.handleEntityEvent("tool", e),
@@ -6737,13 +5686,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     eventSource.addEventListener("tool_offline", (e) =>
       Admin.handleEntityEvent("tool", e),
     );
-    
+
     eventSource.onopen = () =>
       console.log("✅ SSE Connected for Real-time Monitoring");
     eventSource.onerror = (err) =>
       console.warn("⚠️ SSE Connection issue, retrying...", err);
   }
-                
+
   /**
   * Generic handler for entity events
   */
@@ -6764,14 +5713,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
 
   Admin.updateEntityStatus = function (type, data) {
     let row = null;
-    
+
     if (type === "gateway") {
       // Gateways usually have explicit IDs
       row = safeGetElement(`gateway-row-${data.id}`);
     } else if (type === "tool") {
       // 1. Try explicit ID (fastest)
       row = safeGetElement(`tool-row-${data.id}`);
-      
+
       // 2. Fallback: Search rows by looking for the ID in Action buttons
       if (!row) {
         const panel = safeGetElement("tools-panel");
@@ -6783,7 +5732,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
               row = tr;
               break;
             }
-            
+
             // Check innerHTML for the UUID in action attributes
             const html = tr.innerHTML;
             if (html.includes(data.id)) {
@@ -6803,17 +5752,17 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       }
     }
-    
+
     if (!row) {
       console.warn(`Could not find row for ${type} id: ${data.id}`);
       return;
     }
-    
+
     // Dynamically find Status and Action columns
     const table = row.closest("table");
     let statusIndex = -1;
     let actionIndex = -1;
-    
+
     if (table) {
       const headers = table.querySelectorAll("thead th");
       headers.forEach((th, index) => {
@@ -6826,7 +5775,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         }
       });
     }
-    
+
     // Fallback indices if headers aren't found
     if (statusIndex === -1) {
       statusIndex = type === "gateway" ? 4 : 5;
@@ -6834,23 +5783,23 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (actionIndex === -1) {
       actionIndex = type === "gateway" ? 9 : 6;
     }
-    
+
     const statusCell = row.children[statusIndex];
     const actionCell = row.children[actionIndex];
-    
+
     // --- 1. Update Status Badge ---
     if (statusCell) {
       const isEnabled =
       data.enabled !== undefined ? data.enabled : data.isActive;
       const isReachable =
       data.reachable !== undefined ? data.reachable : true;
-      
+
       statusCell.innerHTML = Admin.generateStatusBadgeHtml(
         isEnabled,
         isReachable,
         type,
       );
-      
+
       // Flash effect
       statusCell.classList.add(
         "bg-blue-50",
@@ -6862,7 +5811,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         statusCell.classList.remove("bg-blue-50", "dark:bg-blue-900");
       }, 1000);
     }
-    
+
     // --- 2. Update Action Buttons ---
     if (actionCell) {
       const isEnabled =
@@ -6953,10 +5902,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       "log-component-filter",
     )?.value;
     const searchQuery = safeGetElement("log-search")?.value;
-    
+
     // Restore default log table headers (in case we're coming from performance metrics view)
     Admin.restoreLogTableHeaders();
-    
+
     // Build search request
     const searchRequest = {
       limit: currentLogLimit,
@@ -6964,7 +5913,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       sort_by: "timestamp",
       sort_order: "desc",
     };
-    
+
     // Only add filters if they have actual values (not empty strings)
     if (searchQuery && searchQuery.trim() !== "") {
       const trimmedSearch = searchQuery.trim();
@@ -6983,13 +5932,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (componentFilter && componentFilter !== "") {
       searchRequest.component = [componentFilter];
     }
-    
+
     // Store filters for pagination
     currentLogFilters = searchRequest;
-    
+
     try {
-      const response = await Admin.fetchWithAuth(
-        `${Admin.getRootPath()}/api/logs/search`,
+      const response = await fetchWithAuth(
+        `${getRootPath()}/api/logs/search`,
         {
           method: "POST",
           headers: {
@@ -6998,7 +5947,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           body: JSON.stringify(searchRequest),
         },
       );
-      
+
       if (!response.ok) {
         const errorText = await response.text();
         console.error("API Error Response:", errorText);
@@ -7006,12 +5955,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           `Failed to search logs: ${response.statusText} - ${errorText}`,
         );
       }
-      
+
       const data = await response.json();
       Admin.displayLogResults(data);
     } catch (error) {
       console.error("Error searching logs:", error);
-      Admin.showToast("Failed to search logs: " + error.message, "error");
+      showToast("Failed to search logs: " + error.message, "error");
       safeGetElement("logs-tbody").innerHTML = `
   <tr><td colspan="7" class="px-4 py-4 text-center text-red-600 dark:text-red-400">
   ❌ Error: ${escapeHtml(error.message)}
@@ -7029,10 +5978,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const logStats = safeGetElement("log-stats");
     const prevButton = safeGetElement("prev-page");
     const nextButton = safeGetElement("next-page");
-    
+
     // Ensure default headers are shown for log view
     Admin.restoreLogTableHeaders();
-    
+
     if (!data.results || data.results.length === 0) {
       tbody.innerHTML = `
         <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
@@ -7043,7 +5992,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       logStats.innerHTML = '<span class="text-sm">No results</span>';
       return;
     }
-    
+
     // Update stats
     logCount.textContent = `${data.total.toLocaleString()} logs`;
     const start = currentLogPage * currentLogLimit + 1;
@@ -7053,11 +6002,11 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         Showing ${start}-${end} of ${data.total.toLocaleString()} logs
       </span>
     `;
-                  
+
     // Update pagination buttons
     prevButton.disabled = currentLogPage === 0;
     nextButton.disabled = end >= data.total;
-    
+
     // Render log entries
     tbody.innerHTML = data.results
     .map((log) => {
@@ -7067,7 +6016,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       : "-";
       const correlationId = log.correlation_id || "-";
       const userDisplay = log.user_email || log.user_id || "-";
-      
+
       return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
           onclick="Admin.showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
@@ -7110,7 +6059,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     })
     .join("");
   }
-              
+
   /**
   * Get CSS class for log level badge
   */
@@ -7161,7 +6110,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       Admin.showCorrelationTrace(correlationId);
     } else {
       console.log("Log details:", logId);
-      Admin.showToast("Full log details view coming soon", "info");
+      showToast("Full log details view coming soon", "info");
     }
   }
 
@@ -7198,7 +6147,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       `;
     }
   }
-              
+
   /**
   * Trace all logs for a correlation ID
   */
@@ -7215,24 +6164,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         return;
       }
     }
-    
+
     try {
-      const response = await Admin.fetchWithAuth(
-        `${Admin.getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`,
+      const response = await fetchWithAuth(
+        `${getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`,
         {
           method: "GET",
         },
       );
-      
+
       if (!response.ok) {
         throw new Error(`Failed to fetch trace: ${response.statusText}`);
       }
-      
+
       const trace = await response.json();
       Admin.displayCorrelationTrace(trace);
     } catch (error) {
       console.error("Error fetching correlation trace:", error);
-      Admin.showToast(
+      showToast(
         "Failed to fetch correlation trace: " + error.message,
         "error",
       );
@@ -7246,7 +6195,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const label = typeLabel
     ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)
     : "Item";
-    
+
     if (!enabled) {
       // CASE 1: Inactive (Manually disabled) -> RED
       return `
@@ -7279,7 +6228,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         </div>`;
     }
   }
-              
+
   /**
   * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
   */
@@ -7289,10 +6238,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (!form) {
       return;
     }
-    
+
     // The HTML structure for the button
     // Ensure we are flipping the button state correctly based on isEnabled
-    
+
     if (isEnabled) {
       // If Enabled -> Show Deactivate Button
       form.innerHTML = `
@@ -7311,34 +6260,34 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       `;
     }
   }
-              
+
   // CRITICAL DEBUG AND FIX FOR MCP SERVERS SEARCH
   console.log("🔧 LOADING MCP SERVERS SEARCH DEBUG FUNCTIONS...");
 
   // Emergency fix function for MCP Servers search
   Admin.emergencyFixMCPSearch = function () {
     console.log("🚨 EMERGENCY FIX: Attempting to fix MCP Servers search...");
-    
+
     // Find the search input
     const searchInput = safeGetElement("gateways-search-input");
     if (!searchInput) {
       console.error("❌ Cannot find gateways-search-input element");
       return false;
     }
-    
+
     console.log("✅ Found search input:", searchInput);
-    
+
     // Remove all existing event listeners by cloning
     const newSearchInput = searchInput.cloneNode(true);
     searchInput.parentNode.replaceChild(newSearchInput, searchInput);
-    
+
     // Add fresh event listener
     const finalSearchInput = safeGetElement("gateways-search-input");
     finalSearchInput.addEventListener("input", function (e) {
       console.log("🔍 EMERGENCY SEARCH EVENT:", e.target.value);
       Admin.filterGatewaysTable(e.target.value);
     });
-    
+
     console.log(
       "✅ Emergency fix applied - test by typing in MCP Servers search box",
     );
@@ -7354,27 +6303,27 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   // Debug current state function
   Admin.debugMCPSearchState = function () {
     console.log("🔍 DEBUGGING MCP SEARCH STATE:");
-    
+
     const searchInput = safeGetElement("gateways-search-input");
     console.log("Search input:", searchInput);
     console.log(
       "Search input value:",
       searchInput ? searchInput.value : "NOT FOUND",
     );
-    
+
     const panel = safeGetElement("gateways-panel");
     console.log("Gateways panel:", panel);
-    
+
     const table = panel ? panel.querySelector("table") : null;
     console.log("Table in panel:", table);
-    
+
     const rows = table ? table.querySelectorAll("tbody tr") : [];
     console.log("Rows found:", rows.length);
-    
+
     if (rows.length > 0) {
       console.log("First row content:", rows[0].textContent);
     }
-    
+
     return {
       searchInput: !!searchInput,
       panel: !!panel,
@@ -7404,13 +6353,13 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const thead = safeGetElement("logs-thead");
     const logCount = safeGetElement("log-count");
     const logStats = safeGetElement("log-stats");
-    
+
     // Calculate total events
     const totalEvents =
     (trace.logs?.length || 0) +
     (trace.security_events?.length || 0) +
     (trace.audit_trails?.length || 0);
-    
+
     // Update table headers for trace view
     if (thead) {
       thead.innerHTML = `
@@ -7439,7 +6388,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         </tr>
       `;
     }
-    
+
     // Update stats
     logCount.textContent = `${totalEvents} events`;
     logStats.innerHTML = `
@@ -7462,7 +6411,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           </div>
       </div>
   `;
-    
+
     if (totalEvents === 0) {
       tbody.innerHTML = `
           <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
@@ -7471,10 +6420,10 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       `;
       return;
     }
-    
+
     // Combine all events into a unified timeline
     const allEvents = [];
-    
+
     // Add logs
     (trace.logs || []).forEach((log) => {
       const levelClass = Admin.getLogLevelClass(log.level);
@@ -7512,7 +6461,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         `,
       });
     });
-    
+
     // Add security events
     (trace.security_events || []).forEach((event) => {
       const severityClass = Admin.getSeverityClass(event.severity);
@@ -7561,7 +6510,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         `,
       });
     });
-    
+
     // Add audit trails
     (trace.audit_trails || []).forEach((audit) => {
       const actionBadgeColors = {
@@ -7578,7 +6527,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       const statusBg = audit.success
       ? "bg-green-100 dark:bg-green-900"
       : "bg-red-100 dark:bg-red-900";
-      
+
       allEvents.push({
         timestamp: new Date(audit.timestamp),
         html: `
@@ -7613,14 +6562,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         `,
       });
     });
-    
+
     // Sort all events chronologically
     allEvents.sort((a, b) => a.timestamp - b.timestamp);
-    
+
     // Render sorted events
     tbody.innerHTML = allEvents.map((event) => event.html).join("");
   }
-              
+
   /**
   * Show security events
   */
@@ -7628,24 +6577,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     Admin.setPerformanceAggregationVisibility(false);
     Admin.setLogFiltersVisibility(false);
     try {
-      const response = await Admin.fetchWithAuth(
-        `${Admin.getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
+      const response = await fetchWithAuth(
+        `${getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
         {
           method: "GET",
         },
       );
-      
+
       if (!response.ok) {
         throw new Error(
           `Failed to fetch security events: ${response.statusText}`,
         );
       }
-      
+
       const events = await response.json();
       Admin.displaySecurityEvents(events);
     } catch (error) {
       console.error("Error fetching security events:", error);
-      Admin.showToast("Failed to fetch security events: " + error.message, "error");
+      showToast("Failed to fetch security events: " + error.message, "error");
     }
   }
 
@@ -7657,7 +6606,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const thead = safeGetElement("logs-thead");
     const logCount = safeGetElement("log-count");
     const logStats = safeGetElement("log-stats");
-    
+
     // Update table headers for security events
     if (thead) {
       thead.innerHTML = `
@@ -7686,14 +6635,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         </tr>
       `;
     }
-      
+
     logCount.textContent = `${events.length} security events`;
     logStats.innerHTML = `
         <span class="text-sm text-red-600 dark:text-red-400">
             🛡️ Unresolved Security Events
         </span>
     `;
-    
+
     if (events.length === 0) {
       tbody.innerHTML = `
           <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
@@ -7702,12 +6651,12 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       `;
       return;
     }
-      
+
     tbody.innerHTML = events
     .map((event) => {
       const severityClass = Admin.getSeverityClass(event.severity);
       const threatScore = (event.threat_score * 100).toFixed(0);
-      
+
       return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
             <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
@@ -7773,24 +6722,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     Admin.setPerformanceAggregationVisibility(false);
     Admin.setLogFiltersVisibility(false);
     try {
-      const response = await Admin.fetchWithAuth(
-        `${Admin.getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
+      const response = await fetchWithAuth(
+        `${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
         {
           method: "GET",
         },
       );
-      
+
       if (!response.ok) {
         throw new Error(
           `Failed to fetch audit trails: ${response.statusText}`,
         );
       }
-      
+
       const trails = await response.json();
       Admin.displayAuditTrail(trails);
     } catch (error) {
       console.error("Error fetching audit trails:", error);
-      Admin.showToast("Failed to fetch audit trails: " + error.message, "error");
+      showToast("Failed to fetch audit trails: " + error.message, "error");
     }
   }
 
@@ -7802,7 +6751,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     const thead = safeGetElement("logs-thead");
     const logCount = safeGetElement("log-count");
     const logStats = safeGetElement("log-stats");
-    
+
     // Update table headers for audit trail
     if (thead) {
       thead.innerHTML = `
@@ -7831,14 +6780,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           </tr>
       `;
     }
-    
+
     logCount.textContent = `${trails.length} audit entries`;
     logStats.innerHTML = `
       <span class="text-sm text-yellow-600 dark:text-yellow-400">
           📝 Audit Trail Entries Requiring Review
       </span>
     `;
-    
+
     if (trails.length === 0) {
       tbody.innerHTML = `
           <tr><td colspan="7" class="px-4 py-8 text-center text-green-600 dark:text-green-400">
@@ -7847,14 +6796,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       `;
       return;
     }
-    
+
     tbody.innerHTML = trails
     .map((trail) => {
       const actionClass = trail.success
       ? "text-green-600"
       : "text-red-600";
       const actionIcon = trail.success ? "✓" : "✗";
-      
+
       // Determine action badge color
       const actionBadgeColors = {
         create: "bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200",
@@ -7869,7 +6818,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       const actionBadge =
       actionBadgeColors[trail.action.toLowerCase()] ||
       "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200";
-      
+
       // Format resource name with ID
       const resourceName =
       trail.resource_name || trail.resource_id || "-";
@@ -7878,7 +6827,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
           ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ""}
           ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ""}
       `;
-      
+
       return `
           <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
               <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
@@ -7943,24 +6892,24 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     );
 
     try {
-      const response = await Admin.fetchWithAuth(
-        `${Admin.getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`,
+      const response = await fetchWithAuth(
+        `${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`,
         {
           method: "GET",
         },
       );
-      
+
       if (!response.ok) {
         throw new Error(
           `Failed to fetch performance metrics: ${response.statusText}`,
         );
       }
-      
+
       const metrics = await response.json();
       Admin.displayPerformanceMetrics(metrics);
     } catch (error) {
       console.error("Error fetching performance metrics:", error);
-      Admin.showToast(
+      showToast(
         "Failed to fetch performance metrics: " + error.message,
         "error",
       );
@@ -8027,7 +6976,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
       const errorRatePercent = (metric.error_rate * 100).toFixed(2);
       const errorClass =
       metric.error_rate > 0.1 ? "text-red-600" : "text-green-600";
-      
+
       return `
           <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
               <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
@@ -8081,1536 +7030,6 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     Admin.searchStructuredLogs();
   }
 
-  /**
-  * Get root path for API calls
-  */
-  Admin.getRootPath = function () {
-    return window.ROOT_PATH || "";
-  }
-
-  /**
-  * Show toast notification
-  */
-  Admin.showToast = function (message, type = "info") {
-    // Check if showMessage function exists (from existing admin.js)
-    if (typeof showMessage === "function") {
-      // eslint-disable-next-line no-undef
-      Admin.showMessage(message, type === "error" ? "danger" : type);
-    } else {
-      console.log(`[${type.toUpperCase()}] ${message}`);
-    }
-  }
-          
-  // ===================================================================
-  // LLM SETTINGS FUNCTIONS
-  // ===================================================================
-
-  /**
-  * Switch between LLM Settings tabs (providers/models)
-  */
-  Admin.switchLLMSettingsTab = function (tabName) {
-    // Hide all content panels
-    const panels = document.querySelectorAll(".llm-settings-content");
-    panels.forEach((panel) => panel.classList.add("hidden"));
-    
-    // Remove active state from all tabs
-    const tabs = document.querySelectorAll(".llm-settings-tab");
-    tabs.forEach((tab) => {
-      tab.classList.remove(
-        "border-indigo-500",
-        "text-indigo-600",
-        "dark:text-indigo-400",
-      );
-      tab.classList.add(
-        "border-transparent",
-        "text-gray-500",
-        "hover:text-gray-700",
-        "hover:border-gray-300",
-        "dark:text-gray-400",
-        "dark:hover:text-gray-300",
-      );
-    });
-    
-    // Show selected panel
-    const selectedPanel = safeGetElement(
-      `llm-settings-content-${tabName}`,
-    );
-    if (selectedPanel) {
-      selectedPanel.classList.remove("hidden");
-      // Trigger HTMX load if not yet loaded
-      htmx.trigger(selectedPanel, "revealed");
-    }
-    
-    // Activate selected tab
-    const selectedTab = safeGetElement(`llm-settings-tab-${tabName}`);
-    if (selectedTab) {
-      selectedTab.classList.remove(
-        "border-transparent",
-        "text-gray-500",
-        "hover:text-gray-700",
-        "hover:border-gray-300",
-        "dark:text-gray-400",
-        "dark:hover:text-gray-300",
-      );
-      selectedTab.classList.add(
-        "border-indigo-500",
-        "text-indigo-600",
-        "dark:text-indigo-400",
-      );
-    }
-  }
-
-  // Cache for provider defaults
-  let llmProviderDefaults = null;
-
-  /**
-  * Load provider defaults from the server
-  */
-  Admin.loadLLMProviderDefaults = async function () {
-    if (llmProviderDefaults) {
-      return llmProviderDefaults;
-    }
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/admin/llm/provider-defaults`,
-        {
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      if (response.ok) {
-        llmProviderDefaults = await response.json();
-      }
-    } catch (error) {
-      console.error("Failed to load provider defaults:", error);
-    }
-    return llmProviderDefaults || {};
-  }
-
-  // Track previous provider type for smart auto-fill
-  let previousProviderType = null;
-
-  /**
-  * Handle provider type change - auto-fill defaults
-  */
-  Admin.onLLMProviderTypeChange = async function () {
-    const providerType = safeGetElement("llm-provider-type").value;
-    if (!providerType) {
-      // Hide provider-specific config section
-      const configSection = safeGetElement(
-        "llm-provider-specific-config",
-      );
-      if (configSection) {
-        configSection.classList.add("hidden");
-      }
-      return;
-    }
-    
-    const defaults = await Admin.loadLLMProviderDefaults();
-    const config = defaults[providerType];
-    
-    if (!config) {
-      return;
-    }
-    
-    // Only auto-fill if creating new provider (not editing)
-    const providerId = safeGetElement("llm-provider-id").value;
-    const isEditing = providerId !== "";
-    
-    const apiBaseField = safeGetElement("llm-provider-api-base");
-    const defaultModelField = safeGetElement(
-      "llm-provider-default-model",
-    );
-    
-    if (!isEditing) {
-      // Check if current values match previous provider's defaults
-      const previousConfig = previousProviderType
-        ? defaults[previousProviderType]
-        : null;
-      const apiBaseMatchesPrevious =
-        previousConfig &&
-        (apiBaseField.value === previousConfig.api_base ||
-          apiBaseField.value === "");
-      const modelMatchesPrevious =
-        previousConfig &&
-        (defaultModelField.value === previousConfig.default_model ||
-          defaultModelField.value === "");
-        
-      // Auto-fill API base if empty or matches previous provider's default
-      if (
-        (apiBaseMatchesPrevious || !apiBaseField.value) &&
-        config.api_base
-      ) {
-        apiBaseField.value = config.api_base;
-      }
-      
-      // Auto-fill default model if empty or matches previous provider's default
-      if (
-        (modelMatchesPrevious || !defaultModelField.value) &&
-        config.default_model
-      ) {
-        defaultModelField.value = config.default_model;
-      }
-      
-      // Remember this provider type for next change
-      previousProviderType = providerType;
-    }
-        
-    // Update description/help text
-    const descEl = safeGetElement("llm-provider-type-description");
-    if (descEl && config.description) {
-      descEl.textContent = config.description;
-      descEl.classList.remove("hidden");
-    }
-    
-    // Show/hide API key requirement indicator
-    const apiKeyRequired = safeGetElement(
-      "llm-provider-api-key-required",
-    );
-    if (apiKeyRequired) {
-      if (config.requires_api_key) {
-        apiKeyRequired.classList.remove("hidden");
-      } else {
-        apiKeyRequired.classList.add("hidden");
-      }
-    }
-    
-    // Load and render provider-specific configuration fields
-    await Admin.renderProviderSpecificFields(providerType, isEditing);
-  }
-      
-  /**
-  * Render provider-specific configuration fields dynamically
-  */
-  Admin.renderProviderSpecificFields = async function (providerType, isEditing = false) {
-    try {
-      // Fetch provider configurations
-      const response = await fetch(
-        `${window.ROOT_PATH}/admin/llm/provider-configs`,
-        {
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      if (!response.ok) {
-        console.error("Failed to fetch provider configs");
-        return;
-      }
-      
-      const providerConfigs = await response.json();
-      const providerConfig = providerConfigs[providerType];
-      
-      if (
-        !providerConfig ||
-        !providerConfig.config_fields ||
-        providerConfig.config_fields.length === 0
-      ) {
-        // No provider-specific fields, hide the section
-        const configSection = safeGetElement(
-          "llm-provider-specific-config",
-        );
-        if (configSection) {
-          configSection.classList.add("hidden");
-        }
-        return;
-      }
-      
-      // Show the provider-specific config section
-      const configSection = safeGetElement(
-        "llm-provider-specific-config",
-      );
-      const fieldsContainer = safeGetElement(
-        "llm-provider-config-fields",
-      );
-      
-      if (!configSection || !fieldsContainer) {
-        return;
-      }
-      
-      configSection.classList.remove("hidden");
-      fieldsContainer.innerHTML = ""; // Clear existing fields
-      
-      // Render each field
-      for (const fieldDef of providerConfig.config_fields) {
-        const fieldDiv = document.createElement("div");
-        
-        const label = document.createElement("label");
-        label.setAttribute("for", `llm-config-${fieldDef.name}`);
-        label.className =
-        "block text-sm font-medium text-gray-700 dark:text-gray-300";
-        label.textContent = fieldDef.label;
-        if (fieldDef.required) {
-          const requiredSpan = document.createElement("span");
-          requiredSpan.className = "text-red-500 ml-1";
-          requiredSpan.textContent = "*";
-          label.appendChild(requiredSpan);
-        }
-        fieldDiv.appendChild(label);
-        
-        let inputElement;
-        
-        if (fieldDef.field_type === "select") {
-          inputElement = document.createElement("select");
-          inputElement.className =
-          "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
-          
-          // Add empty option
-          const emptyOption = document.createElement("option");
-          emptyOption.value = "";
-          emptyOption.textContent = "Select...";
-          inputElement.appendChild(emptyOption);
-          
-          // Add options
-          if (fieldDef.options) {
-            for (const opt of fieldDef.options) {
-              const option = document.createElement("option");
-              option.value = opt.value;
-              option.textContent = opt.label;
-              inputElement.appendChild(option);
-            }
-          }
-        } else if (fieldDef.field_type === "textarea") {
-          inputElement = document.createElement("textarea");
-          inputElement.className =
-          "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
-          inputElement.rows = 3;
-        } else {
-          inputElement = document.createElement("input");
-          inputElement.type = fieldDef.field_type;
-          inputElement.className =
-          "mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm";
-          
-          if (fieldDef.field_type === "number") {
-            if (
-              fieldDef.min_value !== null &&
-              fieldDef.min_value !== undefined
-            ) {
-              inputElement.min = fieldDef.min_value;
-            }
-            if (
-              fieldDef.max_value !== null &&
-              fieldDef.max_value !== undefined
-            ) {
-              inputElement.max = fieldDef.max_value;
-            }
-          }
-        }
-        
-        inputElement.id = `llm-config-${fieldDef.name}`;
-        inputElement.name = `config_${fieldDef.name}`;
-        
-        if (fieldDef.required) {
-          inputElement.required = true;
-        }
-        
-        if (fieldDef.placeholder) {
-          inputElement.placeholder = fieldDef.placeholder;
-        }
-        
-        if (fieldDef.default_value && !isEditing) {
-          inputElement.value = fieldDef.default_value;
-        }
-        
-        fieldDiv.appendChild(inputElement);
-        
-        // Add help text if available
-        if (fieldDef.help_text) {
-          const helpText = document.createElement("p");
-          helpText.className =
-          "mt-1 text-xs text-gray-500 dark:text-gray-400";
-          helpText.textContent = fieldDef.help_text;
-          fieldDiv.appendChild(helpText);
-        }
-        
-        fieldsContainer.appendChild(fieldDiv);
-      }
-    } catch (error) {
-      console.error("Error rendering provider-specific fields:", error);
-    }
-  }
-      
-  /**
-  * Show Add Provider Modal
-  */
-  Admin.showAddProviderModal = async function () {
-    safeGetElement("llm-provider-id").value = "";
-    safeGetElement("llm-provider-form").reset();
-    safeGetElement("llm-provider-modal-title").textContent =
-    "Add LLM Provider";
-    
-    // Reset helper elements
-    const descEl = safeGetElement("llm-provider-type-description");
-    if (descEl) {
-      descEl.classList.add("hidden");
-    }
-    
-    // Reset provider type tracker for smart auto-fill
-    previousProviderType = null;
-    
-    // Load defaults for quick access
-    await Admin.loadLLMProviderDefaults();
-    
-    safeGetElement("llm-provider-modal").classList.remove("hidden");
-  }
-
-  /**
-  * Close Provider Modal
-  */
-  Admin.closeLLMProviderModal = function () {
-    safeGetElement("llm-provider-modal").classList.add("hidden");
-  }
-
-  /**
-  * Fetch models from a provider's API
-  */
-  Admin.fetchLLMProviderModels = async function (providerId) {
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        const modelList = result.models
-        .map((m) => `- ${m.id} (${m.owned_by || "unknown"})`)
-        .join("\n");
-        showCopyableModal(
-          `Found ${result.count} Models`,
-          modelList || "No models found",
-          "success",
-        );
-      } else {
-        showCopyableModal("Failed to Fetch Models", result.error, "error");
-      }
-      
-      return result;
-    } catch (error) {
-      console.error("Error fetching models:", error);
-      showCopyableModal(
-        "Failed to Fetch Models",
-        `Error: ${error.message}`,
-        "error",
-      );
-      return { success: false, error: error.message, models: [] };
-    }
-  }
-
-  /**
-  * Sync models from provider API to database
-  */
-  Admin.syncLLMProviderModels = async function (providerId) {
-    try {
-      Admin.showToast("Syncing models...", "info");
-      
-      const response = await fetch(
-        `${window.ROOT_PATH}/admin/llm/providers/${providerId}/sync-models`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      const result = await response.json();
-      
-      if (result.success) {
-        showCopyableModal(
-          "Models Synced Successfully",
-          `${result.message}\n\nTotal available: ${result.total || 0}`,
-          "success",
-        );
-        // Refresh the models list
-        Admin.refreshLLMModels();
-      } else {
-        showCopyableModal("Failed to Sync Models", result.error, "error");
-      }
-      
-      return result;
-    } catch (error) {
-      console.error("Error syncing models:", error);
-      showCopyableModal(
-        "Failed to Sync Models",
-        `Error: ${error.message}`,
-        "error",
-      );
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-  * Edit LLM Provider
-  */
-  Admin.editLLMProvider = async function (providerId) {
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/llm/providers/${providerId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch provider details");
-      }
-      const provider = await response.json();
-      
-      safeGetElement("llm-provider-id").value = provider.id;
-      safeGetElement("llm-provider-name").value = provider.name;
-      safeGetElement("llm-provider-type").value =
-      provider.provider_type;
-      safeGetElement("llm-provider-description").value =
-      provider.description || "";
-      safeGetElement("llm-provider-api-key").value = "";
-      safeGetElement("llm-provider-api-base").value =
-      provider.api_base || "";
-      safeGetElement("llm-provider-default-model").value =
-      provider.default_model || "";
-      safeGetElement("llm-provider-temperature").value =
-      provider.default_temperature || 0.7;
-      safeGetElement("llm-provider-max-tokens").value =
-      provider.default_max_tokens || "";
-      safeGetElement("llm-provider-enabled").checked =
-      provider.enabled;
-      
-      // Render provider-specific fields and populate with existing config
-      await Admin.renderProviderSpecificFields(provider.provider_type, true);
-      
-      // Populate provider-specific config values
-      if (provider.config) {
-        for (const [key, value] of Object.entries(provider.config)) {
-          const input = safeGetElement(`llm-config-${key}`);
-          if (input) {
-            if (input.type === "checkbox") {
-              input.checked = value;
-            } else {
-              input.value = value || "";
-            }
-          }
-        }
-      }
-      
-      safeGetElement("llm-provider-modal-title").textContent =
-      "Edit LLM Provider";
-      document
-      .getElementById("llm-provider-modal")
-      .classList.remove("hidden");
-    } catch (error) {
-      console.error("Error fetching provider:", error);
-      Admin.showToast("Failed to load provider details", "error");
-    }
-  }
-              
-  /**
-  * Save LLM Provider (create or update)
-  */
-  Admin.saveLLMProvider = async function (event) {
-    event.preventDefault();
-    
-    const providerId = safeGetElement("llm-provider-id").value;
-    const isUpdate = providerId !== "";
-    
-    const formData = {
-      name: safeGetElement("llm-provider-name").value,
-      provider_type: safeGetElement("llm-provider-type").value,
-      description:
-      safeGetElement("llm-provider-description").value || null,
-      api_base:
-      safeGetElement("llm-provider-api-base").value || null,
-      default_model:
-      safeGetElement("llm-provider-default-model").value || null,
-      default_temperature: parseFloat(
-        safeGetElement("llm-provider-temperature").value,
-      ),
-      enabled: safeGetElement("llm-provider-enabled").checked,
-      config: {},
-    };
-    
-    const apiKey = safeGetElement("llm-provider-api-key").value;
-    if (apiKey) {
-      formData.api_key = apiKey;
-    }
-    
-    const maxTokens = safeGetElement("llm-provider-max-tokens").value;
-    if (maxTokens) {
-      formData.default_max_tokens = parseInt(maxTokens, 10);
-    }
-    
-    // Collect provider-specific configuration fields
-    const configFieldsContainer = safeGetElement(
-      "llm-provider-config-fields",
-    );
-    if (configFieldsContainer) {
-      const configInputs = configFieldsContainer.querySelectorAll(
-        "input, select, textarea",
-      );
-      for (const input of configInputs) {
-        if (input.name && input.name.startsWith("config_")) {
-          const fieldName = input.name.replace("config_", "");
-          let value = input.value;
-          
-          // Convert to appropriate type
-          if (input.type === "number") {
-            value = value ? parseFloat(value) : null;
-          } else if (input.type === "checkbox") {
-            value = input.checked;
-          } else if (value === "") {
-            value = null;
-          }
-          
-          if (value !== null && value !== "") {
-            formData.config[fieldName] = value;
-          }
-        }
-      }
-    }
-    
-    try {
-      const url = isUpdate
-      ? `${window.ROOT_PATH}/llm/providers/${providerId}`
-      : `${window.ROOT_PATH}/llm/providers`;
-      const method = isUpdate ? "PATCH" : "POST";
-      
-      const response = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-      });
-      
-      if (!response.ok) {
-        const errorMsg = await parseErrorResponse(
-          response,
-          "Failed to save provider",
-        );
-        throw new Error(errorMsg);
-      }
-      
-      Admin.closeLLMProviderModal();
-      Admin.showToast(
-        isUpdate
-        ? "Provider updated successfully"
-        : "Provider created successfully",
-        "success",
-      );
-      Admin.refreshLLMProviders();
-    } catch (error) {
-      console.error("Error saving provider:", error);
-      Admin.showToast(error.message || "Failed to save provider", "error");
-    }
-  }
-
-  /**
-  * Delete LLM Provider
-  */
-  Admin.deleteLLMProvider = async function (providerId, providerName) {
-    if (
-      !confirm(
-        `Are you sure you want to delete the provider "${providerName}"? This will also delete all associated models.`,
-      )
-    ) {
-      return;
-    }
-    
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/llm/providers/${providerId}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      if (!response.ok) {
-        const errorMsg = await parseErrorResponse(
-          response,
-          "Failed to delete provider",
-        );
-        throw new Error(errorMsg);
-      }
-      
-      Admin.showToast("Provider deleted successfully", "success");
-      Admin.refreshLLMProviders();
-    } catch (error) {
-      console.error("Error deleting provider:", error);
-      Admin.showToast(error.message || "Failed to delete provider", "error");
-    }
-  }
-
-  /**
-  * Toggle LLM Provider enabled state
-  */
-  Admin.toggleLLMProvider = async function (providerId) {
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/llm/providers/${providerId}/state`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      if (!response.ok) {
-        throw new Error("Failed to toggle provider");
-      }
-      
-      Admin.refreshLLMProviders();
-    } catch (error) {
-      console.error("Error toggling provider:", error);
-      Admin.showToast("Failed to toggle provider", "error");
-    }
-  }
-
-  /**
-  * Check LLM Provider health
-  */
-  Admin.checkLLMProviderHealth = async function (providerId) {
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/admin/llm/providers/${providerId}/health`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      const result = await response.json();
-      
-      // Show result message with details using copyable modal
-      if (result.status === "healthy") {
-        const message = `Status: ${result.status}\nLatency: ${result.latency_ms}ms`;
-        showCopyableModal("Health Check Passed", message, "success");
-      } else {
-        // Show error details for unhealthy status
-        let message = `Status: ${result.status}`;
-        if (result.latency_ms) {
-          message += `\nLatency: ${result.latency_ms}ms`;
-        }
-        if (result.error) {
-          message += `\n\nError:\n${result.error}`;
-        }
-        showCopyableModal("Health Check Failed", message, "error");
-      }
-      
-      // Refresh providers to update status
-      Admin.refreshLLMProviders();
-    } catch (error) {
-      console.error("Error checking provider health:", error);
-      showCopyableModal(
-        "Health Check Request Failed",
-        `Error: ${error.message}`,
-        "error",
-      );
-    }
-  }
-
-  /**
-  * Refresh LLM Providers list
-  */
-  Admin.refreshLLMProviders = function () {
-    const container = safeGetElement("llm-providers-container");
-    if (container) {
-      htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/providers/html`, {
-        target: "#llm-providers-container",
-        swap: "innerHTML",
-      });
-    }
-  }
-
-  /**
-  * Show Add Model Modal
-  */
-  Admin.showAddModelModal = async function () {
-    safeGetElement("llm-model-id").value = "";
-    safeGetElement("llm-model-form").reset();
-    safeGetElement("llm-model-modal-title").textContent =
-    "Add LLM Model";
-    
-    // Populate providers dropdown
-    await Admin.populateProviderDropdown();
-    
-    safeGetElement("llm-model-modal").classList.remove("hidden");
-  }
-
-  /**
-  * Populate provider dropdown in model modal
-  */
-  Admin.populateProviderDropdown = async function () {
-    try {
-      const response = await fetch(`${window.ROOT_PATH}/llm/providers`, {
-        headers: {
-          Authorization: `Bearer ${await Admin.getAuthToken()}`,
-        },
-      });
-      if (!response.ok) {
-        throw new Error("Failed to fetch providers");
-      }
-      const data = await response.json();
-      
-      const select = safeGetElement("llm-model-provider");
-      select.innerHTML = '<option value="">Select provider</option>';
-      
-      data.providers.forEach((provider) => {
-        const option = document.createElement("option");
-        option.value = provider.id;
-        option.textContent = `${provider.name} (${provider.provider_type})`;
-        select.appendChild(option);
-      });
-    } catch (error) {
-      console.error("Error fetching providers:", error);
-    }
-  }
-
-  /**
-  * Close Model Modal
-  */
-  Admin.closeLLMModelModal = function () {
-    safeGetElement("llm-model-modal").classList.add("hidden");
-  }
-
-  /**
-  * Handle provider change in model modal - auto-fetch models
-  */
-  Admin.onModelProviderChange = async function () {
-    const providerId = safeGetElement("llm-model-provider").value;
-    const modelInput = safeGetElement("llm-model-model-id");
-    const datalist = safeGetElement("llm-model-suggestions");
-    const statusEl = safeGetElement("llm-model-fetch-status");
-    
-    // Clear existing suggestions
-    datalist.innerHTML = "";
-    
-    if (!providerId) {
-      modelInput.placeholder = "Select provider first...";
-      statusEl.classList.add("hidden");
-      return;
-    }
-    
-    modelInput.placeholder = "Type or select a model...";
-    
-    // Auto-fetch models when provider is selected
-    await Admin.fetchModelsForModelModal();
-  }
-
-  /**
-  * Fetch available models for the model modal
-  */
-  Admin.fetchModelsForModelModal = async function () {
-    const providerId = safeGetElement("llm-model-provider").value;
-    const datalist = safeGetElement("llm-model-suggestions");
-    const statusEl = safeGetElement("llm-model-fetch-status");
-    
-    if (!providerId) {
-      Admin.showToast("Please select a provider first", "warning");
-      return;
-    }
-    
-    statusEl.textContent = "Fetching models...";
-    statusEl.classList.remove("hidden");
-    
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/admin/llm/providers/${providerId}/fetch-models`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      const result = await response.json();
-      
-      if (result.success && result.models && result.models.length > 0) {
-        // Populate datalist with model suggestions
-        datalist.innerHTML = "";
-        result.models.forEach((model) => {
-          const option = document.createElement("option");
-          option.value = model.id;
-          option.textContent = model.name || model.id;
-          datalist.appendChild(option);
-        });
-        
-        statusEl.textContent = `Found ${result.models.length} models. Type to filter or enter custom.`;
-        statusEl.classList.remove("hidden");
-      } else {
-        statusEl.textContent =
-        result.error || "No models found. Enter model ID manually.";
-        statusEl.classList.remove("hidden");
-      }
-    } catch (error) {
-      console.error("Error fetching models:", error);
-      statusEl.textContent =
-      "Failed to fetch models. Enter model ID manually.";
-      statusEl.classList.remove("hidden");
-    }
-  }
-
-  /**
-  * Edit LLM Model
-  */
-  Admin.editLLMModel = async function (modelId) {
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/llm/models/${modelId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      if (!response.ok) {
-        throw new Error("Failed to fetch model details");
-      }
-      const model = await response.json();
-      
-      await Admin.populateProviderDropdown();
-      
-      safeGetElement("llm-model-id").value = model.id;
-      safeGetElement("llm-model-provider").value = model.provider_id;
-      safeGetElement("llm-model-model-id").value = model.model_id;
-      safeGetElement("llm-model-name").value = model.model_name;
-      safeGetElement("llm-model-alias").value =
-      model.model_alias || "";
-      safeGetElement("llm-model-description").value =
-      model.description || "";
-      safeGetElement("llm-model-context-window").value =
-      model.context_window || "";
-      safeGetElement("llm-model-max-output").value =
-      model.max_output_tokens || "";
-      safeGetElement("llm-model-supports-chat").checked =
-      model.supports_chat;
-      safeGetElement("llm-model-supports-streaming").checked =
-      model.supports_streaming;
-      safeGetElement("llm-model-supports-functions").checked =
-      model.supports_function_calling;
-      safeGetElement("llm-model-supports-vision").checked =
-      model.supports_vision;
-      safeGetElement("llm-model-enabled").checked = model.enabled;
-      safeGetElement("llm-model-deprecated").checked =
-      model.deprecated;
-      
-      safeGetElement("llm-model-modal-title").textContent =
-      "Edit LLM Model";
-      safeGetElement("llm-model-modal").classList.remove("hidden");
-    } catch (error) {
-      console.error("Error fetching model:", error);
-      Admin.showToast("Failed to load model details", "error");
-    }
-  }
-
-  /**
-  * Save LLM Model (create or update)
-  */
-  Admin.saveLLMModel = async function (event) {
-    event.preventDefault();
-    
-    const modelId = safeGetElement("llm-model-id").value;
-    const isUpdate = modelId !== "";
-    
-    const formData = {
-      provider_id: safeGetElement("llm-model-provider").value,
-      model_id: safeGetElement("llm-model-model-id").value,
-      model_name: safeGetElement("llm-model-name").value,
-      model_alias: safeGetElement("llm-model-alias").value || null,
-      description:
-      safeGetElement("llm-model-description").value || null,
-      supports_chat: safeGetElement("llm-model-supports-chat")
-      .checked,
-      supports_streaming: safeGetElement(
-        "llm-model-supports-streaming",
-      ).checked,
-      supports_function_calling: safeGetElement(
-        "llm-model-supports-functions",
-      ).checked,
-      supports_vision: safeGetElement("llm-model-supports-vision")
-      .checked,
-      enabled: safeGetElement("llm-model-enabled").checked,
-      deprecated: safeGetElement("llm-model-deprecated").checked,
-    };
-    
-    const contextWindow = safeGetElement(
-      "llm-model-context-window",
-    ).value;
-    if (contextWindow) {
-      formData.context_window = parseInt(contextWindow, 10);
-    }
-    
-    const maxOutput = safeGetElement("llm-model-max-output").value;
-    if (maxOutput) {
-      formData.max_output_tokens = parseInt(maxOutput, 10);
-    }
-    
-    try {
-      const url = isUpdate
-      ? `${window.ROOT_PATH}/llm/models/${modelId}`
-      : `${window.ROOT_PATH}/llm/models`;
-      const method = isUpdate ? "PATCH" : "POST";
-      
-      const response = await fetch(url, {
-        method,
-        headers: {
-          Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(formData),
-      });
-      
-      if (!response.ok) {
-        const errorMsg = await parseErrorResponse(
-          response,
-          "Failed to save model",
-        );
-        throw new Error(errorMsg);
-      }
-      
-      Admin.closeLLMModelModal();
-      Admin.showToast(
-        isUpdate
-        ? "Model updated successfully"
-        : "Model created successfully",
-        "success",
-      );
-      Admin.refreshLLMModels();
-    } catch (error) {
-      console.error("Error saving model:", error);
-      Admin.showToast(error.message || "Failed to save model", "error");
-    }
-  }
-
-  /**
-  * Delete LLM Model
-  */
-  Admin.deleteLLMModel = async function (modelId, modelName) {
-    if (!confirm(`Are you sure you want to delete the model "${modelName}"?`)) {
-      return;
-    }
-    
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/llm/models/${modelId}`,
-        {
-          method: "DELETE",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      if (!response.ok) {
-        const errorMsg = await parseErrorResponse(
-          response,
-          "Failed to delete model",
-        );
-        throw new Error(errorMsg);
-      }
-      
-      Admin.showToast("Model deleted successfully", "success");
-      Admin.refreshLLMModels();
-    } catch (error) {
-      console.error("Error deleting model:", error);
-      Admin.showToast(error.message || "Failed to delete model", "error");
-    }
-  }
-
-  /**
-  * Toggle LLM Model enabled state
-  */
-  Admin.toggleLLMModel = async function (modelId) {
-    try {
-      const response = await fetch(
-        `${window.ROOT_PATH}/llm/models/${modelId}/state`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${await Admin.getAuthToken()}`,
-          },
-        },
-      );
-      
-      if (!response.ok) {
-        throw new Error("Failed to toggle model");
-      }
-      
-      Admin.refreshLLMModels();
-    } catch (error) {
-      console.error("Error toggling model:", error);
-      Admin.showToast("Failed to toggle model", "error");
-    }
-  }
-
-  /**
-  * Refresh LLM Models list
-  */
-  Admin.refreshLLMModels = function () {
-    const container = safeGetElement("llm-models-container");
-    if (container) {
-      htmx.ajax("GET", `${window.ROOT_PATH}/admin/llm/models/html`, {
-        target: "#llm-models-container",
-        swap: "innerHTML",
-      });
-    }
-  }
-
-  /**
-  * Filter models by provider
-  */
-  Admin.filterModelsByProvider = function (providerId) {
-    const url = providerId
-    ? `${window.ROOT_PATH}/admin/llm/models/html?provider_id=${providerId}`
-    : `${window.ROOT_PATH}/admin/llm/models/html`;
-    
-    htmx.ajax("GET", url, {
-      target: "#llm-models-container",
-      swap: "innerHTML",
-    });
-  }
-
-  /**
-  * Alpine.js component for LLM API Info & Test
-  */
-  Admin.llmApiInfoApp = function () {
-    return {
-      testType: "models",
-      testModel: "",
-      testMessage: "Hello! Please respond with a short greeting.",
-      testing: false,
-      testResult: null,
-      testSuccess: false,
-      testMetrics: null,
-      assistantMessage: null,
-      modelList: null,
-      
-      formatDuration(ms) {
-        if (ms < 1000) {
-          return `${ms}ms`;
-        }
-        return `${(ms / 1000).toFixed(2)}s`;
-      },
-      
-      formatBytes(bytes) {
-        if (bytes === 0) {
-          return "0 B";
-        }
-        if (bytes < 1024) {
-          return `${bytes} B`;
-        } else if (bytes < 1024 * 1024) {
-          return `${(bytes / 1024).toFixed(2)} KB`;
-        } else {
-          return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
-        }
-      },
-      
-      async runTest() {
-        // Use admin test endpoint directly
-        this.testing = true;
-        this.testResult = null;
-        this.testSuccess = false;
-        this.testMetrics = null;
-        this.assistantMessage = null;
-        this.modelList = null;
-        
-        try {
-          const requestBody = {
-            test_type: this.testType,
-          };
-          
-          if (this.testType === "chat") {
-            if (!this.testModel) {
-              this.testResult = JSON.stringify(
-                { error: "Please select a model" },
-                null,
-                2,
-              );
-              this.testSuccess = false;
-              this.testMetrics = {
-                httpStatus: 400,
-                httpStatusText: "Bad Request",
-              };
-              return;
-            }
-            requestBody.model_id = this.testModel;
-            requestBody.message = this.testMessage;
-            requestBody.max_tokens = 100;
-          }
-          
-          const requestBodyStr = JSON.stringify(requestBody);
-          const startTime = performance.now();
-          
-          const response = await fetch(
-            `${window.ROOT_PATH}/admin/llm/test`,
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${await Admin.getAuthToken()}`,
-                "Content-Type": "application/json",
-              },
-              body: requestBodyStr,
-            },
-          );
-          
-          const endTime = performance.now();
-          const data = await response.json();
-          
-          this.testSuccess = data.success === true;
-          this.testResult = JSON.stringify(data, null, 2);
-          
-          // Build metrics
-          this.testMetrics = {
-            duration:
-            data.metrics?.duration ||
-            Math.round(endTime - startTime),
-            httpStatus: response.status,
-            httpStatusText: response.statusText,
-            requestSize: requestBodyStr.length,
-            responseSize: JSON.stringify(data).length,
-          };
-          
-          if (this.testType === "chat" && data.metrics) {
-            this.testMetrics.promptTokens =
-            data.metrics.promptTokens || 0;
-            this.testMetrics.completionTokens =
-            data.metrics.completionTokens || 0;
-            this.testMetrics.totalTokens =
-            data.metrics.totalTokens || 0;
-            this.testMetrics.responseModel = data.metrics.responseModel;
-            this.assistantMessage = data.assistant_message;
-          }
-          
-          if (this.testType === "models" && data.metrics) {
-            this.testMetrics.modelCount = data.metrics.modelCount;
-            this.modelList = data.data?.data || [];
-          }
-        } catch (error) {
-          this.testResult = JSON.stringify(
-            { error: error.message },
-            null,
-            2,
-          );
-          this.testSuccess = false;
-          this.testMetrics = {
-            httpStatus: 0,
-            httpStatusText: "Network Error",
-          };
-        } finally {
-          this.testing = false;
-        }
-      },
-    };
-  }
-
-  Admin.overviewDashboard = function () {
-    return {
-      init() {
-        this.updateSvgColors();
-        const observer = new MutationObserver(() => this.updateSvgColors());
-        observer.observe(document.documentElement, {
-          attributes: true,
-          attributeFilter: ["class"],
-        });
-      },
-      updateSvgColors() {
-        const isDark = document.documentElement.classList.contains("dark");
-        const svg = safeGetElement("overview-architecture");
-        if (!svg) {
-          return;
-        }
-        
-        const marker = svg.querySelector("#arrowhead polygon");
-        if (marker) {
-          marker.setAttribute(
-            "class",
-            isDark ? "fill-gray-500" : "fill-gray-400",
-          );
-        }
-      },
-    };
-  };
-
-  // Debounce helper for search
-  const searchDebounceTimers = {};
-  Admin.debouncedServerSideUserSearch = function (teamId, searchTerm, delay = 300) {
-    if (searchDebounceTimers[teamId]) {
-      clearTimeout(searchDebounceTimers[teamId]);
-    }
-    searchDebounceTimers[teamId] = setTimeout(() => {
-      Admin.serverSideUserSearch(teamId, searchTerm);
-    }, delay);
-  }
-
-  // Team user search function - searches all users and splits into members/non-members
-  Admin.serverSideUserSearch = async function (teamId, searchTerm) {
-    const membersContainer = safeGetElement(
-      `team-members-container-${teamId}`,
-    );
-    const nonMembersContainer = safeGetElement(
-      `team-non-members-container-${teamId}`,
-    );
-    
-    if (!membersContainer || !nonMembersContainer) {
-      console.error("Team containers not found");
-      return;
-    }
-    
-    // Read per_page from data attributes (set server-side), fallback to 20
-    const membersPerPage =
-    membersContainer.dataset.perPage ||
-    membersContainer.getAttribute("data-per-page") ||
-    20;
-    const nonMembersPerPage =
-    nonMembersContainer.dataset.perPage ||
-    nonMembersContainer.getAttribute("data-per-page") ||
-    20;
-    
-    // If search is empty, reload both sections with full data
-    if (!searchTerm || searchTerm.trim() === "") {
-      try {
-        // Reload members - use fetchWithAuth for bearer token support
-        const membersResponse = await Admin.fetchWithAuth(
-          `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
-        );
-        if (membersResponse.ok) {
-          membersContainer.innerHTML = await membersResponse.text();
-          // Re-initialize HTMX on new content for infinite scroll triggers
-          if (typeof htmx !== "undefined") {
-            htmx.process(membersContainer);
-          }
-        }
-        
-        // Reload non-members
-        const nonMembersResponse = await Admin.fetchWithAuth(
-          `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
-        );
-        if (nonMembersResponse.ok) {
-          nonMembersContainer.innerHTML = await nonMembersResponse.text();
-          // Re-initialize HTMX on new content for infinite scroll triggers
-          if (typeof htmx !== "undefined") {
-            htmx.process(nonMembersContainer);
-          }
-        }
-      } catch (error) {
-        console.error("Error reloading user lists:", error);
-      }
-      return;
-    }
-    
-    try {
-      // First, collect member data AND checkbox states from DOM (before search replaces content)
-      const memberDataFromDom = {};
-      const checkboxStates = {}; // Track checkbox states for all visible users
-      const existingMemberItems = document.querySelectorAll(
-        `#team-members-container-${teamId} .user-item`,
-      );
-      existingMemberItems.forEach((item) => {
-        const email = item.dataset.userEmail;
-        if (email) {
-          const roleSelect = item.querySelector(".role-select");
-          const checkbox = item.querySelector(".user-checkbox");
-          memberDataFromDom[email] = {
-            role: roleSelect ? roleSelect.value : "member",
-          };
-          if (checkbox) {
-            checkboxStates[email] = checkbox.checked;
-          }
-        }
-      });
-      
-      // Also collect checkbox states from non-members section
-      const existingNonMemberItems = document.querySelectorAll(
-        `#team-non-members-container-${teamId} .user-item`,
-      );
-      existingNonMemberItems.forEach((item) => {
-        const email = item.dataset.userEmail;
-        if (email) {
-          const checkbox = item.querySelector(".user-checkbox");
-          const roleSelect = item.querySelector(".role-select");
-          if (checkbox) {
-            checkboxStates[email] = checkbox.checked;
-            // Also preserve role selection for users being added
-            if (checkbox.checked && roleSelect) {
-              memberDataFromDom[email] = {
-                role: roleSelect.value,
-                pendingAdd: true, // Flag that this is a pending addition
-              };
-            }
-          }
-        }
-      });
-      
-      // If no members found in DOM yet, fetch from server to get membership data with roles
-      if (Object.keys(memberDataFromDom).length === 0) {
-        try {
-          const membersResp = await Admin.fetchWithAuth(
-            `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
-          );
-          if (membersResp.ok) {
-            const tempDiv = document.createElement("div");
-            tempDiv.innerHTML = await membersResp.text();
-            tempDiv.querySelectorAll(".user-item").forEach((item) => {
-              const email = item.dataset.userEmail;
-              if (email) {
-                const roleSelect =
-                item.querySelector(".role-select");
-                memberDataFromDom[email] = {
-                  role: roleSelect ? roleSelect.value : "member",
-                };
-              }
-            });
-          }
-        } catch (e) {
-          console.error("Error fetching member data:", e);
-        }
-      }
-      
-      // Search all users - use fetchWithAuth for bearer token support
-      const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(searchTerm)}&limit=100`;
-      const response = await Admin.fetchWithAuth(searchUrl);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.users && data.users.length > 0) {
-        // Split users into members and non-members based on collected data
-        const members = [];
-        const nonMembers = [];
-        
-        data.users.forEach((user) => {
-          if (memberDataFromDom[user.email]) {
-            members.push({
-              ...user,
-              role: memberDataFromDom[user.email].role,
-            });
-          } else {
-            nonMembers.push(user);
-          }
-        });
-        
-        // Helper to escape HTML
-        escapeHtml = function (text) {
-          const div = document.createElement("div");
-          div.textContent = text;
-          return div.innerHTML;
-        }
-        
-        // Render members with preserved roles, checkbox states, and loadedMembers hidden input
-        let membersHtml = "";
-        members.forEach((user) => {
-          const fullName = escapeHtml(user.full_name || user.email);
-          const email = escapeHtml(user.email);
-          const role = user.role || "member";
-          const isOwner = role === "owner";
-          // Preserve checkbox state if available, otherwise default to checked for existing members
-          const isChecked =
-          checkboxStates[user.email] !== undefined
-          ? checkboxStates[user.email]
-          : true;
-          membersHtml += `
-        <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20" data-user-email="${email}">
-            <div class="flex-shrink-0">
-                <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                </div>
-            </div>
-            <input type="hidden" name="loadedMembers" value="${email}" />
-            <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} data-auto-check="true" />
-            <div class="flex-grow min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                    ${isOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                </div>
-                <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-            </div>
-            <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-            </select>
-        </div>
-    `;
-        });
-        
-        // Render non-members with preserved checkbox states and roles
-        let nonMembersHtml = "";
-        nonMembers.forEach((user) => {
-          const fullName = escapeHtml(user.full_name || user.email);
-          const email = escapeHtml(user.email);
-          // Preserve checkbox state if available, otherwise default to unchecked for non-members
-          const isChecked =
-          checkboxStates[user.email] !== undefined
-          ? checkboxStates[user.email]
-          : false;
-          // Preserve role selection for users being added
-          const pendingData = memberDataFromDom[user.email];
-          const role =
-          pendingData && pendingData.pendingAdd
-          ? pendingData.role
-          : "member";
-          const isOwner = role === "owner";
-          nonMembersHtml += `
-        <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border border-transparent" data-user-email="${email}" data-is-member="false">
-            <div class="flex-shrink-0">
-                <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                    <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${user.email[0].toUpperCase()}</span>
-                </div>
-            </div>
-            <input type="checkbox" name="associatedUsers" value="${email}" data-user-name="${fullName}" class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0" ${isChecked ? "checked" : ""} />
-            <div class="flex-grow min-w-0">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="select-none font-medium text-gray-900 dark:text-white truncate">${fullName}</span>
-                </div>
-                <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${email}</div>
-            </div>
-            <select name="role_${encodeURIComponent(user.email)}" class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0">
-                <option value="member" ${!isOwner ? "selected" : ""}>Member</option>
-                <option value="owner" ${isOwner ? "selected" : ""}>Owner</option>
-            </select>
-        </div>
-    `;
-        });
-        
-        membersContainer.innerHTML =
-        membersHtml ||
-        '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-        nonMembersContainer.innerHTML =
-        nonMembersHtml ||
-        '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-      } else {
-        // No results
-        membersContainer.innerHTML =
-        '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching members</div>';
-        nonMembersContainer.innerHTML =
-        '<div class="text-center py-4 text-gray-500 dark:text-gray-400">No matching users</div>';
-      }
-    } catch (error) {
-      console.error("Error searching users:", error);
-      membersContainer.innerHTML =
-      '<div class="text-center py-4 text-red-600">Error searching users</div>';
-      nonMembersContainer.innerHTML =
-      '<div class="text-center py-4 text-red-600">Error searching users</div>';
-    }
-  }
-
   // ============================================================================ //
   //                         TEAM SEARCH AND FILTER FUNCTIONS                      //
   // ============================================================================ //
@@ -9634,7 +7053,7 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
     if (teamSearchDebounceTimer) {
       clearTimeout(teamSearchDebounceTimer);
     }
-    
+
     teamSearchDebounceTimer = setTimeout(() => {
       Admin.performTeamSearch(searchTerm);
     }, 300);
@@ -9664,37 +7083,37 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   Admin.performTeamSearch = async function (searchTerm) {
     const container = safeGetElement("unified-teams-list");
     const loadingIndicator = safeGetElement("teams-loading");
-    
+
     if (!container) {
       console.error("unified-teams-list container not found");
       return;
     }
-    
+
     // Show loading state
     if (loadingIndicator) {
       loadingIndicator.style.display = "block";
     }
-    
+
     // Build URL with search query and current relationship filter
     const params = new URLSearchParams();
     params.set("page", "1");
     params.set("per_page", Admin.getTeamsPerPage().toString());
-    
+
     if (searchTerm && searchTerm.trim() !== "") {
       params.set("q", searchTerm.trim());
     }
-    
+
     if (
       currentTeamRelationshipFilter &&
       currentTeamRelationshipFilter !== "all"
     ) {
       params.set("relationship", currentTeamRelationshipFilter);
     }
-    
+
     const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
-    
+
     console.log(`[Team Search] Searching teams with URL: ${url}`);
-    
+
     try {
       // Use HTMX to load the results
       if (window.htmx) {
@@ -9773,14 +7192,14 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
         );
       }
     });
-    
+
     // Update current filter state
     currentTeamRelationshipFilter = filter;
-    
+
     // Get current search query
     const searchInput = safeGetElement("team-search");
     const searchQuery = searchInput ? searchInput.value.trim() : "";
-    
+
     // Perform search with new filter
     Admin.performTeamSearch(searchQuery);
   }
@@ -9791,341 +7210,5 @@ import { createMemoizedInit, fetchWithTimeout, getCookie, getCurrentTeamId, getC
   */
   Admin.filterTeams = function (searchValue) {
     Admin.serverSideTeamSearch(searchValue);
-  }
-
-  // ============================================================================ //
-  //                    TEAM SELECTOR DROPDOWN FUNCTIONS                           //
-  // ============================================================================ //
-
-  /**
-  * Debounce timer for team selector search
-  */
-  let teamSelectorSearchDebounceTimer = null;
-
-  /**
-  * Search teams in the team selector dropdown
-  * @param {string} searchTerm - The search query
-  */
-  Admin.searchTeamSelector = function (searchTerm) {
-    // Debounce the search
-    if (teamSelectorSearchDebounceTimer) {
-      clearTimeout(teamSelectorSearchDebounceTimer);
-    }
-    
-    teamSelectorSearchDebounceTimer = setTimeout(() => {
-      Admin.performTeamSelectorSearch(searchTerm);
-    }, 300);
-  }
-
-  /**
-  * Perform the team selector search
-  * @param {string} searchTerm - The search query
-  */
-  Admin.performTeamSelectorSearch = function (searchTerm) {
-    const container = safeGetElement("team-selector-items");
-    if (!container) {
-      console.error("team-selector-items container not found");
-      return;
-    }
-    
-    // Build URL
-    const params = new URLSearchParams();
-    params.set("page", "1");
-    params.set("per_page", "20");
-    params.set("render", "selector");
-    
-    if (searchTerm && searchTerm.trim() !== "") {
-      params.set("q", searchTerm.trim());
-    }
-    
-    const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
-    
-    // Use HTMX to load results
-    if (window.htmx) {
-      window.htmx.ajax("GET", url, {
-        target: "#team-selector-items",
-        swap: "innerHTML",
-      });
-    }
-  }
-
-  /**
-  * Select a team from the team selector dropdown
-  * @param {HTMLElement} button - The button element that was clicked
-  */
-  Admin.selectTeamFromSelector = function (button) {
-    const teamId = button.dataset.teamId;
-    const teamName = button.dataset.teamName;
-    const isPersonal = button.dataset.teamIsPersonal === "true";
-    
-    // Update the Alpine.js component state
-    const selectorContainer = button.closest("[x-data]");
-    if (selectorContainer && selectorContainer.__x) {
-      const alpineData = selectorContainer.__x.$data;
-      alpineData.selectedTeam = teamId;
-      alpineData.selectedTeamName = (isPersonal ? "👤 " : "🏢 ") + teamName;
-      alpineData.open = false;
-    }
-    
-    // Clear the search input
-    const searchInput = safeGetElement("team-selector-search");
-    if (searchInput) {
-      searchInput.value = "";
-    }
-    
-    // Reset the loaded flag so next open reloads the list
-    const itemsContainer = safeGetElement("team-selector-items");
-    if (itemsContainer) {
-      delete itemsContainer.dataset.loaded;
-    }
-    
-    // Call the existing updateTeamContext function (defined in admin.html)
-    if (typeof window.updateTeamContext === "function") {
-      window.updateTeamContext(teamId);
-    }
-  }
-  
-  // Add three fields to passthrough section on Advanced button click
-  Admin.handleAddPassthrough = function () {
-    const passthroughContainer = safeGetElement("passthrough-container");
-    if (!passthroughContainer) {
-      console.error("Passthrough container not found");
-      return;
-    }
-    
-    // Toggle visibility
-    if (
-      passthroughContainer.style.display === "none" ||
-      passthroughContainer.style.display === ""
-    ) {
-      passthroughContainer.style.display = "block";
-      // Add fields only if not already present
-      if (!safeGetElement("query-mapping-field")) {
-        const queryDiv = document.createElement("div");
-        queryDiv.className = "mb-4";
-        queryDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
-            <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
-        `;
-        passthroughContainer.appendChild(queryDiv);
-      }
-      if (!safeGetElement("header-mapping-field")) {
-        const headerDiv = document.createElement("div");
-        headerDiv.className = "mb-4";
-        headerDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
-            <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
-        `;
-        passthroughContainer.appendChild(headerDiv);
-      }
-      if (!safeGetElement("timeout-ms-field")) {
-        const timeoutDiv = document.createElement("div");
-        timeoutDiv.className = "mb-4";
-        timeoutDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
-            <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
-        `;
-        passthroughContainer.appendChild(timeoutDiv);
-      }
-      if (!safeGetElement("expose-passthrough-field")) {
-        const exposeDiv = document.createElement("div");
-        exposeDiv.className = "mb-4";
-        exposeDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
-            <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
-                <option value="true" selected>True</option>
-                <option value="false">False</option>
-            </select>
-        `;
-        passthroughContainer.appendChild(exposeDiv);
-      }
-      if (!safeGetElement("allowlist-field")) {
-        const allowlistDiv = document.createElement("div");
-        allowlistDiv.className = "mb-4";
-        allowlistDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
-            <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
-        `;
-        passthroughContainer.appendChild(allowlistDiv);
-      }
-      if (!safeGetElement("plugin-chain-pre-field")) {
-        const pluginPreDiv = document.createElement("div");
-        pluginPreDiv.className = "mb-4";
-        pluginPreDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
-            <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
-        `;
-        passthroughContainer.appendChild(pluginPreDiv);
-      }
-      if (!safeGetElement("plugin-chain-post-field")) {
-        const pluginPostDiv = document.createElement("div");
-        pluginPostDiv.className = "mb-4";
-        pluginPostDiv.innerHTML = `
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
-            <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
-        `;
-        passthroughContainer.appendChild(pluginPostDiv);
-      }
-    } else {
-      passthroughContainer.style.display = "none";
-    }
-  }
-  
-  // Make URL field read-only for integration type MCP
-  Admin.updateEditToolUrl = function () {
-    const editTypeField = safeGetElement("edit-tool-type");
-    const editurlField = safeGetElement("edit-tool-url");
-    if (editTypeField && editurlField) {
-      if (editTypeField.value === "MCP") {
-        editurlField.readOnly = true;
-      } else {
-        editurlField.readOnly = false;
-      }
-    }
-  }
-  
-  // Attach event listener after DOM is loaded or when modal opens
-  document.addEventListener("DOMContentLoaded", function () {
-    const TypeField = safeGetElement("edit-tool-type");
-    if (TypeField) {
-      TypeField.addEventListener("change", Admin.updateEditToolUrl);
-      // Set initial state
-      Admin.updateEditToolUrl();
-    }
-    
-    // Initialize CA certificate upload immediately
-    Admin.initializeCACertUpload();
-    
-    // Also try to initialize after a short delay (in case the panel loads later)
-    setTimeout(Admin.initializeCACertUpload, 500);
-    
-    // Re-initialize when switching to gateways tab
-    const gatewaysTab = document.querySelector('[onclick*="gateways"]');
-    if (gatewaysTab) {
-      gatewaysTab.addEventListener("click", function () {
-        setTimeout(Admin.initializeCACertUpload, 100);
-      });
-    }
-    
-    // Initialize search functionality for all entity types (immediate, no debounce)
-    initializeSearchInputsMemoized();
-    // Only initialize password validation if password fields exist on page
-    if (document.getElementById("password-field")) {
-      Admin.initializePasswordValidation();
-    }
-    Admin.initializeAddMembersForms();
-    
-    // Event delegation for team member search - server-side search for unified view
-    // This handler is initialized here for early binding, but the actual search logic
-    // is in Admin.performUserSearch() which is attached when the form is initialized
-    const teamSearchTimeouts = {};
-    const teamMemberDataCache = {};
-    
-    document.body.addEventListener("input", async function (event) {
-      const target = event.target;
-      if (target.id && target.id.startsWith("user-search-")) {
-        const teamId = target.id.replace("user-search-", "");
-        const listContainer = safeGetElement(
-          `team-members-list-${teamId}`,
-        );
-        
-        if (!listContainer) return;
-        
-        const query = target.value.trim();
-        
-        // Clear previous timeout for this team
-        if (teamSearchTimeouts[teamId]) {
-          clearTimeout(teamSearchTimeouts[teamId]);
-        }
-        
-        // Get team member data from cache or script tag
-        if (!teamMemberDataCache[teamId]) {
-          const teamMemberDataScript = safeGetElement(
-            `team-member-data-${teamId}`,
-          );
-          if (teamMemberDataScript) {
-            try {
-              teamMemberDataCache[teamId] = JSON.parse(
-                teamMemberDataScript.textContent || "{}",
-              );
-              console.log(
-                `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`,
-              );
-            } catch (e) {
-              console.error(
-                `[Team ${teamId}] Failed to parse team member data:`,
-                e,
-              );
-              teamMemberDataCache[teamId] = {};
-            }
-          } else {
-            teamMemberDataCache[teamId] = {};
-          }
-        }
-        
-        // Debounce server call
-        teamSearchTimeouts[teamId] = setTimeout(async () => {
-          await Admin.performUserSearch(
-            teamId,
-            query,
-            listContainer,
-            teamMemberDataCache[teamId],
-          );
-        }, 300);
-      }
-    });
-    
-    // Re-initialize search inputs when HTMX content loads
-    // Only re-initialize if the swap affects search-related content
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-      const target = event.detail.target;
-      const relevantPanels = [
-        "catalog-panel",
-        "gateways-panel",
-        "tools-panel",
-        "resources-panel",
-        "prompts-panel",
-        "a2a-agents-panel",
-      ];
-      
-      if (
-        target &&
-        relevantPanels.some(
-          (panelId) =>
-            target.id === panelId || target.closest(`#${panelId}`),
-        )
-      ) {
-        console.log(
-          `📝 HTMX swap detected in ${target.id}, resetting search state`,
-        );
-        resetSearchInputsState();
-        initializeSearchInputsDebounced();
-      }
-    });
-    
-    // Initialize search when switching tabs
-    document.addEventListener("click", function (event) {
-      if (
-        event.target.matches('[onclick*="Admin.showTab"]') ||
-        event.target.closest('[onclick*="Admin.showTab"]')
-      ) {
-        console.log("🔄 Tab switch detected, resetting search state");
-        resetSearchInputsState();
-        initializeSearchInputsDebounced();
-      }
-    });
-  });
-  
-  /**
-  * Handle keydown event when Enter or Space key is pressed
-  *
-  * @param {KeyboardEvent} event - the keyboard event triggered
-  * @param {function} callback - the function to call when Enter or Space is pressed
-  */
-  Admin.handleKeydown = (event, callback) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      callback(event);
-    }
   }
 })(window.Admin)
