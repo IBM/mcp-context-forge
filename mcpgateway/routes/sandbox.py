@@ -25,7 +25,7 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 # Local
-from ..database import get_db
+from ..db import get_db
 from ..schemas.sandbox import (
     BatchSimulateRequest,
     BatchSimulationResult,
@@ -527,7 +527,7 @@ async def simulate_form_submit(
 
         # Create test case from form data
         # First-Party
-        from mcpgateway.plugins.unified_pdp.pdp_models import Context, Decision, Resource, Subject
+        from plugins.unified_pdp.pdp_models import Context, Decision, Resource, Subject
         from mcpgateway.schemas.sandbox import TestCase
 
         test_case = TestCase(
