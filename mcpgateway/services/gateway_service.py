@@ -2193,7 +2193,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     gateway.tags = gateway_update.tags
 
                 # Update gateway_mode if provided
-                if hasattr(gateway_update, 'gateway_mode') and gateway_update.gateway_mode is not None:
+                if hasattr(gateway_update, "gateway_mode") and gateway_update.gateway_mode is not None:
                     gateway.gateway_mode = gateway_update.gateway_mode
 
                 # Update metadata fields

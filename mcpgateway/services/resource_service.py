@@ -2178,10 +2178,10 @@ class ResourceService:
                     resource_db = db.execute(query).scalar_one_or_none()
 
                     # Check for direct_proxy mode
-                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy":
+                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy":  # pragma: no cover - integration test
                         logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
 
-                        try:
+                        try:  # pragma: no cover - integration test
                             # First-Party
                             from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
 
@@ -2238,7 +2238,7 @@ class ResourceService:
                                     logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
                                     # Skip the rest of the DB lookup logic
 
-                        except Exception as e:
+                        except Exception as e:  # pragma: no cover - integration test
                             logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
                             raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
 
