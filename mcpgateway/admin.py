@@ -1608,13 +1608,15 @@ async def admin_servers_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         search_term = f"%{tag_search.lower()}%"
         search_conditions = [
+            DbServer.id.like(search_term),
             func.lower(DbServer.name).like(search_term),
-            func.lower(DbServer.description).like(search_term),
-            func.lower(DbServer.tags).like(search_term),
-            func.lower(DbServer.owner_email).like(search_term),
+            func.lower(func.coalesce(DbServer.description, '')).like(search_term),
+            func.lower(cast(DbServer.tags, String)).like(search_term),
+            func.lower(func.coalesce(DbServer.owner_email, '')).like(search_term),
+            func.lower(func.coalesce(DbServer.federation_source, '')).like(search_term),
         ]
         query = query.where(or_(*search_conditions))
         LOGGER.info(f"🔍 Servers search filter applied: {tag_search}")
@@ -1628,7 +1630,7 @@ async def admin_servers_partial_html(
         query_params["include_inactive"] = "true"
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         query_params["tag_search"] = tag_search
 
     # Use unified pagination function
@@ -7075,14 +7077,16 @@ async def admin_tools_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         search_term = f"%{tag_search.lower()}%"
         search_conditions = [
+            DbTool.id.like(search_term),
             func.lower(DbTool.original_name).like(search_term),
-            func.lower(DbTool.description).like(search_term),
-            func.lower(DbTool.tags).like(search_term),
-            func.lower(DbTool.owner_email).like(search_term),
-            func.lower(DbTool.url).like(search_term),
+            func.lower(func.coalesce(DbTool.description, '')).like(search_term),
+            func.lower(cast(DbTool.tags, String)).like(search_term),
+            func.lower(func.coalesce(DbTool.owner_email, '')).like(search_term),
+            func.lower(func.coalesce(DbTool.url, '')).like(search_term),
+            func.lower(func.coalesce(DbTool.federation_source, '')).like(search_term),
         ]
         query = query.where(or_(*search_conditions))
         LOGGER.info(f"🔍 Tools search filter applied: {tag_search}")
@@ -7101,7 +7105,7 @@ async def admin_tools_partial_html(
         query_params_dict["gateway_id"] = gateway_id
     if team_id:
         query_params_dict["team_id"] = team_id
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         query_params_dict["tag_search"] = tag_search
 
     paginated_result = await paginate_query(
@@ -7626,13 +7630,15 @@ async def admin_prompts_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         search_term = f"%{tag_search.lower()}%"
         search_conditions = [
+            DbPrompt.id.like(search_term),
             func.lower(DbPrompt.name).like(search_term),
-            func.lower(DbPrompt.description).like(search_term),
-            func.lower(DbPrompt.tags).like(search_term),
-            func.lower(DbPrompt.owner_email).like(search_term),
+            func.lower(func.coalesce(DbPrompt.description, '')).like(search_term),
+            func.lower(cast(DbPrompt.tags, String)).like(search_term),
+            func.lower(func.coalesce(DbPrompt.owner_email, '')).like(search_term),
+            func.lower(func.coalesce(DbPrompt.federation_source, '')).like(search_term),
         ]
         query = query.where(or_(*search_conditions))
         LOGGER.info(f"🔍 Prompts search filter applied: {tag_search}")
@@ -7648,7 +7654,7 @@ async def admin_prompts_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         query_params["tag_search"] = tag_search
 
     # Use unified pagination function
@@ -8340,14 +8346,16 @@ async def admin_resources_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         search_term = f"%{tag_search.lower()}%"
         search_conditions = [
+            DbResource.id.like(search_term),
             func.lower(DbResource.name).like(search_term),
-            func.lower(DbResource.description).like(search_term),
-            func.lower(DbResource.tags).like(search_term),
-            func.lower(DbResource.owner_email).like(search_term),
+            func.lower(func.coalesce(DbResource.description, '')).like(search_term),
+            func.lower(cast(DbResource.tags, String)).like(search_term),
+            func.lower(func.coalesce(DbResource.owner_email, '')).like(search_term),
             func.lower(DbResource.uri).like(search_term),
+            func.lower(func.coalesce(DbResource.federation_source, '')).like(search_term),
         ]
         query = query.where(or_(*search_conditions))
         LOGGER.info(f"🔍 Resources search filter applied: {tag_search}")
@@ -8363,7 +8371,7 @@ async def admin_resources_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         query_params["tag_search"] = tag_search
 
     # Use unified pagination function
@@ -9188,14 +9196,16 @@ async def admin_a2a_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         search_term = f"%{tag_search.lower()}%"
         search_conditions = [
+            DbA2AAgent.id.like(search_term),
             func.lower(DbA2AAgent.name).like(search_term),
-            func.lower(DbA2AAgent.description).like(search_term),
-            func.lower(DbA2AAgent.tags).like(search_term),
-            func.lower(DbA2AAgent.owner_email).like(search_term),
-            func.lower(DbA2AAgent.endpoint_url).like(search_term),
+            func.lower(func.coalesce(DbA2AAgent.description, '')).like(search_term),
+            func.lower(cast(DbA2AAgent.tags, String)).like(search_term),
+            func.lower(func.coalesce(DbA2AAgent.owner_email, '')).like(search_term),
+            func.lower(func.coalesce(DbA2AAgent.endpoint_url, '')).like(search_term),
+            func.lower(func.coalesce(DbA2AAgent.federation_source, '')).like(search_term),
         ]
         query = query.where(or_(*search_conditions))
         LOGGER.info(f"🔍 A2A Agents search filter applied: {tag_search}")
@@ -9211,7 +9221,7 @@ async def admin_a2a_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search:
+    if tag_search and isinstance(tag_search, str):
         query_params["tag_search"] = tag_search
 
     # Use unified pagination function

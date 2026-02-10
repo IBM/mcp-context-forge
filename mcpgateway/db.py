@@ -1916,9 +1916,11 @@ class EmailTeamJoinRequest(Base):
         expires_at = self.expires_at
 
         # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
+        if expires_at.tzinfo is None:
+            # expires_at is timezone-naive, assume it's local time and convert to UTC
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            expires_at = expires_at.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        elif now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
 
         return now > expires_at
@@ -2008,9 +2010,11 @@ class PendingUserApproval(Base):
         expires_at = self.expires_at
 
         # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
+        if expires_at.tzinfo is None:
+            # expires_at is timezone-naive, assume it's local time and convert to UTC
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            expires_at = expires_at.replace(tzinfo=local_tz).astimezone(timezone.utc)
+        elif now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)
 
         return now > expires_at
@@ -5283,8 +5287,9 @@ class SSOAuthSession(Base):
 
         # Handle timezone mismatch by converting naive datetime to UTC if needed
         if expires.tzinfo is None:
-            # expires_at is timezone-naive, assume it's UTC
-            expires = expires.replace(tzinfo=timezone.utc)
+            # expires_at is timezone-naive, assume it's local time and convert to UTC
+            local_tz = datetime.now(timezone.utc).astimezone().tzinfo
+            expires = expires.replace(tzinfo=local_tz).astimezone(timezone.utc)
         elif now.tzinfo is None:
             # now is timezone-naive (shouldn't happen with utc_now, but just in case)
             now = now.replace(tzinfo=timezone.utc)

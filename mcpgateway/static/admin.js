@@ -17477,18 +17477,18 @@ function performServerSideSearch(entityType, searchTerm) {
         const adminIndex = currentPath.indexOf('/admin');
         rootPath = adminIndex > 0 ? currentPath.substring(0, adminIndex) : '';
     }
-    
+
     // Build the URL with search parameter
     const url = new URL(rootPath + config.endpoint, window.location.origin);
-    url.searchParams.set('page', '1');  // Reset to first page on search
-    url.searchParams.set('per_page', document.querySelector(`#${config.tableName}-pagination-controls select`)?.value || '10');
+    url.searchParams.set("page", "1");  // Reset to first page on search
+    url.searchParams.set("per_page", document.querySelector(`#${config.tableName}-pagination-controls select`)?.value || "10");
     
     // Add include_inactive if checkbox is checked
     const checkbox = document.getElementById(config.checkboxId);
     if (checkbox) {
         url.searchParams.set('include_inactive', checkbox.checked.toString());
     }
-    
+
     // Add search term (empty string clears the filter)
     if (searchTerm && searchTerm.trim()) {
         url.searchParams.set('tag_search', searchTerm.trim());
@@ -17501,8 +17501,10 @@ function performServerSideSearch(entityType, searchTerm) {
         url.searchParams.set('team_id', teamId);
     }
 
-    console.log(`🔍 Server-side search for ${entityType}: "${searchTerm}" -> ${url.toString()}`);
-    
+    console.log(
+        `🔍 Server-side search for ${entityType}: "${searchTerm}" -> ${url.toString()}`,
+    );
+
     // Trigger HTMX request
     htmx.ajax('GET', url.toString(), {
         target: config.target,
@@ -17522,7 +17524,7 @@ function debouncedServerSearch(entityType, searchTerm, delay = 300) {
     if (serverEntitySearchTimers[entityType]) {
         clearTimeout(serverEntitySearchTimers[entityType]);
     }
-    
+
     // Set new timer
     serverEntitySearchTimers[entityType] = setTimeout(() => {
         performServerSideSearch(entityType, searchTerm);
@@ -17564,7 +17566,7 @@ function initializeSearchInputs() {
     const catalogSearchInput = document.getElementById("catalog-search-input");
     if (catalogSearchInput) {
         catalogSearchInput.addEventListener("input", function () {
-            debouncedServerSearch('catalog', this.value);
+            debouncedServerSearch("catalog", this.value);
         });
         console.log("✅ Virtual Servers search initialized (server-side)");
     }
@@ -17621,7 +17623,7 @@ function initializeSearchInputs() {
     const toolsSearchInput = document.getElementById("tools-search-input");
     if (toolsSearchInput) {
         toolsSearchInput.addEventListener("input", function () {
-            debouncedServerSearch('tools', this.value);
+            debouncedServerSearch("tools", this.value);
         });
         console.log("✅ Tools search initialized (server-side)");
     }
@@ -17632,7 +17634,7 @@ function initializeSearchInputs() {
     );
     if (resourcesSearchInput) {
         resourcesSearchInput.addEventListener("input", function () {
-            debouncedServerSearch('resources', this.value);
+            debouncedServerSearch("resources", this.value);
         });
         console.log("✅ Resources search initialized (server-side)");
     }
@@ -17641,7 +17643,7 @@ function initializeSearchInputs() {
     const promptsSearchInput = document.getElementById("prompts-search-input");
     if (promptsSearchInput) {
         promptsSearchInput.addEventListener("input", function () {
-            debouncedServerSearch('prompts', this.value);
+            debouncedServerSearch("prompts", this.value);
         });
         console.log("✅ Prompts search initialized (server-side)");
     }
@@ -17652,7 +17654,7 @@ function initializeSearchInputs() {
     );
     if (agentsSearchInput) {
         agentsSearchInput.addEventListener("input", function () {
-            debouncedServerSearch('a2a-agents', this.value);
+            debouncedServerSearch("a2a-agents", this.value);
         });
         console.log("✅ A2A Agents search initialized (server-side)");
     }
