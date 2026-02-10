@@ -1,11 +1,11 @@
 ## JavaScript Unit Testing
 
-MCP Gateway uses **Vitest** for JavaScript unit testing, providing fast and modern testing capabilities for browser-based code.
+MCP Gateway uses **Vitest** for JavaScript unit testing, providing fast and modern testing capabilities for browser-based code. Tests cover pure/near-pure utility functions in `admin.js` (validation, formatting, parsing, error handling, display, and config).
 
 ### Configuration Files
 
-- **`vitest.config.js`** - Main Vitest configuration
-- **`tests/js/admin.test.js`** - Test suite for admin.js utilities
+- **`vitest.config.js`** - Main Vitest configuration (Istanbul coverage, JSDOM environment)
+- **`tests/js/helpers/admin-env.js`** - Shared JSDOM + Istanbul instrumentation helper
 
 ### Running JavaScript Tests
 
@@ -27,28 +27,61 @@ npm run test:ui
 
 ### Test Structure
 
-JavaScript tests are located in the `tests/js/` directory:
+JavaScript tests are located in the `tests/js/` directory, organized by category:
 
 ```
 tests/
 └── js/
-    ├── admin.test.js      # Admin UI utility tests
-    └── [future test files]
+    ├── helpers/
+    │   └── admin-env.js               # Shared JSDOM + Istanbul setup
+    ├── admin.test.js                   # escapeHtml (13 tests)
+    ├── admin-validation.test.js        # Input/URL/JSON/IP/cert validators (92 tests)
+    ├── admin-formatting.test.js        # formatValue/Number/Date/FileSize/etc. (46 tests)
+    ├── admin-parsing.test.js           # parseUriTemplate/ThinkTags/CertInfo/KPI (47 tests)
+    ├── admin-display.test.js           # Log/severity classes, status badges (39 tests)
+    ├── admin-config.test.js            # isAdminUser, getRootPath, aggregation (27 tests)
+    └── admin-errors.test.js            # handleFetchError (7 tests)
 ```
+
+**Total: 271 tests across 7 test files.**
 
 ### Writing Tests
 
-Tests use Vitest's Jest-compatible API:
+Tests use Vitest's Jest-compatible API with the shared helper for JSDOM setup:
 
 ```javascript
-import { describe, test, expect } from 'vitest';
+import { describe, test, expect, beforeAll, afterAll } from 'vitest';
+import { loadAdminJs, cleanupAdminJs } from './helpers/admin-env.js';
 
-describe('MyFunction', () => {
+let win;
+
+beforeAll(() => {
+  win = loadAdminJs();
+});
+
+afterAll(() => {
+  cleanupAdminJs();
+});
+
+describe('myFunction', () => {
   test('should do something', () => {
-    expect(myFunction('input')).toBe('expected output');
+    expect(win.myFunction('input')).toBe('expected output');
   });
 });
 ```
+
+### Coverage
+
+admin.js is a ~31K-line non-modular browser script. Tests cover all pure/near-pure utility functions:
+
+| Metric | Coverage |
+|--------|----------|
+| Statements | 6.29% |
+| Branches | 4.51% |
+| Functions | 8.93% |
+| Lines | 6.32% |
+
+The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTMX event handlers that require full browser mocking or integration tests.
 
 ---
 
