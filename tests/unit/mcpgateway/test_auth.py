@@ -1059,6 +1059,7 @@ class TestSetAuthMethodFromPayload:
     @pytest.fixture(autouse=True)
     def disable_auth_cache(self, monkeypatch):
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
     @pytest.mark.asyncio
     async def test_api_token_auth_provider(self):
