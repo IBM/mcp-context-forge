@@ -7671,16 +7671,8 @@ function showTab(tabName) {
                 }
 
                 if (tabName === "tokens") {
-                    // Load Tokens list and set up form handling
-                    const tokensList = safeGetElement("tokens-list");
-                    if (tokensList) {
-                        const hasLoadingMessage =
-                            tokensList.innerHTML.includes("Loading tokens...");
-                        const isEmpty = !tokensList.innerHTML.trim();
-                        if (hasLoadingMessage || isEmpty) {
-                            loadTokensList();
-                        }
-                    }
+                    // Set up event delegation for token action buttons (once)
+                    setupTokenListEventHandlers();
 
                     // Set up create token form if not already set up
                     const createForm = safeGetElement("create-token-form");
@@ -20121,35 +20113,25 @@ window.cleanupA2ATestModal = cleanupA2ATestModal;
  * Load tokens list from API
  */
 async function loadTokensList() {
-    const tokensList = safeGetElement("tokens-list");
-    if (!tokensList) {
+    const tokensTable = document.getElementById("tokens-table");
+    if (!tokensTable) {
         return;
     }
 
-    try {
-        tokensList.innerHTML =
-            '<p class="text-gray-500 dark:text-gray-400">Loading tokens...</p>';
-
-        const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
-            headers: {
-                Authorization: `Bearer ${await getAuthToken()}`,
-                "Content-Type": "application/json",
-            },
-        });
-
-        if (!response.ok) {
-            throw new Error(`Failed to load tokens: (${response.status})`);
-        }
-
-        const data = await response.json();
-        displayTokensList(data.tokens);
-    } catch (error) {
-        console.error("Error loading tokens:", error);
-        tokensList.innerHTML =
-            '<div class="text-red-500">Error loading tokens: ' +
-            escapeHtml(error.message) +
-            "</div>";
+    const teamId = typeof getCurrentTeamId === "function" ? getCurrentTeamId() : "";
+    const includeInactive =
+        document.getElementById("show-inactive-tokens")?.checked ?? false;
+    const params = { include_inactive: includeInactive.toString() };
+    if (teamId) {
+        params.team_id = teamId;
     }
+
+    const url = buildTableUrl(
+        "tokens",
+        `${window.ROOT_PATH}/admin/tokens/partial`,
+        params,
+    );
+    htmx.ajax("GET", url, { target: "#tokens-table", swap: "outerHTML" });
 }
 
 /**
@@ -20264,17 +20246,24 @@ function displayTokensList(tokens) {
 /**
  * Set up event handlers for token list buttons using event delegation.
  * This avoids inline onclick handlers and associated XSS risks.
- * Uses a one-time guard to prevent duplicate handlers on repeated renders.
- * @param {HTMLElement} container - The tokens list container element
+ * Attaches to the persistent tokens-panel parent so handlers survive
+ * HTMX swaps of the tokens-table content.
+ * @param {HTMLElement} [container] - Optional container; defaults to tokens-panel
  */
 function setupTokenListEventHandlers(container) {
-    // Guard against duplicate handlers on repeated renders
-    if (container.dataset.handlersAttached === "true") {
+    // Prefer the persistent parent panel so delegation survives HTMX swaps
+    const panel = document.getElementById("tokens-panel") || container;
+    if (!panel) {
         return;
     }
-    container.dataset.handlersAttached = "true";
 
-    container.addEventListener("click", (event) => {
+    // Guard against duplicate handlers on repeated renders
+    if (panel.dataset.tokenHandlersAttached === "true") {
+        return;
+    }
+    panel.dataset.tokenHandlersAttached = "true";
+
+    panel.addEventListener("click", (event) => {
         const button = event.target.closest("button[data-action]");
         if (!button) {
             return;

@@ -234,6 +234,7 @@ class TestListTokens:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_tokens(include_inactive=False, limit=50, offset=0, db=mock_db, current_user=mock_current_user)
@@ -256,6 +257,7 @@ class TestListTokens:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocation = AsyncMock(return_value=revocation_info)
 
             response = await list_tokens(include_inactive=True, limit=10, offset=0, db=mock_db, current_user=mock_current_user)
@@ -271,11 +273,13 @@ class TestListTokens:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[])
+            mock_service.count_user_tokens = AsyncMock(return_value=0)
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_tokens(include_inactive=False, limit=20, offset=10, db=mock_db, current_user=mock_current_user)
 
             assert response.tokens == []
+            assert response.total == 0
             assert response.limit == 20
             assert response.offset == 10
             mock_service.list_user_tokens.assert_called_with(
@@ -530,12 +534,14 @@ class TestAdminEndpoints:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_user_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_all_tokens(user_email="user@example.com", include_inactive=False, limit=100, offset=0, current_user=mock_admin_user, db=mock_db)
 
             assert isinstance(response, TokenListResponse)
             assert len(response.tokens) == 1
+            assert response.total == 1
 
     @pytest.mark.asyncio
     async def test_list_all_tokens_non_admin(self, mock_db, mock_current_user):
@@ -638,11 +644,13 @@ class TestTeamTokens:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_team_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.count_team_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_team_tokens(team_id="team-456", include_inactive=False, limit=50, offset=0, current_user=mock_current_user, db=mock_db)
 
             assert len(response.tokens) == 1
+            assert response.total == 1
             assert response.tokens[0].team_id == "team-456"
 
     @pytest.mark.asyncio
@@ -690,6 +698,7 @@ class TestEdgeCases:
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
             mock_service.list_user_tokens = AsyncMock(return_value=[])
+            mock_service.count_user_tokens = AsyncMock(return_value=0)
 
             response = await list_tokens(include_inactive=True, limit=100, offset=50, db=mock_db, current_user=mock_current_user)
 

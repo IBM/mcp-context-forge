@@ -228,6 +228,11 @@ async def list_tokens(
         offset=offset,
     )
 
+    total_count = await service.count_user_tokens(
+        user_email=current_user["email"],
+        include_inactive=include_inactive,
+    )
+
     token_responses = []
     for token in tokens:
         # Check if token is revoked
@@ -259,7 +264,7 @@ async def list_tokens(
 
     db.commit()
     db.close()
-    return TokenListResponse(tokens=token_responses, total=len(token_responses), limit=limit, offset=offset)
+    return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
 
 
 @router.get("/{token_id}", response_model=TokenResponse)
@@ -512,6 +517,7 @@ async def list_all_tokens(
 
     service = TokenCatalogService(db)
 
+    total_count = 0
     if user_email:
         # Get tokens for specific user
         tokens = await service.list_user_tokens(
@@ -519,6 +525,10 @@ async def list_all_tokens(
             include_inactive=include_inactive,
             limit=limit,
             offset=offset,
+        )
+        total_count = await service.count_user_tokens(
+            user_email=user_email,
+            include_inactive=include_inactive,
         )
     else:
         # This would need a new method in service for all tokens
@@ -556,7 +566,7 @@ async def list_all_tokens(
 
     db.commit()
     db.close()
-    return TokenListResponse(tokens=token_responses, total=len(token_responses), limit=limit, offset=offset)
+    return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
 
 
 @router.delete("/admin/{token_id}", status_code=status.HTTP_204_NO_CONTENT, tags=["admin"])
@@ -724,6 +734,11 @@ async def list_team_tokens(
             offset=offset,
         )
 
+        total_count = await service.count_team_tokens(
+            team_id=team_id,
+            include_inactive=include_inactive,
+        )
+
         token_responses = []
         for token in tokens:
             # Check if token is revoked
@@ -755,6 +770,6 @@ async def list_team_tokens(
 
         db.commit()
         db.close()
-        return TokenListResponse(tokens=token_responses, total=len(token_responses), limit=limit, offset=offset)
+        return TokenListResponse(tokens=token_responses, total=total_count, limit=limit, offset=offset)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

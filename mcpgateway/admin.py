@@ -67,7 +67,7 @@ from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam, extract_json_field
+from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, GlobalConfig, ObservabilitySavedQuery, ObservabilitySpan, ObservabilityTrace
 from mcpgateway.db import Prompt as DbPrompt
@@ -139,6 +139,7 @@ from mcpgateway.services.server_service import ServerError, ServerLockConflictEr
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
@@ -8332,6 +8333,153 @@ async def admin_search_prompts(
         )
 
     return {"prompts": prompts, "count": len(prompts)}
+
+
+@admin_router.get("/tokens/partial", response_class=HTMLResponse)
+@require_permission("tokens.read", allow_admin_bypass=False)
+async def admin_tokens_partial_html(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    include_inactive: bool = False,
+    render: Optional[str] = Query(None),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """Return paginated tokens HTML partials for the admin UI.
+
+    This HTMX endpoint returns only the partial HTML used by the admin UI for
+    API tokens. It supports two render modes:
+
+    - default: full token cards + pagination controls
+    - ``render="controls"``: return only pagination controls
+
+    Args:
+        request: FastAPI request object used by the template engine.
+        page: Page number (1-indexed).
+        per_page: Number of items per page (bounded by settings).
+        include_inactive: If True, include inactive/expired tokens in results.
+        render: Render mode; one of None or "controls".
+        team_id: Filter by team ID.
+        db: Database session (dependency-injected).
+        user: Authenticated user object from dependency injection.
+
+    Returns:
+        HTMLResponse: A rendered template response containing either the token
+        cards partial or pagination controls depending on ``render``.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} requested tokens HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, team_id={team_id})")
+
+    # Normalize per_page within configured bounds
+    per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
+
+    # Build base query: tokens owned by this user
+    query = select(EmailApiToken).where(EmailApiToken.user_email == user_email)
+
+    if team_id:
+        query = query.where(EmailApiToken.team_id == team_id)
+
+    if not include_inactive:
+        query = query.where(and_(EmailApiToken.is_active.is_(True), or_(EmailApiToken.expires_at.is_(None), EmailApiToken.expires_at > utc_now())))
+
+    query = query.order_by(desc(EmailApiToken.created_at))
+
+    # Build query params for pagination links
+    query_params: Dict[str, Any] = {}
+    if include_inactive:
+        query_params["include_inactive"] = "true"
+    if team_id:
+        query_params["team_id"] = team_id
+
+    # Use unified pagination function
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,
+        base_url=f"{settings.app_root_path}/admin/tokens/partial",
+        query_params=query_params,
+        use_cursor_threshold=False,
+    )
+
+    tokens_db = paginated_result["data"]
+    pagination = paginated_result["pagination"]
+    links = paginated_result["links"]
+
+    base_url = f"{settings.app_root_path}/admin/tokens/partial"
+
+    if render == "controls":
+        db.commit()
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "pagination_controls.html",
+            {
+                "request": request,
+                "pagination": pagination.model_dump(),
+                "base_url": base_url,
+                "hx_target": "#tokens-table",
+                "hx_indicator": "#tokens-loading",
+                "query_params": query_params,
+                "root_path": request.scope.get("root_path", ""),
+            },
+        )
+
+    # Build token data with revocation info and team names
+    token_service = TokenCatalogService(db)
+
+    # Batch fetch team names
+    team_ids_set = {t.team_id for t in tokens_db if t.team_id}
+    team_map: Dict[str, str] = {}
+    if team_ids_set:
+        teams = db.execute(select(EmailTeam.id, EmailTeam.name).where(EmailTeam.id.in_(team_ids_set), EmailTeam.is_active.is_(True))).all()
+        team_map = {team.id: team.name for team in teams}
+
+    # Build token data list
+    data = []
+    for token in tokens_db:
+        revocation_info = await token_service.get_token_revocation(token.jti)
+        data.append(
+            {
+                "id": token.id,
+                "name": token.name,
+                "description": token.description,
+                "user_email": token.user_email,
+                "team_id": token.team_id,
+                "team_name": team_map.get(token.team_id) if token.team_id else None,
+                "created_at": token.created_at,
+                "expires_at": token.expires_at,
+                "last_used": token.last_used,
+                "is_active": token.is_active,
+                "is_revoked": revocation_info is not None,
+                "revoked_at": revocation_info.revoked_at if revocation_info else None,
+                "revoked_by": revocation_info.revoked_by if revocation_info else None,
+                "revocation_reason": revocation_info.reason if revocation_info else None,
+                "tags": token.tags or [],
+                "server_id": token.server_id,
+                "resource_scopes": token.resource_scopes or [],
+                "ip_restrictions": token.ip_restrictions or [],
+                "time_restrictions": token.time_restrictions or {},
+                "usage_limits": token.usage_limits or {},
+            }
+        )
+
+    db.commit()
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "tokens_partial.html",
+        {
+            "request": request,
+            "data": data,
+            "pagination": pagination.model_dump(),
+            "links": links.model_dump() if links else None,
+            "root_path": request.scope.get("root_path", ""),
+            "include_inactive": include_inactive,
+        },
+    )
 
 
 @admin_router.get("/a2a/partial", response_class=HTMLResponse)

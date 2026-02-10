@@ -642,7 +642,23 @@
                       // Try to find team name from USER_TEAMS_DATA
                       const teams = window.USER_TEAMS_DATA || [];
                       const team = teams.find(t => t.id === this.selectedTeam);
-                      this.selectedTeamName = team ? (team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name) : 'All Teams';
+                      if (team) {
+                        this.selectedTeamName = team.is_personal ? '👤 ' + team.name : '🏢 ' + team.name;
+                      } else {
+                        // Fetch team name from API if not in local data
+                        const self = this;
+                        fetch('{{ root_path }}/teams/' + this.selectedTeam, {
+                          headers: { 'Authorization': 'Bearer ' + (document.cookie.match(/access_token=([^;]+)/)?.[1] || '') }
+                        }).then(function(r) { return r.ok ? r.json() : null; }).then(function(data) {
+                          if (data && data.name) {
+                            self.selectedTeamName = data.is_personal ? '👤 ' + data.name : '🏢 ' + data.name;
+                          } else {
+                            self.selectedTeamName = self.selectedTeam.substring(0, 8) + '...';
+                          }
+                        }).catch(function() {
+                          self.selectedTeamName = self.selectedTeam.substring(0, 8) + '...';
+                        });
+                      }
                     }
                   },
                   loadTeams() {
@@ -6112,6 +6128,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
             Create and manage personal API tokens with scoped access controls
           </p>
+          <div class="flex items-center">
+            <input
+              type="checkbox"
+              id="show-inactive-tokens"
+              class="mr-2 show-inactive-toggle"
+              name="include_inactive"
+              x-init="syncCheckboxFromUrl('tokens', 'show-inactive-tokens')"
+              @change="updateInactiveUrlState('tokens', $el.checked)"
+              hx-get="{{ root_path }}/admin/tokens/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tokens').checked, per_page: document.querySelector('#tokens-pagination-controls select')?.value || 50}"
+              hx-target="#tokens-table"
+              hx-swap="outerHTML"
+              hx-indicator="#tokens-loading"
+              hx-trigger="change"
+            />
+            <label
+              for="show-inactive-tokens"
+              class="text-sm font-medium text-gray-700 dark:text-gray-300"
+              >Show Inactive</label
+            >
+          </div>
         </div>
 
         <!-- Create Token Form -->
@@ -6293,13 +6330,79 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
 
         <!-- Tokens List -->
-        <div class="bg-white shadow rounded-lg dark:bg-gray-800">
-          <div class="px-4 py-5 sm:p-6">
-            <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">
+        <div class="bg-white shadow rounded-lg p-4 mb-4 dark:bg-gray-800">
+          <div class="p-0">
+            <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
               Your API Tokens
             </h3>
-            <div id="tokens-list">
-              <p class="text-gray-500 dark:text-gray-400">Loading tokens...</p>
+            <!-- Table will be loaded via HTMX -->
+            <div id="tokens-table"
+                 x-init="$el.setAttribute('hx-get', buildTableUrl('tokens', '{{ root_path }}/admin/tokens/partial', {include_inactive: (document.getElementById('show-inactive-tokens')?.checked ?? false).toString(){% if selected_team_id %}, team_id: '{{ selected_team_id }}'{% endif %}}))"
+                 hx-trigger="load"
+                 hx-swap="outerHTML"
+                 hx-indicator="#tokens-loading">
+              <!-- Loading placeholder -->
+              <div class="flex items-center justify-center p-8">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading tokens...</span>
+              </div>
+            </div>
+
+            <!-- Loading Indicator for HTMX -->
+            <div id="tokens-loading" class="htmx-indicator">
+              <div class="flex items-center justify-center p-4">
+                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tokens...</span>
+              </div>
+            </div>
+
+            <!-- Pagination Controls -->
+            {# ---- compute safe pagination values first ---- #}
+            {% set page = (pagination.page if pagination is defined else (page if page is defined else 1)) %}
+            {% set per_page = (pagination.per_page if pagination is defined else (per_page if per_page is defined else 50)) %}
+            {% set total_items = (pagination.total_items if pagination is defined else 0) %}
+            {% set total_pages = (pagination.total_pages if pagination is defined else ((total_items + per_page - 1) // per_page)) %}
+            {% set has_prev = page > 1 %}
+            {% set has_next = (page * per_page) < total_items %}
+
+            {% set pagination = {
+              'page': page,
+              'per_page': per_page,
+              'total_items': total_items,
+              'total_pages': total_pages,
+              'has_prev': has_prev,
+              'has_next': has_next
+            } %}
+
+            {# build the refresh URL for controls #}
+            {% set controls_url = root_path + '/admin/tokens/partial'
+              + '?render=controls'
+              + '&page=' + page|string
+              + '&per_page=' + per_page|string
+              + '&include_inactive=' + (include_inactive|default(false)|string|lower) %}
+
+            <div id="tokens-pagination-controls"
+                hx-get="{{ controls_url }}"
+                hx-trigger="refreshControls"
+                hx-target="#tokens-pagination-controls"
+                hx-swap="outerHTML"
+                hx-indicator="#tokens-loading">
+
+              {# helpers used by pagination_controls.html #}
+              {% set base_url = root_path + '/admin/tokens/partial' %}
+              {% set hx_target = '#tokens-table' %}
+              {% set hx_indicator = '#tokens-loading' %}
+              {% set table_name = 'tokens' %}
+              {% set query_params = {'include_inactive': include_inactive} %}
+              {% autoescape false %}
+              {% include 'pagination_controls.html' %}
+              {% endautoescape %}
             </div>
           </div>
         </div>

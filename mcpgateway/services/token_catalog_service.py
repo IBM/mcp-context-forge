@@ -499,6 +499,64 @@ class TokenCatalogService:
         logger.info(f"Created {token_type} API token '{name}' for user {user_email}. Token ID: {api_token.id}, Expires: {expires_at or 'Never'}")
         return api_token, raw_token
 
+    async def count_user_tokens(self, user_email: str, include_inactive: bool = False) -> int:
+        """Count API tokens for a user.
+
+        Args:
+            user_email: User's email address
+            include_inactive: Include inactive/expired tokens
+
+        Returns:
+            int: Total number of matching tokens
+        """
+        query = select(func.count(EmailApiToken.id)).where(EmailApiToken.user_email == user_email)
+
+        if not include_inactive:
+            query = query.where(and_(EmailApiToken.is_active.is_(True), or_(EmailApiToken.expires_at.is_(None), EmailApiToken.expires_at > utc_now())))
+
+        result = self.db.execute(query)
+        return result.scalar() or 0
+
+    async def count_team_tokens(self, team_id: str, include_inactive: bool = False) -> int:
+        """Count API tokens for a team.
+
+        Args:
+            team_id: Team ID to count tokens for
+            include_inactive: Include inactive/expired tokens
+
+        Returns:
+            int: Total number of matching tokens
+        """
+        query = select(func.count(EmailApiToken.id)).where(EmailApiToken.team_id == team_id)
+
+        if not include_inactive:
+            query = query.where(and_(EmailApiToken.is_active.is_(True), or_(EmailApiToken.expires_at.is_(None), EmailApiToken.expires_at > utc_now())))
+
+        result = self.db.execute(query)
+        return result.scalar() or 0
+
+    async def count_user_tokens_by_team(self, user_email: str, team_id: Optional[str] = None, include_inactive: bool = False) -> int:
+        """Count API tokens for a user, optionally filtered by team.
+
+        Args:
+            user_email: User's email address
+            team_id: Optional team ID filter
+            include_inactive: Include inactive/expired tokens
+
+        Returns:
+            int: Total number of matching tokens
+        """
+        query = select(func.count(EmailApiToken.id)).where(EmailApiToken.user_email == user_email)
+
+        if team_id:
+            query = query.where(EmailApiToken.team_id == team_id)
+
+        if not include_inactive:
+            query = query.where(and_(EmailApiToken.is_active.is_(True), or_(EmailApiToken.expires_at.is_(None), EmailApiToken.expires_at > utc_now())))
+
+        result = self.db.execute(query)
+        return result.scalar() or 0
+
     async def list_user_tokens(self, user_email: str, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[EmailApiToken]:
         """List API tokens for a user.
 
