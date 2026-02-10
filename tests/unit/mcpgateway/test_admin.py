@@ -9516,6 +9516,56 @@ async def test_admin_get_user_edit_with_password_requirements(monkeypatch, mock_
     assert "Password Requirements" in response.body.decode()
 
 
+@pytest.mark.asyncio
+async def test_admin_get_user_edit_has_error_display(monkeypatch, mock_request, mock_db, allow_permission):
+    """Test that the edit user form has complete error display plumbing (container + HTMX targeting)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    body = response.body.decode()
+
+    # Verify error container exists
+    assert 'id="edit-user-error"' in body, "Edit user form should have error container div"
+
+    # Verify HTMX error targeting attributes
+    assert 'hx-target="#edit-user-error"' in body, "Form should target error container"
+    assert 'hx-swap="innerHTML"' in body, "Form should use innerHTML swap strategy"
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_errors_include_retarget_header(monkeypatch, mock_db, allow_permission):
+    """Test that all error responses include HX-Retarget header for defensive redundancy."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+
+    # Test 1: Generic exception error
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "A"}))
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("Test error"))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 400
+    assert response.headers.get("HX-Retarget") == "#edit-user-error", "Generic error should include HX-Retarget header"
+
+    # Test 2: Admin protection error (last remaining admin)
+    request2 = MagicMock(spec=Request)
+    request2.form = AsyncMock(return_value=FakeForm({"full_name": "A"}))
+    auth_service2 = MagicMock()
+    auth_service2.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=True))
+    auth_service2.is_last_active_admin = AsyncMock(return_value=True)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service2)
+
+    response2 = await admin_update_user("a%40example.com", request=request2, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response2.status_code == 400
+    assert "last remaining admin" in response2.body.decode()
+    assert response2.headers.get("HX-Retarget") == "#edit-user-error", "Admin protection error should include HX-Retarget header"
+
+
 class _StubPluginService:
     def __init__(self, plugins: list[dict]):
         self.plugins = plugins
