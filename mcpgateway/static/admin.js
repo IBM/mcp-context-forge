@@ -15286,12 +15286,6 @@ async function handleEditToolFormSubmit(event) {
     try {
         const formData = new FormData(form);
 
-        // Decode HTML entities in description field before submission
-        const description = formData.get("description");
-        if (description) {
-            formData.set("description", decodeHtml(description));
-        }
-
         // Basic validation (customize as needed)
         const name = formData.get("name");
         const url = formData.get("url");
@@ -15614,12 +15608,6 @@ async function handleEditResFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
-
-    // Decode HTML entities in description field before submission
-    const description = formData.get("description");
-    if (description) {
-        formData.set("description", decodeHtml(description));
-    }
 
     try {
         // Validate inputs

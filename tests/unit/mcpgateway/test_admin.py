@@ -14073,14 +14073,14 @@ class TestTemplateButtonGating:
 
         templates_dir = str(settings.templates_dir)
         env = Environment(loader=FileSystemLoader(templates_dir), autoescape=True)
-        
+
         # Register the decode_html filter (same as in main.py)
         def decode_html_entities(value: str) -> str:
             """Decode HTML entities in strings for display."""
             if not value:
                 return value
             return html.unescape(value)
-        
+
         env.filters["decode_html"] = decode_html_entities
         return env
 

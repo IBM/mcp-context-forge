@@ -48,7 +48,6 @@ Examples:
 """
 
 # Standard
-import html
 from html.parser import HTMLParser
 import ipaddress
 import logging
@@ -235,35 +234,21 @@ class _TagStripper(HTMLParser):
     """
 
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(convert_charrefs=True)
         self.reset()
         self.strict = False
-        self.convert_charrefs = False  # Keep entities as-is initially
         self.fed: List[str] = []
 
     def handle_data(self, data: str) -> None:
         """Handle text data between tags.
 
+        With convert_charrefs=True, HTML entities are automatically decoded
+        (e.g., &amp; → &) and plain text with & passes through unchanged.
+
         Args:
             data: Text content between HTML tags
         """
         self.fed.append(data)
-
-    def handle_entityref(self, name: str) -> None:
-        """Handle HTML entity references like & and decode them.
-
-        Args:
-            name: Entity reference name (e.g., 'amp' for &)
-        """
-        self.fed.append(html.unescape(f"&{name};"))
-
-    def handle_charref(self, name: str) -> None:
-        """Handle character references like &#65; and decode them.
-
-        Args:
-            name: Character reference code (e.g., '65' for &#65;)
-        """
-        self.fed.append(html.unescape(f"&#{name};"))
 
     def get_data(self) -> str:
         """Return the accumulated text content.
@@ -291,10 +276,11 @@ def _strip_html_tags(value: str) -> str:
         >>> _strip_html_tags('Quote: "Hello"')
         'Quote: "Hello"'
         >>> _strip_html_tags('&&&')
-        '&&'
+        '&&&'
     """
     s = _TagStripper()
     s.feed(value)
+    s.close()
     return s.get_data()
 
 

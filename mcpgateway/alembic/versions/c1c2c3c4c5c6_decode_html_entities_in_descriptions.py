@@ -1,7 +1,8 @@
+# -*- coding: utf-8 -*-
 """decode html entities in descriptions
 
 Revision ID: c1c2c3c4c5c6
-Revises: 04cda6733305
+Revises: v1a2b3c4d5e6
 Create Date: 2026-02-06 08:42:00.000000
 
 """
@@ -16,7 +17,7 @@ from sqlalchemy import MetaData
 
 # revision identifiers, used by Alembic.
 revision: str = "c1c2c3c4c5c6"
-down_revision: str = "04cda6733305"
+down_revision: str = "v1a2b3c4d5e6"
 branch_labels: None = None
 depends_on: None = None
 
@@ -166,7 +167,14 @@ def downgrade() -> None:
     """Re-encode special characters as HTML entities in description and display_name fields.
 
     This reverses the upgrade by re-applying html.escape() to descriptions and display names.
-    Note: This will only encode common special characters like ', ", <, >, &
+
+    IMPORTANT: This is a best-effort reversal. The old sanitize_display_text() applied
+    html.escape() at input time, so the pre-upgrade DB state had HTML entities for data
+    that went through the REST API validators. However, descriptions created via gateway
+    discovery bypass validators and were stored as plain text. This downgrade will encode
+    those too (e.g., "R&D" becomes "R&amp;D"), which is an acceptable trade-off since the
+    old templates (without the decode_html filter) need encoded data to display correctly.
+
     Uses SQLAlchemy ORM to avoid SQL injection risks.
     """
     connection = op.get_bind()
