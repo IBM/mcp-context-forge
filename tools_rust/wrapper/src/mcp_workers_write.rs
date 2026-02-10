@@ -42,11 +42,11 @@ pub async fn write_output(i: usize, tx: &Sender<Bytes>, res: PostResult) {
             trim_ascii_whitespace(&line)
         };
 
-        if !out_line.is_empty() {
-            if let Err(e) = tx.send_async(out_line).await {
-                error!("Worker {i}: failed to send: {e}");
-                break;
-            }
+        if !out_line.is_empty()
+            && let Err(e) = tx.send_async(out_line).await
+        {
+            error!("Worker {i}: failed to send: {e}");
+            break;
         }
     }
 }

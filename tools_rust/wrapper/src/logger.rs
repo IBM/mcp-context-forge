@@ -2,7 +2,7 @@ use crate::config::DEFAULT_LOG_LEVEL;
 use std::sync::{Mutex, Once};
 use tracing::level_filters;
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 static INIT: Once = Once::new();
 static GUARD: Mutex<Option<WorkerGuard>> = Mutex::new(None);

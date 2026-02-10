@@ -1,4 +1,4 @@
-use base64::{engine::general_purpose, Engine as _};
+use base64::{Engine as _, engine::general_purpose};
 use mcp_stdio_wrapper::config::Config;
 use mcp_stdio_wrapper::http_client::get_http_client;
 use mcp_stdio_wrapper::streamer_error::invalid_error;

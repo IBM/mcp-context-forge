@@ -75,10 +75,15 @@ graph TD
         G --> H(stdio_writer);
         H --> I[stdout];
     end
-
+```
 ## Testing
 
 To verify the functionality of the `mcp-stdio-wrapper`, you can use the provided test scripts in the `scripts/` directory.
+Start gateway with:
+```
+make compose-up
+```
+before running test scripts.
 
 ### `test-fast-time-curl.sh`
 

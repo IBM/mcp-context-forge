@@ -69,7 +69,7 @@ pedantic ped p:
 # help: pedanticx pedx px  - Run clippy --fix with pedantic lints on src/
 pedanticx pedx px:
 	@echo "Running clippy with pedantic lints on src/..."
-	@cargo clippy --fix -- -W clippy::pedantic5
+	@cargo clippy --fix -- -W clippy::pedantic
 
 # help: pedantic-test      - Run clippy with pedantic lints on tests/
 pedantic-test pedantic-tests pedt pt:

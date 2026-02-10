@@ -3,8 +3,8 @@ use crate::streamer::McpStreamClient;
 use crate::streamer_lines::extract_lines;
 use bytes::{Bytes, BytesMut};
 use futures::StreamExt;
-use reqwest::header::CONTENT_TYPE;
 use reqwest::Client;
+use reqwest::header::CONTENT_TYPE;
 use tracing::{debug, error};
 
 impl McpStreamClient {

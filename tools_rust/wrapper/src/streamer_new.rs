@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::streamer::McpStreamClient;
 use arc_swap::ArcSwap;
-use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 
 const ACCEPT_VALUES: &str = "application/json, application/x-ndjson, text/event-stream";
 

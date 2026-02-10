@@ -1,7 +1,7 @@
 [package]
 name = "mcp_stdio_wrapper"
 version = "1.0.0-BETA-1"
-edition = "2021"
+edition = "2024"
 default-run = "mcp_stdio_wrapper"
 
 [dependencies]
@@ -35,7 +35,6 @@ time = "0.3.47"
 mockito = "1.7.1"
 tokio-test = "0.4.5"
 tracing-test = "0.2.5"
-criterion = "0.5"
 
 [profile.release]
 lto = "fat"
