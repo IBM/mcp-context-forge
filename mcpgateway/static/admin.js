@@ -7674,6 +7674,22 @@ function showTab(tabName) {
                     // Set up event delegation for token action buttons (once)
                     setupTokenListEventHandlers();
 
+                    // Load tokens list if not already loaded
+                    const tokensTable =
+                        document.getElementById("tokens-table");
+                    if (tokensTable) {
+                        const hasLoadingMessage =
+                            tokensTable.innerHTML.includes(
+                                "Loading tokens...",
+                            );
+                        if (hasLoadingMessage) {
+                            // Trigger HTMX load manually if HTMX is available
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(tokensTable, "load");
+                            }
+                        }
+                    }
+
                     // Set up create token form if not already set up
                     const createForm = safeGetElement("create-token-form");
                     if (createForm && !createForm.hasAttribute("data-setup")) {
@@ -20110,15 +20126,17 @@ window.cleanupA2ATestModal = cleanupA2ATestModal;
  */
 
 /**
- * Load tokens list from API
+ * Load tokens list from API.
+ * @param {boolean} resetToFirstPage - If true, forces page 1 (use after create/revoke).
  */
-async function loadTokensList() {
+async function loadTokensList(resetToFirstPage) {
     const tokensTable = document.getElementById("tokens-table");
     if (!tokensTable) {
         return;
     }
 
-    const teamId = typeof getCurrentTeamId === "function" ? getCurrentTeamId() : "";
+    const teamId =
+        typeof getCurrentTeamId === "function" ? getCurrentTeamId() : "";
     const includeInactive =
         document.getElementById("show-inactive-tokens")?.checked ?? false;
     const params = { include_inactive: includeInactive.toString() };
@@ -20126,11 +20144,31 @@ async function loadTokensList() {
         params.team_id = teamId;
     }
 
-    const url = buildTableUrl(
-        "tokens",
-        `${window.ROOT_PATH}/admin/tokens/partial`,
-        params,
-    );
+    var url;
+    if (resetToFirstPage) {
+        var baseUrl = new URL(
+            `${window.ROOT_PATH}/admin/tokens/partial`,
+            window.location.origin,
+        );
+        baseUrl.searchParams.set("page", "1");
+        baseUrl.searchParams.set(
+            "per_page",
+            String(getPaginationParams("tokens").perPage || 10),
+        );
+        Object.entries(params).forEach(function (entry) {
+            if (entry[1] !== null && entry[1] !== undefined && entry[1] !== "") {
+                baseUrl.searchParams.set(entry[0], entry[1]);
+            }
+        });
+        url = baseUrl.pathname + baseUrl.search;
+    } else {
+        url = buildTableUrl(
+            "tokens",
+            `${window.ROOT_PATH}/admin/tokens/partial`,
+            params,
+        );
+    }
+
     htmx.ajax("GET", url, { target: "#tokens-table", swap: "outerHTML" });
 }
 
@@ -20275,7 +20313,12 @@ function setupTokenListEventHandlers(container) {
             const tokenData = button.dataset.token;
             if (tokenData) {
                 try {
-                    const token = JSON.parse(decodeURIComponent(tokenData));
+                    let token;
+                    try {
+                        token = JSON.parse(decodeURIComponent(tokenData));
+                    } catch (_) {
+                        token = JSON.parse(tokenData);
+                    }
                     showTokenDetailsModal(token);
                 } catch (e) {
                     console.error("Failed to parse token data:", e);
@@ -20636,7 +20679,7 @@ async function createToken(form) {
         const result = await response.json();
         showTokenCreatedModal(result);
         form.reset();
-        await loadTokensList();
+        loadTokensList(true);
 
         // Show appropriate success message
         const tokenType = currentTeamId ? "team-scoped" : "public-only";
@@ -20781,7 +20824,7 @@ async function revokeToken(tokenId, tokenName) {
         }
 
         showNotification("Token revoked successfully", "success");
-        await loadTokensList();
+        loadTokensList(true);
     } catch (error) {
         console.error("Error revoking token:", error);
         showNotification(`Error revoking token: ${error.message}`, "error");
@@ -31673,7 +31716,7 @@ window.handleKeydown = handleKeydown;
  * buttons when the client-side user context says the current user should not
  * be able to mutate a given row.
  */
-document.body.addEventListener("htmx:afterSettle", function (_evt) {
+document.addEventListener("htmx:afterSettle", function (_evt) {
     const currentUser = window.CURRENT_USER;
     const isAdmin = Boolean(window.IS_ADMIN);
     const userTeams = window.USER_TEAMS || [];

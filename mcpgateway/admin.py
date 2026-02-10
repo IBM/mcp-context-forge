@@ -8465,6 +8465,9 @@ async def admin_tokens_partial_html(
                 "usage_limits": token.usage_limits or {},
             }
         )
+    data = jsonable_encoder(data)
+    for item in data:
+        item["_json"] = orjson.dumps(item).decode()
 
     db.commit()
 

@@ -31,13 +31,13 @@
         {% endif %}
         <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
           <div>
-            <span class="font-medium">Created:</span> {{ token.created_at.strftime('%Y-%m-%d') if token.created_at else 'Never' }}
+            <span class="font-medium">Created:</span> {{ token.created_at.split('T')[0] if token.created_at else 'Never' }}
           </div>
           <div>
-            <span class="font-medium">Expires:</span> {{ token.expires_at.strftime('%Y-%m-%d') if token.expires_at else 'Never' }}
+            <span class="font-medium">Expires:</span> {{ token.expires_at.split('T')[0] if token.expires_at else 'Never' }}
           </div>
           <div>
-            <span class="font-medium">Last Used:</span> {{ token.last_used.strftime('%Y-%m-%d') if token.last_used else 'Never' }}
+            <span class="font-medium">Last Used:</span> {{ token.last_used.split('T')[0] if token.last_used else 'Never' }}
           </div>
         </div>
         {% if token.server_id %}
@@ -50,7 +50,7 @@
       <div class="flex flex-wrap gap-2 ml-4">
         <button
           data-action="token-details"
-          data-token="{{ token|tojson|e }}"
+          data-token="{{ token._json }}"
           class="px-3 py-1 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 border border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 rounded-md"
         >
           Details
