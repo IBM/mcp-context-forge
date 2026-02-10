@@ -96,6 +96,10 @@ tests/playwright/reports/
 tests/playwright/videos/
 tests/playwright/screenshots/
 
+# Vitest
+coverage/
+.vitest/
+
 # ========================================
 # Fuzzing
 # ========================================
