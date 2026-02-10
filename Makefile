@@ -6902,3 +6902,16 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+	
+# Experimental Rust Streamable HTTP transport scaffold
+# help: rust-transport-build    - Build experimental Rust streamable HTTP transport wheel
+# help: rust-transport-dev      - Build/install experimental Rust streamable HTTP transport in development mode
+.PHONY: rust-transport-build rust-transport-dev
+
+rust-transport-build: rust-check-maturin   ## Build experimental Rust streamable HTTP transport wheel
+	@echo "🦀 Building experimental Rust streamable HTTP transport scaffold"
+	@cd mcpgateway_transport_rs && maturin build --release
+
+rust-transport-dev: rust-check-maturin     ## Install experimental Rust streamable HTTP transport in development mode
+	@echo "🦀 Installing experimental Rust streamable HTTP transport scaffold"
+	@cd mcpgateway_transport_rs && maturin develop --release
