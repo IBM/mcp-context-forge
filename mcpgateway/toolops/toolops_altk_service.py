@@ -242,6 +242,9 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
     Returns:
         enriched_description: Enriched tool description
         tool_schema: Updated tool schema in MCP-CF ToolRead format
+
+    Raises:
+        Exception: If the tool cannot be retrieved or converted to schema.
     """
     try:
         tool_schema: ToolRead = await tool_service.get_tool(db, tool_id)
