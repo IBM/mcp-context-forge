@@ -43,7 +43,7 @@ repos:
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
         types: [text]
-        exclude: 'tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py'
+        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py'
 
   #   - repo: https://github.com/Yelp/detect-secrets
   #     rev: v1.5.0
@@ -370,7 +370,7 @@ repos:
         description: Verifies test files in tests/ directories start with `test_`.
         language: python
         files: (^|/)tests/.+\.py$
-        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client)/.*\.py$
+        exclude: ^tests/(.*/)?(pages|helpers|fuzzers|scripts|fixtures|migration|utils|manual|async|load|loadtest|jmeter|client|populate)/.*\.py$
         args: [--pytest-test-first] # `test_.*\.py`
 
   # - repo: https://github.com/pycqa/flake8
@@ -539,3 +539,4 @@ repos:
       - id: interrogate
         args: [--quiet, --fail-under=100]
         files: ^mcpgateway/
+        exclude: _pb2(_grpc)?\.py$

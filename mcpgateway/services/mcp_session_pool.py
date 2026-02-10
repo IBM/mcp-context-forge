@@ -85,7 +85,7 @@ def _get_cleanup_timeout() -> float:
 
 if TYPE_CHECKING:
     # Standard
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 

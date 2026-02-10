@@ -8,14 +8,15 @@ import json
 from types import SimpleNamespace
 
 # Third-Party
-import pytest
 from pydantic import SecretStr, ValidationError
+import pytest
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
+    _mask_oauth_config,
     A2AAgentCreate,
     A2AAgentInvocation,
     A2AAgentRead,
@@ -740,3 +741,95 @@ def test_password_team_token_and_grpc_validators(monkeypatch):
         GrpcServiceUpdate.validate_target("host")
     assert GrpcServiceUpdate.validate_description(None) is None
     assert len(GrpcServiceUpdate.validate_description("x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 1))) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+
+
+class TestMaskOauthConfig:
+    """Tests for the _mask_oauth_config() helper function."""
+
+    def test_masks_client_secret(self):
+        """client_secret is replaced with masked value."""
+        result = _mask_oauth_config({"client_secret": "super-secret"})
+        assert result["client_secret"] == settings.masked_auth_value
+
+    def test_masks_password(self):
+        """password is replaced with masked value."""
+        result = _mask_oauth_config({"password": "p@ssw0rd"})
+        assert result["password"] == settings.masked_auth_value
+
+    def test_masks_all_sensitive_keys(self):
+        """All keys in _SENSITIVE_OAUTH_KEYS are masked."""
+        # First-Party
+        from mcpgateway.schemas import _SENSITIVE_OAUTH_KEYS
+
+        config = {k: f"value-{k}" for k in _SENSITIVE_OAUTH_KEYS}
+        result = _mask_oauth_config(config)
+        for k in _SENSITIVE_OAUTH_KEYS:
+            assert result[k] == settings.masked_auth_value
+
+    def test_preserves_non_sensitive(self):
+        """grant_type, token_url etc. are unchanged."""
+        config = {"grant_type": "client_credentials", "token_url": "https://auth.example.com/token", "client_id": "my-app"}
+        result = _mask_oauth_config(config)
+        assert result == config
+
+    def test_handles_none_values(self):
+        """Falsy values (None) are not masked."""
+        result = _mask_oauth_config({"password": None})
+        assert result["password"] is None
+
+    def test_handles_nested_dicts(self):
+        """Recursive masking works on nested dictionaries."""
+        config = {"nested": {"client_secret": "inner-secret", "safe_key": "ok"}}
+        result = _mask_oauth_config(config)
+        assert result["nested"]["client_secret"] == settings.masked_auth_value
+        assert result["nested"]["safe_key"] == "ok"
+
+    def test_handles_non_dict(self):
+        """String/int/None input is returned as-is."""
+        assert _mask_oauth_config("just-a-string") == "just-a-string"
+        assert _mask_oauth_config(42) == 42
+        assert _mask_oauth_config(None) is None
+
+    def test_case_insensitive(self):
+        """Key matching is case-insensitive (lowered comparison)."""
+        result = _mask_oauth_config({"Client_Secret": "secret"})
+        assert result["Client_Secret"] == settings.masked_auth_value
+
+    def test_handles_list_input(self):
+        """Lists are recursively processed."""
+        config = [{"client_secret": "s1"}, {"safe_key": "ok"}]
+        result = _mask_oauth_config(config)
+        assert result[0]["client_secret"] == settings.masked_auth_value
+        assert result[1]["safe_key"] == "ok"
+
+    def test_gateway_read_masked_includes_oauth(self):
+        """GatewayRead.masked() masks oauth_config sensitive keys."""
+        gw = GatewayRead(
+            name="test-gw",
+            url="http://example.com",
+            oauth_config={"client_secret": "secret", "token_url": "https://auth.example.com/token"},
+        )
+        masked = gw.masked()
+        assert masked.oauth_config["client_secret"] == settings.masked_auth_value
+        assert masked.oauth_config["token_url"] == "https://auth.example.com/token"
+
+    def test_a2a_agent_read_masked_includes_oauth(self):
+        """A2AAgentRead.masked() masks oauth_config sensitive keys."""
+        now = datetime.now(timezone.utc)
+        agent = A2AAgentRead(
+            name="test-agent",
+            endpoint_url="http://example.com/agent",
+            agent_type="a2a",
+            protocol_version="1.0",
+            capabilities={},
+            config={},
+            enabled=True,
+            reachable=True,
+            created_at=now,
+            updated_at=now,
+            last_interaction=None,
+            oauth_config={"client_secret": "secret", "grant_type": "client_credentials"},
+        )
+        masked = agent.masked()
+        assert masked.oauth_config["client_secret"] == settings.masked_auth_value
+        assert masked.oauth_config["grant_type"] == "client_credentials"

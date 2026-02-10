@@ -544,14 +544,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
-                result = await service.create_user(
-                    email="active@example.com",
-                    password="SecurePass123",
-                    full_name="Active User",
-                    is_admin=False,
-                    is_active=True,
-                    auth_provider="local"
-                )
+                result = await service.create_user(email="active@example.com", password="SecurePass123", full_name="Active User", is_admin=False, is_active=True, auth_provider="local")
 
                 # Verify user was added with is_active=True
                 mock_db.add.assert_called()
@@ -575,14 +568,7 @@ class TestEmailAuthServiceUserManagement:
             mock_settings.password_require_special = False
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
-                result = await service.create_user(
-                    email="inactive@example.com",
-                    password="SecurePass123",
-                    full_name="Inactive User",
-                    is_admin=False,
-                    is_active=False,
-                    auth_provider="local"
-                )
+                result = await service.create_user(email="inactive@example.com", password="SecurePass123", full_name="Inactive User", is_admin=False, is_active=False, auth_provider="local")
 
                 # Verify user was added with is_active=False
                 mock_db.add.assert_called()
@@ -607,12 +593,7 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="pwchange@example.com",
-                    password="TempPass123",
-                    full_name="Password Change User",
-                    is_admin=False,
-                    password_change_required=True,
-                    auth_provider="local"
+                    email="pwchange@example.com", password="TempPass123", full_name="Password Change User", is_admin=False, password_change_required=True, auth_provider="local"
                 )
 
                 # Verify user was added with password_change_required=True
@@ -638,12 +619,7 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="nopwchange@example.com",
-                    password="SecurePass123",
-                    full_name="No Password Change User",
-                    is_admin=False,
-                    password_change_required=False,
-                    auth_provider="local"
+                    email="nopwchange@example.com", password="SecurePass123", full_name="No Password Change User", is_admin=False, password_change_required=False, auth_provider="local"
                 )
 
                 # Verify user was added with password_change_required=False
@@ -669,13 +645,7 @@ class TestEmailAuthServiceUserManagement:
 
             with patch("mcpgateway.services.email_auth_service.settings", mock_settings):
                 result = await service.create_user(
-                    email="combined@example.com",
-                    password="TempPass123",
-                    full_name="Combined Fields User",
-                    is_admin=False,
-                    is_active=False,
-                    password_change_required=True,
-                    auth_provider="local"
+                    email="combined@example.com", password="TempPass123", full_name="Combined Fields User", is_admin=False, is_active=False, password_change_required=True, auth_provider="local"
                 )
 
                 # Verify user was added with both fields set correctly
@@ -791,6 +761,74 @@ class TestEmailAuthServiceUserManagement:
 
             assert result is None
             mock_user.increment_failed_attempts.assert_called_once_with(3, 15)
+
+    # =========================================================================
+    # Admin Lockout Protection Tests
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_authenticate_admin_skips_lockout_when_protected(self, service, mock_db, mock_user, mock_password_service):
+        """Test that a protected admin bypasses account lockout."""
+        service.password_service = mock_password_service
+        mock_user.is_admin = True
+        mock_user.is_account_locked.return_value = True
+        mock_password_service.verify_password_async = AsyncMock(return_value=True)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.protect_all_admins = True
+
+            result = await service.authenticate_user(email="admin@example.com", password="correct_password")
+
+            assert result == mock_user
+            mock_user.reset_failed_attempts.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_authenticate_admin_no_increment_when_protected(self, service, mock_db, mock_user, mock_password_service):
+        """Test that a protected admin's failed attempts are not incremented on wrong password."""
+        service.password_service = mock_password_service
+        mock_user.is_admin = True
+        mock_user.is_account_locked.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.protect_all_admins = True
+
+            result = await service.authenticate_user(email="admin@example.com", password="wrong_password")
+
+            assert result is None
+            mock_user.increment_failed_attempts.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_authenticate_admin_still_locked_when_not_protected(self, service, mock_db, mock_user, mock_password_service):
+        """Test that admin is still locked out when protect_all_admins is False."""
+        service.password_service = mock_password_service
+        mock_user.is_admin = True
+        mock_user.is_account_locked.return_value = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.protect_all_admins = False
+
+            result = await service.authenticate_user(email="admin@example.com", password="correct_password")
+
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_authenticate_non_admin_still_locked_when_protected(self, service, mock_db, mock_user, mock_password_service):
+        """Test that non-admin users are still locked out even when protect_all_admins is True."""
+        service.password_service = mock_password_service
+        mock_user.is_admin = False
+        mock_user.is_account_locked.return_value = True
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.protect_all_admins = True
+
+            result = await service.authenticate_user(email="test@example.com", password="correct_password")
+
+            assert result is None
 
     # =========================================================================
     # Password Change Tests
@@ -1351,14 +1389,7 @@ class TestEmailAuthServiceUserUpdates:
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
 
-        result = await service.update_user(
-            email="test@example.com",
-            full_name="Updated Name",
-            is_admin=True,
-            is_active=False,
-            password_change_required=True,
-            password="NewPassword123!"
-        )
+        result = await service.update_user(email="test@example.com", full_name="Updated Name", is_admin=True, is_active=False, password_change_required=True, password="NewPassword123!")
 
         assert mock_user.full_name == "Updated Name"
         assert mock_user.is_admin is True

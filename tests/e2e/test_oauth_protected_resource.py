@@ -43,28 +43,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-# First-Party
-# Replace RBAC decorators with no-ops BEFORE importing app
-import mcpgateway.middleware.rbac as rbac_module
-
-
-def noop_decorator(*args, **kwargs):
-    """No-op decorator that just returns the function unchanged."""
-
-    def decorator(func):
-        return func
-
-    if len(args) == 1 and callable(args[0]) and not kwargs:
-        return args[0]
-    else:
-        return decorator
-
-
-rbac_module.require_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_admin_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_any_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-
-# Now import app after patching RBAC
+# Import app with bootstrap_db patched (avoid startup DB initialization during tests)
 with mock_patch("mcpgateway.bootstrap_db.main"):
     # First-Party
     from mcpgateway.config import settings
@@ -110,6 +89,26 @@ async def oauth_test_db():
     Base.metadata.create_all(bind=engine)
 
     TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)
+
+    # Seed an admin user so PermissionService admin-bypass works for RBAC-decorated endpoints.
+    # This avoids patching RBAC decorators at import time, which leaks into other test modules.
+    # First-Party
+    from mcpgateway.db import EmailUser
+
+    seed_db = TestSessionLocal()
+    try:
+        seed_db.add(
+            EmailUser(
+                email="testuser@example.com",
+                password_hash="not-a-real-hash",
+                full_name="Test User",
+                is_admin=True,
+                is_active=True,
+            )
+        )
+        seed_db.commit()
+    finally:
+        seed_db.close()
 
     def override_get_db():
         db = TestSessionLocal()

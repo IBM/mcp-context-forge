@@ -77,6 +77,20 @@ class TestIdentityHashSessionAffinity:
             session_hash = hashlib.sha256(b"abc123").hexdigest()
             assert result != session_hash
 
+    def test_session_affinity_enabled_without_session_id_falls_back(self):
+        """When affinity is enabled but header is missing, fall back to identity headers."""
+        import orjson
+
+        pool = MCPSessionPool(identity_headers=frozenset(["authorization"]))
+        headers = {"Authorization": "Bearer tok"}
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            result = pool._compute_identity_hash(headers)
+
+        expected = hashlib.sha256(orjson.dumps(["authorization:Bearer tok"])).hexdigest()
+        assert result == expected
+
 
 # ---------------------------------------------------------------------------
 # Lines 518-520: is_valid_mcp_session_id
@@ -326,6 +340,69 @@ class TestAcquireSessionAffinity:
         assert result is mock_session
         await pool.close_all()
 
+    @pytest.mark.asyncio
+    async def test_acquire_session_affinity_redis_no_mapping_falls_back(self):
+        """When Redis is available but has no mapping, should fall back to normal pool key computation."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        mcp_session_id = "validid123"
+        gateway_id = "gw-1"
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=None)
+
+        mock_session = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+            gateway_id=gateway_id,
+        )
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value=None):
+                    with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
+                        with patch.object(pool, "_maybe_evict_idle_pool_keys", new_callable=AsyncMock):
+                            result = await pool.acquire(url, headers={"x-mcp-session-id": mcp_session_id}, gateway_id=gateway_id)
+
+        assert result is mock_session
+        assert pool._session_affinity_misses == 1
+        await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_acquire_session_affinity_invalid_session_id_skips_mapping_and_owner_check(self):
+        """Invalid x-mcp-session-id should skip mapping lookup and ownership check."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        gateway_id = "gw-1"
+
+        mock_session = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+            gateway_id=gateway_id,
+        )
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            with patch.object(pool, "_get_pool_session_owner", new_callable=AsyncMock, return_value=None) as mock_owner:
+                with patch.object(pool, "_create_session", new_callable=AsyncMock, return_value=mock_session):
+                    with patch.object(pool, "_maybe_evict_idle_pool_keys", new_callable=AsyncMock):
+                        result = await pool.acquire(url, headers={"x-mcp-session-id": "invalid id!!"}, gateway_id=gateway_id)
+
+        assert result is mock_session
+        mock_owner.assert_not_awaited()
+        await pool.close_all()
+
 
 # ---------------------------------------------------------------------------
 # Lines 804-813: acquire ownership check path
@@ -427,6 +504,72 @@ class TestReleaseEdgeCases:
         with patch.object(pool, "_close_session", new_callable=AsyncMock):
             await pool.release(pooled)
 
+    @pytest.mark.asyncio
+    async def test_release_expired_session_handles_missing_semaphore(self):
+        """If semaphore was evicted concurrently, release should not crash."""
+        pool = MCPSessionPool(session_ttl_seconds=1.0)
+        url = "http://test:8080"
+
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+            created_at=time.time() - 1000,
+            last_used=time.time(),
+        )
+
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        await pool._get_or_create_pool(pool_key)
+
+        async def close_and_drop(_pooled):
+            pool._semaphores.pop(pool_key, None)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock, side_effect=close_and_drop) as mock_close:
+            await pool.release(pooled)
+
+        mock_close.assert_awaited_once()
+        assert pool_key not in pool._semaphores
+
+    @pytest.mark.asyncio
+    async def test_release_queue_full_handles_missing_semaphore(self):
+        """If semaphore was evicted concurrently, queue-full path should not crash."""
+        pool = MCPSessionPool(max_sessions_per_key=1)
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+
+        queue = await pool._get_or_create_pool(pool_key)
+        queue.put_nowait(
+            PooledSession(
+                session=MagicMock(),
+                transport_context=MagicMock(),
+                url=url,
+                identity_key="anonymous",
+                transport_type=TransportType.STREAMABLE_HTTP,
+                headers={},
+            )
+        )
+
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+        )
+
+        async def close_and_drop(_pooled):
+            pool._semaphores.pop(pool_key, None)
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock, side_effect=close_and_drop) as mock_close:
+            await pool.release(pooled)
+
+        mock_close.assert_awaited_once()
+        assert pool_key not in pool._semaphores
+
 
 # ---------------------------------------------------------------------------
 # Lines 910, 935, 937->925, 946->939, 950-953, 956->925: _maybe_evict_idle_pool_keys
@@ -484,6 +627,70 @@ class TestEvictionBranches:
         await pool._maybe_evict_idle_pool_keys()
 
         assert pool._pools[pool_key].qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_eviction_queue_empty_race_breaks_cleanly(self):
+        """If queue empties between empty() and get_nowait(), eviction should handle QueueEmpty."""
+        pool = MCPSessionPool(idle_pool_eviction_seconds=0.01, session_ttl_seconds=0.01)
+        pool._eviction_run_interval = 0
+
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+
+        fake_queue = MagicMock()
+        # Simulate race: empty() says there is work, but get_nowait raises QueueEmpty.
+        fake_queue.empty = MagicMock(side_effect=[False, True])
+        fake_queue.get_nowait = MagicMock(side_effect=asyncio.QueueEmpty())
+
+        pool._pools[pool_key] = fake_queue
+        pool._active[pool_key] = set()
+        pool._pool_last_used[pool_key] = time.time() - 1000
+        pool._last_eviction_run = 0
+
+        await pool._maybe_evict_idle_pool_keys()
+
+    @pytest.mark.asyncio
+    async def test_eviction_pool_key_with_missing_pool_is_ignored(self):
+        """If _pool_last_used has a key but pool is missing, eviction should skip cleanly."""
+        pool = MCPSessionPool(idle_pool_eviction_seconds=0.01, session_ttl_seconds=0.01)
+        pool._eviction_run_interval = 0
+
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        pool._pool_last_used[pool_key] = time.time() - 1000
+        pool._last_eviction_run = 0
+
+        await pool._maybe_evict_idle_pool_keys()
+
+    @pytest.mark.asyncio
+    async def test_eviction_expired_session_missing_semaphore_does_not_release(self):
+        """When a semaphore entry is missing, eviction should not attempt to release it."""
+        pool = MCPSessionPool(idle_pool_eviction_seconds=0.01, session_ttl_seconds=0.01)
+        pool._eviction_run_interval = 0
+
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+        pool._pools[pool_key] = asyncio.Queue(maxsize=10)
+        pool._active[pool_key] = set()
+        pool._pool_last_used[pool_key] = time.time() - 1000
+
+        expired = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url=url,
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={},
+            created_at=time.time() - 1000,
+            last_used=time.time() - 1000,
+        )
+        pool._pools[pool_key].put_nowait(expired)
+
+        pool._last_eviction_run = 0
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool._maybe_evict_idle_pool_keys()
+
+        mock_close.assert_awaited_once_with(expired)
 
 
 # ---------------------------------------------------------------------------
@@ -718,6 +925,21 @@ class TestCreateSessionCleanupErrors:
                 with pytest.raises(RuntimeError, match="Failed to create MCP session"):
                     await pool._create_session("http://test:8080", None, TransportType.SSE, None)
 
+    @pytest.mark.asyncio
+    async def test_create_session_cleanup_skips_session_exit_when_session_not_created(self):
+        """If transport enter fails before session exists, cleanup should still close transport."""
+        pool = MCPSessionPool()
+
+        transport_ctx = MagicMock()
+        transport_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("enter boom"))
+        transport_ctx.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.services.mcp_session_pool.sse_client", return_value=transport_ctx):
+            with pytest.raises(RuntimeError, match="Failed to create MCP session"):
+                await pool._create_session("http://test:8080", None, TransportType.SSE, None)
+
+        transport_ctx.__aexit__.assert_awaited()
+
 
 # ---------------------------------------------------------------------------
 # Lines 1224-1227: _close_session Redis cleanup
@@ -753,6 +975,38 @@ class TestCloseSessionRedisCleanup:
                 with patch.object(pool, "_cleanup_pool_session_owner", new_callable=AsyncMock) as mock_cleanup:
                     await pool._close_session(pooled)
         mock_cleanup.assert_awaited_once_with("validid123")
+
+    @pytest.mark.asyncio
+    async def test_close_session_invalid_session_id_skips_redis_cleanup(self):
+        """Invalid session IDs should not trigger Redis cleanup."""
+        pool = MCPSessionPool()
+
+        class DummyScope:
+            def __init__(self):
+                self.cancelled_caught = False
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        pooled = PooledSession(
+            session=MagicMock(),
+            transport_context=MagicMock(),
+            url="http://test:8080",
+            identity_key="anonymous",
+            transport_type=TransportType.STREAMABLE_HTTP,
+            headers={"x-mcp-session-id": "invalid id!!"},
+        )
+        pooled.session.__aexit__ = AsyncMock(return_value=None)
+        pooled.transport_context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch("mcpgateway.services.mcp_session_pool.anyio.move_on_after", return_value=DummyScope()):
+                with patch.object(pool, "_cleanup_pool_session_owner", new_callable=AsyncMock) as mock_cleanup:
+                    await pool._close_session(pooled)
+
+        mock_cleanup.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
@@ -863,6 +1117,28 @@ class TestCloseAllQueueEmpty:
 
         mock_close.assert_awaited()
 
+    @pytest.mark.asyncio
+    async def test_close_all_queue_empty_race_breaks_cleanly(self):
+        """If queue empties between empty() and get_nowait(), close_all should handle QueueEmpty."""
+        pool = MCPSessionPool()
+        url = "http://test:8080"
+        pool_key = ("anonymous", url, "anonymous", "streamablehttp", "")
+
+        fake_queue = MagicMock()
+        fake_queue.empty = MagicMock(side_effect=[False, True])
+        fake_queue.get_nowait = MagicMock(side_effect=asyncio.QueueEmpty())
+
+        pool._pools[pool_key] = fake_queue
+        pool._active[pool_key] = set()
+        pool._semaphores[pool_key] = asyncio.Semaphore(1)
+        pool._locks[pool_key] = asyncio.Lock()
+
+        with patch.object(pool, "_close_session", new_callable=AsyncMock) as mock_close:
+            await pool.close_all()
+
+        mock_close.assert_not_awaited()
+        assert pool._closed is True
+
 
 # ---------------------------------------------------------------------------
 # Lines 1286-1291: close_all RPC listener cancellation
@@ -933,6 +1209,16 @@ class TestRegisterPoolSessionOwner:
             mock_settings.mcpgateway_session_affinity_enabled = True
             mock_settings.mcpgateway_session_affinity_ttl = 300
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=Exception("Redis down")):
+                await pool.register_pool_session_owner("validid123")
+
+    @pytest.mark.asyncio
+    async def test_register_owner_no_redis(self):
+        """No Redis client available should be a no-op."""
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_session_affinity_ttl = 300
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
                 await pool.register_pool_session_owner("validid123")
 
 
@@ -1011,6 +1297,650 @@ class TestGetStreamableHttpSessionOwner:
             result = await pool.get_streamable_http_session_owner("validid123")
         assert result == "worker-1:1234"
         mock_get.assert_awaited_once_with("validid123")
+
+
+# ---------------------------------------------------------------------------
+# Lines 1374-1466: forward_request_to_owner
+# ---------------------------------------------------------------------------
+class TestForwardRequestToOwner:
+    """Cover forward_request_to_owner (session affinity forwarding for SSE)."""
+
+    @pytest.mark.asyncio
+    async def test_forward_request_to_owner_invalid_session_id_returns_none(self):
+        """Invalid session IDs should short-circuit to local execution (None)."""
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            result = await pool.forward_request_to_owner("invalid id!!", {"method": "tools/call"})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_forward_request_to_owner_returns_response_from_pubsub(self):
+        """When owner is another worker and a response arrives, return the decoded response."""
+        import orjson
+
+        pool = MCPSessionPool()
+        mcp_session_id = "sess-123"
+        request_data = {"method": "tools/call", "params": {"name": "test_tool"}}
+        expected = {"result": {"ok": True}}
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock(return_value={"type": "message", "data": orjson.dumps(expected)})
+
+        mock_redis = AsyncMock()
+        mock_redis.get = AsyncMock(return_value=b"other-worker")
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "my-worker"):
+                    result = await pool.forward_request_to_owner(mcp_session_id, request_data, timeout=0.5)
+
+        assert result == expected
+        assert pool._forwarded_requests == 1
+        mock_redis.publish.assert_awaited()
+        mock_pubsub.subscribe.assert_awaited()
+        mock_pubsub.unsubscribe.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_forward_request_to_owner_returns_none_on_exception(self):
+        """Unexpected errors should be non-fatal and fall back to local execution (None)."""
+        pool = MCPSessionPool()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=RuntimeError("redis down")):
+                result = await pool.forward_request_to_owner("sess-123", {"method": "tools/call"})
+
+        assert result is None
+        assert pool._forwarded_request_failures == 1
+
+
+# ---------------------------------------------------------------------------
+# Lines 1468-1522: start_rpc_listener
+# ---------------------------------------------------------------------------
+class TestStartRpcListener:
+    """Cover RPC/HTTP pubsub listener processing for forwarded requests."""
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_processes_messages_and_exits(self):
+        """Listener should process rpc_forward, http_forward, unknown types, handle errors and cancellation."""
+        import orjson
+
+        pool = MCPSessionPool()
+
+        req_rpc = {"type": "rpc_forward", "response_channel": "chan:rpc", "mcp_session_id": "sess-123", "method": "tools/call"}
+        req_http = {"type": "http_forward", "response_channel": "chan:http", "mcp_session_id": "sess-456", "method": "GET", "path": "/mcp", "headers": {}, "body": ""}
+        req_unknown = {"type": "wat", "response_channel": "chan:unknown"}
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock(
+            side_effect=[
+                {"type": "message", "data": orjson.dumps(req_rpc)},
+                {"type": "message", "data": orjson.dumps(req_http)},
+                {"type": "message", "data": orjson.dumps(req_unknown)},
+                RuntimeError("boom"),
+                asyncio.CancelledError(),
+            ]
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                    with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock, return_value={"result": {"ok": True}}) as mock_exec_rpc:
+                        with patch.object(pool, "_execute_forwarded_http_request", new_callable=AsyncMock) as mock_exec_http:
+                            await pool.start_rpc_listener()
+
+        # Subscribe/unsubscribe to worker-specific channels
+        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+
+        # rpc_forward executed and response published
+        mock_exec_rpc.assert_awaited_once()
+        mock_redis.publish.assert_awaited_once()
+
+        # http_forward executed
+        mock_exec_http.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_outer_exception_is_handled(self):
+        """Errors setting up Redis/pubsub should be handled gracefully."""
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, side_effect=RuntimeError("redis down")):
+                await pool.start_rpc_listener()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_closed_skips_message_loop(self):
+        """When pool is already closed, listener should subscribe then immediately unsubscribe."""
+        pool = MCPSessionPool()
+        pool._closed = True
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock()
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                    await pool.start_rpc_listener()
+
+        mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+        mock_pubsub.get_message.assert_not_awaited()
+        mock_pubsub.unsubscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_skips_non_messages_and_missing_response_channel(self):
+        """Non-message pubsub payloads and requests without response_channel should be ignored."""
+        import orjson
+
+        pool = MCPSessionPool()
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock(
+            side_effect=[
+                None,
+                {"type": "message", "data": orjson.dumps({"type": "rpc_forward"})},  # no response_channel
+                asyncio.CancelledError(),
+            ]
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                    with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock) as mock_exec:
+                        await pool.start_rpc_listener()
+
+        mock_exec.assert_not_awaited()
+        mock_redis.publish.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Lines 1524-1581: _execute_forwarded_request
+# ---------------------------------------------------------------------------
+class TestExecuteForwardedRequest:
+    """Cover internal RPC execution used by session affinity forwarding."""
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_success_result(self):
+        """Successful JSON-RPC response should return result wrapper."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self, data):
+                self._data = data
+            def json(self):
+                return self._data
+
+        class DummyClient:
+            def __init__(self, response):
+                self._response = response
+                self.post_calls = []
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, url, json, headers, timeout):
+                self.post_calls.append({"url": url, "json": json, "headers": headers, "timeout": timeout})
+                return self._response
+
+        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "result": {"x": 1}, "id": 1}))
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+                result = await pool._execute_forwarded_request(
+                    {"method": "tools/call", "params": {"name": "t"}, "headers": {"x-test": "1"}, "req_id": 1, "mcp_session_id": "sess-123"}
+                )
+
+        assert result == {"result": {"x": 1}}
+        assert dummy_client.post_calls[0]["headers"]["x-forwarded-internally"] == "true"
+        assert dummy_client.post_calls[0]["headers"]["content-type"] == "application/json"
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_error_result(self):
+        """JSON-RPC error response should return error wrapper."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self, data):
+                self._data = data
+            def json(self):
+                return self._data
+
+        class DummyClient:
+            def __init__(self, response):
+                self._response = response
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                return self._response
+
+        dummy_client = DummyClient(DummyResponse({"jsonrpc": "2.0", "error": {"code": -32601, "message": "nope"}, "id": 1}))
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+                result = await pool._execute_forwarded_request({"method": "nope", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-123"})
+
+        assert result == {"error": {"code": -32601, "message": "nope"}}
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_timeout_returns_error(self):
+        """httpx timeouts should return a structured internal timeout error."""
+        import httpx
+
+        pool = MCPSessionPool()
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def post(self, *_args, **_kwargs):
+                raise httpx.TimeoutException("timeout")
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 0.1
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                result = await pool._execute_forwarded_request({"method": "tools/call", "params": {}, "headers": {}})
+
+        assert result["error"]["code"] == -32603
+        assert result["error"]["message"] == "Internal request timeout"
+
+
+# ---------------------------------------------------------------------------
+# Lines 1583-1664: _execute_forwarded_http_request
+# ---------------------------------------------------------------------------
+class TestExecuteForwardedHttpRequest:
+    """Cover internal HTTP execution used by streamable HTTP session affinity forwarding."""
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_http_request_success_publishes_response(self):
+        """On success, should publish a serialized HTTP response to Redis."""
+        import orjson
+
+        pool = MCPSessionPool()
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 201
+                self.headers = {"content-type": "text/plain", "x-test": "1"}
+                self.content = b"resp"
+
+        class DummyClient:
+            def __init__(self, response):
+                self._response = response
+                self.request_calls = []
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def request(self, method, url, headers, content, timeout):
+                self.request_calls.append({"method": method, "url": url, "headers": headers, "content": content, "timeout": timeout})
+                return self._response
+
+        dummy_client = DummyClient(DummyResponse())
+
+        request = {
+            "type": "http_forward",
+            "response_channel": "chan:http:resp",
+            "mcp_session_id": "sess-12345678",
+            "method": "POST",
+            "path": "/mcp",
+            "query_string": "a=1",
+            "headers": {"x-client": "1"},
+            "body": b"req".hex(),
+            "original_worker": "worker-0",
+        }
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+                await pool._execute_forwarded_http_request(request, mock_redis)
+
+        # Verify internal request was built with query string + loop protection headers
+        assert dummy_client.request_calls[0]["url"].endswith("/mcp?a=1")
+        assert dummy_client.request_calls[0]["headers"]["x-forwarded-internally"] == "true"
+        assert dummy_client.request_calls[0]["headers"]["x-original-worker"] == "worker-0"
+
+        # Verify published response can be decoded
+        channel, payload = mock_redis.publish.call_args[0]
+        assert channel == "chan:http:resp"
+        published = orjson.loads(payload)
+        assert published["status"] == 201
+        assert bytes.fromhex(published["body"]) == b"resp"
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_http_request_error_publish_failure_is_swallowed(self):
+        """If execution fails and publishing the error response fails too, the handler should swallow it."""
+        import orjson
+
+        pool = MCPSessionPool()
+        mock_redis = AsyncMock()
+        mock_redis.publish = AsyncMock(side_effect=RuntimeError("publish failed"))
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def request(self, *_args, **_kwargs):
+                raise RuntimeError("request failed")
+
+        request = {
+            "type": "http_forward",
+            "response_channel": "chan:http:error",
+            "mcp_session_id": "sess-12345678",
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {},
+            "body": "",
+        }
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                await pool._execute_forwarded_http_request(request, mock_redis)
+
+        # Error response publish was attempted
+        channel, payload = mock_redis.publish.call_args[0]
+        assert channel == "chan:http:error"
+        published = orjson.loads(payload)
+        assert published["status"] == 500
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_http_request_success_without_redis_does_not_publish(self):
+        """If redis is None, the handler should execute but skip publishing the response."""
+        pool = MCPSessionPool()
+
+        class DummyResponse:
+            def __init__(self):
+                self.status_code = 200
+                self.headers = {"content-type": "text/plain"}
+                self.content = b"ok"
+
+        class DummyClient:
+            def __init__(self, response):
+                self._response = response
+                self.request_calls = []
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def request(self, method, url, headers, content, timeout):
+                self.request_calls.append({"method": method, "url": url})
+                return self._response
+
+        dummy_client = DummyClient(DummyResponse())
+
+        request = {
+            "type": "http_forward",
+            "response_channel": "chan:http:resp",
+            "mcp_session_id": "sess-12345678",
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {},
+            "body": "",
+        }
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=dummy_client):
+                await pool._execute_forwarded_http_request(request, redis=None)
+
+        assert dummy_client.request_calls, "Expected an internal HTTP call to be made"
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_http_request_error_without_redis_does_not_publish(self):
+        """If redis is None, the error path should not attempt to publish an error response."""
+        pool = MCPSessionPool()
+
+        class DummyClient:
+            async def __aenter__(self):
+                return self
+            async def __aexit__(self, *_exc):
+                return False
+            async def request(self, *_args, **_kwargs):
+                raise RuntimeError("request failed")
+
+        request = {
+            "type": "http_forward",
+            "response_channel": "chan:http:error",
+            "mcp_session_id": "sess-12345678",
+            "method": "GET",
+            "path": "/mcp",
+            "headers": {},
+            "body": "",
+        }
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.port = 4444
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.services.mcp_session_pool.httpx.AsyncClient", return_value=DummyClient()):
+                await pool._execute_forwarded_http_request(request, redis=None)
+
+
+# ---------------------------------------------------------------------------
+# Lines 1680-1782: forward_streamable_http_to_owner
+# ---------------------------------------------------------------------------
+class TestForwardStreamableHttpToOwner:
+    """Cover forward_streamable_http_to_owner (session affinity forwarding for Streamable HTTP)."""
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_affinity_disabled_returns_none(self):
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = False
+            result = await pool.forward_streamable_http_to_owner(
+                owner_worker_id="worker-2",
+                mcp_session_id="sess-123",
+                method="GET",
+                path="/mcp",
+                headers={},
+                body=b"",
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_invalid_session_id_returns_none(self):
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            result = await pool.forward_streamable_http_to_owner(
+                owner_worker_id="worker-2",
+                mcp_session_id="invalid id!!",
+                method="GET",
+                path="/mcp",
+                headers={},
+                body=b"",
+            )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_no_redis_returns_none(self):
+        pool = MCPSessionPool()
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=None):
+                result = await pool.forward_streamable_http_to_owner(
+                    owner_worker_id="worker-2",
+                    mcp_session_id="sess-123",
+                    method="GET",
+                    path="/mcp",
+                    headers={},
+                    body=b"",
+                )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_success_decodes_body(self):
+        import orjson
+
+        pool = MCPSessionPool()
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock(return_value={"type": "message", "data": orjson.dumps({"status": 200, "headers": {"x": "y"}, "body": b"hello".hex()})})
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+                    result = await pool.forward_streamable_http_to_owner(
+                        owner_worker_id="worker-2",
+                        mcp_session_id="sess-123",
+                        method="POST",
+                        path="/mcp",
+                        headers={"x-client": "1"},
+                        body=b"req",
+                        query_string="a=1",
+                    )
+
+        assert result["status"] == 200
+        assert result["body"] == b"hello"
+        assert pool._forwarded_requests == 1
+        mock_redis.publish.assert_awaited_once()
+        mock_pubsub.subscribe.assert_awaited_once()
+        mock_pubsub.unsubscribe.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_ignores_non_message_then_returns(self):
+        """Non-message pubsub payloads should be ignored while waiting for a response."""
+        import orjson
+
+        pool = MCPSessionPool()
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock(
+            side_effect=[
+                None,
+                {"type": "message", "data": orjson.dumps({"status": 200, "headers": {}, "body": b"ok".hex()})},
+            ]
+        )
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                result = await pool.forward_streamable_http_to_owner(
+                    owner_worker_id="worker-2",
+                    mcp_session_id="sess-123",
+                    method="GET",
+                    path="/mcp",
+                    headers={},
+                    body=b"",
+                )
+
+        assert result["status"] == 200
+        assert result["body"] == b"ok"
+        mock_pubsub.unsubscribe.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_timeout_returns_none(self):
+        pool = MCPSessionPool()
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+        mock_pubsub.get_message = AsyncMock(side_effect=asyncio.TimeoutError())
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock()
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                result = await pool.forward_streamable_http_to_owner(
+                    owner_worker_id="worker-2",
+                    mcp_session_id="sess-123",
+                    method="GET",
+                    path="/mcp",
+                    headers={},
+                    body=b"",
+                )
+
+        assert result is None
+        assert pool._forwarded_request_timeouts == 1
+        mock_pubsub.unsubscribe.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_forward_streamable_http_to_owner_publish_error_returns_none(self):
+        pool = MCPSessionPool()
+
+        mock_pubsub = AsyncMock()
+        mock_pubsub.subscribe = AsyncMock()
+        mock_pubsub.unsubscribe = AsyncMock()
+
+        mock_redis = AsyncMock()
+        mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+        mock_redis.publish = AsyncMock(side_effect=RuntimeError("publish failed"))
+
+        with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+            mock_settings.mcpgateway_session_affinity_enabled = True
+            mock_settings.mcpgateway_pool_rpc_forward_timeout = 1.0
+            with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
+                result = await pool.forward_streamable_http_to_owner(
+                    owner_worker_id="worker-2",
+                    mcp_session_id="sess-123",
+                    method="GET",
+                    path="/mcp",
+                    headers={},
+                    body=b"",
+                )
+
+        assert result is None
+        assert pool._forwarded_request_failures == 1
+        mock_pubsub.unsubscribe.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------

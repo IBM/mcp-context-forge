@@ -396,6 +396,34 @@ class EmailAuthService:
             self.db.add(registration_event)
             self.db.commit()
 
+            # Auto-assign platform_admin role if is_admin=True
+            if is_admin:
+                try:
+                    # Import here to avoid circular imports
+                    # First-Party
+                    from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+                    role_service = RoleService(self.db)
+
+                    # Look up platform_admin role
+                    platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
+
+                    if platform_admin_role:
+                        # Check if assignment already exists
+                        existing_assignment = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                        if not existing_assignment or not existing_assignment.is_active:
+                            await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                            logger.info(f"Auto-assigned platform_admin role to {email}")
+                        else:
+                            logger.info(f"User {email} already has platform_admin role")
+                    else:
+                        logger.warning(f"platform_admin role not found, cannot auto-assign to {email}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to auto-assign platform_admin role to {email}: {e}")
+                    # Don't fail user creation if role assignment fails
+
             return user
 
         except IntegrityError as e:
@@ -450,24 +478,33 @@ class EmailAuthService:
                 logger.info(f"Authentication failed for {email}: account disabled")
                 return None
 
-            if user.is_account_locked():
+            is_protected_admin = user.is_admin and settings.protect_all_admins
+
+            if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
                 return None
+
+            # Clear lockout for protected admins so they can always attempt login
+            if is_protected_admin and user.is_account_locked():
+                logger.info(f"Clearing lockout for protected admin {email}")
+                user.reset_failed_attempts()
+                self.db.commit()
 
             # Verify password
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts
-                max_attempts = getattr(settings, "max_failed_login_attempts", 5)
-                lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
+                # Increment failed attempts (skip for protected admins)
+                if not is_protected_admin:
+                    max_attempts = getattr(settings, "max_failed_login_attempts", 5)
+                    lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
-                is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
+                    is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
-                if is_locked:
-                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
-                    failure_reason = "Account locked due to too many failed attempts"
+                    if is_locked:
+                        logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                        failure_reason = "Account locked due to too many failed attempts"
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
@@ -1065,6 +1102,37 @@ class EmailAuthService:
                 if is_admin != user.is_admin:
                     user.is_admin = is_admin
                     user.admin_origin = admin_origin_source if is_admin else None
+
+                    # Sync platform_admin role assignment with is_admin flag
+                    try:
+                        # Import here to avoid circular imports
+                        # First-Party
+                        from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+                        role_service = RoleService(self.db)
+
+                        # Look up platform_admin role
+                        platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
+
+                        if platform_admin_role:
+                            if is_admin:
+                                # Assign platform_admin role
+                                existing_assignment = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                                if not existing_assignment or not existing_assignment.is_active:
+                                    await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned platform_admin role to {email}")
+                            else:
+                                # Revoke platform_admin role
+                                revoked = await role_service.revoke_role_from_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked platform_admin role from {email}")
+                        else:
+                            logger.warning(f"platform_admin role not found, cannot sync role for {email}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to sync platform_admin role for {email}: {e}")
+                        # Don't fail user update if role sync fails
 
             if is_active is not None:
                 user.is_active = is_active
