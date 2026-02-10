@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 # First-Party
-from mcpgateway.plugins.unified_pdp.pdp_models import (
+from plugins.unified_pdp.pdp_models import (
     Context,
     Decision,
     Resource,

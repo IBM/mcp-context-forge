@@ -1,0 +1,76 @@
+<div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
+            Simulation Results
+        </h3>
+    </div>
+    <div class="p-6 space-y-6">
+        <!-- Result Badge -->
+        <div class="flex items-center justify-between">
+            <div>
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Test Result</h4>
+                <div class="mt-2">
+                    <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full {{ 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' if result.passed else 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200' }}">
+                        {{ 'PASSED ✓' if result.passed else 'FAILED ✗' }}
+                    </span>
+                </div>
+            </div>
+            <div class="text-right">
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Execution Time</h4>
+                <p class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
+                    {{ result.execution_time_ms }}ms
+                </p>
+            </div>
+        </div>
+        
+        <!-- Decision Details -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-200 dark:border-gray-700 pt-6">
+            <div>
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Expected Decision</h4>
+                <p class="text-lg font-semibold text-gray-900 dark:text-white">
+                    {{ result.expected_decision.value }}
+                </p>
+            </div>
+            <div>
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Actual Decision</h4>
+                <p class="text-lg font-semibold text-gray-900 dark:text-white">
+                    {{ result.actual_decision.value }}
+                </p>
+            </div>
+        </div>
+        
+        <!-- Matching Policies -->
+        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+            <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Matching Policies</h4>
+            <div class="space-x-2 space-y-2">
+                {% if result.matching_policies %}
+                    {% for policy in result.matching_policies %}
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{{ policy }}</span>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-sm text-gray-500 dark:text-gray-400">No policies matched</p>
+                {% endif %}
+            </div>
+        </div>
+        
+        <!-- Reason -->
+        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+            <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Decision Reason</h4>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
+                <p class="text-sm text-gray-700 dark:text-gray-300">
+                    {{ result.reason }}
+                </p>
+            </div>
+        </div>
+        
+        <!-- Detailed Explanation -->
+        {% if result.explanation %}
+        <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
+            <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Detailed Explanation</h4>
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
+                <pre class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono">{{ result.explanation }}</pre>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
