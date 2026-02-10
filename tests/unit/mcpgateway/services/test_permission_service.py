@@ -284,8 +284,8 @@ async def test_get_user_permissions_cached(svc):
 @pytest.mark.asyncio
 async def test_get_user_permissions_from_roles(svc):
     """Permissions are collected from user roles."""
-    role = SimpleNamespace(get_effective_permissions=lambda: ["tools.read", "tools.create"])
-    user_role = SimpleNamespace(role=role, role_id="r1")
+    role = SimpleNamespace(name="test_role", permissions=["tools.read", "tools.create"], get_effective_permissions=lambda: ["tools.read", "tools.create"])
+    user_role = SimpleNamespace(role=role, role_id="r1", scope="global", scope_id=None)
     with patch.object(svc, "_get_user_roles", return_value=[user_role]):
         result = await svc.get_user_permissions("user@test.com")
     assert "tools.read" in result
@@ -295,8 +295,8 @@ async def test_get_user_permissions_from_roles(svc):
 @pytest.mark.asyncio
 async def test_get_user_permissions_any_team_cache_key(svc):
     """include_all_teams uses separate cache key."""
-    role = SimpleNamespace(get_effective_permissions=lambda: ["teams.read"])
-    user_role = SimpleNamespace(role=role, role_id="r1")
+    role = SimpleNamespace(name="team_role", permissions=["teams.read"], get_effective_permissions=lambda: ["teams.read"])
+    user_role = SimpleNamespace(role=role, role_id="r1", scope="team", scope_id="t1")
     with patch.object(svc, "_get_user_roles", return_value=[user_role]):
         result = await svc.get_user_permissions("user@test.com", include_all_teams=True)
     assert "user@test.com:__anyteam__" in svc._permission_cache
@@ -318,6 +318,14 @@ async def test_get_user_roles_with_scope(svc, mock_db):
     """get_user_roles with scope filter."""
     mock_db.execute.return_value.scalars.return_value.all.return_value = []
     roles = await svc.get_user_roles("user@test.com", scope="team", team_id="t1")
+    assert roles == []
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_include_all_teams(svc, mock_db):
+    """_get_user_roles with include_all_teams=True."""
+    mock_db.execute.return_value.scalars.return_value.all.return_value = []
+    roles = await svc._get_user_roles("user@test.com", team_id=None, include_all_teams=True)
     assert roles == []
 
 

@@ -595,6 +595,7 @@ async def create_user(user_request: AdminCreateUserRequest, current_user_ctx: di
             is_active=user_request.is_active,
             password_change_required=user_request.password_change_required,
             auth_provider="local",
+            granted_by=current_user_ctx.get("email"),
         )
 
         # If the user was created with the default password, optionally force password change

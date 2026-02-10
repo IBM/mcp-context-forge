@@ -225,16 +225,20 @@ class PermissionService:
         else:
             cache_key = f"{user_email}:{team_id or 'global'}"
         if self._is_cache_valid(cache_key):
-            return self._permission_cache[cache_key]
+            cached_perms = self._permission_cache[cache_key]
+            logger.debug(f"[RBAC] Cache hit for {user_email} (team_id={team_id}): {cached_perms}")
+            return cached_perms
 
         permissions = set()
 
         # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams)
+        logger.debug(f"[RBAC] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
 
         # Collect permissions from all roles
         for user_role in user_roles:
             role_permissions = user_role.role.get_effective_permissions()
+            logger.debug(f"[RBAC] Role '{user_role.role.name}' (scope={user_role.scope}, scope_id={user_role.scope_id}) has permissions: {role_permissions}")
             permissions.update(role_permissions)
 
         # Cache both permissions and roles
@@ -435,11 +439,18 @@ class PermissionService:
     async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> List[UserRole]:
         """Get user roles for permission checking.
 
-        Includes global roles and team-specific roles if team_id is provided.
+        Always includes global and personal roles. Team-scoped role inclusion
+        depends on the parameters:
+
+        - team_id provided: includes team roles for that specific team
+          (plus team roles with scope_id=NULL which apply to all teams)
+        - team_id=None, include_all_teams=True: includes ALL team-scoped roles
+        - team_id=None, include_all_teams=False: includes only team-scoped roles
+          with scope_id=NULL (roles that apply to all teams, e.g. during login)
 
         Args:
             user_email: Email address of the user
-            team_id: Optional team ID to include team-specific roles
+            team_id: Optional team ID to filter to a specific team's roles
             include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
 
         Returns:
@@ -447,13 +458,19 @@ class PermissionService:
         """
         query = select(UserRole).join(Role).options(contains_eager(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
-        # Include global roles and team-specific roles
+        # Include global roles and personal roles
         scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
 
         if team_id:
-            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
+            # Filter to specific team's roles only
+            scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
         elif include_all_teams:
-            scope_conditions.append(UserRole.scope == "team")  # All team roles
+            # Include ALL team-scoped roles (for list/read endpoints with session tokens)
+            scope_conditions.append(UserRole.scope == "team")
+        else:
+            # When team_id is None and include_all_teams is False (e.g., during login),
+            # include team-scoped roles with scope_id=None (roles that apply to all teams)
+            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id.is_(None)))
 
         query = query.where(or_(*scope_conditions))
 
