@@ -771,6 +771,50 @@ class TestUpdateApiTokenLastUsed:
                             mock_update.assert_called_once_with("jti-api-456")
 
     @pytest.mark.asyncio
+    async def test_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
+        """Test that authentication continues even if last_used update fails (lines 711-712)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")
+
+        jwt_payload = {
+            "sub": "api@example.com",
+            "jti": "jti-api-fail-123",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "user": {"auth_provider": "api_token"},
+        }
+
+        mock_user = EmailUser(
+            email="api@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        # Mock the update function to raise an exception
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        with patch("mcpgateway.auth._update_api_token_last_used_sync", side_effect=Exception("DB connection failed")):
+                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                # Authentication should succeed despite update failure
+                                user = await get_current_user(credentials=credentials, request=request)
+
+                                # Verify user was authenticated
+                                assert user.email == "api@example.com"
+
+                                # Verify auth_method was still set to api_token
+                                assert request.state.auth_method == "api_token"
+
+    @pytest.mark.asyncio
     async def test_api_token_jti_stored_in_request_state(self, monkeypatch):
         """Test that JTI is stored in request.state for middleware use."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
@@ -858,6 +902,54 @@ class TestUpdateApiTokenLastUsed:
                                 # Verify last_used update was called for legacy token
                                 assert mock_update.call_count == 1
                                 mock_update.assert_called_with("jti-legacy-999")
+
+    @pytest.mark.asyncio
+    async def test_legacy_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
+        """Test that authentication continues even if legacy token last_used update fails (lines 732-733)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")
+
+        # JWT payload without auth_provider (legacy format)
+        jwt_payload = {
+            "sub": "legacy@example.com",
+            "jti": "jti-legacy-fail-888",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="legacy@example.com",
+            password_hash="hash",
+            full_name="Legacy User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        # Mock functions individually
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                            with patch("mcpgateway.auth._update_api_token_last_used_sync", side_effect=Exception("DB update failed")):
+                                with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                    # Authentication should succeed despite update failure
+                                    user = await get_current_user(credentials=credentials, request=request)
+
+                                    # Verify user was authenticated
+                                    assert user.email == "legacy@example.com"
+
+                                    # Verify auth_method was still set to api_token
+                                    assert request.state.auth_method == "api_token"
+
+                                    # Verify JTI was stored in request.state
+                                    assert request.state.jti == "jti-legacy-fail-888"
 
 
 # ============================================================================

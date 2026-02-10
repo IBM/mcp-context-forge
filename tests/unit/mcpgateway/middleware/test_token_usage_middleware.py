@@ -291,3 +291,58 @@ async def test_uses_user_email_from_state():
     
     call_args = mock_token_service.log_token_usage.call_args
     assert call_args.kwargs["user_email"] == "state_user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_handles_token_extraction_error():
+    """Middleware should handle errors when extracting authorization header (lines 110-112)."""
+    middleware = TokenUsageMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/tools"
+    request.state.auth_method = "api_token"
+    request.state.jti = None
+    request.state.user = None
+    # Make headers.get() raise an exception
+    request.headers.get.side_effect = Exception("Header extraction failed")
+    
+    with patch("mcpgateway.middleware.token_usage_middleware.SessionLocal") as mock_session:
+        response = await middleware.dispatch(request, call_next)
+    
+    assert response.status_code == 200
+    # Should not create DB session if token extraction fails
+    mock_session.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handles_db_close_error():
+    """Middleware should handle errors when closing database session (lines 142-145)."""
+    middleware = TokenUsageMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    
+    request = MagicMock(spec=Request)
+    request.url.path = "/api/gateways"
+    request.method = "GET"
+    request.state.auth_method = "api_token"
+    request.state.jti = "jti-close-error"
+    request.state.user = MagicMock(email="user@example.com")
+    request.client.host = "192.168.1.1"
+    request.headers = {"user-agent": "TestClient/1.0"}
+    
+    mock_db = MagicMock()
+    mock_db.close.side_effect = Exception("Failed to close connection")
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+    
+    with patch("mcpgateway.middleware.token_usage_middleware.SessionLocal", return_value=mock_db), \
+         patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service):
+        # Should not raise exception even if db.close() fails
+        response = await middleware.dispatch(request, call_next)
+    
+    assert response.status_code == 200
+    
+    # Verify log_token_usage was still called
+    mock_token_service.log_token_usage.assert_awaited_once()
+    mock_db.commit.assert_called_once()
+    mock_db.close.assert_called_once()
