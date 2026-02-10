@@ -2,33 +2,30 @@
 
 set -ueo pipefail
 
-#export RUST_LOG="reqwest=trace,hyper=trace"
+MCPGATEWAY_BEARER_TOKEN="$(uvx --from mcp-contextforge-gateway python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)"
 
-TOKEN_FILE="$HOME/.local/mcpgateway-bearer-token.txt"
-if [ ! -f "$TOKEN_FILE" ]; then
-	echo "Error: Token file not found at $TOKEN_FILE" >&2
-	exit 1
-fi
+PORT="${PORT:-8080}"
+SERVER_ID="${SERVER_ID:-9779b6698cbd4b4995ee04a4fab38737}"
+URL="http://localhost:${PORT}/servers/${SERVER_ID}/mcp"
 
-AUTH="Bearer $(tr -d '\r\n' <"$TOKEN_FILE")"
-
+AUTH="Bearer $MCPGATEWAY_BEARER_TOKEN"
 rm -f out.log
 
 if [[ "${P:=X}" == "P" ]]; then
 	EXE=(
-		uv
-		--project ~/prj/mcp-context-forge
-		run
+		uvx
+		--from mcp-contextforge-gateway
+		python
 		-m
 		mcpgateway.wrapper
-		--url "http://localhost:8080/servers/9779b6698cbd4b4995ee04a4fab38737/mcp"
+		--url "$URL"
 		--auth "$AUTH"
 		--log-level off
 	)
 else
 	EXE=(
-		mcp_stdio_wrapper
-		--url "http://localhost:8080/servers/9779b6698cbd4b4995ee04a4fab38737/mcp"
+		"$(dirname "$0")/../target/release/mcp_stdio_wrapper"
+		--url "$URL"
 		--auth "$AUTH"
 		--log-level debug
 		--log-file out.log
@@ -42,12 +39,11 @@ CALL='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fast-time-
 
 time (
 	echo "$INIT"
-	sleep ${SLEEP:=0}
+	sleep ${SLEEP:=0.2}
 	echo "$NOTIFY"
-	sleep ${SLEEP:=0}
+	sleep ${SLEEP:=0.2}
 	echo "$LIST"
-	sleep ${SLEEP:=0}
+	sleep ${SLEEP:=0.2}
 	echo "$CALL"
-	sleep ${SLEEP:=0}
-	sleep 999
+	sleep ${SLEEP:=0.2}
 ) | "${EXE[@]}"

@@ -2,10 +2,11 @@
 
 set -ueo pipefail
 
-MCPGATEWAY_BEARER_TOKEN="$(uv --project ~/prj/mcp-context-forge run -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key 2>/dev/null)"
-echo -n $MCPGATEWAY_BEARER_TOKEN >~/.local/mcpgateway-bearer-token.txt
+MCPGATEWAY_BEARER_TOKEN="$(uvx --from mcp-contextforge-gateway python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)"
 
-URL="http://localhost:8080/servers/9779b6698cbd4b4995ee04a4fab38737/mcp"
+PORT="${PORT:-8080}"
+SERVER_ID="${SERVER_ID:-9779b6698cbd4b4995ee04a4fab38737}"
+URL="http://localhost:${PORT}/servers/${SERVER_ID}/mcp"
 
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"demo","version":"0.0.1"}}}'
 
@@ -19,11 +20,10 @@ HEADERS=(
 	-H "Accept: application/json, application/x-ndjson, text/event-stream"
 )
 
-curl  -N  "$URL" "${HEADERS[@]}" -d "$INIT"
+curl -N "$URL" "${HEADERS[@]}" -d "$INIT"
 printf "\n---\n"
-curl  -N  "$URL" "${HEADERS[@]}" -d "$NOTIFY"
-printf  "\n---\n"
-curl  -N  "$URL" "${HEADERS[@]}" -d "$LIST"
+curl -N "$URL" "${HEADERS[@]}" -d "$NOTIFY"
 printf "\n---\n"
-curl  -N  "$URL" "${HEADERS[@]}" -d "$CALL"
-
+curl -N "$URL" "${HEADERS[@]}" -d "$LIST"
+printf "\n---\n"
+curl -N "$URL" "${HEADERS[@]}" -d "$CALL"

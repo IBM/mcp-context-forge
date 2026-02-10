@@ -75,4 +75,30 @@ graph TD
         G --> H(stdio_writer);
         H --> I[stdout];
     end
+
+## Testing
+
+To verify the functionality of the `mcp-stdio-wrapper`, you can use the provided test scripts in the `scripts/` directory.
+
+### `test-fast-time-curl.sh`
+
+This script directly interacts with the virtual server of the MCP Gateway using `curl`. It's useful for verifying that the MCP Gateway is running and responding as expected.
+
+```bash
+./scripts/test-fast-time-curl.sh
 ```
+
+### `test-fast-time-wrapper.sh`
+
+By default, the test scripts run against the release version of the `mcp-stdio-wrapper`. If you need to test a development version, you must update the executable path within the relevant test script to point to your development build.
+
+This script utilizes the `mcp-stdio-wrapper` to send requests to the MCP Gateway. It demonstrates how the wrapper processes input and communicates with the gateway.
+
+```bash
+./scripts/test-fast-time-wrapper.sh
+```
+
+
+```
+
+**Note** Update the PORT and SERVER_ID variables at the top of each script to match your environment, or set them as environment variables before execution.

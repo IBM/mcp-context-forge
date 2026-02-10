@@ -1,5 +1,8 @@
 #!/usr/bin/env -S bash
 
+
+# test for rust-sdk server sample 
+
 set -ueo pipefail
 
 rm -f out.log
