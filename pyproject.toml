@@ -63,6 +63,7 @@ dependencies = [
     "oauthlib>=3.3.1",
     "orjson>=3.11.5",
     "parse>=1.20.2",
+    "pgvector>=0.2.4",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.24.1",
     "psutil>=7.2.1",
