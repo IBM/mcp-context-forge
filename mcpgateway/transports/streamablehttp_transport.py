@@ -66,6 +66,7 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.utils.gateway_access import check_gateway_access
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.verify_credentials import verify_credentials
@@ -1061,6 +1062,11 @@ async def list_tools() -> List[types.Tool]:
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy":
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []  # Return empty list for unauthorized access
+
                         # Direct proxy mode: forward request to remote MCP server
                         # Get _meta from request context if available
                         meta = None
@@ -1290,6 +1296,11 @@ async def list_resources() -> List[types.Resource]:
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                     if gateway and gateway.gateway_mode == "direct_proxy":
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []  # Return empty list for unauthorized access
+
                         # Direct proxy mode: forward request to remote MCP server
                         # Get _meta from request context if available
                         meta = None
@@ -1335,6 +1346,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     Returns:
         Union[str, bytes]: The content of the resource as text or binary data.
         Returns empty string on failure or if no content is found.
+
+    Raises:
+        HTTPException: If access is denied to the gateway in direct_proxy mode.
 
     Logs exceptions if any errors occur during reading.
 
@@ -1387,6 +1401,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
             if gateway_id:
                 # Third-Party
+                from fastapi import HTTPException  # pylint: disable=import-outside-toplevel
                 from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
                 # First-Party
@@ -1394,6 +1409,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
 
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if gateway and gateway.gateway_mode == "direct_proxy":
+                    # SECURITY: Check gateway access before allowing direct proxy
+                    if not await check_gateway_access(db, gateway, user_email, token_teams):
+                        logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                        raise HTTPException(status_code=404, detail="Resource not found")
+
                     # Direct proxy mode: forward request to remote MCP server
                     # Get _meta from request context if available
                     meta = None
