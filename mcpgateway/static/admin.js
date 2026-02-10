@@ -17370,60 +17370,163 @@ window.testSearchInit = function () {
  */
 function clearSearch(entityType) {
     try {
-        if (entityType === "catalog") {
-            const searchInput = document.getElementById("catalog-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterServerTable(""); // Clear the filter
-            }
-        } else if (entityType === "tools") {
-            const searchInput = document.getElementById("tools-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterToolsTable(""); // Clear the filter
-            }
-        } else if (entityType === "resources") {
-            const searchInput = document.getElementById(
-                "resources-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterResourcesTable(""); // Clear the filter
-            }
-        } else if (entityType === "prompts") {
-            const searchInput = document.getElementById("prompts-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterPromptsTable(""); // Clear the filter
-            }
-        } else if (entityType === "a2a-agents") {
-            const searchInput = document.getElementById(
-                "a2a-agents-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterA2AAgentsTable(""); // Clear the filter
-            }
-        } else if (entityType === "gateways") {
-            const searchInput = document.getElementById(
-                "gateways-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterGatewaysTable(""); // Clear the filter
-            }
-        } else if (entityType === "gateways") {
-            const searchInput = document.getElementById(
-                "gateways-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterGatewaysTable(""); // Clear the filter
+        // Map of entity types to their search input IDs
+        const inputMap = {
+            'catalog': 'catalog-search-input',
+            'tools': 'tools-search-input',
+            'resources': 'resources-search-input',
+            'prompts': 'prompts-search-input',
+            'a2a-agents': 'a2a-agents-search-input',
+            'gateways': 'gateways-search-input'
+        };
+
+        const inputId = inputMap[entityType];
+        if (!inputId) {
+            console.error(`Unknown entity type for clearSearch: ${entityType}`);
+            return;
+        }
+
+        const searchInput = document.getElementById(inputId);
+        if (searchInput) {
+            searchInput.value = "";
+            // Trigger server-side search with empty term to reload all data
+            // For gateways, use client-side filter as fallback
+            if (entityType === 'gateways') {
+                filterGatewaysTable("");
+            } else {
+                performServerSideSearch(entityType, "");
             }
         }
     } catch (error) {
         console.error("Error clearing search:", error);
     }
+}
+
+// Make clearSearch function available globally
+window.clearSearch = clearSearch;
+
+/**
+ * Debounce timers for server-side entity search requests
+ */
+const serverEntitySearchTimers = {};
+
+/**
+ * Perform server-side search via HTMX
+ * This function sends the search term to the server for filtering across all pages
+ * @param {string} entityType - The entity type (catalog, tools, resources, prompts, a2a-agents, gateways)
+ * @param {string} searchTerm - The search term to filter by
+ */
+function performServerSideSearch(entityType, searchTerm) {
+    // Map entity types to their respective configurations
+    const entityConfig = {
+        'catalog': {
+            endpoint: '/admin/servers/partial',
+            target: '#servers-table',
+            indicator: '#servers-loading',
+            checkboxId: 'show-inactive-servers',
+            tableName: 'servers'
+        },
+        'tools': {
+            endpoint: '/admin/tools/partial',
+            target: '#tools-table',
+            indicator: '#tools-loading',
+            checkboxId: 'show-inactive-tools',
+            tableName: 'tools'
+        },
+        'resources': {
+            endpoint: '/admin/resources/partial',
+            target: '#resources-table',
+            indicator: '#resources-loading',
+            checkboxId: 'show-inactive-resources',
+            tableName: 'resources'
+        },
+        'prompts': {
+            endpoint: '/admin/prompts/partial',
+            target: '#prompts-table',
+            indicator: '#prompts-loading',
+            checkboxId: 'show-inactive-prompts',
+            tableName: 'prompts'
+        },
+        'a2a-agents': {
+            endpoint: '/admin/a2a/partial',
+            target: '#agents-table',
+            indicator: '#agents-loading',
+            checkboxId: 'show-inactive-a2a-agents',
+            tableName: 'agents'
+        },
+        'gateways': {
+            endpoint: '/admin/gateways/partial',
+            target: '#gateways-table',
+            indicator: '#gateways-loading',
+            checkboxId: 'show-inactive-gateways',
+            tableName: 'gateways'
+        }
+    };
+
+    const config = entityConfig[entityType];
+    if (!config) {
+        console.error(`Unknown entity type: ${entityType}`);
+        return;
+    }
+
+    // Get root path from document or infer from current URL
+    // The admin UI is always at /admin, so we extract everything before that
+    let rootPath = document.querySelector('meta[name="root-path"]')?.content;
+    if (rootPath === undefined || rootPath === null) {
+        const currentPath = window.location.pathname;
+        const adminIndex = currentPath.indexOf('/admin');
+        rootPath = adminIndex > 0 ? currentPath.substring(0, adminIndex) : '';
+    }
+    
+    // Build the URL with search parameter
+    const url = new URL(rootPath + config.endpoint, window.location.origin);
+    url.searchParams.set('page', '1');  // Reset to first page on search
+    url.searchParams.set('per_page', document.querySelector(`#${config.tableName}-pagination-controls select`)?.value || '10');
+    
+    // Add include_inactive if checkbox is checked
+    const checkbox = document.getElementById(config.checkboxId);
+    if (checkbox) {
+        url.searchParams.set('include_inactive', checkbox.checked.toString());
+    }
+    
+    // Add search term (empty string clears the filter)
+    if (searchTerm && searchTerm.trim()) {
+        url.searchParams.set('tag_search', searchTerm.trim());
+    }
+
+    // Get team_id from URL if present
+    const urlParams = new URLSearchParams(window.location.search);
+    const teamId = urlParams.get('team_id');
+    if (teamId) {
+        url.searchParams.set('team_id', teamId);
+    }
+
+    console.log(`🔍 Server-side search for ${entityType}: "${searchTerm}" -> ${url.toString()}`);
+    
+    // Trigger HTMX request
+    htmx.ajax('GET', url.toString(), {
+        target: config.target,
+        swap: 'outerHTML',
+        indicator: config.indicator
+    });
+}
+
+/**
+ * Debounced server-side search to avoid excessive requests
+ * @param {string} entityType - The entity type
+ * @param {string} searchTerm - The search term
+ * @param {number} delay - Debounce delay in milliseconds (default: 300)
+ */
+function debouncedServerSearch(entityType, searchTerm, delay = 300) {
+    // Clear existing timer for this entity type
+    if (serverEntitySearchTimers[entityType]) {
+        clearTimeout(serverEntitySearchTimers[entityType]);
+    }
+    
+    // Set new timer
+    serverEntitySearchTimers[entityType] = setTimeout(() => {
+        performServerSideSearch(entityType, searchTerm);
+    }, delay);
 }
 
 // Make server-side search functions available globally
