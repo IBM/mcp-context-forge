@@ -412,67 +412,33 @@ class EmailAuthService:
 
             # Auto-assign dual roles using RoleService (after personal team creation)
             try:
-                # First-Party
-                from mcpgateway.db import Role  # pylint: disable=import-outside-toplevel
-
                 granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
 
-                # Assign roles based on is_admin flag
-                if is_admin:
-                    # Admin users get: platform_admin (global) + team_admin (team-scoped to personal team)
+                # Determine global role based on admin status
+                global_role_name = "platform_admin" if is_admin else "platform_viewer"
+                global_role = await self.role_service.get_role_by_name(global_role_name, "global")
 
-                    # 1. Assign platform_admin role with global scope
-                    platform_admin_role = self.db.execute(select(Role).where(and_(Role.name == "platform_admin", Role.is_active.is_(True)))).scalar_one_or_none()
-
-                    if platform_admin_role:
-                        try:
-                            await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=granter)
-                            logger.info(f"Assigned platform_admin role (global scope) to admin user {email}")
-                        except ValueError as e:
-                            logger.warning(f"Could not assign platform_admin role to {email}: {e}")
-                    else:
-                        logger.warning(f"platform_admin role not found. User {email} created without global admin role.")
-
-                    # 2. Assign team_admin role with team scope (if personal team exists)
-                    if personal_team_id:
-                        team_admin_role = self.db.execute(select(Role).where(and_(Role.name == "team_admin", Role.is_active.is_(True)))).scalar_one_or_none()
-
-                        if team_admin_role:
-                            try:
-                                await self.role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
-                                logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to admin user {email}")
-                            except ValueError as e:
-                                logger.warning(f"Could not assign team_admin role to {email}: {e}")
-                        else:
-                            logger.warning(f"team_admin role not found. User {email} created without team admin role.")
-
+                if global_role:
+                    try:
+                        await self.role_service.assign_role_to_user(user_email=email, role_id=global_role.id, scope="global", scope_id=None, granted_by=granter)
+                        logger.info(f"Assigned {global_role_name} role (global scope) to user {email}")
+                    except ValueError as e:
+                        logger.warning(f"Could not assign {global_role_name} role to {email}: {e}")
                 else:
-                    # Non-admin users get: platform_viewer_role (global) + team_admin (team-scoped to personal team)
+                    logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
 
-                    # 1. Assign platform_viewer_role role with global scope
-                    platform_viewer_role = self.db.execute(select(Role).where(and_(Role.name == "platform_viewer", Role.is_active.is_(True)))).scalar_one_or_none()
+                # Assign team_admin role with team scope (if personal team exists)
+                if personal_team_id:
+                    team_admin_role = await self.role_service.get_role_by_name("team_admin", "team")
 
-                    if platform_viewer_role:
+                    if team_admin_role:
                         try:
-                            await self.role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=granter)
-                            logger.info(f"Assigned platform_viewer role (global scope) to user {email}")
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                            logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to user {email}")
                         except ValueError as e:
-                            logger.warning(f"Could not assign viewer role to {email}: {e}")
+                            logger.warning(f"Could not assign team_admin role to {email}: {e}")
                     else:
-                        logger.warning(f"platform_viewer role not found. User {email} created without global viewer role.")
-
-                    # 2. Assign team_admin role with team scope (if personal team exists)
-                    if personal_team_id:
-                        team_admin_role = self.db.execute(select(Role).where(and_(Role.name == "team_admin", Role.is_active.is_(True)))).scalar_one_or_none()
-
-                        if team_admin_role:
-                            try:
-                                await self.role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
-                                logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to user {email}")
-                            except ValueError as e:
-                                logger.warning(f"Could not assign team_admin role to {email}: {e}")
-                        else:
-                            logger.warning(f"team_admin role not found. User {email} created without team admin role.")
+                        logger.warning(f"team_admin role not found. User {email} created without team admin role.")
 
             except Exception as role_error:
                 logger.error(f"Failed to assign roles to user {email}: {role_error}")

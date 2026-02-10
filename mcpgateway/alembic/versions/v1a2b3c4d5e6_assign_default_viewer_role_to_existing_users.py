@@ -14,8 +14,8 @@ This migration:
 2. Creates platform_viewer role with global scope
 3. Assigns roles to existing users:
    - Admin users: team_admin (team scope) + platform_admin (global scope)
-   - Non-admin users: team_admin (team scope) + viewer (global scope)
-   - Preserves admin@example.com records unchanged
+   - Non-admin users: team_admin (team scope) + platform_viewer (global scope)
+   - Preserves platform admin records unchanged
 
 This ensures backward compatibility when RBAC is enabled on an existing system.
 """
@@ -30,6 +30,9 @@ import uuid
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy import text
+
+# First-Party
+from mcpgateway.config import settings
 
 # revision identifiers, used by Alembic.
 revision: str = "v1a2b3c4d5e6"
@@ -133,9 +136,10 @@ def upgrade() -> None:
     This migration:
     1. Updates permissions for team_admin, developer, and viewer roles
     2. Creates platform_viewer role with global scope
-    3. Assigns roles to existing users (excluding admin@example.com):
+    3. Assigns roles to existing users (excluding the platform admin):
        - Admin users: team_admin (team scope) + platform_admin (global scope)
-       - Non-admin users: team_admin (team scope) + platformviewer (global scope)
+       - Non-admin users: team_admin (team scope) + platform_viewer (global scope)
+       - Users without a personal team still get their global role
 
     The migration is idempotent and safe to run multiple times.
     Supports both PostgreSQL and SQLite databases.
@@ -143,6 +147,9 @@ def upgrade() -> None:
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
+
+    # Read platform admin email from settings (avoids hardcoding)
+    admin_email = settings.platform_admin_email
 
     # Detect database dialect
     dialect_name = bind.dialect.name
@@ -169,7 +176,7 @@ def upgrade() -> None:
     print("\n=== Step 1: Updating role permissions ===")
     for role_name, new_permissions in ROLE_PERMISSIONS.items():
         if role_name == "platform_viewer":
-            continue  # Handle separately
+            continue  # Created/updated in Step 2
 
         role_query = text("SELECT id FROM roles WHERE name = :role_name LIMIT 1")
         role_result = bind.execute(role_query, {"role_name": role_name}).fetchone()
@@ -212,14 +219,24 @@ def upgrade() -> None:
 
     if not platform_viewer_result:
         platform_viewer_id = str(uuid.uuid4())
-        insert_role = text(
+        if dialect_name == "postgresql":
+            insert_role = text(
+                """
+                INSERT INTO roles (id, name, description, scope, permissions, inherits_from,
+                                 created_by, is_system_role, is_active, created_at, updated_at)
+                VALUES (:id, :name, :description, :scope, CAST(:permissions AS JSONB), :inherits_from,
+                        :created_by, :is_system_role, :is_active, :created_at, :updated_at)
             """
-            INSERT INTO roles (id, name, description, scope, permissions, inherits_from,
-                             created_by, is_system_role, is_active, created_at, updated_at)
-            VALUES (:id, :name, :description, :scope, :permissions, :inherits_from,
-                    :created_by, :is_system_role, :is_active, :created_at, :updated_at)
-        """
-        )
+            )
+        else:
+            insert_role = text(
+                """
+                INSERT INTO roles (id, name, description, scope, permissions, inherits_from,
+                                 created_by, is_system_role, is_active, created_at, updated_at)
+                VALUES (:id, :name, :description, :scope, :permissions, :inherits_from,
+                        :created_by, :is_system_role, :is_active, :created_at, :updated_at)
+            """
+            )
 
         bind.execute(
             insert_role,
@@ -230,7 +247,7 @@ def upgrade() -> None:
                 "scope": "global",
                 "permissions": json.dumps(ROLE_PERMISSIONS["platform_viewer"]),
                 "inherits_from": None,
-                "created_by": "admin@example.com",
+                "created_by": admin_email,
                 "is_system_role": True,
                 "is_active": True,
                 "created_at": now,
@@ -239,7 +256,33 @@ def upgrade() -> None:
         )
         print(f"  ✓ Created 'platform_viewer' role with ID: {platform_viewer_id}")
     else:
-        print("  ℹ 'platform_viewer' role already exists")
+        # Update permissions if role already exists (converge to system defaults)
+        platform_viewer_id = platform_viewer_result[0]
+        if dialect_name == "postgresql":
+            update_pv_query = text(
+                """
+                UPDATE roles
+                SET permissions = CAST(:permissions AS JSONB), updated_at = :updated_at
+                WHERE id = :role_id
+                """
+            )
+        else:
+            update_pv_query = text(
+                """
+                UPDATE roles
+                SET permissions = :permissions, updated_at = :updated_at
+                WHERE id = :role_id
+                """
+            )
+        bind.execute(
+            update_pv_query,
+            {
+                "permissions": json.dumps(ROLE_PERMISSIONS["platform_viewer"]),
+                "updated_at": now,
+                "role_id": platform_viewer_id,
+            },
+        )
+        print("  ✓ Updated 'platform_viewer' role permissions")
 
     # Step 3: Get role IDs for assignment
     print("\n=== Step 3: Fetching role IDs ===")
@@ -267,7 +310,7 @@ def upgrade() -> None:
     platform_admin_role_id = platform_admin_result[0]
     print(f"  ✓ Found 'platform_admin' role: {platform_admin_role_id}")
 
-    # Step 4: Find users without role assignments (excluding admin@example.com)
+    # Step 4: Find users without role assignments (excluding platform admin)
     print("\n=== Step 4: Finding users without role assignments ===")
     if dialect_name == "postgresql":
         users_query = text(
@@ -304,10 +347,10 @@ def upgrade() -> None:
         """
         )
 
-    users_without_roles = bind.execute(users_query, {"admin_email": "admin@example.com"}).fetchall()
+    users_without_roles = bind.execute(users_query, {"admin_email": admin_email}).fetchall()
 
     if not users_without_roles:
-        print("  ℹ All active users (except admin@example.com) already have role assignments.")
+        print(f"  ℹ All active users (except {admin_email}) already have role assignments.")
         return
 
     print(f"  ✓ Found {len(users_without_roles)} users without role assignments")
@@ -323,7 +366,7 @@ def upgrade() -> None:
     """
     )
 
-    granted_by_email = "admin@example.com"
+    granted_by_email = admin_email
     assigned_count = 0
 
     for user_row in users_without_roles:
@@ -331,21 +374,24 @@ def upgrade() -> None:
         is_admin = user_row[1]
         team_id = user_row[2]
 
-        if not team_id:
-            print(f"  ⚠ User {user_email} has no personal team, skipping")
-            continue
-
         try:
-            # Assign team_admin role with team scope
-            team_admin_assignment_id = str(uuid.uuid4())
+            # Assign global role based on is_admin flag (always, even without personal team)
+            if is_admin:
+                global_role_id = platform_admin_role_id
+                global_role_name = "platform_admin"
+            else:
+                global_role_id = platform_viewer_role_id
+                global_role_name = "platform_viewer"
+
+            global_role_assignment_id = str(uuid.uuid4())
             bind.execute(
                 insert_user_role,
                 {
-                    "id": team_admin_assignment_id,
+                    "id": global_role_assignment_id,
                     "user_email": user_email,
-                    "role_id": team_admin_role_id,
-                    "scope": "team",
-                    "scope_id": team_id,
+                    "role_id": global_role_id,
+                    "scope": "global",
+                    "scope_id": None,
                     "granted_by": granted_by_email,
                     "granted_at": now,
                     "expires_at": None,
@@ -353,52 +399,35 @@ def upgrade() -> None:
                 },
             )
 
-            # Assign second role based on is_admin flag
-            if is_admin:
-                # Admin users get platform_admin with global scope
-                global_role_assignment_id = str(uuid.uuid4())
+            # Assign team_admin role with team scope (only if personal team exists)
+            if team_id:
+                team_admin_assignment_id = str(uuid.uuid4())
                 bind.execute(
                     insert_user_role,
                     {
-                        "id": global_role_assignment_id,
+                        "id": team_admin_assignment_id,
                         "user_email": user_email,
-                        "role_id": platform_admin_role_id,
-                        "scope": "global",
-                        "scope_id": None,
+                        "role_id": team_admin_role_id,
+                        "scope": "team",
+                        "scope_id": team_id,
                         "granted_by": granted_by_email,
                         "granted_at": now,
                         "expires_at": None,
                         "is_active": True,
                     },
                 )
-                print(f"  ✓ Assigned 'team_admin' (team) + 'platform_admin' (global) to: {user_email}")
+                print(f"  ✓ Assigned 'team_admin' (team) + '{global_role_name}' (global) to: {user_email}")
             else:
-                # Non-admin users get platform_viewer with global scope
-                global_role_assignment_id = str(uuid.uuid4())
-                bind.execute(
-                    insert_user_role,
-                    {
-                        "id": global_role_assignment_id,
-                        "user_email": user_email,
-                        "role_id": platform_viewer_role_id,
-                        "scope": "global",
-                        "scope_id": None,
-                        "granted_by": granted_by_email,
-                        "granted_at": now,
-                        "expires_at": None,
-                        "is_active": True,
-                    },
-                )
-                print(f"  ✓ Assigned 'team_admin' (team) + 'platform_viewer' (global) to: {user_email}")
+                print(f"  ✓ Assigned '{global_role_name}' (global) to: {user_email} (no personal team, skipped team_admin)")
 
             assigned_count += 1
         except Exception as e:
             print(f"  ✗ Failed to assign roles to {user_email}: {e}")
 
     print(f"\n✅ Successfully assigned roles to {assigned_count} users")
-    print("   • Each user received 2 roles:")
-    print("     - team_admin with team scope (for their personal team)")
+    print("   • Each user received:")
     print("     - platform_admin (admins) or platform_viewer (non-admins) with global scope")
+    print("     - team_admin with team scope (if personal team exists)")
 
 
 def downgrade() -> None:
@@ -407,13 +436,15 @@ def downgrade() -> None:
     This migration downgrade:
     1. Reverts permissions for team_admin, developer, and viewer roles to original values
     2. Removes platform_viewer role
-    3. Removes all role assignments EXCEPT those for admin@example.com
+    3. Removes migration-assigned role assignments
 
     Supports both PostgreSQL and SQLite databases.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
     existing_tables = inspector.get_table_names()
+
+    admin_email = settings.platform_admin_email
 
     # Detect database dialect
     dialect_name = bind.dialect.name
@@ -426,14 +457,30 @@ def downgrade() -> None:
 
     now = datetime.now(timezone.utc)
 
-    # Step 1: Remove migration-assigned role assignments (keeping admin@example.com)
-    # Do this FIRST to avoid foreign key constraint issues
+    # Step 1: Remove migration-assigned role assignments
+    # Only delete assignments granted by this migration (granted_by = platform admin email)
+    # for roles that this migration assigns (team_admin, platform_admin, platform_viewer).
+    # Do this FIRST to avoid foreign key constraint issues with platform_viewer removal.
     print("\n=== Step 1: Removing migration-assigned roles ===")
     try:
-        delete_sql = text("DELETE FROM user_roles WHERE user_email != :keep_email")
-        result = bind.execute(delete_sql, {"keep_email": "admin@example.com"})
-        rowcount = getattr(result, "rowcount", "unknown")
-        print(f"  ✓ Removed {rowcount} role assignments (preserved admin@example.com)")
+        # Get the role IDs this migration assigns
+        migration_role_ids = []
+        for rname in ("team_admin", "platform_admin", "platform_viewer"):
+            row = bind.execute(text("SELECT id FROM roles WHERE name = :n LIMIT 1"), {"n": rname}).fetchone()
+            if row:
+                migration_role_ids.append(row[0])
+
+        if migration_role_ids:
+            # Delete only assignments that match the migration's granted_by AND role_ids
+            placeholders = ", ".join(f":rid{i}" for i in range(len(migration_role_ids)))
+            params = {f"rid{i}": rid for i, rid in enumerate(migration_role_ids)}
+            params["granted_by"] = admin_email
+            delete_sql = text(f"DELETE FROM user_roles WHERE granted_by = :granted_by AND role_id IN ({placeholders})")  # nosec B608 - placeholders are enumerated param names, not user input
+            result = bind.execute(delete_sql, params)
+            rowcount = getattr(result, "rowcount", "unknown")
+            print(f"  ✓ Removed {rowcount} migration-assigned role assignments")
+        else:
+            print("  ℹ No migration roles found to clean up")
     except Exception as e:
         print(f"  ⚠ Could not remove migration-assigned roles: {e}")
         # Don't return - continue with other steps

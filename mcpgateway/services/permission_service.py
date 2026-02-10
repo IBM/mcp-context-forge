@@ -439,17 +439,19 @@ class PermissionService:
     async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> List[UserRole]:
         """Get user roles for permission checking.
 
-        Includes global roles, personal roles, and team-specific roles.
+        Always includes global and personal roles. Team-scoped role inclusion
+        depends on the parameters:
 
-        When team_id is provided, only includes roles for that specific team.
-        When team_id is None, includes ALL team roles the user has (important for
-        admin dashboard access where users may have team-scoped admin permissions).
+        - team_id provided: includes team roles for that specific team
+          (plus team roles with scope_id=NULL which apply to all teams)
+        - team_id=None, include_all_teams=True: includes ALL team-scoped roles
+        - team_id=None, include_all_teams=False: includes only team-scoped roles
+          with scope_id=NULL (roles that apply to all teams, e.g. during login)
 
         Args:
             user_email: Email address of the user
+            team_id: Optional team ID to filter to a specific team's roles
             include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
-            team_id: Optional team ID to filter to a specific team's roles.
-                    If None, includes all team roles the user has.
 
         Returns:
             List[UserRole]: List of active roles for the user

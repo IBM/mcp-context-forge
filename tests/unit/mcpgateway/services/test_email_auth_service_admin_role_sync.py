@@ -41,10 +41,9 @@ async def test_create_user_admin_role_not_found(mock_db):
                 mock_settings.password_require_numbers = False
                 mock_settings.password_require_special = False
 
-                # Role query returns None (platform_admin not found)
-                mock_db.execute.return_value.scalar_one_or_none.return_value = None
-
+                # Mock RoleService with get_role_by_name returning None (role not found)
                 mock_role_service = MagicMock()
+                mock_role_service.get_role_by_name = AsyncMock(return_value=None)
                 mock_role_service.assign_role_to_user = AsyncMock()
 
                 with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):

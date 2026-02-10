@@ -590,7 +590,7 @@ class TestBootstrapDefaultRoles:
                             await bootstrap_default_roles(mock_conn)
 
                             # Should only create default roles (5 roles: platform_admin, team_admin, developer, viewer, platform_viewer)
-                            assert mock_role_service.create_role.call_count >= 5
+                            assert mock_role_service.create_role.call_count == 5
                             # Should not log about additional roles
                             assert not any("additional roles" in str(call) for call in mock_logger.info.call_args_list)
 

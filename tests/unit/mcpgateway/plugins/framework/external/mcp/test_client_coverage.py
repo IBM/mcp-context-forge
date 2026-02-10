@@ -870,7 +870,7 @@ class TestTerminateHTTPSessionErrors:
         mock_client.delete = AsyncMock(side_effect=RuntimeError("delete failed"))
 
         plugin._http_client_factory = MagicMock(return_value=mock_client)
-        with caplog.at_level("DEBUG"):
+        with caplog.at_level("DEBUG", logger="mcpgateway.plugins.framework.external.mcp.client"):
             await plugin._ExternalPlugin__terminate_http_session()
 
         assert any("Failed to terminate streamable HTTP session" in r.message for r in caplog.records)

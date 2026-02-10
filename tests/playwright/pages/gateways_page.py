@@ -300,11 +300,21 @@ class GatewaysPage(BasePage):
     def wait_for_gateways_table_loaded(self, timeout: int = 30000) -> None:
         """Wait for gateways table to be loaded and ready.
 
+        Handles the Alpine.js + HTMX loading sequence where x-init sets
+        the hx-get attribute before HTMX fires the load trigger and
+        swaps in the table content via outerHTML.
+
         Args:
             timeout: Maximum time to wait in milliseconds
         """
         self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
-        self.wait_for_attached(self.gateways_table_body, timeout=timeout)
+        try:
+            self.wait_for_attached(self.gateways_table_body, timeout=timeout)
+        except AssertionError:
+            # Alpine.js x-init / HTMX load race: reload to re-run the sequence
+            self.page.reload(wait_until="domcontentloaded")
+            self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
+            self.wait_for_attached(self.gateways_table_body, timeout=timeout)
 
     def create_gateway(self, gateway_data: dict) -> None:
         """Create a new MCP Server gateway by filling and submitting the form.

@@ -876,6 +876,9 @@ class RoleService:
         Hard-deletes all role assignments (active and inactive) for the given user.
         Intended for use when permanently deleting a user account.
 
+        Note: Does not commit the transaction. The caller is responsible for
+        committing (e.g., as part of a larger user deletion operation).
+
         Args:
             user_email: Email of user whose roles should be deleted
 

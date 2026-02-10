@@ -63,71 +63,68 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete,teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
+| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
 | `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
 | `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
 | `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
 
 !!! info "Default Role Assignment"
-    **New users automatically receive TWO roles upon creation to provide both team management and global access:**
-    
+    **New users automatically receive up to two roles upon creation:**
+
     **Admin users** (`is_admin: true`) receive:
-    
-    1. `team_admin` role with **team scope**
-       - `scope_id` = user's personal team ID
-       - Grants full management of their personal team resources
-    2. `platform_admin` role with **global scope**
-       - `scope_id` = None
+
+    1. `platform_admin` role with **global scope** (`scope_id` = None)
        - Grants unrestricted access to all platform resources
-    
-    **Non-admin users** (`is_admin: false`) receive:
-    
-    1. `team_admin` role with **team scope**
-       - `scope_id` = user's personal team ID
+    2. `team_admin` role with **team scope** (`scope_id` = personal team ID)
        - Grants full management of their personal team resources
-    2. `platform_viewer` role with **global scope**
-       - `scope_id` = None
+       - Only assigned if personal team creation succeeds
+
+    **Non-admin users** (`is_admin: false`) receive:
+
+    1. `platform_viewer` role with **global scope** (`scope_id` = None)
        - Grants read-only access to all platform resources
-    
+    2. `team_admin` role with **team scope** (`scope_id` = personal team ID)
+       - Grants full management of their personal team resources
+       - Only assigned if personal team creation succeeds
+
     This dual-role approach ensures:
-    - Users can fully manage their personal team resources (via team-scoped `team_admin`)
-    - Users have appropriate global visibility (via global-scoped `platform_admin` or `platform_viewer`)
+    - Users always have appropriate global visibility (via `platform_admin` or `platform_viewer`)
+    - Users can fully manage their personal team resources (via team-scoped `team_admin`, when available)
     - Clear separation between team-level and platform-level permissions
-    
+
     The `granted_by` field tracks which admin created the user for audit purposes.
 
 !!! note "Existing Users Migration"
     An Alembic migration (`v1a2b3c4d5e6`) automatically updates existing users without roles:
-    
+
     **Previous behavior (before migration):**
     - Admin users: Only `platform_admin` with global scope (`scope_id` = None)
     - Non-admin users: Only `viewer` with team scope (`scope_id` = None)
-    
+
     **After migration:**
-    
+
     **Admin users** receive:
-    
+
     1. `team_admin` role with **team scope**
        - `scope_id` = user's personal team ID (from `email_team_members` table)
        - Enables management of personal team resources
     2. `platform_admin` role with **global scope**
        - `scope_id` = None
        - Maintains unrestricted platform access
-    
+
     **Non-admin users** receive:
-    
+
     1. `team_admin` role with **team scope**
        - `scope_id` = user's personal team ID (from `email_team_members` table)
        - Enables management of personal team resources
     2. `platform_viewer` role with **global scope**
        - `scope_id` = None
        - Provides read-only access to platform resources
-    
+
     **Migration behavior:**
     - Only affects users without existing role assignments
-    - Requires user to have a personal team in `email_team_members` table
-    - Users without a personal team are skipped with a warning
-    - Users with email `admin@example.com` are excluded to preserve bootstrap configuration
+    - Users without a personal team still receive their global role (team_admin is skipped)
+    - The platform admin (configured via `PLATFORM_ADMIN_EMAIL`) is excluded to preserve bootstrap configuration
     - Migration is idempotent and safe to run multiple times
 
 ### Resources
