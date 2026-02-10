@@ -240,12 +240,27 @@ class OAuthManager:
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
-        # Prepare token request data
-        token_data = {
-            "grant_type": "client_credentials",
-            "client_id": client_id,
-            "client_secret": client_secret,
-        }
+        # Prepare token request data and headers based on credentials_location
+        credentials_location = credentials.get("credentials_location", "body")
+        request_headers = {}
+
+        if credentials_location == "header":
+            # Send credentials via Authorization header (Basic Auth)
+            auth_string = f"{client_id}:{client_secret}"
+            auth_header = base64.b64encode(auth_string.encode()).decode()
+            request_headers["Authorization"] = f"Basic {auth_header}"
+            token_data = {
+                "grant_type": "client_credentials",
+            }
+            logger.debug("Using Authorization header for OAuth credentials")
+        else:
+            # Default: Send credentials in request body
+            token_data = {
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+            }
+            logger.debug("Using request body for OAuth credentials")
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
@@ -254,7 +269,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await client.post(token_url, data=token_data, headers=request_headers if request_headers else None, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 # GitHub returns form-encoded responses, not JSON
@@ -331,20 +346,30 @@ class OAuthManager:
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
-        # Prepare token request data
+        # Prepare token request data and headers based on credentials_location
+        credentials_location = credentials.get("credentials_location", "body")
+        request_headers = {}
+
+        # Base token data for password grant
         token_data = {
             "grant_type": "password",
             "username": username,
             "password": password,
         }
 
-        # Add client_id (required by most providers including Keycloak)
-        if client_id:
-            token_data["client_id"] = client_id
-
-        # Add client_secret if present (some providers require it, others don't)
-        if client_secret:
-            token_data["client_secret"] = client_secret
+        if credentials_location == "header" and client_id and client_secret:
+            # Send client credentials via Authorization header (Basic Auth)
+            auth_string = f"{client_id}:{client_secret}"
+            auth_header = base64.b64encode(auth_string.encode()).decode()
+            request_headers["Authorization"] = f"Basic {auth_header}"
+            logger.debug("Using Authorization header for OAuth client credentials")
+        else:
+            # Default: Send client credentials in request body
+            if client_id:
+                token_data["client_id"] = client_id
+            if client_secret:
+                token_data["client_secret"] = client_secret
+            logger.debug("Using request body for OAuth client credentials")
 
         if scopes:
             token_data["scope"] = " ".join(scopes) if isinstance(scopes, list) else scopes
@@ -353,7 +378,7 @@ class OAuthManager:
         for attempt in range(self.max_retries):
             try:
                 client = await self._get_client()
-                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response = await client.post(token_url, data=token_data, headers=request_headers if request_headers else None, timeout=self.request_timeout)
                 response.raise_for_status()
 
                 # Handle both JSON and form-encoded responses
