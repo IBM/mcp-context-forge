@@ -3,5 +3,4 @@
   "reportUnusedCoroutine": "error",
   "reportMissingTypeStubs": "warning",
   "exclude": ["build", ".venv", "tests/async/profiles"]
-
 }
