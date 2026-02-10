@@ -1,6 +1,10 @@
 # Playwright Test Artifacts
 # This .gitignore is for tests/playwright/ directory
 
+# Authentication state (saved browser sessions)
+.auth/
+*.json
+
 # Screenshots from failed tests
 screenshots/
 *.png
