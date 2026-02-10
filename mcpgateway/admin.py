@@ -6015,7 +6015,12 @@ async def admin_create_user(
 
         # Create new user
         new_user = await auth_service.create_user(
-            email=str(form.get("email", "")), password=password, full_name=str(form.get("full_name", "")), is_admin=form.get("is_admin") == "on", auth_provider="local"
+            email=str(form.get("email", "")),
+            password=password,
+            full_name=str(form.get("full_name", "")),
+            is_admin=form.get("is_admin") == "on",
+            auth_provider="local",
+            granted_by=get_user_email(user),  # Pass current admin user for audit trail
         )
 
         # If the user was created with the default password, optionally force password change
