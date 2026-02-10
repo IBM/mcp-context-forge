@@ -409,8 +409,10 @@ async def _derive_team_from_payload(kwargs) -> Optional[str]:
                 return tid
 
     # Try request form data (admin UI endpoints)
+    # Note: use 'is not None' rather than truthiness check because some
+    # objects (e.g. Pydantic models) may be truthy yet lack .headers.
     request = kwargs.get("request")
-    if request:
+    if request is not None and isinstance(request, Request):
         content_type = request.headers.get("content-type", "")
         if "form" in content_type:
             try:

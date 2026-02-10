@@ -1476,7 +1476,7 @@ class TestDeriveTeamFromPayload:
     async def test_form_data_team_id(self):
         """Extract team_id from form data in request."""
         mock_form = AsyncMock(return_value={"team_id": "team-from-form"})
-        mock_request = MagicMock()
+        mock_request = MagicMock(spec=Request)
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
         mock_request.form = mock_form
 
@@ -1487,7 +1487,7 @@ class TestDeriveTeamFromPayload:
     async def test_form_data_no_team_id(self):
         """Return None when form data has no team_id."""
         mock_form = AsyncMock(return_value={})
-        mock_request = MagicMock()
+        mock_request = MagicMock(spec=Request)
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
         mock_request.form = mock_form
 
@@ -1497,7 +1497,7 @@ class TestDeriveTeamFromPayload:
     @pytest.mark.asyncio
     async def test_form_parse_exception(self):
         """Return None when form parsing fails."""
-        mock_request = MagicMock()
+        mock_request = MagicMock(spec=Request)
         mock_request.headers = {"content-type": "multipart/form-data"}
         mock_request.form = AsyncMock(side_effect=Exception("parse error"))
 
@@ -1507,10 +1507,19 @@ class TestDeriveTeamFromPayload:
     @pytest.mark.asyncio
     async def test_non_form_content_type(self):
         """Skip form parsing for non-form content types."""
-        mock_request = MagicMock()
+        mock_request = MagicMock(spec=Request)
         mock_request.headers = {"content-type": "application/json"}
 
         result = await rbac._derive_team_from_payload({"request": mock_request})
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_pydantic_request_param_not_confused_with_fastapi_request(self):
+        """Ensure a Pydantic model named 'request' is not treated as a FastAPI Request."""
+        mock_pydantic_model = MagicMock()  # No spec=Request, simulates a Pydantic body param
+        mock_pydantic_model.headers = None  # Pydantic models might have arbitrary attrs
+
+        result = await rbac._derive_team_from_payload({"request": mock_pydantic_model})
         assert result is None
 
 

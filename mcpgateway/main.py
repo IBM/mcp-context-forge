@@ -1345,7 +1345,7 @@ def _normalize_scope_path(scope_path: str, root_path: str) -> str:
     if root_path and len(root_path) > 1:
         root_path = root_path.rstrip("/")
     if root_path and len(root_path) > 1 and scope_path.startswith(root_path):
-        rest = scope_path[len(root_path):]
+        rest = scope_path[len(root_path) :]
         # Ensure we matched a full path segment, not a partial prefix
         # e.g. root_path="/app" must not strip from "/application/admin"
         if not rest or rest[0] == "/":
