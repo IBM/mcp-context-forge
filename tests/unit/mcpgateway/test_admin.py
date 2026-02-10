@@ -11903,7 +11903,7 @@ class TestApplySearchFilter:
             (MockModel.description, True, False),
         ]
 
-        result = apply_search_filter(query, MockModel, "test", fields)
+        result = apply_search_filter(query, "test", fields)
         # Result should be a Select statement with WHERE clause
         assert result is not None
         assert str(result) != str(query)  # Query was modified
@@ -11924,7 +11924,7 @@ class TestApplySearchFilter:
         query = select(MockModel)
         fields = [(MockModel.name, False, False)]
 
-        result = apply_search_filter(query, MockModel, "100%", fields)
+        result = apply_search_filter(query, "100%", fields)
         compiled = str(result.compile(compile_kwargs={"literal_binds": True}))
         # The % should be escaped in the LIKE pattern
         assert "100\\%" in compiled or "100" in compiled
@@ -11944,7 +11944,7 @@ class TestApplySearchFilter:
         query = select(MockModel)
         fields = [(MockModel.name, False, False)]
 
-        result = apply_search_filter(query, MockModel, "test_name", fields)
+        result = apply_search_filter(query, "test_name", fields)
         compiled = str(result.compile(compile_kwargs={"literal_binds": True}))
         # The _ should be escaped in the LIKE pattern
         assert "test\\_name" in compiled or "test_name" in compiled
@@ -11964,7 +11964,7 @@ class TestApplySearchFilter:
         query = select(MockModel)
         fields = [(MockModel.tags, False, True)]  # is_json=True
 
-        result = apply_search_filter(query, MockModel, "tag1", fields)
+        result = apply_search_filter(query, "tag1", fields)
         compiled = str(result)
         # JSON fields should be cast to String
         assert "CAST" in compiled or "cast" in compiled.lower()
@@ -11984,7 +11984,7 @@ class TestApplySearchFilter:
         query = select(MockModel)
         fields = [(MockModel.name, False, False)]
 
-        result = apply_search_filter(query, MockModel, "test_name", fields)
+        result = apply_search_filter(query, "test_name", fields)
         compiled = str(result)
         # The ESCAPE clause should be present to handle backslash escapes
         assert "ESCAPE" in compiled.upper()
