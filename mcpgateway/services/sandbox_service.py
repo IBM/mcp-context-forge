@@ -30,8 +30,8 @@ from typing import List, Optional
 from sqlalchemy.orm import Session
 
 # Local
-from ..plugins.unified_pdp.pdp import PolicyDecisionPoint
-from ..plugins.unified_pdp.pdp_models import (
+from plugins.unified_pdp.pdp import PolicyDecisionPoint
+from plugins.unified_pdp.pdp_models import (
     CacheConfig,
     CombinationMode,
     Context,
@@ -43,7 +43,7 @@ from ..plugins.unified_pdp.pdp_models import (
     Resource,
     Subject,
 )
-from ..schemas.sandbox import (
+from ..schemas import (
     BatchSimulationResult,
     DecisionComparison,
     HistoricalDecision,

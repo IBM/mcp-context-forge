@@ -20,13 +20,14 @@ import logging
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, Form, HTTPException, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from mcpgateway.auth import get_current_user
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 # Local
 from ..db import get_db
-from ..schemas.sandbox import (
+from ..schemas import (
     BatchSimulateRequest,
     BatchSimulationResult,
     RegressionReport,
@@ -505,6 +506,8 @@ async def service_info() -> dict:
 
 @router.post("/sandbox/simulate", response_class=HTMLResponse)
 async def simulate_form_submit(
+    request: Request,
+    current_user=Depends(get_current_user),
     policy_draft_id: str = Form(...),
     subject_email: str = Form(...),
     subject_roles: str = Form(...),
@@ -554,95 +557,12 @@ async def simulate_form_submit(
             include_explanation=True,
         )
 
-        # Generate HTML response
-        passed_class = "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200" if result.passed else "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-        passed_text = "PASSED ✓" if result.passed else "FAILED ✗"
-
-        policies_html = "".join(
-            [
-                f'<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200">{policy}</span>'
-                for policy in result.matching_policies
-            ]
+        # Render template response with auto-escaping
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "sandbox_simulate_results.html",
+            {"result": result}
         )
-
-        explanation_html = ""
-        if result.explanation:
-            explanation_html = f"""
-            <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Detailed Explanation</h4>
-                <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
-                    <pre class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap font-mono">{result.explanation}</pre>
-                </div>
-            </div>
-            """
-
-        html = f"""
-        <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
-            <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
-                    Simulation Results
-                </h3>
-            </div>
-
-            <div class="p-6 space-y-6">
-                <!-- Result Badge -->
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Test Result</h4>
-                        <div class="mt-2">
-                            <span class="px-3 py-1 inline-flex text-sm leading-5 font-semibold rounded-full {passed_class}">
-                                {passed_text}
-                            </span>
-                        </div>
-                    </div>
-                    <div class="text-right">
-                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400">Execution Time</h4>
-                        <p class="mt-2 text-2xl font-bold text-gray-900 dark:text-white">
-                            {result.execution_time_ms}ms
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Decision Details -->
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 border-t border-gray-200 dark:border-gray-700 pt-6">
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Expected Decision</h4>
-                        <p class="text-lg font-semibold text-gray-900 dark:text-white">
-                            {result.expected_decision.value}
-                        </p>
-                    </div>
-                    <div>
-                        <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-2">Actual Decision</h4>
-                        <p class="text-lg font-semibold text-gray-900 dark:text-white">
-                            {result.actual_decision.value}
-                        </p>
-                    </div>
-                </div>
-
-                <!-- Matching Policies -->
-                <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Matching Policies</h4>
-                    <div class="space-x-2 space-y-2">
-                        {policies_html if policies_html else '<p class="text-sm text-gray-500 dark:text-gray-400">No policies matched</p>'}
-                    </div>
-                </div>
-
-                <!-- Reason -->
-                <div class="border-t border-gray-200 dark:border-gray-700 pt-6">
-                    <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Decision Reason</h4>
-                    <div class="bg-gray-50 dark:bg-gray-900 rounded-md p-4">
-                        <p class="text-sm text-gray-700 dark:text-gray-300">
-                            {result.reason}
-                        </p>
-                    </div>
-                </div>
-
-                {explanation_html}
-            </div>
-        </div>
-        """
-
-        return HTMLResponse(content=html)
 
     except Exception as e:
         logger.exception("Error running simulation")
