@@ -17,13 +17,18 @@ Required interface:
 """
 
 # Standard
+import logging
 from typing import List, Optional
 
 # Third-Party
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 # First-Party
+from mcpgateway.db import Tool, ToolEmbedding
 from mcpgateway.schemas import ToolSearchResult
+
+logger = logging.getLogger(__name__)
 
 
 class VectorSearchService:
@@ -114,3 +119,61 @@ class VectorSearchService:
         
         # Placeholder: Return empty results
         return []
+
+ 
+    def get_tool_embedding(
+        self, 
+        db: Session, 
+        tool_id: str
+    ) -> Optional[ToolEmbedding]:
+        """Retrieve stored embedding for a tool.
+        
+        Args:
+            db: Database session
+            tool_id: ID of the tool
+        
+        Returns:
+            ToolEmbedding if found, None otherwise
+            
+        Example:
+            >>> embedding = search_service.get_tool_embedding(db, "tool-123")
+            >>> if embedding:
+            ...     print(f"Found embedding with {len(embedding.embedding)} dimensions")
+            ...     print(f"Model: {embedding.model_name}")
+            ...     print(f"Created: {embedding.created_at}")
+        """
+        return db.query(ToolEmbedding).filter(
+            ToolEmbedding.tool_id == tool_id
+        ).first()
+
+    def delete_tool_embedding(
+        self, 
+        db: Session, 
+        tool_id: str
+    ) -> bool:
+        """Delete stored embedding for a tool.
+        
+        Args:
+            db: Database session
+            tool_id: ID of the tool
+        
+        Returns:
+            True if deleted, False if not found
+            
+        Example:
+            >>> # Delete old embedding before regenerating
+            >>> deleted = search_service.delete_tool_embedding(db, "tool-123")
+            >>> if deleted:
+            ...     print("Embedding deleted successfully")
+            ...     # Now regenerate with new model
+            ...     await embedding_service.embed_and_store_tool(db, tool)
+        """
+        embedding = self.get_tool_embedding(db, tool_id)
+        if embedding:
+            db.delete(embedding)
+            db.commit()
+            logger.info(f"Deleted embedding for tool {tool_id}")
+            return True
+        logger.warning(f"No embedding found for tool {tool_id}")
+        return False
+    
