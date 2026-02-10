@@ -277,6 +277,9 @@ class TestGatewayCreation:
         fails, the gateway is NOT saved to the database (returns 502). Since this
         depends on external service availability, we skip rather than fail.
 
+        After a successful POST, the JS handler redirects to /admin#gateways via
+        window.location.href. We wait for that navigation to settle.
+
         Returns:
             The response object from the POST.
         """
@@ -288,18 +291,43 @@ class TestGatewayCreation:
         response = response_info.value
         if response.status >= 400:
             pytest.skip(f"Gateway creation failed for '{gateway_name}' (HTTP {response.status} — external service or server error)")
+
+        # The JS success handler does window.location.href = redirectUrl which
+        # triggers a full page navigation. Wait for it to complete so the
+        # subsequent reload doesn't race with the redirect.
+        gateways_page.page.wait_for_load_state("domcontentloaded")
+
         return response
 
     @staticmethod
     def _verify_gateway_in_table(gateways_page: GatewaysPage, gateway_name: str):
-        """Reload, search, and assert gateway exists in the table."""
-        # Wait for any in-flight HTMX swap to settle before reload
+        """Reload, search, and assert gateway exists in the table.
+
+        After gateway creation, the JS handler redirects to /admin#gateways.
+        We reload to ensure the DB commit (which runs after the POST response
+        is sent) has completed, then navigate to the gateways tab and search.
+        """
+        # Wait for the DB commit to complete (runs after POST response is sent)
         gateways_page.page.wait_for_timeout(2000)
+
+        # Reload to get fresh data and explicitly navigate to gateways tab
         gateways_page.page.reload(wait_until="domcontentloaded")
+        gateways_page.navigate_to_gateways_tab()
         gateways_page.wait_for_gateways_table_loaded()
         gateways_page.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=20000)
         gateways_page.search_gateways(gateway_name)
         gateways_page.page.wait_for_timeout(1000)
+
+        if not gateways_page.gateway_exists(gateway_name):
+            # Retry once: reload again in case the first load raced with db.commit()
+            logger.warning("Gateway '%s' not found on first attempt, retrying after reload", gateway_name)
+            gateways_page.page.reload(wait_until="domcontentloaded")
+            gateways_page.navigate_to_gateways_tab()
+            gateways_page.wait_for_gateways_table_loaded()
+            gateways_page.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=20000)
+            gateways_page.search_gateways(gateway_name)
+            gateways_page.page.wait_for_timeout(1000)
+
         assert gateways_page.gateway_exists(gateway_name), f"Gateway '{gateway_name}' was not found in the table after creation"
 
     def test_create_simple_gateway(self, gateways_page: GatewaysPage, test_gateway_data: dict):
