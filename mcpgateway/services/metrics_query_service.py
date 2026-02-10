@@ -51,10 +51,6 @@ class AggregatedMetrics:
     # Source breakdown for debugging
     raw_count: int = 0
     rollup_count: int = 0
-    # Current hour metrics (for real-time visibility)
-    current_hour_executions: int = 0
-    current_hour_successful: int = 0
-    current_hour_failed: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format for API response.
