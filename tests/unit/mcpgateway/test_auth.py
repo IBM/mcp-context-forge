@@ -1086,6 +1086,8 @@ class TestSetAuthMethodFromPayload:
 
         with (
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):
@@ -1116,7 +1118,9 @@ class TestSetAuthMethodFromPayload:
 
         with (
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
             patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True),
+            patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):
