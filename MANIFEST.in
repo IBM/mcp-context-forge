@@ -28,6 +28,7 @@ include *.json
 include *.sh
 include *.txt
 include *.lua
+include *.js
 recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
@@ -173,6 +174,7 @@ exclude .coverage.*
 exclude .travis.yml
 exclude .eslintrc.json
 exclude eslint.config.js
+exclude vitest.config.js
 exclude .stylelintrc.json
 exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt
