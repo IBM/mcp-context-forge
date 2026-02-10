@@ -1326,6 +1326,33 @@ async def plugin_exception_handler(_request: Request, exc: PluginError):
     return ORJSONResponse(status_code=200, content={"error": json_rpc_error.model_dump()})
 
 
+def _normalize_scope_path(scope_path: str, root_path: str) -> str:
+    """Strip ``root_path`` prefix from *scope_path* when a reverse proxy forwards the full path.
+
+    Returns the route-only path (e.g. ``"/qa/gateway/docs"`` -> ``"/docs"``).
+    A ``root_path`` of ``"/"`` is ignored to avoid stripping the leading slash
+    from every path.  Trailing slashes on *root_path* are stripped before
+    comparison so that ``"/qa/gateway/"`` is handled identically to
+    ``"/qa/gateway"``.
+
+    Args:
+        scope_path: The full path from the request scope.
+        root_path: The root path prefix to be stripped.
+
+    Returns:
+        The normalized path with the root_path prefix removed.
+    """
+    if root_path and len(root_path) > 1:
+        root_path = root_path.rstrip("/")
+    if root_path and len(root_path) > 1 and scope_path.startswith(root_path):
+        rest = scope_path[len(root_path):]
+        # Ensure we matched a full path segment, not a partial prefix
+        # e.g. root_path="/app" must not strip from "/application/admin"
+        if not rest or rest[0] == "/":
+            return rest or "/"
+    return scope_path
+
+
 class DocsAuthMiddleware(BaseHTTPMiddleware):
     """
     Middleware to protect FastAPI's auto-generated documentation routes
@@ -1386,14 +1413,11 @@ class DocsAuthMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Get path from scope to handle root_path correctly
-        # request.scope["path"] is the path after stripping root_path
-        # This handles deployments under sub-paths (e.g., /gateway/docs)
         scope_path = request.scope.get("path", request.url.path)
         root_path = request.scope.get("root_path", "")
+        scope_path = _normalize_scope_path(scope_path, root_path)
 
-        # Check both the scope path and the full URL path to be safe
-        # This covers both direct access and sub-path deployments
-        is_protected = any(scope_path.startswith(p) for p in protected_paths) or any(request.url.path.startswith(f"{root_path}{p}") for p in protected_paths if root_path)
+        is_protected = any(scope_path.startswith(p) for p in protected_paths)
 
         if is_protected:
             try:
@@ -1471,13 +1495,14 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         # Get path from scope to handle root_path correctly
         scope_path = request.scope.get("path", request.url.path)
         root_path = request.scope.get("root_path", "")
+        scope_path = _normalize_scope_path(scope_path, root_path)
 
         # Allow OPTIONS requests for CORS preflight (RFC 7231)
         if request.method == "OPTIONS":
             return await call_next(request)
 
         # Check if this is an admin route
-        is_admin_route = scope_path.startswith("/admin") or (root_path and request.url.path.startswith(f"{root_path}/admin"))
+        is_admin_route = scope_path.startswith("/admin")
 
         if not is_admin_route:
             return await call_next(request)
