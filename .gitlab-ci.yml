@@ -1,3 +1,9 @@
 workflow:
   rules:
     - when: never
+
+noop:
+  rules:
+    - when: never
+  script:
+    - echo "noop"
