@@ -37,10 +37,10 @@ make monitoring-lite-down && make monitoring-lite-up
 # Start load test UI (Runs on local host)
 make load-test-ui
 # Access locust - http://localhost:8089 and run the test
-	# Concurreny = 800
-	# Ramp up = 100
-	# Run Time - 10m
-	# uncheck FastTestEchoUser & FastTestTimeUser
+    # Concurreny = 800
+    # Ramp up = 100
+    # Run Time - 10m
+    # uncheck FastTestEchoUser & FastTestTimeUser
 
 ```
 
