@@ -19,9 +19,11 @@ from dotenv import load_dotenv
 try:
     # Local
     from .config import get_example_env, get_settings, validate_environment
+    from .env_utils import _env_int
 except ImportError:
     # Third-Party
     from config import get_example_env, get_settings, validate_environment
+    from env_utils import _env_int
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
@@ -112,12 +114,7 @@ def main():
 
     try:
         host = os.getenv("HOST", "127.0.0.1")
-        port_raw = os.getenv("PORT", "8000")
-        try:
-            port = int(port_raw)
-        except ValueError:
-            logger.warning("Invalid PORT=%r; using 8000", port_raw)
-            port = 8000
+        port = _env_int("PORT", default=8000)
 
         env_log_level = os.getenv("LOG_LEVEL")
         log_level = (env_log_level or ("debug" if settings.debug_mode else "info")).lower()

@@ -18,6 +18,7 @@ try:
     # Local
     from .agent_langchain import LangchainMCPAgent
     from .config import get_settings
+    from .env_utils import _env_bool, _env_int, _parse_csv
     from .models import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -32,6 +33,7 @@ except ImportError:
     # Third-Party
     from agent_langchain import LangchainMCPAgent
     from config import get_settings
+    from env_utils import _env_bool, _env_int, _parse_csv
     from models import (
         ChatCompletionChoice,
         ChatCompletionRequest,
@@ -46,28 +48,6 @@ except ImportError:
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Basic env parsing helpers (kept local to avoid adding new dependencies).
-def _env_bool(name: str, *, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in {"1", "true", "yes", "y", "on"}
-
-
-def _env_int(name: str, *, default: int) -> int:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        logger.warning("Invalid %s=%r; using %d", name, raw, default)
-        return default
-
-
-def _parse_csv(value: str) -> list[str]:
-    return [part.strip() for part in value.split(",") if part.strip()]
 
 
 # Initialize FastAPI app

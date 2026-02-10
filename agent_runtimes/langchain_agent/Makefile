@@ -71,11 +71,11 @@ check-env: ## Validate environment configuration
 # Application Management
 run: check-env ## Run the agent in production mode
 	@echo "🚀 Starting MCP LangChain Agent..."
-	uvicorn app:app --host 127.0.0.1 --port 8000
+	uvicorn app:app --host $${HOST:-127.0.0.1} --port $${PORT:-8000}
 
 dev: check-env ## Run the agent in development mode with auto-reload
 	@echo "🔧 Starting MCP LangChain Agent in development mode..."
-	uvicorn app:app --host 127.0.0.1 --port 8000 --reload
+	uvicorn app:app --host $${HOST:-127.0.0.1} --port $${PORT:-8000} --reload
 
 # Health Checks
 health: ## Check agent health status
