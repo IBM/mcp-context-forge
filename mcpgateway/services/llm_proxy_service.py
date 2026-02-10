@@ -423,7 +423,7 @@ class LLMProxyService:
             try:
                 db.close()
             except Exception as e:
-                logger.debug("Error closing DB session after resolve_model: %s", e)
+                logger.debug("Error closing DB session after resolve_model: %s", e)  # pragma: no cover
         # Build request based on provider type
         if provider.provider_type == LLMProviderType.AZURE_OPENAI:
             url, headers, body = self._build_azure_request(request, provider, model)

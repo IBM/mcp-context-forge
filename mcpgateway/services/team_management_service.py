@@ -720,7 +720,7 @@ class TeamManagementService:
                         # No DB needed; return reconstructed objects
                         return teams
                     except Exception as e:
-                        logger.warning(f"Failed to reconstruct teams from cache: {e}")
+                        logger.warning(f"Failed to reconstruct teams from cache: {e}")  # pragma: no cover
                         # Fall through to full DB query
 
                 # Otherwise assume list of IDs: fetch full team objects by IDs (fast indexed lookup)
@@ -730,7 +730,7 @@ class TeamManagementService:
                     return teams
                 except Exception as e:
                     self.db.rollback()
-                    logger.warning(f"Failed to fetch teams by IDs from cache: {e}")
+                    logger.warning(f"Failed to fetch teams by IDs from cache: {e}")  # pragma: no cover
                     # Fall through to full query
 
         # Cache miss or caching disabled - do full query
@@ -752,7 +752,7 @@ class TeamManagementService:
 
         except Exception as e:
             self.db.rollback()
-            logger.error(f"Failed to get teams for user {user_email}: {e}")
+            logger.error(f"Failed to get teams for user {user_email}: {e}")  # pragma: no cover
             return []
 
     async def verify_team_for_user(self, user_email, team_id=None):

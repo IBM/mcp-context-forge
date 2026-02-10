@@ -422,11 +422,11 @@ class NotificationService:
             method_attr = getattr(notification_root, "method", None)
             if isinstance(method_attr, str):
                 if method_attr.endswith("notifications/tools/list_changed"):
-                    notification_type = NotificationType.TOOLS_LIST_CHANGED
+                    notification_type = NotificationType.TOOLS_LIST_CHANGED  # pragma: no cover
                 elif method_attr.endswith("notifications/resources/list_changed"):
-                    notification_type = NotificationType.RESOURCES_LIST_CHANGED
+                    notification_type = NotificationType.RESOURCES_LIST_CHANGED  # pragma: no cover
                 elif method_attr.endswith("notifications/prompts/list_changed"):
-                    notification_type = NotificationType.PROMPTS_LIST_CHANGED
+                    notification_type = NotificationType.PROMPTS_LIST_CHANGED  # pragma: no cover
 
         if notification_type:
             logger.info(

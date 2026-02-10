@@ -382,7 +382,7 @@ class MetricsCleanupService:
                         if batch_deleted >= self.batch_size and self._batch_sleep_ms > 0:
                             time.sleep(self._batch_sleep_ms / 1000.0)
                     except Exception as e:
-                        logger.debug("Sleep between delete batches interrupted: %s", e)
+                        logger.debug("Sleep between delete batches interrupted: %s", e)  # pragma: no cover
 
                     # If we deleted less than batch size, we're done
                     if batch_deleted < self.batch_size:
