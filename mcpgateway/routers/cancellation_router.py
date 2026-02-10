@@ -22,9 +22,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
 import mcpgateway.main as main_module
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 
 # Initialize logging
 logging_service = LoggingService()
@@ -66,7 +67,7 @@ class CancelResponse(BaseModel):
 
 
 @router.post("/cancel", response_model=CancelResponse)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with_permissions)) -> CancelResponse:
     """
     Cancel a run by its request ID.
@@ -104,7 +105,7 @@ async def cancel_run(payload: CancelRequest, _user=Depends(get_current_user_with
 
 
 @router.get("/status/{request_id}")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_status(request_id: str, _user=Depends(get_current_user_with_permissions)):
     """
     Get the status of a run by its request ID.

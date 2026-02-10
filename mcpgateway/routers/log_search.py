@@ -30,8 +30,9 @@ from mcpgateway.db import (
     SecurityEvent,
     StructuredLogEntry,
 )
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.log_aggregator import get_log_aggregator
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 
 logger = logging.getLogger(__name__)
 
@@ -320,7 +321,7 @@ class PerformanceMetricResponse(BaseModel):
 
 # API Endpoints
 @router.post("/search", response_model=LogSearchResponse)
-@require_permission("logs:read")
+@require_permission_v2("logs:read")
 async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> LogSearchResponse:
     """Search structured logs with filters and pagination.
 
@@ -429,7 +430,7 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
 
 
 @router.get("/trace/{correlation_id}", response_model=CorrelationTraceResponse)
-@require_permission("logs:read")
+@require_permission_v2("logs:read")
 async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> CorrelationTraceResponse:
     """Get all logs and events for a correlation ID.
 
@@ -542,7 +543,7 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
 
 
 @router.get("/security-events", response_model=List[SecurityEventResponse])
-@require_permission("security:read")
+@require_permission_v2("security:read")
 async def get_security_events(
     severity: Optional[List[str]] = Query(None),
     event_type: Optional[List[str]] = Query(None),
@@ -618,7 +619,7 @@ async def get_security_events(
 
 
 @router.get("/audit-trails", response_model=List[AuditTrailResponse])
-@require_permission("audit:read")
+@require_permission_v2("audit:read")
 async def get_audit_trails(
     action: Optional[List[str]] = Query(None),
     resource_type: Optional[List[str]] = Query(None),
@@ -699,7 +700,7 @@ async def get_audit_trails(
 
 
 @router.get("/performance-metrics", response_model=List[PerformanceMetricResponse])
-@require_permission("metrics:read")
+@require_permission_v2("metrics:read")
 async def get_performance_metrics(
     component: Optional[str] = Query(None),
     operation: Optional[str] = Query(None),

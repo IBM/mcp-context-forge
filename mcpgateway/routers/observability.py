@@ -20,9 +20,10 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import SessionLocal
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 
 router = APIRouter(prefix="/observability", tags=["Observability"])
 
@@ -57,7 +58,7 @@ def get_db():
 
 
 @router.get("/traces", response_model=List[ObservabilityTraceRead])
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def list_traces(
     start_time: Optional[datetime] = Query(None, description="Filter traces after this time"),
     end_time: Optional[datetime] = Query(None, description="Filter traces before this time"),
@@ -143,7 +144,7 @@ async def list_traces(
 
 
 @router.post("/traces/query", response_model=List[ObservabilityTraceRead])
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def query_traces_advanced(
     # Third-Party
     request_body: dict,
@@ -257,7 +258,7 @@ async def query_traces_advanced(
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)):
     """Get a trace by ID with all its spans and events.
 
@@ -307,7 +308,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
 
 
 @router.get("/spans", response_model=List[ObservabilitySpanRead])
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def list_spans(
     trace_id: Optional[str] = Query(None, description="Filter by trace ID"),
     resource_type: Optional[str] = Query(None, description="Filter by resource type"),
@@ -371,7 +372,7 @@ async def list_spans(
 
 
 @router.delete("/traces/cleanup")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def cleanup_old_traces(
     days: int = Query(7, ge=1, description="Delete traces older than this many days"),
     db: Session = Depends(get_db),
@@ -410,7 +411,7 @@ async def cleanup_old_traces(
 
 
 @router.get("/stats")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_stats(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
@@ -471,7 +472,7 @@ async def get_stats(
 
 
 @router.post("/traces/export")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def export_traces(
     request_body: dict,
     format: str = Query("json", description="Export format (json, csv, ndjson)"),
@@ -650,7 +651,7 @@ async def export_traces(
 
 
 @router.get("/analytics/query-performance")
-@require_permission("admin.system_config")
+@require_permission_v2("admin.system_config")
 async def get_query_performance(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
