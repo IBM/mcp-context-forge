@@ -3,373 +3,6 @@ const Admin = window.Admin || {};
 
 /* global marked, DOMPurify */
 const MASKED_AUTH_VALUE = "*****";
-
-// ===================================================================
-// GLOBAL CHART.JS INSTANCE REGISTRY
-// ===================================================================
-// Centralized chart management to prevent "Canvas is already in use" errors
-Admin.chartRegistry = {
-    charts: new Map(),
-
-    register(id, chart) {
-        // Destroy existing chart with same ID before registering new one
-        if (this.charts.has(id)) {
-            this.destroy(id);
-        }
-        this.charts.set(id, chart);
-        console.log(`Chart registered: ${id}`);
-    },
-
-    destroy(id) {
-        const chart = this.charts.get(id);
-        if (chart) {
-            try {
-                chart.destroy();
-                console.log(`Chart destroyed: ${id}`);
-            } catch (e) {
-                console.warn(`Failed to destroy chart ${id}:`, e);
-            }
-            this.charts.delete(id);
-        }
-    },
-
-    destroyAll() {
-        console.log(`Destroying all charts (${this.charts.size} total)`);
-        this.charts.forEach((chart, id) => {
-            this.destroy(id);
-        });
-    },
-
-    destroyByPrefix(prefix) {
-        const toDestroy = [];
-        this.charts.forEach((chart, id) => {
-            if (id.startsWith(prefix)) {
-                toDestroy.push(id);
-            }
-        });
-        console.log(
-            `Destroying ${toDestroy.length} charts with prefix: ${prefix}`,
-        );
-        toDestroy.forEach((id) => this.destroy(id));
-    },
-
-    has(id) {
-        return this.charts.has(id);
-    },
-
-    get(id) {
-        return this.charts.get(id);
-    },
-
-    size() {
-        return this.charts.size;
-    },
-};
-
-// Cleanup all charts on page unload
-window.addEventListener("beforeunload", () => {
-    window.chartRegistry.destroyAll();
-});
-
-// Add three fields to passthrough section on Advanced button click
-Admin.handleAddPassthrough = function () {
-    const passthroughContainer = safeGetElement("passthrough-container");
-    if (!passthroughContainer) {
-        console.error("Passthrough container not found");
-        return;
-    }
-
-    // Toggle visibility
-    if (
-        passthroughContainer.style.display === "none" ||
-        passthroughContainer.style.display === ""
-    ) {
-        passthroughContainer.style.display = "block";
-        // Add fields only if not already present
-        if (!document.getElementById("query-mapping-field")) {
-            const queryDiv = document.createElement("div");
-            queryDiv.className = "mb-4";
-            queryDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Query Mapping (JSON)</label>
-                <textarea id="query-mapping-field" name="query_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
-            `;
-            passthroughContainer.appendChild(queryDiv);
-        }
-        if (!document.getElementById("header-mapping-field")) {
-            const headerDiv = document.createElement("div");
-            headerDiv.className = "mb-4";
-            headerDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Header Mapping (JSON)</label>
-                <textarea id="header-mapping-field" name="header_mapping" class="mt-1 px-1.5 block w-full h-40 rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 bg-black text-white" placeholder="{}"></textarea>
-            `;
-            passthroughContainer.appendChild(headerDiv);
-        }
-        if (!document.getElementById("timeout-ms-field")) {
-            const timeoutDiv = document.createElement("div");
-            timeoutDiv.className = "mb-4";
-            timeoutDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">timeout_ms (number)</label>
-                <input type="number" id="timeout-ms-field" name="timeout_ms" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="30000" min="0" />
-            `;
-            passthroughContainer.appendChild(timeoutDiv);
-        }
-        if (!document.getElementById("expose-passthrough-field")) {
-            const exposeDiv = document.createElement("div");
-            exposeDiv.className = "mb-4";
-            exposeDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Expose Passthrough</label>
-                <select id="expose-passthrough-field" name="expose_passthrough" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300">
-                    <option value="true" selected>True</option>
-                    <option value="false">False</option>
-                </select>
-            `;
-            passthroughContainer.appendChild(exposeDiv);
-        }
-        if (!document.getElementById("allowlist-field")) {
-            const allowlistDiv = document.createElement("div");
-            allowlistDiv.className = "mb-4";
-            allowlistDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Allowlist (comma-separated hosts/schemes)</label>
-                <input type="text" id="allowlist-field" name="allowlist" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[example.com, https://api.example.com]" />
-            `;
-            passthroughContainer.appendChild(allowlistDiv);
-        }
-        if (!document.getElementById("plugin-chain-pre-field")) {
-            const pluginPreDiv = document.createElement("div");
-            pluginPreDiv.className = "mb-4";
-            pluginPreDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Pre</label>
-                <input type="text" id="plugin-chain-pre-field" name="plugin_chain_pre" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
-            `;
-            passthroughContainer.appendChild(pluginPreDiv);
-        }
-        if (!document.getElementById("plugin-chain-post-field")) {
-            const pluginPostDiv = document.createElement("div");
-            pluginPostDiv.className = "mb-4";
-            pluginPostDiv.innerHTML = `
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-1">Plugin Chain Post (optional, override defaults)</label>
-                <input type="text" id="plugin-chain-post-field" name="plugin_chain_post" class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300" placeholder="[]" />
-            `;
-            passthroughContainer.appendChild(pluginPostDiv);
-        }
-    } else {
-        passthroughContainer.style.display = "none";
-    }
-}
-
-// Make URL field read-only for integration type MCP
-Admin.updateEditToolUrl = function () {
-    const editTypeField = document.getElementById("edit-tool-type");
-    const editurlField = document.getElementById("edit-tool-url");
-    if (editTypeField && editurlField) {
-        if (editTypeField.value === "MCP") {
-            editurlField.readOnly = true;
-        } else {
-            editurlField.readOnly = false;
-        }
-    }
-}
-
-// Function to update default visibility based on team_id in URL
-function updateDefaultVisibility() {
-    const urlParams = new URLSearchParams(window.location.search);
-    const teamId = urlParams.get("team_id");
-    const hasTeam = teamId && teamId.trim() !== "";
-
-    // List of visibility prefixes to handle
-    // These correspond to the "public", "team", "private" radio buttons
-    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
-    const visibilityPrefixes = [
-        "gateway-visibility", // Gateways (Create)
-        "server-visibility", // Virtual Servers (Create)
-        "tool-visibility", // Tools (Create)
-        "resource-visibility", // Resources (Create)
-        "prompt-visibility", // Prompts (Create)
-        "a2a-visibility", // Agents (Create)
-    ];
-
-    visibilityPrefixes.forEach((prefix) => {
-        const publicId = `[id="${prefix}-public"]`;
-        const teamIdStr = `[id="${prefix}-team"]`;
-        const privateIdStr = `[id="${prefix}-private"]`;
-
-        // Handle potential duplicate IDs using querySelectorAll
-        const publicRadios = document.querySelectorAll(publicId);
-        const teamRadios = document.querySelectorAll(teamIdStr);
-        const privateRadios = document.querySelectorAll(privateIdStr);
-
-        if (hasTeam) {
-            // Default to Team
-            teamRadios.forEach((radio) => {
-                // Ensure we only set check if it's the initial default (not user modified,
-                // though on page load user hasn't modified yet).
-                if (!radio.checked) {
-                    radio.checked = true;
-                    // Also set defaultChecked to ensure form resets go to this state
-                    radio.defaultChecked = true;
-                    // Trigger change event for any listeners
-                    radio.dispatchEvent(new Event("change", { bubbles: true }));
-                }
-            });
-            // Reset public and private radios default state
-            publicRadios.forEach((radio) => {
-                radio.defaultChecked = false;
-            });
-            privateRadios.forEach((radio) => {
-                radio.defaultChecked = false;
-            });
-        } else {
-            // Default to Public
-            publicRadios.forEach((radio) => {
-                if (!radio.checked) {
-                    radio.checked = true;
-                    radio.defaultChecked = true;
-                    radio.dispatchEvent(new Event("change", { bubbles: true }));
-                }
-            });
-            // Reset team and private radios default state
-            teamRadios.forEach((radio) => {
-                radio.defaultChecked = false;
-            });
-            privateRadios.forEach((radio) => {
-                radio.defaultChecked = false;
-            });
-        }
-    });
-}
-
-// Attach event listener after DOM is loaded or when modal opens
-document.addEventListener("DOMContentLoaded", function () {
-    const TypeField = document.getElementById("edit-tool-type");
-    if (TypeField) {
-        TypeField.addEventListener("change", updateEditToolUrl);
-        // Set initial state
-        updateEditToolUrl();
-    }
-
-    // Initialize default visibility based on URL team_id
-    updateDefaultVisibility();
-
-    // Initialize CA certificate upload immediately
-    initializeCACertUpload();
-
-    // Also try to initialize after a short delay (in case the panel loads later)
-    setTimeout(initializeCACertUpload, 500);
-
-    // Re-initialize when switching to gateways tab
-    const gatewaysTab = document.querySelector('[onclick*="gateways"]');
-    if (gatewaysTab) {
-        gatewaysTab.addEventListener("click", function () {
-            setTimeout(initializeCACertUpload, 100);
-        });
-    }
-
-    // Initialize search functionality for all entity types (immediate, no debounce)
-    initializeSearchInputsMemoized();
-    initializeGlobalSearch();
-    initializePasswordValidation();
-    initializeAddMembersForms();
-
-    // Event delegation for team member search - server-side search for unified view
-    // This handler is initialized here for early binding, but the actual search logic
-    // is in performUserSearch() which is attached when the form is initialized
-    const teamSearchTimeouts = {};
-    const teamMemberDataCache = {};
-
-    document.body.addEventListener("input", async function (event) {
-        const target = event.target;
-        if (target.id && target.id.startsWith("user-search-")) {
-            const teamId = target.id.replace("user-search-", "");
-            const listContainer = document.getElementById(
-                `team-members-list-${teamId}`,
-            );
-
-            if (!listContainer) return;
-
-            const query = target.value.trim();
-
-            // Clear previous timeout for this team
-            if (teamSearchTimeouts[teamId]) {
-                clearTimeout(teamSearchTimeouts[teamId]);
-            }
-
-            // Get team member data from cache or script tag
-            if (!teamMemberDataCache[teamId]) {
-                const teamMemberDataScript = document.getElementById(
-                    `team-member-data-${teamId}`,
-                );
-                if (teamMemberDataScript) {
-                    try {
-                        teamMemberDataCache[teamId] = JSON.parse(
-                            teamMemberDataScript.textContent || "{}",
-                        );
-                        console.log(
-                            `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`,
-                        );
-                    } catch (e) {
-                        console.error(
-                            `[Team ${teamId}] Failed to parse team member data:`,
-                            e,
-                        );
-                        teamMemberDataCache[teamId] = {};
-                    }
-                } else {
-                    teamMemberDataCache[teamId] = {};
-                }
-            }
-
-            // Debounce server call
-            teamSearchTimeouts[teamId] = setTimeout(async () => {
-                await performUserSearch(
-                    teamId,
-                    query,
-                    listContainer,
-                    teamMemberDataCache[teamId],
-                );
-            }, 300);
-        }
-    });
-
-    // Re-initialize search inputs when HTMX content loads
-    // Only re-initialize if the swap affects search-related content
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-        const target = event.detail.target;
-        const relevantPanels = [
-            "catalog-panel",
-            "gateways-panel",
-            "tools-panel",
-            "resources-panel",
-            "prompts-panel",
-            "a2a-agents-panel",
-        ];
-
-        if (
-            target &&
-            relevantPanels.some(
-                (panelId) =>
-                    target.id === panelId || target.closest(`#${panelId}`),
-            )
-        ) {
-            console.log(
-                `📝 HTMX swap detected in ${target.id}, resetting search state`,
-            );
-            resetSearchInputsState();
-            initializeSearchInputsDebounced();
-        }
-    });
-
-    // Initialize search when switching tabs
-    document.addEventListener("click", function (event) {
-        if (
-            event.target.matches('[onclick*="showTab"]') ||
-            event.target.closest('[onclick*="showTab"]')
-        ) {
-            console.log("🔄 Tab switch detected, resetting search state");
-            resetSearchInputsState();
-            initializeSearchInputsDebounced();
-        }
-    });
-});
 /**
  * ====================================================================
  * SECURE ADMIN.JS - COMPLETE VERSION WITH XSS PROTECTION
@@ -1446,7 +1079,8 @@ Admin.showMetricsError = function (error) {
                 <p class="text-sm mb-2">${escapeHtml(errorMessage)}</p>
                 <p class="text-xs text-gray-500 mb-4">${helpText}</p>
                 <button
-                    onclick="Admin.retryLoadMetrics()"
+                    onclick="retryLoadMetrics()"
+                    onclick="retryLoadMetrics()"
                     class="bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Try Again
                 </button>
@@ -1470,7 +1104,7 @@ Admin.retryLoadMetrics = function () {
 }
 
 Admin.showMetricsPlaceholder = function () {
-    const aggregatedSection = Admin.safeGetElement("aggregated-metrics-section");
+    const aggregatedSection = safeGetElement("aggregated-metrics-section");
     if (aggregatedSection) {
         const placeholderDiv = document.createElement("div");
         placeholderDiv.className = "text-gray-600 p-4 text-center";
@@ -1550,7 +1184,7 @@ Admin.displayMetrics = function (data, retryCount = 0) {
                 </svg>
                 <h3 class="text-lg font-medium mb-2">No Metrics Available</h3>
                 <p class="text-sm">Metrics data will appear here once tools, resources, or prompts are executed.</p>
-                <button onclick="Admin.retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
+                <button onclick="retryLoadMetrics()" class="mt-4 bg-indigo-600 text-white px-4 py-2 rounded hover:bg-indigo-700 transition-colors">
                     Refresh Metrics
                 </button>
             `;
@@ -8121,7 +7755,6 @@ Admin.showTab = function (tabName) {
     }
 }
 
-Admin.showTab = showTab;
 // ===================================================================
 // MULTI-HEADER AUTHENTICATION MANAGEMENT
 // ===================================================================
@@ -8200,7 +7833,7 @@ Admin.addAuthHeader = function (containerId, options = {}) {
                 type="text"
                 placeholder="Header Key (e.g., X-API-Key)"
                 class="auth-header-key block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm"
-                oninput="Admin.updateAuthHeadersJSON('${containerId}')"
+                oninput="updateAuthHeadersJSON('${containerId}')"
             />
         </div>
         <div class="flex-1">
@@ -8211,12 +7844,12 @@ Admin.addAuthHeader = function (containerId, options = {}) {
                     placeholder="Header Value"
                     data-sensitive-label="header value"
                     class="auth-header-value block w-full px-1.5 rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 text-sm pr-16"
-                    oninput="Admin.updateAuthHeadersJSON('${containerId}')"
+                    oninput="updateAuthHeadersJSON('${containerId}')"
                 />
                 <button
                     type="button"
                     class="absolute inset-y-0 right-0 flex items-center px-2 text-xs font-medium text-indigo-600 hover:text-indigo-800 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-indigo-300"
-                    onclick="Admin.toggleInputMask('${valueInputId}', this)"
+                    onclick="toggleInputMask('${valueInputId}', this)"
                     aria-pressed="false"
                     aria-label="Show header value"
                 >
@@ -8226,7 +7859,7 @@ Admin.addAuthHeader = function (containerId, options = {}) {
         </div>
         <button
             type="button"
-            onclick="Admin.removeAuthHeader('${headerId}', '${containerId}')"
+            onclick="removeAuthHeader('${headerId}', '${containerId}')"
             class="inline-flex items-center px-2 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-red-700 bg-red-100 hover:bg-red-200 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 dark:bg-red-900 dark:text-red-300 dark:hover:bg-red-800"
             title="Remove header"
         >
@@ -11536,9 +11169,8 @@ Admin.testTool = async function (toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Decode HTML entities first, then escape and replace newlines with <br/> tags
-                const decodedDesc = decodeHtml(tool.description);
-                descElement.innerHTML = Admin.escapeHtml(decodedDesc).replace(
+                // Escape HTML and then replace newlines with <br/> tags
+                descElement.innerHTML = Admin.escapeHtml(tool.description).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -11861,23 +11493,23 @@ Admin.loadTools = async function () {
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                     <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
-                        <button onclick="Admin.enrichTool('${id}')"
+                        <button onclick="enrichTool('${id}')"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
                         Enrich
                         </button>
-                        <button onclick="Admin.generateToolTestCases('${id}')"
+                        <button onclick="generateToolTestCases('${id}')"
                         class="col-span-2 px-2 py-1 text-[11px] font-small rounded-md text-purple-600 hover:bg-purple-50">
                         Generate Test Cases
                         </button>
-                        <button onclick="Admin.validateTool('${id}')"
+                        <button onclick="validateTool('${id}')"
                         class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
                         Validate
                         </button>
-                        <button onclick="Admin.viewTool('${id}')"
+                        <button onclick="viewTool('${id}')"
                         class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
                         View
                         </button>
-                        <button onclick="Admin.editTool('${id}')"
+                        <button onclick="editTool('${id}')"
                         class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
                         Edit
                         </button>
@@ -12500,8 +12132,7 @@ Admin.validateTool = async function (toolId) {
                         ? tool.description.indexOf("*")
                         : tool.description.length,
                 );
-                const decodedDesc = decodeHtml(cleanDesc);
-                descElement.innerHTML = Admin.escapeHtml(decodedDesc).replace(
+                descElement.innerHTML = Admin.escapeHtml(tool.description).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -18951,7 +18582,7 @@ Admin.updateFilterEmptyState = function (entityType, visibleCount, isFiltering) 
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
                     </svg>
                     <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100 mb-2">No matching ${entityType}</h3>
-                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="Admin.clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
+                    <p class="text-gray-500 dark:text-gray-400">No ${entityType} found with the specified tags. Try adjusting your filter or <button onclick="clearTagFilter('${entityType}')" class="text-indigo-600 hover:text-indigo-500 underline">clear the filter</button>.</p>
                 </div>
             `;
             tableContainer.appendChild(emptyMessage);
@@ -19558,7 +19189,7 @@ Admin.updateDropZoneStatus = function (fileName, importData) {
                 <div class="text-xs text-gray-500 dark:text-gray-400">
                     ${totalEntities} entities • Version ${escapeHtml(importData.version || "unknown")}
                 </div>
-                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="Admin.resetImportFile()">
+                <button class="text-xs text-blue-600 dark:text-blue-400 hover:underline" onclick="resetImportFile()">
                     Choose different file
                 </button>
             </div>
@@ -20915,7 +20546,7 @@ Admin.showTokenCreatedModal = function (tokenData) {
                             id="new-token-value"
                         />
                         <button
-                            onclick="Admin.copyToClipboard('new-token-value')"
+                            onclick="copyToClipboard('new-token-value')"
                             class="px-3 py-2 bg-indigo-600 text-white text-sm rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             Copy
@@ -22406,7 +22037,7 @@ Admin.displayPublicTeams = function (teams) {
                     ${team.member_count} members
                 </div>
                 <button
-                    onclick="Admin.requestToJoinTeam('${escapeHtml(team.id)}')"
+                    onclick="requestToJoinTeam('${escapeHtml(team.id)}')"
                     class="px-3 py-2 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                     Request to Join
@@ -22821,15 +22452,15 @@ Admin.displayImportPreview = function (preview) {
         <!-- Selection Controls -->
         <div class="flex justify-between items-center mb-4">
             <div class="space-x-4">
-                <button onclick="Admin.selectAllItems()"
+                <button onclick="selectAllItems()"
                         class="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 underline">
                     Select All
                 </button>
-                <button onclick="Admin.selectNoneItems()"
+                <button onclick="selectNoneItems()"
                         class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-300 underline">
                     Select None
                 </button>
-                <button onclick="Admin.selectOnlyCustom()"
+                <button onclick="selectOnlyCustom()"
                         class="text-sm text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 underline">
                     Custom Items Only
                 </button>
@@ -22857,7 +22488,7 @@ Admin.displayImportPreview = function (preview) {
                                 <input type="checkbox"
                                        class="gateway-checkbox mt-1 mr-3"
                                        data-gateway="${gatewayName}"
-                                       onchange="Admin.updateSelectionCount()">
+                                       onchange="updateSelectionCount()">
                                 <div class="flex-1">
                                     <div class="font-medium text-gray-900 dark:text-white">
                                         ${bundle.gateway.name}
@@ -22910,7 +22541,7 @@ Admin.displayImportPreview = function (preview) {
                                            class="item-checkbox mt-1 mr-3"
                                            data-type="${entityType}"
                                            data-id="${item.id}"
-                                           onchange="Admin.updateSelectionCount()">
+                                           onchange="updateSelectionCount()">
                                     <div class="flex-1">
                                         <div class="text-sm font-medium text-gray-900 dark:text-white">
                                             ${item.name}
@@ -22965,17 +22596,17 @@ Admin.displayImportPreview = function (preview) {
 
         <!-- Action Buttons -->
         <div class="flex justify-between pt-6 border-t border-gray-200 dark:border-gray-700">
-            <button onclick="Admin.resetImportSelection()"
+            <button onclick="resetImportSelection()"
                     class="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md hover:bg-gray-50 dark:hover:bg-gray-700">
                 🔄 Reset Selection
             </button>
 
             <div class="space-x-3">
-                <button onclick="Admin.handleSelectiveImport(true)"
+                <button onclick="handleSelectiveImport(true)"
                         class="px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900 border border-blue-200 dark:border-blue-800 rounded-md hover:bg-blue-100 dark:hover:bg-blue-800">
                     🧪 Preview Selected
                 </button>
-                <button onclick="Admin.handleSelectiveImport(false)"
+                <button onclick="handleSelectiveImport(false)"
                         class="px-4 py-2 text-sm font-medium text-white bg-green-600 border border-transparent rounded-md hover:bg-green-700">
                     ✅ Import Selected Items
                 </button>
@@ -24271,7 +23902,7 @@ Admin.loadVirtualServersForChat = async function () {
                 <div class="server-item relative p-3 border rounded-lg cursor-pointer transition-colors
                     ${llmChatState.selectedServerId === server.id ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-900" : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-600"}
                     ${!isActive ? "opacity-50" : ""}"
-                    onclick="Admin.selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
+                    onclick="selectServerForChat('${server.id}', '${escapeHtml(server.name)}', ${isActive}, ${requiresToken}, '${visibility}')"
                     style="position: relative;">
 
                     ${
@@ -28984,7 +28615,7 @@ Admin.displayLogResults = function (data) {
 
             return `
             <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                onclick="Admin.showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
+                onclick="showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
                 <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                     ${formatTimestamp(log.timestamp)}
                 </td>
@@ -31598,15 +31229,6 @@ Admin.performTeamSearch = async function (searchTerm) {
     params.set("page", "1");
     params.set("per_page", Admin.getTeamsPerPage().toString());
 
-    // Sync URL state so CRUD refresh reads the correct page
-    const currentUrl = new URL(window.location.href);
-    const urlParams = new URLSearchParams(currentUrl.searchParams);
-    urlParams.set("teams_page", "1");
-    urlParams.set("teams_size", getTeamsPerPage().toString());
-    const newUrl =
-        currentUrl.pathname + "?" + urlParams.toString() + currentUrl.hash;
-    window.safeReplaceState({}, "", newUrl);
-
     if (searchTerm && searchTerm.trim() !== "") {
         params.set("q", searchTerm.trim());
     }
@@ -31821,6 +31443,7 @@ Admin.selectTeamFromSelector = function (button) {
 Admin.chartRegistry = {
     charts: new Map(),
 
+    
     register(id, chart) {
         // Destroy existing chart with same ID before registering new one
         if (this.charts.has(id)) {
@@ -31830,6 +31453,7 @@ Admin.chartRegistry = {
         console.log(`Chart registered: ${id}`);
     },
 
+    
     destroy(id) {
         const chart = this.charts.get(id);
         if (chart) {
@@ -31843,6 +31467,7 @@ Admin.chartRegistry = {
         }
     },
 
+    
     destroyAll() {
         console.log(`Destroying all charts (${this.charts.size} total)`);
         this.charts.forEach((chart, id) => {
@@ -31850,6 +31475,7 @@ Admin.chartRegistry = {
         });
     },
 
+    
     destroyByPrefix(prefix) {
         const toDestroy = [];
         this.charts.forEach((chart, id) => {
@@ -31863,14 +31489,17 @@ Admin.chartRegistry = {
         toDestroy.forEach((id) => this.destroy(id));
     },
 
+    
     has(id) {
         return this.charts.has(id);
     },
 
+    
     get(id) {
         return this.charts.get(id);
     },
 
+    
     size() {
         return this.charts.size;
     },
@@ -32108,7 +31737,6 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 });
-Admin.getTeamsCurrentPaginationState = getTeamsCurrentPaginationState;
 
 /**
  * Handle keydown event when Enter or Space key is pressed
@@ -32124,81 +31752,3 @@ function handleKeydown(event, callback) {
 }
 
 Admin.handleKeydown = handleKeydown;
-
-/**
- * Defense-in-depth: audit mutation buttons after every HTMX partial swap.
- *
- * Server-side Jinja2 `can_modify` is the authoritative control. This JS
- * handler is a redundant safety net that hides edit/delete/activate/deactivate
- * buttons when the client-side user context says the current user should not
- * be able to mutate a given row.
- */
-document.addEventListener("htmx:afterSettle", function (_evt) {
-    const currentUser = window.CURRENT_USER;
-    const isAdmin = Boolean(window.IS_ADMIN);
-    const userTeams = window.USER_TEAMS || [];
-
-    if (!currentUser) return;
-
-    // Build a quick lookup: team_id -> role (only "owner" matters for modify)
-    const teamRoleMap = {};
-    for (let i = 0; i < userTeams.length; i++) {
-        if (userTeams[i].id && userTeams[i].role) {
-            teamRoleMap[String(userTeams[i].id)] = userTeams[i].role;
-        }
-    }
-
-    // Known panel table body IDs that contain entity rows
-    const tableBodyIds = [
-        "tools-table-body",
-        "servers-table-body",
-        "resources-table-body",
-        "prompts-table-body",
-        "gateways-table-body",
-        "agents-table-body",
-        "toolBody",
-    ];
-
-    for (let t = 0; t < tableBodyIds.length; t++) {
-        const tbody = document.getElementById(tableBodyIds[t]);
-        if (!tbody) continue;
-
-        const rows = tbody.querySelectorAll("tr[data-owner-email]");
-        for (let r = 0; r < rows.length; r++) {
-            const row = rows[r];
-            const ownerEmail = row.getAttribute("data-owner-email") || "";
-            const teamId = row.getAttribute("data-team-id") || "";
-            const visibility = row.getAttribute("data-visibility") || "";
-
-            let canModify = isAdmin;
-            if (!canModify && ownerEmail === currentUser) {
-                canModify = true;
-            }
-            if (
-                !canModify &&
-                visibility === "team" &&
-                teamId &&
-                teamRoleMap[teamId] === "owner"
-            ) {
-                canModify = true;
-            }
-
-            if (!canModify) {
-                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
-                const buttons = row.querySelectorAll(
-                    "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
-                );
-                for (let b = 0; b < buttons.length; b++) {
-                    buttons[b].remove();
-                }
-                // Remove delete and state-toggle forms
-                const forms = row.querySelectorAll(
-                    "form[action*='/delete'], form[action*='/state']",
-                );
-                for (let f = 0; f < forms.length; f++) {
-                    forms[f].remove();
-                }
-            }
-        }
-    }
-});

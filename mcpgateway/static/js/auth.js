@@ -1,5 +1,9 @@
-import { MASKED_AUTH_VALUE } from './constants.js';
-import { safeGetElement, showSuccessMessage, showErrorMessage } from './utils.js';
+import { MASKED_AUTH_VALUE } from "./constants.js";
+import {
+  safeGetElement,
+  showSuccessMessage,
+  showErrorMessage,
+} from "./utils.js";
 
 // ===================================================================
 // MULTI-HEADER AUTHENTICATION MANAGEMENT
@@ -10,40 +14,38 @@ import { safeGetElement, showSuccessMessage, showErrorMessage } from './utils.js
  * @param {HTMLElement} button - Button triggering the toggle
  */
 export function toggleInputMask(inputOrId, button) {
-    const input =
-        typeof inputOrId === "string"
-            ? safeGetElement(inputOrId)
-            : inputOrId;
+  const input =
+    typeof inputOrId === "string" ? safeGetElement(inputOrId) : inputOrId;
 
-    if (!input || !button) {
-        return;
+  if (!input || !button) {
+    return;
+  }
+
+  const revealing = input.type === "password";
+  if (revealing) {
+    input.type = "text";
+    if (input.dataset.isMasked === "true") {
+      input.value = input.dataset.realValue ?? "";
     }
-
-    const revealing = input.type === "password";
-    if (revealing) {
-        input.type = "text";
-        if (input.dataset.isMasked === "true") {
-            input.value = input.dataset.realValue ?? "";
-        }
-    } else {
-        input.type = "password";
-        if (input.dataset.isMasked === "true") {
-            input.value = MASKED_AUTH_VALUE;
-        }
+  } else {
+    input.type = "password";
+    if (input.dataset.isMasked === "true") {
+      input.value = MASKED_AUTH_VALUE;
     }
+  }
 
-    const label = input.getAttribute("data-sensitive-label") || "value";
-    button.textContent = revealing ? "Hide" : "Show";
-    button.setAttribute("aria-pressed", revealing ? "true" : "false");
-    button.setAttribute(
-        "aria-label",
-        `${revealing ? "Hide" : "Show"} ${label}`.trim(),
-    );
+  const label = input.getAttribute("data-sensitive-label") || "value";
+  button.textContent = revealing ? "Hide" : "Show";
+  button.setAttribute("aria-pressed", revealing ? "true" : "false");
+  button.setAttribute(
+    "aria-label",
+    `${revealing ? "Hide" : "Show"} ${label}`.trim(),
+  );
 
-    const container = input.closest('[id^="auth-headers-container"]');
-    if (container) {
-        updateAuthHeadersJSON(container.id);
-    }
+  const container = input.closest('[id^="auth-headers-container"]');
+  if (container) {
+    updateAuthHeadersJSON(container.id);
+  }
 }
 
 /**
@@ -51,27 +53,27 @@ export function toggleInputMask(inputOrId, button) {
  * @param {string} containerId - ID of the container to add the header row to
  */
 export function addAuthHeader(containerId, options = {}) {
-    const container = safeGetElement(containerId);
-    if (!container) {
-        console.error(`Container with ID ${containerId} not found`);
-        return;
-    }
+  const container = safeGetElement(containerId);
+  if (!container) {
+    console.error(`Container with ID ${containerId} not found`);
+    return;
+  }
 
-    /**
-     * Global counter for unique header IDs
-     */
-    let headerCounter = 0;
-    const headerId = `auth-header-${++headerCounter}`;
-    const valueInputId = `${headerId}-value`;
+  /**
+   * Global counter for unique header IDs
+   */
+  let headerCounter = 0;
+  const headerId = `auth-header-${++headerCounter}`;
+  const valueInputId = `${headerId}-value`;
 
-    const headerRow = document.createElement("div");
-    headerRow.className = "flex items-center space-x-2";
-    headerRow.id = headerId;
-    if (options.existing) {
-        headerRow.dataset.existing = "true";
-    }
+  const headerRow = document.createElement("div");
+  headerRow.className = "flex items-center space-x-2";
+  headerRow.id = headerId;
+  if (options.existing) {
+    headerRow.dataset.existing = "true";
+  }
 
-    headerRow.innerHTML = `
+  headerRow.innerHTML = `
         <div class="flex-1">
             <input
                 type="text"
@@ -113,34 +115,34 @@ export function addAuthHeader(containerId, options = {}) {
         </button>
     `;
 
-    container.appendChild(headerRow);
+  container.appendChild(headerRow);
 
-    const keyInput = headerRow.querySelector(".auth-header-key");
-    const valueInput = headerRow.querySelector(".auth-header-value");
-    if (keyInput) {
-        keyInput.value = options.key ?? "";
+  const keyInput = headerRow.querySelector(".auth-header-key");
+  const valueInput = headerRow.querySelector(".auth-header-value");
+  if (keyInput) {
+    keyInput.value = options.key ?? "";
+  }
+  if (valueInput) {
+    if (options.isMasked) {
+      valueInput.value = MASKED_AUTH_VALUE;
+      valueInput.dataset.isMasked = "true";
+      valueInput.dataset.realValue = options.value ?? "";
+    } else {
+      valueInput.value = options.value ?? "";
+      if (valueInput.dataset) {
+        delete valueInput.dataset.isMasked;
+        delete valueInput.dataset.realValue;
+      }
     }
-    if (valueInput) {
-        if (options.isMasked) {
-            valueInput.value = MASKED_AUTH_VALUE;
-            valueInput.dataset.isMasked = "true";
-            valueInput.dataset.realValue = options.value ?? "";
-        } else {
-            valueInput.value = options.value ?? "";
-            if (valueInput.dataset) {
-                delete valueInput.dataset.isMasked;
-                delete valueInput.dataset.realValue;
-            }
-        }
-    }
+  }
 
-    updateAuthHeadersJSON(containerId);
+  updateAuthHeadersJSON(containerId);
 
-    const shouldFocus = options.focus !== false;
-    // Focus on the key input of the new header
-    if (shouldFocus && keyInput) {
-        keyInput.focus();
-    }
+  const shouldFocus = options.focus !== false;
+  // Focus on the key input of the new header
+  if (shouldFocus && keyInput) {
+    keyInput.focus();
+  }
 }
 
 /**
@@ -149,11 +151,11 @@ export function addAuthHeader(containerId, options = {}) {
  * @param {string} containerId - ID of the container to update
  */
 export function removeAuthHeader(headerId, containerId) {
-    const headerRow = safeGetElement(headerId);
-    if (headerRow) {
-        headerRow.remove();
-        updateAuthHeadersJSON(containerId);
-    }
+  const headerRow = safeGetElement(headerId);
+  if (headerRow) {
+    headerRow.remove();
+    updateAuthHeadersJSON(containerId);
+  }
 }
 
 /**
@@ -161,112 +163,109 @@ export function removeAuthHeader(headerId, containerId) {
  * @param {string} containerId - ID of the container with headers
  */
 export function updateAuthHeadersJSON(containerId) {
-    const container = safeGetElement(containerId);
-    if (!container) {
+  const container = safeGetElement(containerId);
+  if (!container) {
+    return;
+  }
+
+  const headers = [];
+  const headerRows = container.querySelectorAll('[id^="auth-header-"]');
+  const duplicateKeys = new Set();
+  const seenKeys = new Set();
+  let hasValidationErrors = false;
+
+  headerRows.forEach((row) => {
+    const keyInput = row.querySelector(".auth-header-key");
+    const valueInput = row.querySelector(".auth-header-value");
+
+    if (keyInput && valueInput) {
+      const key = keyInput.value.trim();
+      const rawValue = valueInput.value;
+
+      // Skip completely empty rows
+      if (!key && (!rawValue || !rawValue.trim())) {
         return;
-    }
+      }
 
-    const headers = [];
-    const headerRows = container.querySelectorAll('[id^="auth-header-"]');
-    const duplicateKeys = new Set();
-    const seenKeys = new Set();
-    let hasValidationErrors = false;
+      // Require key but allow empty values
+      if (!key) {
+        keyInput.setCustomValidity("Header key is required");
+        keyInput.reportValidity();
+        hasValidationErrors = true;
+        return;
+      }
 
-    headerRows.forEach((row) => {
-        const keyInput = row.querySelector(".auth-header-key");
-        const valueInput = row.querySelector(".auth-header-value");
-
-        if (keyInput && valueInput) {
-            const key = keyInput.value.trim();
-            const rawValue = valueInput.value;
-
-            // Skip completely empty rows
-            if (!key && (!rawValue || !rawValue.trim())) {
-                return;
-            }
-
-            // Require key but allow empty values
-            if (!key) {
-                keyInput.setCustomValidity("Header key is required");
-                keyInput.reportValidity();
-                hasValidationErrors = true;
-                return;
-            }
-
-            // Validate header key format (letters, numbers, hyphens, underscores)
-            if (!/^[a-zA-Z0-9\-_]+$/.test(key)) {
-                keyInput.setCustomValidity(
-                    "Header keys should contain only letters, numbers, hyphens, and underscores",
-                );
-                keyInput.reportValidity();
-                hasValidationErrors = true;
-                return;
-            } else {
-                keyInput.setCustomValidity("");
-            }
-
-            // Track duplicate keys
-            if (seenKeys.has(key.toLowerCase())) {
-                duplicateKeys.add(key);
-            }
-            seenKeys.add(key.toLowerCase());
-
-            if (valueInput.dataset.isMasked === "true") {
-                const storedValue = valueInput.dataset.realValue ?? "";
-                if (
-                    rawValue !== MASKED_AUTH_VALUE &&
-                    rawValue !== storedValue
-                ) {
-                    delete valueInput.dataset.isMasked;
-                    delete valueInput.dataset.realValue;
-                }
-            }
-
-            const finalValue =
-                valueInput.dataset.isMasked === "true"
-                    ? MASKED_AUTH_VALUE
-                    : rawValue.trim();
-
-            headers.push({
-                key,
-                value: finalValue, // Allow empty values
-            });
-        }
-    });
-
-    // Find the corresponding JSON input field
-    let jsonInput = null;
-    if (containerId === "auth-headers-container") {
-        jsonInput = safeGetElement("auth-headers-json");
-    } else if (containerId === "auth-headers-container-gw") {
-        jsonInput = safeGetElement("auth-headers-json-gw");
-    } else if (containerId === "auth-headers-container-a2a") {
-        jsonInput = safeGetElement("auth-headers-json-a2a");
-    } else if (containerId === "edit-auth-headers-container") {
-        jsonInput = safeGetElement("edit-auth-headers-json");
-    } else if (containerId === "auth-headers-container-gw-edit") {
-        jsonInput = safeGetElement("auth-headers-json-gw-edit");
-    } else if (containerId === "auth-headers-container-a2a-edit") {
-        jsonInput = safeGetElement("auth-headers-json-a2a-edit");
-    }
-
-    // Warn about duplicate keys in console
-    if (duplicateKeys.size > 0 && !hasValidationErrors) {
-        console.warn(
-            "Duplicate header keys detected (last value will be used):",
-            Array.from(duplicateKeys),
+      // Validate header key format (letters, numbers, hyphens, underscores)
+      if (!/^[a-zA-Z0-9\-_]+$/.test(key)) {
+        keyInput.setCustomValidity(
+          "Header keys should contain only letters, numbers, hyphens, and underscores",
         );
-    }
-
-    // Check for excessive headers
-    if (headers.length > 100) {
-        console.error("Maximum of 100 headers allowed per gateway");
+        keyInput.reportValidity();
+        hasValidationErrors = true;
         return;
-    }
+      } else {
+        keyInput.setCustomValidity("");
+      }
 
-    if (jsonInput) {
-        jsonInput.value = headers.length > 0 ? JSON.stringify(headers) : "";
+      // Track duplicate keys
+      if (seenKeys.has(key.toLowerCase())) {
+        duplicateKeys.add(key);
+      }
+      seenKeys.add(key.toLowerCase());
+
+      if (valueInput.dataset.isMasked === "true") {
+        const storedValue = valueInput.dataset.realValue ?? "";
+        if (rawValue !== MASKED_AUTH_VALUE && rawValue !== storedValue) {
+          delete valueInput.dataset.isMasked;
+          delete valueInput.dataset.realValue;
+        }
+      }
+
+      const finalValue =
+        valueInput.dataset.isMasked === "true"
+          ? MASKED_AUTH_VALUE
+          : rawValue.trim();
+
+      headers.push({
+        key,
+        value: finalValue, // Allow empty values
+      });
     }
+  });
+
+  // Find the corresponding JSON input field
+  let jsonInput = null;
+  if (containerId === "auth-headers-container") {
+    jsonInput = safeGetElement("auth-headers-json");
+  } else if (containerId === "auth-headers-container-gw") {
+    jsonInput = safeGetElement("auth-headers-json-gw");
+  } else if (containerId === "auth-headers-container-a2a") {
+    jsonInput = safeGetElement("auth-headers-json-a2a");
+  } else if (containerId === "edit-auth-headers-container") {
+    jsonInput = safeGetElement("edit-auth-headers-json");
+  } else if (containerId === "auth-headers-container-gw-edit") {
+    jsonInput = safeGetElement("auth-headers-json-gw-edit");
+  } else if (containerId === "auth-headers-container-a2a-edit") {
+    jsonInput = safeGetElement("auth-headers-json-a2a-edit");
+  }
+
+  // Warn about duplicate keys in console
+  if (duplicateKeys.size > 0 && !hasValidationErrors) {
+    console.warn(
+      "Duplicate header keys detected (last value will be used):",
+      Array.from(duplicateKeys),
+    );
+  }
+
+  // Check for excessive headers
+  if (headers.length > 100) {
+    console.error("Maximum of 100 headers allowed per gateway");
+    return;
+  }
+
+  if (jsonInput) {
+    jsonInput.value = headers.length > 0 ? JSON.stringify(headers) : "";
+  }
 }
 
 /**
@@ -275,59 +274,59 @@ export function updateAuthHeadersJSON(containerId) {
  * @param {Array} headers - Array of header objects with key and value properties
  */
 export function loadAuthHeaders(containerId, headers, options = {}) {
-    const container = safeGetElement(containerId);
-    if (!container) {
-        return;
+  const container = safeGetElement(containerId);
+  if (!container) {
+    return;
+  }
+
+  const jsonInput = (() => {
+    if (containerId === "auth-headers-container") {
+      return safeGetElement("auth-headers-json");
     }
-
-    const jsonInput = (() => {
-        if (containerId === "auth-headers-container") {
-            return safeGetElement("auth-headers-json");
-        }
-        if (containerId === "auth-headers-container-gw") {
-            return safeGetElement("auth-headers-json-gw");
-        }
-        if (containerId === "auth-headers-container-a2a") {
-            return safeGetElement("auth-headers-json-a2a");
-        }
-        if (containerId === "edit-auth-headers-container") {
-            return safeGetElement("edit-auth-headers-json");
-        }
-        if (containerId === "auth-headers-container-gw-edit") {
-            return safeGetElement("auth-headers-json-gw-edit");
-        }
-        if (containerId === "auth-headers-container-a2a-edit") {
-            return safeGetElement("auth-headers-json-a2a-edit");
-        }
-        return null;
-    })();
-
-    container.innerHTML = "";
-
-    if (!headers || !Array.isArray(headers) || headers.length === 0) {
-        if (jsonInput) {
-            jsonInput.value = "";
-        }
-        return;
+    if (containerId === "auth-headers-container-gw") {
+      return safeGetElement("auth-headers-json-gw");
     }
+    if (containerId === "auth-headers-container-a2a") {
+      return safeGetElement("auth-headers-json-a2a");
+    }
+    if (containerId === "edit-auth-headers-container") {
+      return safeGetElement("edit-auth-headers-json");
+    }
+    if (containerId === "auth-headers-container-gw-edit") {
+      return safeGetElement("auth-headers-json-gw-edit");
+    }
+    if (containerId === "auth-headers-container-a2a-edit") {
+      return safeGetElement("auth-headers-json-a2a-edit");
+    }
+    return null;
+  })();
 
-    const shouldMaskValues = options.maskValues === true;
+  container.innerHTML = "";
 
-    headers.forEach((header) => {
-        if (!header || !header.key) {
-            return;
-        }
-        const value = typeof header.value === "string" ? header.value : "";
-        addAuthHeader(containerId, {
-            key: header.key,
-            value,
-            existing: true,
-            isMasked: shouldMaskValues,
-            focus: false,
-        });
+  if (!headers || !Array.isArray(headers) || headers.length === 0) {
+    if (jsonInput) {
+      jsonInput.value = "";
+    }
+    return;
+  }
+
+  const shouldMaskValues = options.maskValues === true;
+
+  headers.forEach((header) => {
+    if (!header || !header.key) {
+      return;
+    }
+    const value = typeof header.value === "string" ? header.value : "";
+    addAuthHeader(containerId, {
+      key: header.key,
+      value,
+      existing: true,
+      isMasked: shouldMaskValues,
+      focus: false,
     });
+  });
 
-    updateAuthHeadersJSON(containerId);
+  updateAuthHeadersJSON(containerId);
 }
 
 /**
@@ -336,58 +335,57 @@ export function loadAuthHeaders(containerId, headers, options = {}) {
  * @param {string} gatewayName - Name of the gateway for display purposes
  */
 export async function fetchToolsForGateway(gatewayId, gatewayName) {
-    const button = safeGetElement(`fetch-tools-${gatewayId}`);
-    if (!button) {
-        return;
-    }
+  const button = safeGetElement(`fetch-tools-${gatewayId}`);
+  if (!button) {
+    return;
+  }
 
-    // Disable button and show loading state
-    button.disabled = true;
-    button.textContent = "⏳ Fetching...";
+  // Disable button and show loading state
+  button.disabled = true;
+  button.textContent = "⏳ Fetching...";
+  button.className =
+    "inline-block bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm mr-2";
+
+  try {
+    const response = await fetch(
+      `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
+      { method: "POST" },
+    );
+
+    const result = await response.json();
+
+    if (response.ok) {
+      // Success
+      button.textContent = "✅ Tools Fetched";
+      button.className =
+        "inline-block bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm mr-2";
+
+      // Show success message - API returns {success: true, message: "..."}
+      const message =
+        result.message || `Successfully fetched tools from ${gatewayName}`;
+      showSuccessMessage(message);
+
+      // Refresh the page to show the new tools
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    } else {
+      throw new Error(result.detail || "Failed to fetch tools");
+    }
+  } catch (error) {
+    console.error("Failed to fetch tools:", error);
+
+    // Show error state
+    button.textContent = "❌ Retry";
     button.className =
-        "inline-block bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded text-sm mr-2";
+      "inline-block bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm mr-2";
+    button.disabled = false;
 
-    try {
-        const response = await fetch(
-            `${window.ROOT_PATH}/oauth/fetch-tools/${gatewayId}`,
-            { method: "POST" },
-        );
-
-        const result = await response.json();
-
-        if (response.ok) {
-            // Success
-            button.textContent = "✅ Tools Fetched";
-            button.className =
-                "inline-block bg-green-600 hover:bg-green-700 text-white px-3 py-1 rounded text-sm mr-2";
-
-            // Show success message - API returns {success: true, message: "..."}
-            const message =
-                result.message ||
-                `Successfully fetched tools from ${gatewayName}`;
-            showSuccessMessage(message);
-
-            // Refresh the page to show the new tools
-            setTimeout(() => {
-                window.location.reload();
-            }, 2000);
-        } else {
-            throw new Error(result.detail || "Failed to fetch tools");
-        }
-    } catch (error) {
-        console.error("Failed to fetch tools:", error);
-
-        // Show error state
-        button.textContent = "❌ Retry";
-        button.className =
-            "inline-block bg-red-600 hover:bg-red-700 text-white px-3 py-1 rounded text-sm mr-2";
-        button.disabled = false;
-
-        // Show error message
-        showErrorMessage(
-            `Failed to fetch tools from ${gatewayName}: ${error.message}`,
-        );
-    }
+    // Show error message
+    showErrorMessage(
+      `Failed to fetch tools from ${gatewayName}: ${error.message}`,
+    );
+  }
 }
 
 // ===================================================================
@@ -395,95 +393,93 @@ export async function fetchToolsForGateway(gatewayId, gatewayName) {
 // ===================================================================
 
 export function handleAuthTypeSelection(
-    value,
-    basicFields,
-    bearerFields,
-    headersFields,
-    oauthFields,
-    queryParamFields,
+  value,
+  basicFields,
+  bearerFields,
+  headersFields,
+  oauthFields,
+  queryParamFields,
 ) {
-    if (!basicFields || !bearerFields || !headersFields) {
-        console.warn("Auth field elements not found");
-        return;
-    }
+  if (!basicFields || !bearerFields || !headersFields) {
+    console.warn("Auth field elements not found");
+    return;
+  }
 
-    // Hide all fields first
-    [basicFields, bearerFields, headersFields].forEach((field) => {
-        if (field) {
-            field.style.display = "none";
+  // Hide all fields first
+  [basicFields, bearerFields, headersFields].forEach((field) => {
+    if (field) {
+      field.style.display = "none";
+    }
+  });
+
+  // Hide OAuth fields if they exist
+  if (oauthFields) {
+    oauthFields.style.display = "none";
+  }
+
+  // Hide query param fields if they exist
+  if (queryParamFields) {
+    queryParamFields.style.display = "none";
+  }
+
+  // Show relevant field based on selection
+  switch (value) {
+    case "basic":
+      if (basicFields) {
+        basicFields.style.display = "block";
+      }
+      break;
+    case "bearer":
+      if (bearerFields) {
+        bearerFields.style.display = "block";
+      }
+      break;
+    case "authheaders": {
+      if (headersFields) {
+        headersFields.style.display = "block";
+        // Ensure at least one header row is present
+        const containerId =
+          headersFields.querySelector('[id$="-container"]')?.id;
+        if (containerId) {
+          const container = safeGetElement(containerId);
+          if (container && container.children.length === 0) {
+            addAuthHeader(containerId);
+          }
         }
-    });
-
-    // Hide OAuth fields if they exist
-    if (oauthFields) {
-        oauthFields.style.display = "none";
+      }
+      break;
     }
-
-    // Hide query param fields if they exist
-    if (queryParamFields) {
-        queryParamFields.style.display = "none";
-    }
-
-    // Show relevant field based on selection
-    switch (value) {
-        case "basic":
-            if (basicFields) {
-                basicFields.style.display = "block";
-            }
-            break;
-        case "bearer":
-            if (bearerFields) {
-                bearerFields.style.display = "block";
-            }
-            break;
-        case "authheaders": {
-            if (headersFields) {
-                headersFields.style.display = "block";
-                // Ensure at least one header row is present
-                const containerId =
-                    headersFields.querySelector('[id$="-container"]')?.id;
-                if (containerId) {
-                    const container = safeGetElement(containerId);
-                    if (container && container.children.length === 0) {
-                        addAuthHeader(containerId);
-                    }
-                }
-            }
-            break;
-        }
-        case "oauth":
-            if (oauthFields) {
-                oauthFields.style.display = "block";
-            }
-            break;
-        case "query_param":
-            if (queryParamFields) {
-                queryParamFields.style.display = "block";
-            }
-            break;
-        default:
-            // All fields already hidden
-            break;
-    }
+    case "oauth":
+      if (oauthFields) {
+        oauthFields.style.display = "block";
+      }
+      break;
+    case "query_param":
+      if (queryParamFields) {
+        queryParamFields.style.display = "block";
+      }
+      break;
+    default:
+      // All fields already hidden
+      break;
+  }
 }
-  
-export const handleAuthTypeChange = function () {
+
+export function handleAuthTypeChange() {
   const authType = this.value;
-  
+
   // Detect form type based on the element ID
   // e.g., "auth-type-a2a" or "auth-type-gw"
   const isA2A = this.id.includes("a2a");
   const prefix = isA2A ? "a2a" : "gw";
-  
+
   // Select the correct field groups dynamically
   const basicFields = safeGetElement(`auth-basic-fields-${prefix}`);
   const bearerFields = safeGetElement(`auth-bearer-fields-${prefix}`);
   const headersFields = safeGetElement(`auth-headers-fields-${prefix}`);
   const oauthFields = safeGetElement(`auth-oauth-fields-${prefix}`);
-  const queryParamFields = safeGetElement(
-    `auth-query_param-fields-${prefix}`,
-  );
-  
+  const queryParamFields = safeGetElement(`auth-query_param-fields-${prefix}`);
+
   // Hide all auth sections first
   [
     basicFields,
@@ -496,98 +492,98 @@ export const handleAuthTypeChange = function () {
       section.style.display = "none";
     }
   });
-  
+
   // Show the appropriate section
   switch (authType) {
     case "basic":
-    if (basicFields) {
-      basicFields.style.display = "block";
-    }
-    break;
+      if (basicFields) {
+        basicFields.style.display = "block";
+      }
+      break;
     case "bearer":
-    if (bearerFields) {
-      bearerFields.style.display = "block";
-    }
-    break;
+      if (bearerFields) {
+        bearerFields.style.display = "block";
+      }
+      break;
     case "authheaders":
-    if (headersFields) {
-      headersFields.style.display = "block";
-    }
-    break;
+      if (headersFields) {
+        headersFields.style.display = "block";
+      }
+      break;
     case "oauth":
-    if (oauthFields) {
-      oauthFields.style.display = "block";
-    }
-    break;
+      if (oauthFields) {
+        oauthFields.style.display = "block";
+      }
+      break;
     case "query_param":
-    if (queryParamFields) {
-      queryParamFields.style.display = "block";
-    }
-    break;
+      if (queryParamFields) {
+        queryParamFields.style.display = "block";
+      }
+      break;
     default:
-    // "none" or unknown type — keep everything hidden
-    break;
+      // "none" or unknown type — keep everything hidden
+      break;
   }
 }
 
-export const handleOAuthGrantTypeChange = function () {
+export function handleOAuthGrantTypeChange() {
   const grantType = this.value;
-  
+
   // Detect form type (a2a or gw) from the triggering element ID
   const isA2A = this.id.includes("a2a");
   const prefix = isA2A ? "a2a" : "gw";
-  
+
   // Select the correct fields dynamically based on prefix
   const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
   const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
   const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
-  
+
   // Handle Authorization Code flow
   if (authCodeFields) {
     if (grantType === "authorization_code") {
       authCodeFields.style.display = "block";
-      
+
       // Make URL fields required
       const requiredFields =
-      authCodeFields.querySelectorAll('input[type="url"]');
+        authCodeFields.querySelectorAll('input[type="url"]');
       requiredFields.forEach((field) => (field.required = true));
-      
+
       console.log(
         `(${prefix.toUpperCase()}) Authorization Code flow selected - fields are now required`,
       );
     } else {
       authCodeFields.style.display = "none";
-      
+
       // Remove required validation
       const requiredFields =
-      authCodeFields.querySelectorAll('input[type="url"]');
+        authCodeFields.querySelectorAll('input[type="url"]');
       requiredFields.forEach((field) => (field.required = false));
     }
   }
-  
+
   // Handle Password Grant flow
   if (usernameField && passwordField) {
     const usernameInput = safeGetElement(`oauth-username-${prefix}`);
     const passwordInput = safeGetElement(`oauth-password-${prefix}`);
-    
+
     if (grantType === "password") {
       usernameField.style.display = "block";
       passwordField.style.display = "block";
-      
+
       if (usernameInput) {
         usernameInput.required = true;
       }
       if (passwordInput) {
         passwordInput.required = true;
       }
-      
+
       console.log(
         `(${prefix.toUpperCase()}) Password grant flow selected - username and password are now required`,
       );
     } else {
       usernameField.style.display = "none";
       passwordField.style.display = "none";
-      
+
       if (usernameInput) {
         usernameInput.required = false;
       }
@@ -598,17 +594,17 @@ export const handleOAuthGrantTypeChange = function () {
   }
 }
 
-export const handleEditOAuthGrantTypeChange = function () {
+export function handleEditOAuthGrantTypeChange() {
   const grantType = this.value;
-  
+
   // Detect prefix dynamically (supports both gw-edit and a2a-edit)
   const id = this.id || "";
   const prefix = id.includes("a2a") ? "a2a-edit" : "gw-edit";
-  
+
   const authCodeFields = safeGetElement(`oauth-auth-code-fields-${prefix}`);
   const usernameField = safeGetElement(`oauth-username-field-${prefix}`);
   const passwordField = safeGetElement(`oauth-password-field-${prefix}`);
-  
+
   // === Handle Authorization Code grant ===
   if (authCodeFields) {
     const urlInputs = authCodeFields.querySelectorAll('input[type="url"]');
@@ -623,30 +619,30 @@ export const handleEditOAuthGrantTypeChange = function () {
       urlInputs.forEach((field) => (field.required = false));
     }
   }
-  
+
   // === Handle Password grant ===
   if (usernameField && passwordField) {
     const usernameInput = safeGetElement(`oauth-username-${prefix}`);
     const passwordInput = safeGetElement(`oauth-password-${prefix}`);
-    
+
     if (grantType === "password") {
       usernameField.style.display = "block";
       passwordField.style.display = "block";
-      
+
       if (usernameInput) {
         usernameInput.required = true;
       }
       if (passwordInput) {
         passwordInput.required = true;
       }
-      
+
       console.log(
         `Password grant flow selected (${prefix}) - username and password are now required`,
       );
     } else {
       usernameField.style.display = "none";
       passwordField.style.display = "none";
-      
+
       if (usernameInput) {
         usernameInput.required = false;
       }

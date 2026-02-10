@@ -1,10 +1,25 @@
 import { AppState } from "./appState";
 import { setupFormValidation } from "./formValidation";
-import { initializeCodeMirrorEditors, initializeEventListeners, initializeExportImport, initializeTabState, initializeToolSelects, setupBulkImportModal } from "./initialization";
+import {
+  initializeCodeMirrorEditors,
+  initializeEventListeners,
+  initializeExportImport,
+  initializeSearchInputs,
+  initializeTabState,
+  initializeToolSelects,
+  setupBulkImportModal,
+} from "./initialization";
 import { closeModal } from "./modals";
 import { initializeTagFiltering } from "./tags";
+import { initializeTeamScopingMonitor } from "./tokens";
 import { cleanupToolTestState, loadTools } from "./tools";
-import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
+import {
+  createMemoizedInit,
+  safeGetElement,
+  showErrorMessage,
+  showSuccessMessage,
+  updateEditToolUrl,
+} from "./utils";
 
 ((Admin) => {
   // Global event handler for Escape key on modals
@@ -17,22 +32,18 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
       }
     }
   });
-  
   // Executes MCP tools via SSE streaming. Streams results to UI textarea.
   document.addEventListener("DOMContentLoaded", () => {
     // Use #tool-ops-main-content-wrapper as the event delegation target because
     // #toolBody gets replaced by HTMX swaps. The wrapper survives swaps.
-    const toolOpsWrapper = safeGetElement(
-      "tool-ops-main-content-wrapper",
-    );
+    const toolOpsWrapper = safeGetElement("tool-ops-main-content-wrapper");
     const selectedList = safeGetElement("selectedList");
     const selectedCount = safeGetElement("selectedCount");
     const searchBox = safeGetElement("searchBox");
-    
+
     let selectedTools = [];
     let selectedToolIds = [];
-    
-    
+
     const updateSelectedList = function () {
       selectedList.innerHTML = "";
       if (selectedTools.length === 0) {
@@ -41,29 +52,26 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
         selectedTools.forEach((tool) => {
           const item = document.createElement("div");
           item.className =
-          "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
+            "flex items-center justify-between bg-indigo-100 text-indigo-800 px-3 py-1 rounded-md";
           item.innerHTML = `
               <span>${tool}</span>
               <button class="text-indigo-500 hover:text-indigo-700 font-bold remove-btn">&times;</button>
           `;
-          item.querySelector(".remove-btn").addEventListener(
-            "click",
-            () => {
-              selectedTools = selectedTools.filter((t) => t !== tool);
-              const box = document.querySelector(`
+          item.querySelector(".remove-btn").addEventListener("click", () => {
+            selectedTools = selectedTools.filter((t) => t !== tool);
+            const box = document.querySelector(`
                 .tool-checkbox[data-tool="${tool}"]`);
-              if (box) {
-                box.checked = false;
-              }
-              updateSelectedList();
-            },
-          );
+            if (box) {
+              box.checked = false;
+            }
+            updateSelectedList();
+          });
           selectedList.appendChild(item);
         });
       }
       selectedCount.textContent = selectedTools.length;
-    }
-      
+    };
+
     if (toolOpsWrapper !== null) {
       // ✅ Use event delegation on wrapper (survives HTMX swaps)
       toolOpsWrapper.addEventListener("change", (event) => {
@@ -87,24 +95,23 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
         }
       });
     }
-    
+
     // --- Search logic ---
     if (searchBox !== null) {
       searchBox.addEventListener("input", () => {
         const query = searchBox.value.trim().toLowerCase();
         // Search within #toolBody (which is inside #tool-ops-main-content-wrapper)
         document
-        .querySelectorAll("#tool-ops-main-content-wrapper #toolBody tr")
-        .forEach((row) => {
-          const name = row.dataset.name;
-          row.style.display =
-          name && name.includes(query) ? "" : "none";
-        });
+          .querySelectorAll("#tool-ops-main-content-wrapper #toolBody tr")
+          .forEach((row) => {
+            const name = row.dataset.name;
+            row.style.display = name && name.includes(query) ? "" : "none";
+          });
       });
     }
-    
+
     // Generic API call for Enrich/Validate
-    const callEnrichment = async function () {      
+    const callEnrichment = async function () {
       if (selectedTools.length === 0) {
         showErrorMessage("⚠️ Please select at least one tool.");
         return;
@@ -128,11 +135,11 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
         document.querySelectorAll(".tool-checkbox").forEach((cb) => {
           cb.checked = false;
         });
-        
+
         // Empty the selected tools array
         selectedTools = [];
         selectedToolIds = [];
-        
+
         // Update the selected tools list UI
         updateSelectedList();
       } catch (err) {
@@ -140,7 +147,7 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
         showErrorMessage(`❌ Error: ${err.message}`);
       }
     };
-    
+
     Admin.generateBulkTestCases = async function () {
       const testCases = parseInt(
         safeGetElement("gen-bulk-testcase-count").value,
@@ -148,14 +155,14 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
       const variations = parseInt(
         safeGetElement("gen-bulk-nl-variation-count").value,
       );
-      
+
       if (!testCases || !variations || testCases < 1 || variations < 1) {
         showErrorMessage(
           "⚠️ Please enter valid numbers for test cases and variations.",
         );
         return;
       }
-      
+
       try {
         for (const toolId of selectedToolIds) {
           fetch(
@@ -181,65 +188,65 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
         selectedTools = [];
         selectedToolIds = [];
         updateSelectedList();
-        
+
         // Close modal immediately after clicking Generate
         closeModal("bulk-testcase-gen-modal");
       } catch (err) {
         showErrorMessage(`❌ Error: ${err.message}`);
       }
-    }
-    
+    };
+
     const openTestCaseModal = function () {
       if (selectedToolIds.length === 0) {
         showErrorMessage("⚠️ Please select at least one tool.");
         return;
       }
-      
+
       // Show modal
       document
-      .getElementById("bulk-testcase-gen-modal")
-      .classList.remove("hidden");
+        .getElementById("bulk-testcase-gen-modal")
+        .classList.remove("hidden");
       document
-      .getElementById("bulk-generate-btn")
-      .addEventListener("click", Admin.generateBulkTestCases);
-    }
-    
+        .getElementById("bulk-generate-btn")
+        .addEventListener("click", Admin.generateBulkTestCases);
+    };
+
     const clearAllSelections = function () {
       // Uncheck all checkboxes
       document.querySelectorAll(".tool-checkbox").forEach((cb) => {
         cb.checked = false;
       });
-      
+
       // Empty the selected tools array
       selectedTools = [];
       selectedToolIds = [];
-      
+
       // Update the selected tools list UI
       updateSelectedList();
-    }
+    };
     // Button listeners
     const enrichToolsBtn = safeGetElement("enrichToolsBtn");
-    
+
     if (enrichToolsBtn !== null) {
       document
-      .getElementById("enrichToolsBtn")
-      .addEventListener("click", () => callEnrichment());
+        .getElementById("enrichToolsBtn")
+        .addEventListener("click", () => callEnrichment());
       document
-      .getElementById("validateToolsBtn")
-      .addEventListener("click", () => openTestCaseModal());
+        .getElementById("validateToolsBtn")
+        .addEventListener("click", () => openTestCaseModal());
       document
-      .getElementById("clearToolsBtn")
-      .addEventListener("click", () => clearAllSelections());
+        .getElementById("clearToolsBtn")
+        .addEventListener("click", () => clearAllSelections());
     }
   });
-    
+
   // Prevent manual REST→MCP changes in edit-tool-form
   document.addEventListener("DOMContentLoaded", function () {
     const editToolTypeSelect = safeGetElement("edit-tool-type");
     if (editToolTypeSelect) {
       // Store the initial value for comparison
       editToolTypeSelect.dataset.prevValue = editToolTypeSelect.value;
-      
+
       editToolTypeSelect.addEventListener("change", function (e) {
         const prevType = this.dataset.prevValue;
         const selectedType = this.value;
@@ -253,7 +260,7 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
       });
     }
   });
-  
+
   // Initialize gateway select on page load
   document.addEventListener("DOMContentLoaded", function () {
     // Initialize for the create server form
@@ -269,24 +276,24 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
       );
     }
   });
-  
+
   document.addEventListener("DOMContentLoaded", loadTools);
-  
+
   // ===================================================================
   // GLOBAL ERROR HANDLERS
   // ===================================================================
-  
+
   window.addEventListener("error", (e) => {
     console.error("Global error:", e.error, e.filename, e.lineno);
     // Don't show user error for every script error, just log it
   });
-  
+
   window.addEventListener("unhandledrejection", (e) => {
     console.error("Unhandled promise rejection:", e.reason);
     // Show user error for unhandled promises as they're often more serious
     showErrorMessage("An unexpected error occurred. Please refresh the page.");
   });
-  
+
   // Enhanced cleanup function for page unload
   window.addEventListener("beforeunload", () => {
     try {
@@ -297,7 +304,7 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
       console.error("Error during cleanup:", error);
     }
   });
-  
+
   // Performance monitoring
   if (window.performance && window.performance.mark) {
     window.performance.mark("app-security-complete");
@@ -310,11 +317,11 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
 
   // Initialize tag filtering when page loads
   document.addEventListener("DOMContentLoaded", function () {
-      initializeTagFiltering();
+    initializeTagFiltering();
 
-      if (typeof initializeTeamScopingMonitor === "function") {
-          Admin.initializeTeamScopingMonitor();
-      }
+    if (typeof initializeTeamScopingMonitor === "function") {
+      initializeTeamScopingMonitor();
+    }
   });
 
   // ===================================================================
@@ -324,65 +331,59 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
     Admin.chartRegistry.destroyAll();
   });
 
-
   // ===================================================================
   // Initialization
   // ===================================================================
   document.addEventListener("DOMContentLoaded", () => {
     console.log("🔐 DOM loaded - initializing secure admin interface...");
-    
-    try {      
+
+    try {
       // 1. Initialize CodeMirror editors first
       initializeCodeMirrorEditors();
-      
+
       // 2. Initialize tool selects
       initializeToolSelects();
-      
+
       // 3. Set up all event listeners
       initializeEventListeners();
-      
+
       // 4. Handle initial tab/state
       initializeTabState();
-      
+
       // 5. Set up form validation
       setupFormValidation();
-      
+
       // 6. Setup bulk import modal
       try {
         setupBulkImportModal();
       } catch (error) {
         console.error("Error setting up bulk import modal:", error);
       }
-      
+
       // 7. Initialize export/import functionality
       try {
         initializeExportImport();
       } catch (error) {
-        console.error(
-          "Error setting up export/import functionality:",
-          error,
-        );
+        console.error("Error setting up export/import functionality:", error);
       }
-      
+
       // // ✅ 4.1 Set up tab button click handlers
       // document.querySelectorAll('.tab-button').forEach(button => {
       //     button.addEventListener('click', () => {
       //         const tabId = button.getAttribute('data-tab');
-      
+
       //         document.querySelectorAll('.tab-panel').forEach(panel => {
       //             panel.classList.add('hidden');
       //         });
-      
+
       //         safeGetElement(tabId).classList.remove('hidden');
       //     });
       // });
-      
+
       // Mark as initialized
       AppState.isInitialized = true;
-      
-      console.log(
-        "✅ Secure initialization complete - XSS protection active",
-      );
+
+      console.log("✅ Secure initialization complete - XSS protection active");
     } catch (error) {
       console.error("❌ Initialization failed:", error);
       showErrorMessage(
@@ -390,4 +391,142 @@ import { safeGetElement, showErrorMessage, showSuccessMessage } from "./utils";
       );
     }
   });
-})(window.Admin)
+
+  /**
+   * Create memoized version of search inputs initialization
+   * This prevents repeated initialization and provides explicit reset capability
+   */
+  const {
+    init: initializeSearchInputsMemoized,
+    debouncedInit: initializeSearchInputsDebounced,
+    reset: resetSearchInputsState,
+  } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
+  // Attach event listener after DOM is loaded or when modal opens
+  document.addEventListener("DOMContentLoaded", function () {
+    const TypeField = safeGetElement("edit-tool-type");
+    if (TypeField) {
+      TypeField.addEventListener("change", updateEditToolUrl);
+      // Set initial state
+      updateEditToolUrl();
+    }
+
+    // Initialize CA certificate upload immediately
+    Admin.initializeCACertUpload();
+
+    // Also try to initialize after a short delay (in case the panel loads later)
+    setTimeout(Admin.initializeCACertUpload, 500);
+
+    // Re-initialize when switching to gateways tab
+    const gatewaysTab = document.querySelector('[onclick*="gateways"]');
+    if (gatewaysTab) {
+      gatewaysTab.addEventListener("click", function () {
+        setTimeout(Admin.initializeCACertUpload, 100);
+      });
+    }
+
+    // Initialize search functionality for all entity types (immediate, no debounce)
+    initializeSearchInputsMemoized();
+    // Only initialize password validation if password fields exist on page
+    if (document.getElementById("password-field")) {
+      Admin.initializePasswordValidation();
+    }
+    Admin.initializeAddMembersForms();
+
+    // Event delegation for team member search - server-side search for unified view
+    // This handler is initialized here for early binding, but the actual search logic
+    // is in Admin.performUserSearch() which is attached when the form is initialized
+    const teamSearchTimeouts = {};
+    const teamMemberDataCache = {};
+
+    document.body.addEventListener("input", async function (event) {
+      const target = event.target;
+      if (target.id && target.id.startsWith("user-search-")) {
+        const teamId = target.id.replace("user-search-", "");
+        const listContainer = safeGetElement(`team-members-list-${teamId}`);
+
+        if (!listContainer) return;
+
+        const query = target.value.trim();
+
+        // Clear previous timeout for this team
+        if (teamSearchTimeouts[teamId]) {
+          clearTimeout(teamSearchTimeouts[teamId]);
+        }
+
+        // Get team member data from cache or script tag
+        if (!teamMemberDataCache[teamId]) {
+          const teamMemberDataScript = safeGetElement(
+            `team-member-data-${teamId}`,
+          );
+          if (teamMemberDataScript) {
+            try {
+              teamMemberDataCache[teamId] = JSON.parse(
+                teamMemberDataScript.textContent || "{}",
+              );
+              console.log(
+                `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberDataCache[teamId]).length} members`,
+              );
+            } catch (e) {
+              console.error(
+                `[Team ${teamId}] Failed to parse team member data:`,
+                e,
+              );
+              teamMemberDataCache[teamId] = {};
+            }
+          } else {
+            teamMemberDataCache[teamId] = {};
+          }
+        }
+
+        // Debounce server call
+        teamSearchTimeouts[teamId] = setTimeout(async () => {
+          await Admin.performUserSearch(
+            teamId,
+            query,
+            listContainer,
+            teamMemberDataCache[teamId],
+          );
+        }, 300);
+      }
+    });
+
+    // Re-initialize search inputs when HTMX content loads
+    // Only re-initialize if the swap affects search-related content
+    document.body.addEventListener("htmx:afterSwap", function (event) {
+      const target = event.detail.target;
+      const relevantPanels = [
+        "catalog-panel",
+        "gateways-panel",
+        "tools-panel",
+        "resources-panel",
+        "prompts-panel",
+        "a2a-agents-panel",
+      ];
+
+      if (
+        target &&
+        relevantPanels.some(
+          (panelId) => target.id === panelId || target.closest(`#${panelId}`),
+        )
+      ) {
+        console.log(
+          `📝 HTMX swap detected in ${target.id}, resetting search state`,
+        );
+        resetSearchInputsState();
+        initializeSearchInputsDebounced();
+      }
+    });
+
+    // Initialize search when switching tabs
+    document.addEventListener("click", function (event) {
+      if (
+        event.target.matches('[onclick*="Admin.showTab"]') ||
+        event.target.closest('[onclick*="Admin.showTab"]')
+      ) {
+        console.log("🔄 Tab switch detected, resetting search state");
+        resetSearchInputsState();
+        initializeSearchInputsDebounced();
+      }
+    });
+  });
+})(window.Admin);

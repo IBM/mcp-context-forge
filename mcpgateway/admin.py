@@ -219,15 +219,20 @@ def get_bundle_js_filename() -> str:
 
     Reads the Vite manifest file to get the current hashed bundle filename.
     Falls back to 'bundle.js' if manifest doesn't exist (dev mode).
+    Invalidates the cache when the cached bundle file no longer exists on disk.
 
     Returns:
         str: The bundle filename (e.g., 'bundle-abc123.js')
     """
     global _bundle_js_cache
-    if _bundle_js_cache is not None:
+
+    static_dir = Path(__file__).parent / "static"
+
+    # Use cache if the bundle file still exists on disk
+    if _bundle_js_cache is not None and (static_dir / _bundle_js_cache).exists():
         return _bundle_js_cache
 
-    manifest_path = Path(__file__).parent / "static" / ".vite" / "manifest.json"
+    manifest_path = static_dir / ".vite" / "manifest.json"
     try:
         if manifest_path.exists():
             with open(manifest_path, "r") as f:
