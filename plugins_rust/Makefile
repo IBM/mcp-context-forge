@@ -78,11 +78,11 @@ test-verbose: ## Run workspace tests (verbose)
 
 test-python: ## Run Python tests for workspace (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd .. && pytest tests/unit/mcpgateway/plugins/ -k rust -v
+	cd .. && uv run pytest tests/unit/mcpgateway/plugins/ -k rust -v
 
 test-differential: ## Run differential tests (Rust vs Python)
 	@echo "$(GREEN)Running differential tests...$(NC)"
-	cd .. && pytest tests/differential/ -k differential -v
+	cd .. && uv run pytest tests/differential/ -k differential -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
