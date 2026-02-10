@@ -7268,6 +7268,34 @@ async def test_admin_servers_partial_html_all_teams_view(monkeypatch, mock_reque
 
 
 @pytest.mark.asyncio
+async def test_admin_servers_partial_html_with_tag_search(monkeypatch, mock_request, mock_db):
+    """Test server partial with tag_search filter to cover search functionality."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="srv-1", name="Server 1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    server_service = MagicMock()
+    server_service.convert_server_to_read.return_value = {"id": "srv-1", "name": "Server 1"}
+    monkeypatch.setattr("mcpgateway.admin.server_service", server_service)
+
+    mock_request.headers = {}
+    response = await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        team_id="team-1",
+        tag_search="test-search",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
 async def test_admin_servers_partial_html_team_filter_denied(monkeypatch, mock_request, mock_db):
     pagination = make_pagination_meta()
     monkeypatch.setattr(
@@ -7444,6 +7472,35 @@ async def test_admin_tools_partial_html_team_filter_denied_and_convert_error(mon
         render="selector",
         gateway_id=None,
         team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_tools_partial_html_with_tag_search(monkeypatch, mock_request, mock_db):
+    """Test tools partial with tag_search filter to cover search functionality."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="tool-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    tool_service = MagicMock()
+    tool_service.convert_tool_to_read.return_value = {"id": "tool-1", "name": "Tool 1"}
+    monkeypatch.setattr("mcpgateway.admin.tool_service", tool_service)
+
+    mock_request.headers = {}
+    response = await admin_tools_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-1",
+        tag_search="search-term",
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -7679,6 +7736,36 @@ async def test_admin_prompts_partial_html_gateway_filters_include_inactive_and_c
 
 
 @pytest.mark.asyncio
+async def test_admin_prompts_partial_html_with_tag_search(monkeypatch, mock_request, mock_db):
+    """Test prompts partial with tag_search filter to cover search functionality."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="prompt-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
+    prompt_service = MagicMock()
+    prompt_service.convert_prompt_to_read.return_value = {"id": "prompt-1", "name": "Prompt 1"}
+    monkeypatch.setattr("mcpgateway.admin.prompt_service", prompt_service)
+
+    mock_request.headers = {}
+    response = await admin_prompts_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-1",
+        tag_search="prompt-filter",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("render", [None, "controls", "selector"])
 async def test_admin_resources_partial_html_renders(monkeypatch, mock_request, mock_db, render):
     pagination = make_pagination_meta()
@@ -7701,6 +7788,36 @@ async def test_admin_resources_partial_html_renders(monkeypatch, mock_request, m
         render=render,
         gateway_id="null",
         team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_resources_partial_html_with_tag_search(monkeypatch, mock_request, mock_db):
+    """Test resources partial with tag_search filter to cover search functionality."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="res-1", team_id="team-1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
+    resource_service = MagicMock()
+    resource_service.convert_resource_to_read.return_value = {"id": "res-1", "name": "Resource 1"}
+    monkeypatch.setattr("mcpgateway.admin.resource_service", resource_service)
+
+    mock_request.headers = {}
+    response = await admin_resources_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-1",
+        tag_search="resource-filter",
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
@@ -7961,6 +8078,36 @@ async def test_admin_a2a_partial_html_include_inactive_convert_error_and_denied_
         render="controls",
         gateway_id="gw-1",
         team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_a2a_partial_html_with_tag_search(monkeypatch, mock_request, mock_db):
+    """Test a2a partial with tag_search filter to cover search functionality."""
+    pagination = make_pagination_meta()
+    monkeypatch.setattr(
+        "mcpgateway.admin.paginate_query",
+        AsyncMock(return_value={"data": [SimpleNamespace(id="agent-1", team_id="team-1", name="Agent 1")], "pagination": pagination, "links": None}),
+    )
+    setup_team_service(monkeypatch, ["team-1"])
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="team-1", name="Team 1")]
+    a2a_service = MagicMock()
+    a2a_service.convert_agent_to_read.return_value = {"id": "agent-1", "name": "Agent 1"}
+    monkeypatch.setattr("mcpgateway.admin.a2a_service", a2a_service)
+
+    mock_request.headers = {}
+    response = await admin_a2a_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        include_inactive=False,
+        render=None,
+        gateway_id=None,
+        team_id="team-1",
+        tag_search="agent-filter",
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db},
     )
