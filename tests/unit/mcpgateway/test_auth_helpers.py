@@ -4,7 +4,9 @@
 # Standard
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import threading
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 # Third-Party
 import pytest
@@ -108,6 +110,103 @@ def test_get_personal_team_sync(monkeypatch):
     monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
     assert auth._get_personal_team_sync("user@example.com") == "team-1"
 
+
+def test_get_user_team_ids_sync(monkeypatch):
+    session = DummySession(results=[[("t1",), ("t2",)]])
+    monkeypatch.setattr(auth, "fresh_db_session", lambda: _session_ctx(session))
+    assert auth._get_user_team_ids_sync("user@example.com") == ["t1", "t2"]
+
+
+def test_resolve_teams_from_db_sync_admin_bypass():
+    assert auth._resolve_teams_from_db_sync("user@example.com", is_admin=True) is None
+
+
+def test_resolve_teams_from_db_sync_cache_hit(monkeypatch):
+    class DummyEntry:
+        def __init__(self, value):
+            self.value = value
+
+        def is_expired(self):
+            return False
+
+    cache_key = "user@example.com:True"
+    dummy_cache = SimpleNamespace(
+        _teams_list_cache={cache_key: DummyEntry(["t1"])},
+        _hit_count=0,
+    )
+
+    import mcpgateway.cache.auth_cache as auth_cache_mod
+
+    monkeypatch.setattr(auth_cache_mod, "auth_cache", dummy_cache)
+    assert auth._resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
+    assert dummy_cache._hit_count == 1
+
+
+def test_resolve_teams_from_db_sync_cache_miss_populates_cache(monkeypatch):
+    class DummyEntry:
+        def __init__(self, value, expiry):  # noqa: ARG002 - matches real CacheEntry signature
+            self.value = value
+
+        def is_expired(self):
+            return False
+
+    cache_key = "user@example.com:True"
+    dummy_cache = SimpleNamespace(
+        _teams_list_cache={},
+        _hit_count=0,
+        _teams_list_ttl=60,
+        _lock=threading.Lock(),
+    )
+
+    import mcpgateway.cache.auth_cache as auth_cache_mod
+
+    monkeypatch.setattr(auth_cache_mod, "auth_cache", dummy_cache)
+    monkeypatch.setattr(auth_cache_mod, "CacheEntry", DummyEntry)
+    monkeypatch.setattr(auth, "_get_user_team_ids_sync", lambda _email: ["t1"])
+
+    assert auth._resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
+    assert cache_key in dummy_cache._teams_list_cache
+    assert dummy_cache._teams_list_cache[cache_key].value == ["t1"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_teams_from_db_async_admin_bypass():
+    assert await auth._resolve_teams_from_db("user@example.com", {"is_admin": True}) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_teams_from_db_async_cache_hit(monkeypatch):
+    dummy_cache = SimpleNamespace(
+        get_user_teams=AsyncMock(return_value=["t1"]),
+        set_user_teams=AsyncMock(),
+    )
+
+    import mcpgateway.cache.auth_cache as auth_cache_mod
+
+    monkeypatch.setattr(auth_cache_mod, "auth_cache", dummy_cache)
+    assert await auth._resolve_teams_from_db("user@example.com", {"is_admin": False}) == ["t1"]
+    dummy_cache.set_user_teams.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resolve_teams_from_db_async_cache_miss_sets_cache(monkeypatch):
+    dummy_cache = SimpleNamespace(
+        get_user_teams=AsyncMock(return_value=None),
+        set_user_teams=AsyncMock(),
+    )
+
+    import mcpgateway.cache.auth_cache as auth_cache_mod
+
+    monkeypatch.setattr(auth_cache_mod, "auth_cache", dummy_cache)
+    monkeypatch.setattr(auth, "_get_user_team_ids_sync", lambda _email: ["t1"])
+
+    async def fake_to_thread(fn, *args, **kwargs):  # noqa: ARG001
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr(auth.asyncio, "to_thread", fake_to_thread)
+
+    assert await auth._resolve_teams_from_db("user@example.com", {"is_admin": False}) == ["t1"]
+    dummy_cache.set_user_teams.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_get_team_from_token_variants(monkeypatch):

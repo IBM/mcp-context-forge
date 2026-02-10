@@ -48,6 +48,16 @@ class TestTokenScopingMiddleware:
         return request
 
     @pytest.mark.asyncio
+    async def test_extract_token_scopes_returns_payload(self, middleware):
+        """_extract_token_scopes should return decoded payload on success."""
+        request = MagicMock(spec=Request)
+        request.headers = {"Authorization": "Bearer test-token"}
+
+        payload = {"sub": "user@example.com", "scopes": {"permissions": ["*"]}}
+        with patch("mcpgateway.middleware.token_scoping.verify_jwt_token_cached", new=AsyncMock(return_value=payload)):
+            assert await middleware._extract_token_scopes(request) == payload
+
+    @pytest.mark.asyncio
     async def test_admin_endpoint_not_in_general_whitelist(self, middleware, mock_request):
         """Test that /admin is no longer whitelisted for server-scoped tokens (Issue 4 fix)."""
         mock_request.url.path = "/admin/users"
@@ -224,6 +234,10 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/tools/", "GET", [Permissions.TOOLS_READ]) == True
         assert middleware._check_permission_restrictions("/tools/abc", "GET", [Permissions.TOOLS_READ]) == True
 
+    def test_permission_restrictions_default_allow_for_unmatched_path(self, middleware):
+        """Unmatched paths should default-allow when permissions list is non-empty."""
+        assert middleware._check_permission_restrictions("/unmatched/path", "GET", [Permissions.TOOLS_READ]) is True
+
     def test_check_team_membership_cached_false(self, middleware, monkeypatch):
         """Cached team membership false should deny access."""
         payload = {"sub": "user@example.com", "teams": ["team-1"]}
@@ -234,6 +248,11 @@ class TestTokenScopingMiddleware:
 
         result = middleware._check_team_membership(payload, db=MagicMock())
         assert result is False
+
+    def test_check_team_membership_missing_user_email_denies(self, middleware):
+        """Team-scoped tokens without a user email should be rejected."""
+        payload = {"teams": ["team-1"]}
+        assert middleware._check_team_membership(payload) is False
 
     def test_check_team_membership_db_valid_and_missing(self, middleware, monkeypatch):
         """Validate membership via DB for both valid and missing teams."""
@@ -548,6 +567,53 @@ class TestTokenScopingMiddleware:
             call_next.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_admin_bypass_requires_explicit_null_teams(self, middleware, mock_request):
+        """Admin bypass should only activate when teams is explicitly null and is_admin is true."""
+        mock_request.url.path = "/tools"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        payload = {"sub": "admin@example.com", "teams": None, "is_admin": True, "scopes": {"permissions": ["*"]}}
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=payload),
+            patch.object(middleware, "_check_team_membership") as mock_membership,
+            patch.object(middleware, "_check_resource_team_ownership") as mock_ownership,
+        ):
+            call_next = AsyncMock(return_value="ok")
+            assert await middleware(mock_request, call_next) == "ok"
+            call_next.assert_called_once()
+            mock_membership.assert_not_called()
+            mock_ownership.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_session_token_resolves_teams_from_db(self, middleware, mock_request, monkeypatch):
+        """Session tokens should resolve teams via _resolve_teams_from_db and use shared DB for validation."""
+        mock_request.url.path = "/tools"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+
+        payload = {"sub": "user@example.com", "token_use": "session", "user": {"is_admin": True}, "scopes": {"permissions": ["*"]}}
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=payload),
+            patch.object(middleware, "_check_team_membership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["team-1"])),
+        ):
+            call_next = AsyncMock(return_value="ok")
+            assert await middleware(mock_request, call_next) == "ok"
+            call_next.assert_called_once()
+            assert db.commit.called
+            assert db.close.called
+
+    @pytest.mark.asyncio
     async def test_team_scoped_token_uses_shared_db(self, middleware, mock_request, monkeypatch):
         """Team-scoped tokens should validate membership and resource ownership with shared DB session."""
         mock_request.url.path = "/servers/server-123"
@@ -656,6 +722,106 @@ def test_check_resource_team_ownership_prompt_and_gateway():
     # Resource not found should allow
     db.execute.return_value.scalar_one_or_none.return_value = None
     assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+
+
+def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_resource():
+    """Token team dict format should be normalized and allow matching team resources."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    resource = MagicMock()
+    resource.visibility = "team"
+    resource.team_id = "team-1"
+    db.execute.return_value.scalar_one_or_none.return_value = resource
+
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is True
+
+
+def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypatch):
+    """When middleware owns the DB session, it should commit and close in the finally block."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    resource = MagicMock()
+    resource.visibility = "public"
+    db.execute.return_value.scalar_one_or_none.return_value = resource
+
+    def _get_db():
+        yield db
+
+    monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is True
+    db.commit.assert_called_once()
+    db.close.assert_called_once()
+
+
+def test_check_resource_team_ownership_public_only_token_denied_for_team_prompt():
+    """Public-only tokens should not be able to access team/private prompts."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    prompt = MagicMock()
+    prompt.visibility = "team"
+    prompt.team_id = "team-1"
+    db.execute.return_value.scalar_one_or_none.return_value = prompt
+
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+
+
+def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
+    """Unknown prompt visibility should fail securely (deny)."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    prompt = MagicMock()
+    prompt.visibility = "mystery"
+    prompt.team_id = "team-1"
+    db.execute.return_value.scalar_one_or_none.return_value = prompt
+
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+
+
+def test_check_resource_team_ownership_gateway_team_allows_matching_team():
+    """Team-scoped gateways should allow access for matching team tokens."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    gateway = MagicMock()
+    gateway.visibility = "team"
+    gateway.team_id = "team-1"
+    db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+
+
+def test_check_resource_team_ownership_gateway_private_denies_non_owner():
+    """Private gateways should deny access when requester is not the owner."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    gateway = MagicMock()
+    gateway.visibility = "private"
+    gateway.owner_email = "owner@example.com"
+    gateway.team_id = "team-1"
+    db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+
+
+def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch):
+    """Unknown resource types should be denied by default."""
+    # Standard
+    import re
+
+    # First-Party
+    from mcpgateway.middleware import token_scoping as token_scoping_module
+
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    monkeypatch.setattr(token_scoping_module, "_RESOURCE_PATTERNS", [(re.compile(r"/weird/?([a-f0-9\\-]+)"), "weird")])
+    assert middleware._check_resource_team_ownership("/weird/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
 
 
 def test_check_resource_team_ownership_tool_private_and_unknown():

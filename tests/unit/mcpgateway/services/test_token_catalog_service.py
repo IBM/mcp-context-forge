@@ -231,6 +231,29 @@ class TestTokenCatalogService:
         hash2 = token_service._hash_token("token2")
         assert hash1 != hash2
 
+    def test_validate_scope_containment_allows_empty_scope(self, token_service):
+        """Custom scopes are allowed only when requested scope is empty (inherit-at-runtime)."""
+        token_service._validate_scope_containment(requested_permissions=None, caller_permissions=None)
+        token_service._validate_scope_containment(requested_permissions=[], caller_permissions=[])
+
+    def test_validate_scope_containment_denies_custom_scope_without_permissions(self, token_service):
+        with pytest.raises(ValueError, match="Cannot specify custom token permissions"):
+            token_service._validate_scope_containment(requested_permissions=["tools.read"], caller_permissions=None)
+
+    def test_validate_scope_containment_allows_wildcard_caller(self, token_service):
+        token_service._validate_scope_containment(requested_permissions=["anything"], caller_permissions=["*"])
+
+    def test_validate_scope_containment_denies_wildcard_request_without_wildcard_caller(self, token_service):
+        with pytest.raises(ValueError, match="Cannot create token with wildcard permissions"):
+            token_service._validate_scope_containment(requested_permissions=["*"], caller_permissions=["tools.read"])
+
+    def test_validate_scope_containment_allows_category_wildcard(self, token_service):
+        token_service._validate_scope_containment(requested_permissions=["tools.read"], caller_permissions=["tools.*"])
+
+    def test_validate_scope_containment_denies_permission_not_in_effective_permissions(self, token_service):
+        with pytest.raises(ValueError, match="Cannot grant permission"):
+            token_service._validate_scope_containment(requested_permissions=["tools.execute"], caller_permissions=["tools.read"])
+
     @pytest.mark.asyncio
     async def test_generate_token_basic(self, token_service):
         """Test _generate_token method with basic parameters."""
@@ -560,6 +583,22 @@ class TestTokenCatalogService:
         assert tokens[0] == mock_api_token
 
     @pytest.mark.asyncio
+    async def test_list_team_tokens_invalid_limit_uses_default(self, token_service, mock_db, mock_team_member):
+        """Invalid list_team_tokens limit should fall back to the default limit (50)."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.side_effect = [
+            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_team_member)),
+            mock_result,
+        ]
+
+        await token_service.list_team_tokens("team-123", "test@example.com", limit=0)
+
+        # Second execute call is the list query; make sure default limit was applied.
+        query = mock_db.execute.call_args_list[1][0][0]
+        assert query._limit_clause.value == 50  # pylint: disable=protected-access
+
+    @pytest.mark.asyncio
     async def test_list_team_tokens_not_owner(self, token_service, mock_db):
         """Test list_team_tokens method - user not team owner."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
@@ -731,6 +770,31 @@ class TestTokenCatalogService:
             assert revocation.reason == "Security concern"
 
     @pytest.mark.asyncio
+    async def test_revoke_token_cache_invalidation_failure_is_swallowed(self, token_service, mock_api_token):
+        """If auth cache invalidation fails, revocation should still succeed."""
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            # Patch invalidate_revocation to avoid any Redis dependency and to return a coroutine we can safely close.
+            with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock):
+                # Patch create_task to raise, but close the coroutine to avoid warnings.
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                def _boom_create_task(coro):
+                    coro.close()
+                    raise RuntimeError("boom")
+
+                with patch.object(asyncio, "create_task", side_effect=_boom_create_task):
+                    result = await token_service.revoke_token(
+                        token_id="token-123",
+                        user_email="test@example.com",
+                        revoked_by="test@example.com",
+                        reason="test",
+                    )
+
+        assert result is True
+
+    @pytest.mark.asyncio
     async def test_revoke_token_not_found(self, token_service):
         """Test revoke_token method - token not found."""
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
@@ -744,6 +808,33 @@ class TestTokenCatalogService:
             )
 
             assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_token_not_found(self, token_service):
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = None
+            result = await token_service.admin_revoke_token("missing", revoked_by="admin@example.com")
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_admin_revoke_token_cache_invalidation_failure_is_swallowed(self, token_service, mock_db, mock_api_token):
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_api_token
+
+            with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock):
+                import asyncio  # pylint: disable=import-outside-toplevel
+
+                def _boom_create_task(coro):
+                    coro.close()
+                    raise RuntimeError("boom")
+
+                with patch.object(asyncio, "create_task", side_effect=_boom_create_task):
+                    result = await token_service.admin_revoke_token("token-123", revoked_by="admin@example.com", reason="test")
+
+        assert result is True
+        assert mock_api_token.is_active is False
+        mock_db.add.assert_called_once()
+        mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_is_token_revoked_true(self, token_service, mock_db):
@@ -1206,6 +1297,43 @@ class TestTokenCatalogServiceSqlOptimization:
         assert stats["successful_requests"] == 90
         assert stats["blocked_requests"] == 5
         assert stats["average_response_time_ms"] == 45.5
+
+    @pytest.mark.asyncio
+    async def test_get_usage_stats_postgresql_path_with_token_filter(self, mock_db):
+        """PostgreSQL usage stats should include the token_jti filter when a token_id is provided."""
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = "postgresql"
+        mock_db.get_bind.return_value = mock_bind
+        service = TokenCatalogService(mock_db)
+
+        mock_token = MagicMock()
+        mock_token.jti = "jti-123"
+
+        mock_token_result = MagicMock()
+        mock_token_result.scalar_one_or_none.return_value = mock_token
+
+        mock_stats_row = MagicMock()
+        mock_stats_row.total = 1
+        mock_stats_row.successful = 1
+        mock_stats_row.blocked = 0
+        mock_stats_row.avg_response = 1.0
+
+        mock_stats_result = MagicMock()
+        mock_stats_result.fetchone.return_value = mock_stats_row
+
+        mock_endpoint_row = MagicMock()
+        mock_endpoint_row.endpoint = "/api/tools"
+        mock_endpoint_row.count = 1
+
+        mock_endpoints_result = MagicMock()
+        mock_endpoints_result.fetchall.return_value = [mock_endpoint_row]
+
+        mock_db.execute.side_effect = [mock_token_result, mock_stats_result, mock_endpoints_result]
+
+        stats = await service.get_token_usage_stats("test@example.com", token_id="token-123", days=7)
+
+        assert stats["total_requests"] == 1
+        assert stats["successful_requests"] == 1
 
     @pytest.mark.asyncio
     async def test_get_usage_stats_sqlite_fallback(self, mock_db):
