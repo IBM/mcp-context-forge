@@ -229,13 +229,12 @@ async def main():
         else:
             for j, part in enumerate(message.content):
                 if part.type == ContentType.TEXT:
-                    print(f"  Part {j+1}: TEXT - {part.text[:40]}...")
-                elif part.type == ContentType.TOOL_CALL and part.tool_call:
-                    print(f"  Part {j+1}: TOOL_CALL - {part.tool_call.name}")
-                elif part.type == ContentType.RESOURCE and part.resource:
-                    print(f"  Part {j+1}: RESOURCE - {part.resource.uri}")
-                elif part.type == ContentType.RESOURCE and part.resource_ref:
-                    print(f"  Part {j+1}: RESOURCE_REF - {part.resource_ref.uri}")
+                    text = part.content[:40] if len(part.content) > 40 else part.content
+                    print(f"  Part {j+1}: TEXT - {text}...")
+                elif part.type == ContentType.TOOL_CALL:
+                    print(f"  Part {j+1}: TOOL_CALL - {part.content.name}")
+                elif part.type == ContentType.RESOURCE:
+                    print(f"  Part {j+1}: RESOURCE - {part.content.uri}")
 
         print()
 

@@ -363,20 +363,370 @@ class TokenUsage(BaseModel):
     cached_tokens: Optional[int] = None
 
 
-class MessageMetadata(BaseModel):
-    """Additional metadata about a message.
+# =============================================================================
+# Message Metadata - Extensible container for message metadata
+# =============================================================================
+
+
+class CompletionMetadata(BaseModel):
+    """LLM completion-specific metadata.
+
+    Contains information about how the LLM generated a response.
 
     Attributes:
         stop_reason: Why the model stopped generating.
         tokens: Token usage information.
+        model: Which model generated this response.
         raw_format: Original format ('chatml', 'harmony', 'gemini', 'anthropic').
         raw_data: Format-specific raw data (for debugging/lossless conversion).
+
+    Examples:
+        >>> meta = CompletionMetadata(stop_reason=StopReason.END)
+        >>> meta.tokens = TokenUsage(input_tokens=10, output_tokens=20)
     """
 
     stop_reason: Optional[StopReason] = None
     tokens: Optional[TokenUsage] = None
+    model: Optional[str] = None
     raw_format: Optional[str] = None
     raw_data: Optional[dict[str, Any]] = None
+
+
+class TimingMetadata(BaseModel):
+    """Timing and performance metadata.
+
+    Attributes:
+        created_at: ISO timestamp when the message was created.
+        latency_ms: Time to generate the response in milliseconds.
+        queued_at: When the request was queued (if applicable).
+        started_at: When processing started.
+        completed_at: When processing completed.
+
+    Examples:
+        >>> meta = TimingMetadata(created_at="2024-01-01T00:00:00Z", latency_ms=150)
+    """
+
+    created_at: Optional[str] = None
+    latency_ms: Optional[int] = None
+    queued_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class ProvenanceMetadata(BaseModel):
+    """Origin and source tracking metadata.
+
+    Tracks where a message came from for auditing and threading.
+
+    Attributes:
+        source: Source identifier (e.g., "user", "agent:xyz", "mcp-server:abc").
+        message_id: Unique identifier for this message.
+        parent_id: ID of parent message (for threading/replies).
+        conversation_id: ID of the conversation this message belongs to.
+        trace_id: Distributed tracing ID.
+        span_id: Distributed tracing span ID.
+
+    Examples:
+        >>> meta = ProvenanceMetadata(source="user", message_id="msg-123")
+    """
+
+    source: Optional[str] = None
+    message_id: Optional[str] = None
+    parent_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    trace_id: Optional[str] = None
+    span_id: Optional[str] = None
+
+
+class Metadata(BaseModel):
+    """Extensible metadata container.
+
+    Provides typed containers for common metadata categories,
+    plus a catch-all `custom` dict for vendor/application-specific data.
+
+    Attributes:
+        completion: LLM completion metadata (tokens, stop reason, model).
+        timing: Timing and performance metadata.
+        provenance: Origin and source tracking.
+        custom: Catch-all for custom metadata (use namespaced keys).
+
+    Examples:
+        >>> meta = Metadata()
+        >>> meta.completion = CompletionMetadata(stop_reason=StopReason.END)
+        >>> meta.timing = TimingMetadata(latency_ms=150)
+        >>> meta.set_custom("mycompany.experiment.variant", "A")
+    """
+
+    completion: Optional[CompletionMetadata] = None
+    timing: Optional[TimingMetadata] = None
+    provenance: Optional[ProvenanceMetadata] = None
+    custom: dict[str, Any] = Field(default_factory=dict)
+
+    def set_custom(self, key: str, value: Any) -> None:
+        """Set a custom metadata value.
+
+        Args:
+            key: Metadata key (recommend namespaced: "vendor.feature.key").
+            value: Metadata value.
+        """
+        self.custom[key] = value
+
+    def get_custom(self, key: str, default: Any = None) -> Any:
+        """Get a custom metadata value.
+
+        Args:
+            key: Metadata key.
+            default: Default value if not found.
+
+        Returns:
+            Metadata value or default.
+        """
+        return self.custom.get(key, default)
+
+    def remove_custom(self, key: str) -> Any:
+        """Remove and return a custom metadata value.
+
+        Args:
+            key: Metadata key to remove.
+
+        Returns:
+            The removed value, or None if not found.
+        """
+        return self.custom.pop(key, None)
+
+    def has_custom(self, key: str) -> bool:
+        """Check if custom metadata exists.
+
+        Args:
+            key: Metadata key.
+
+        Returns:
+            True if exists.
+        """
+        return key in self.custom
+
+
+# =============================================================================
+# Message Extensions - Extensible container for message context
+# =============================================================================
+
+
+class HttpExtension(BaseModel):
+    """HTTP-related message extensions.
+
+    Provides storage and helpers for HTTP headers and related context.
+    Plugins can add, modify, or remove headers as messages flow through.
+
+    Attributes:
+        headers: HTTP headers as key-value pairs.
+
+    Examples:
+        >>> ext = HttpExtension()
+        >>> ext.set_header("X-Request-ID", "abc123")
+        >>> ext.get_header("x-request-id")  # case-insensitive
+        'abc123'
+    """
+
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    def set_header(self, name: str, value: str) -> None:
+        """Set a header (overwrites if exists).
+
+        Args:
+            name: Header name.
+            value: Header value.
+        """
+        self.headers[name] = value
+
+    def add_header(self, name: str, value: str) -> bool:
+        """Add header only if it doesn't exist.
+
+        Args:
+            name: Header name.
+            value: Header value.
+
+        Returns:
+            True if added, False if already exists.
+        """
+        if name not in self.headers:
+            self.headers[name] = value
+            return True
+        return False
+
+    def remove_header(self, name: str) -> Optional[str]:
+        """Remove and return header value.
+
+        Args:
+            name: Header name to remove.
+
+        Returns:
+            The removed value, or None if not found.
+        """
+        return self.headers.pop(name, None)
+
+    def get_header(self, name: str, default: Optional[str] = None) -> Optional[str]:
+        """Get header value (case-insensitive lookup).
+
+        Args:
+            name: Header name.
+            default: Default value if not found.
+
+        Returns:
+            Header value or default.
+        """
+        name_lower = name.lower()
+        for k, v in self.headers.items():
+            if k.lower() == name_lower:
+                return v
+        return default
+
+    def has_header(self, name: str) -> bool:
+        """Check if header exists (case-insensitive).
+
+        Args:
+            name: Header name.
+
+        Returns:
+            True if header exists.
+        """
+        return self.get_header(name) is not None
+
+
+class SecurityExtension(BaseModel):
+    """Security-related message extensions.
+
+    Provides storage for security labels, classification, and related context.
+
+    Attributes:
+        labels: Set of security/data labels (e.g., "PII", "CONFIDENTIAL").
+        classification: Data classification level.
+
+    Examples:
+        >>> ext = SecurityExtension()
+        >>> ext.add_label("PII")
+        >>> ext.has_label("pii")  # case-insensitive
+        True
+    """
+
+    labels: set[str] = Field(default_factory=set)
+    classification: Optional[str] = None
+
+    def add_label(self, label: str) -> None:
+        """Add a security label.
+
+        Args:
+            label: Label to add.
+        """
+        self.labels.add(label)
+
+    def remove_label(self, label: str) -> bool:
+        """Remove a security label.
+
+        Args:
+            label: Label to remove.
+
+        Returns:
+            True if removed, False if not found.
+        """
+        if label in self.labels:
+            self.labels.remove(label)
+            return True
+        return False
+
+    def has_label(self, label: str) -> bool:
+        """Check if label exists (case-insensitive).
+
+        Args:
+            label: Label to check.
+
+        Returns:
+            True if label exists.
+        """
+        label_lower = label.lower()
+        return any(l.lower() == label_lower for l in self.labels)
+
+
+class Extensions(BaseModel):
+    """Extensible container for message extensions.
+
+    Provides typed extension points for common use cases (HTTP, security),
+    plus a catch-all `custom` dict for vendor/application-specific data.
+
+    Convention for custom keys: use namespaced keys like "vendor.feature.key"
+    to avoid collisions.
+
+    Attributes:
+        http: HTTP-related extensions (headers, etc.).
+        security: Security-related extensions (labels, classification).
+        custom: Catch-all for custom extensions (use namespaced keys).
+
+    Examples:
+        >>> ext = Extensions()
+        >>> ext.http.set_header("X-Custom", "value")
+        >>> ext.set_custom("mycompany.audit.timestamp", "2024-01-01")
+        >>> ext.get_custom("mycompany.audit.timestamp")
+        '2024-01-01'
+    """
+
+    http: HttpExtension = Field(default_factory=HttpExtension)
+    security: SecurityExtension = Field(default_factory=SecurityExtension)
+    custom: dict[str, Any] = Field(default_factory=dict)
+
+    def set_custom(self, key: str, value: Any) -> None:
+        """Set a custom extension value.
+
+        Args:
+            key: Extension key (recommend namespaced: "vendor.feature.key").
+            value: Extension value.
+        """
+        self.custom[key] = value
+
+    def get_custom(self, key: str, default: Any = None) -> Any:
+        """Get a custom extension value.
+
+        Args:
+            key: Extension key.
+            default: Default value if not found.
+
+        Returns:
+            Extension value or default.
+        """
+        return self.custom.get(key, default)
+
+    def remove_custom(self, key: str) -> Any:
+        """Remove and return a custom extension value.
+
+        Args:
+            key: Extension key to remove.
+
+        Returns:
+            The removed value, or None if not found.
+        """
+        return self.custom.pop(key, None)
+
+    def has_custom(self, key: str) -> bool:
+        """Check if custom extension exists.
+
+        Args:
+            key: Extension key.
+
+        Returns:
+            True if exists.
+        """
+        return key in self.custom
+
+    def list_custom_keys(self, prefix: Optional[str] = None) -> List[str]:
+        """List custom extension keys, optionally filtered by prefix.
+
+        Args:
+            prefix: Optional prefix to filter by (e.g., "mycompany.").
+
+        Returns:
+            List of matching keys.
+        """
+        if prefix:
+            return [k for k in self.custom.keys() if k.startswith(prefix)]
+        return list(self.custom.keys())
 
 
 # =============================================================================
@@ -384,51 +734,186 @@ class MessageMetadata(BaseModel):
 # =============================================================================
 
 
-class ContentPart(BaseModel):
-    """A single part of multimodal content.
+class BaseContentPart(BaseModel):
+    """Base class for all content parts.
 
-    ContentPart is the fundamental unit for representing different types
-    of content within a message. Each part has a type and the corresponding
-    data for that type.
-
-    Attributes:
-        type: The type of content this part contains.
-        text: Text content (for TEXT and THINKING types).
-        image: Image source (for IMAGE type).
-        tool_call: Tool invocation (for TOOL_CALL type).
-        tool_result: Tool result (for TOOL_RESULT type).
-        resource: Embedded resource (for RESOURCE type).
-        resource_ref: Resource reference (for RESOURCE type).
-        prompt_request: Prompt request (for PROMPT type).
-        prompt_result: Prompt result (for PROMPT type).
-        video: Video content data (for VIDEO type).
-        audio: Audio content data (for AUDIO type).
-        document: Document content data (for DOCUMENT type).
-
-    Examples:
-        >>> text_part = ContentPart(type=ContentType.TEXT, text="Hello")
-        >>> text_part.text
-        'Hello'
-        >>> tool_part = ContentPart(
-        ...     type=ContentType.TOOL_CALL,
-        ...     tool_call=ToolCall(name="search", arguments={"q": "test"})
-        ... )
-        >>> tool_part.tool_call.name
-        'search'
+    All content parts have a `type` field that identifies what kind of
+    content they contain, and a `content` field with the actual data.
     """
 
     type: ContentType
-    text: Optional[str] = None
-    image: Optional[ImageSource] = None
-    tool_call: Optional[ToolCall] = None
-    tool_result: Optional[ToolResult] = None
-    resource: Optional[Resource] = None
-    resource_ref: Optional[ResourceReference] = None
-    prompt_request: Optional[PromptRequest] = None
-    prompt_result: Optional[PromptResult] = None
-    video: Optional[dict[str, Any]] = None
-    audio: Optional[dict[str, Any]] = None
-    document: Optional[dict[str, Any]] = None
+
+
+class TextContentPart(BaseContentPart):
+    """Text content part.
+
+    Examples:
+        >>> part = TextContentPart(content="Hello, world!")
+        >>> part.type
+        <ContentType.TEXT: 'text'>
+        >>> part.content
+        'Hello, world!'
+    """
+
+    type: Literal[ContentType.TEXT] = ContentType.TEXT
+    content: str
+
+
+class ThinkingContentPart(BaseContentPart):
+    """Thinking/reasoning content part.
+
+    Used for chain-of-thought, internal reasoning, or analysis
+    that may not be shown to the end user.
+
+    Examples:
+        >>> part = ThinkingContentPart(content="Let me analyze this...")
+        >>> part.type
+        <ContentType.THINKING: 'thinking'>
+    """
+
+    type: Literal[ContentType.THINKING] = ContentType.THINKING
+    content: str
+
+
+class ImageContentPart(BaseContentPart):
+    """Image content part.
+
+    Examples:
+        >>> part = ImageContentPart(content=ImageSource(type="url", data="https://example.com/img.png"))
+        >>> part.content.type
+        'url'
+    """
+
+    type: Literal[ContentType.IMAGE] = ContentType.IMAGE
+    content: ImageSource
+
+
+class ToolCallContentPart(BaseContentPart):
+    """Tool/function call content part.
+
+    Examples:
+        >>> part = ToolCallContentPart(content=ToolCall(name="search", arguments={"q": "test"}))
+        >>> part.content.name
+        'search'
+    """
+
+    type: Literal[ContentType.TOOL_CALL] = ContentType.TOOL_CALL
+    content: ToolCall
+
+
+class ToolResultContentPart(BaseContentPart):
+    """Tool/function result content part.
+
+    Examples:
+        >>> part = ToolResultContentPart(content=ToolResult(tool_name="search", content="Found 10 results"))
+        >>> part.content.tool_name
+        'search'
+    """
+
+    type: Literal[ContentType.TOOL_RESULT] = ContentType.TOOL_RESULT
+    content: ToolResult
+
+
+class ResourceContentPart(BaseContentPart):
+    """Resource content part - embedded resource data.
+
+    Examples:
+        >>> part = ResourceContentPart(content=Resource(uri="file:///data.txt", content="Hello"))
+        >>> part.content.uri
+        'file:///data.txt'
+    """
+
+    type: Literal[ContentType.RESOURCE] = ContentType.RESOURCE
+    content: Resource
+
+
+class ResourceRefContentPart(BaseContentPart):
+    """Resource reference content part - lightweight reference without embedded content.
+
+    Examples:
+        >>> part = ResourceRefContentPart(content=ResourceReference(uri="file:///data.txt"))
+        >>> part.content.uri
+        'file:///data.txt'
+    """
+
+    type: Literal[ContentType.RESOURCE] = ContentType.RESOURCE
+    content: ResourceReference
+
+
+class PromptRequestContentPart(BaseContentPart):
+    """Prompt template request content part.
+
+    Examples:
+        >>> part = PromptRequestContentPart(content=PromptRequest(name="code_review"))
+        >>> part.content.name
+        'code_review'
+    """
+
+    type: Literal[ContentType.PROMPT] = ContentType.PROMPT
+    content: PromptRequest
+
+
+class PromptResultContentPart(BaseContentPart):
+    """Prompt template result content part.
+
+    Examples:
+        >>> part = PromptResultContentPart(content=PromptResult(prompt_name="code_review"))
+        >>> part.content.prompt_name
+        'code_review'
+    """
+
+    type: Literal[ContentType.PROMPT] = ContentType.PROMPT
+    content: PromptResult
+
+
+class VideoContentPart(BaseContentPart):
+    """Video content part.
+
+    Examples:
+        >>> part = VideoContentPart(content={"url": "https://example.com/video.mp4"})
+    """
+
+    type: Literal[ContentType.VIDEO] = ContentType.VIDEO
+    content: dict[str, Any]
+
+
+class AudioContentPart(BaseContentPart):
+    """Audio content part.
+
+    Examples:
+        >>> part = AudioContentPart(content={"url": "https://example.com/audio.mp3"})
+    """
+
+    type: Literal[ContentType.AUDIO] = ContentType.AUDIO
+    content: dict[str, Any]
+
+
+class DocumentContentPart(BaseContentPart):
+    """Document content part (PDF, Word, etc.).
+
+    Examples:
+        >>> part = DocumentContentPart(content={"url": "https://example.com/doc.pdf"})
+    """
+
+    type: Literal[ContentType.DOCUMENT] = ContentType.DOCUMENT
+    content: dict[str, Any]
+
+
+# Discriminated Union - Pydantic uses 'type' field to determine which class
+ContentPart = Union[
+    TextContentPart,
+    ThinkingContentPart,
+    ImageContentPart,
+    ToolCallContentPart,
+    ToolResultContentPart,
+    ResourceContentPart,
+    ResourceRefContentPart,
+    PromptRequestContentPart,
+    PromptResultContentPart,
+    VideoContentPart,
+    AudioContentPart,
+    DocumentContentPart,
+]
 
 
 # =============================================================================
@@ -450,7 +935,7 @@ class Message(BaseModel):
         role: Who is speaking (user, assistant, system, etc.).
         content: Message content - either a string or list of ContentParts.
         channel: Type of output (analysis, commentary, final).
-        headers: HTTP headers to send with this message (mutable by plugins).
+        extensions: Extensible container for HTTP headers, security labels, and custom data.
         metadata: Additional message metadata.
 
     Examples:
@@ -459,14 +944,16 @@ class Message(BaseModel):
         'Hello'
         >>> msg.is_tool_call()
         False
-        >>> msg.headers["Authorization"] = "Bearer token123"
+        >>> msg.extensions.http.set_header("Authorization", "Bearer token123")
+        >>> msg.extensions.security.add_label("PII")
+        >>> msg.extensions.set_custom("mycompany.audit.user", "alice")
     """
 
     role: Role
     content: Union[str, List[ContentPart]]
     channel: Optional[Channel] = None
-    headers: dict[str, str] = Field(default_factory=dict)
-    metadata: Optional[MessageMetadata] = None
+    extensions: Extensions = Field(default_factory=Extensions)
+    metadata: Metadata = Field(default_factory=Metadata)
 
     # =========================================================================
     # Text Content Extraction
@@ -483,10 +970,10 @@ class Message(BaseModel):
 
         text_parts = []
         for part in self.content:
-            if part.type == ContentType.TEXT and part.text:
-                text_parts.append(part.text)
-            elif part.type == ContentType.THINKING and part.text:
-                text_parts.append(f"[THINKING: {part.text}]")
+            if part.type == ContentType.TEXT:
+                text_parts.append(part.content)
+            elif part.type == ContentType.THINKING:
+                text_parts.append(f"[THINKING: {part.content}]")
 
         return "\n".join(text_parts)
 
@@ -499,7 +986,10 @@ class Message(BaseModel):
         if isinstance(self.content, str):
             return None
 
-        thinking_parts = [part.text for part in self.content if part.type == ContentType.THINKING and part.text]
+        thinking_parts = [
+            part.content for part in self.content
+            if part.type == ContentType.THINKING
+        ]
 
         return "\n".join(thinking_parts) if thinking_parts else None
 
@@ -515,7 +1005,7 @@ class Message(BaseModel):
         """
         if isinstance(self.content, str):
             return []
-        return [p.tool_call for p in self.content if p.type == ContentType.TOOL_CALL and p.tool_call is not None]
+        return [p.content for p in self.content if p.type == ContentType.TOOL_CALL]
 
     def get_tool_results(self) -> List[ToolResult]:
         """Extract all tool results from content parts.
@@ -525,7 +1015,7 @@ class Message(BaseModel):
         """
         if isinstance(self.content, str):
             return []
-        return [p.tool_result for p in self.content if p.type == ContentType.TOOL_RESULT and p.tool_result is not None]
+        return [p.content for p in self.content if p.type == ContentType.TOOL_RESULT]
 
     def is_tool_call(self) -> bool:
         """Check if this message contains tool calls.
@@ -569,7 +1059,11 @@ class Message(BaseModel):
         """
         if isinstance(self.content, str):
             return []
-        return [p.resource for p in self.content if p.type == ContentType.RESOURCE and p.resource is not None]
+        # ResourceContentPart has Resource as content
+        return [
+            p.content for p in self.content
+            if p.type == ContentType.RESOURCE and isinstance(p.content, Resource)
+        ]
 
     def get_resource_refs(self) -> List[ResourceReference]:
         """Extract all resource references from content parts.
@@ -579,7 +1073,11 @@ class Message(BaseModel):
         """
         if isinstance(self.content, str):
             return []
-        return [p.resource_ref for p in self.content if p.type == ContentType.RESOURCE and p.resource_ref is not None]
+        # ResourceRefContentPart has ResourceReference as content
+        return [
+            p.content for p in self.content
+            if p.type == ContentType.RESOURCE and isinstance(p.content, ResourceReference)
+        ]
 
     def get_all_resource_uris(self) -> List[str]:
         """Get all resource URIs (both embedded and referenced).
@@ -627,7 +1125,10 @@ class Message(BaseModel):
         """
         if isinstance(self.content, str):
             return []
-        return [p.prompt_request for p in self.content if p.type == ContentType.PROMPT and p.prompt_request is not None]
+        return [
+            p.content for p in self.content
+            if p.type == ContentType.PROMPT and isinstance(p.content, PromptRequest)
+        ]
 
     def get_prompt_results(self) -> List[PromptResult]:
         """Extract all prompt results from content parts.
@@ -637,7 +1138,10 @@ class Message(BaseModel):
         """
         if isinstance(self.content, str):
             return []
-        return [p.prompt_result for p in self.content if p.type == ContentType.PROMPT and p.prompt_result is not None]
+        return [
+            p.content for p in self.content
+            if p.type == ContentType.PROMPT and isinstance(p.content, PromptResult)
+        ]
 
     def is_prompt_request(self) -> bool:
         """Check if this message contains prompt requests.
@@ -681,6 +1185,7 @@ class Message(BaseModel):
 
         return iter_message_views(self, ctx)
 
+    # Can remove this.
     def view(self, ctx: Optional[Any] = None) -> "List[MessageView]":
         """Get all message components as MessageViews.
 

@@ -34,8 +34,14 @@ plugins:
           block: true
         - name: "email"
           pattern: "\\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Z|a-z]{2,}\\b"
-          severity: "low"
-          block: false
+          severity: "medium"
+          redact: true
+          redact_replacement: "[EMAIL REDACTED]"
+        - name: "phone"
+          pattern: "\\b(?:\\+?1[-.]?)?\\(?\\d{3}\\)?[-.]?\\d{3}[-.]?\\d{4}\\b"
+          severity: "medium"
+          redact: true
+          redact_replacement: "[PHONE REDACTED]"
 
   # CDM Tool Allowlist - controls which tools can be called
   - name: "CDMToolAllowlist"

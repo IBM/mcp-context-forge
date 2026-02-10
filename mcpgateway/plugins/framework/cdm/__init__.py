@@ -52,12 +52,20 @@ from mcpgateway.plugins.framework.cdm.models import (
     ResourceReference,
     ToolCall,
     ToolResult,
+    # Extensions
+    Extensions,
+    HttpExtension,
+    SecurityExtension,
+    # Metadata
+    CompletionMetadata,
+    Metadata,
+    ProvenanceMetadata,
+    TimingMetadata,
+    TokenUsage,
     # Message types
     Conversation,
     Message,
-    MessageMetadata,
     OutputConstraint,
-    TokenUsage,
 )
 from mcpgateway.plugins.framework.cdm.view import (
     iter_message_views,
@@ -85,12 +93,20 @@ __all__ = [
     "ResourceReference",
     "ToolCall",
     "ToolResult",
+    # === Extensions ===
+    "Extensions",
+    "HttpExtension",
+    "SecurityExtension",
+    # === Metadata ===
+    "CompletionMetadata",
+    "Metadata",
+    "ProvenanceMetadata",
+    "TimingMetadata",
+    "TokenUsage",
     # === Message Types ===
     "Conversation",
     "Message",
-    "MessageMetadata",
     "OutputConstraint",
-    "TokenUsage",
     # === View/Policy Evaluation ===
     "iter_message_views",
     "MessageView",

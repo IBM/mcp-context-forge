@@ -39,6 +39,8 @@ class ScanPattern(BaseModel):
     pattern: str = Field(description="Regex pattern to match")
     severity: str = Field(default="medium", description="Severity: low, medium, high, critical")
     block: bool = Field(default=False, description="Block message if pattern found")
+    redact: bool = Field(default=False, description="Redact (replace) matched content instead of blocking")
+    redact_replacement: str = Field(default="[REDACTED]", description="Replacement text for redaction")
     scan_pre: bool = Field(default=True, description="Scan input messages (pre)")
     scan_post: bool = Field(default=True, description="Scan output messages (post)")
     view_kinds: List[str] = Field(
@@ -165,16 +167,20 @@ class CDMContentScannerPlugin(Plugin):
         - Check is_pre/is_post for directional filtering
         - Filter by ViewKind
         - Report findings with context
+        - Redact sensitive content (modification mode)
 
         Args:
             payload: The CDM Message to evaluate.
             context: Plugin execution context.
 
         Returns:
-            MessageResult with potential violation if blocking pattern found.
+            MessageResult with potential violation if blocking pattern found,
+            or modified_payload if redaction was performed.
         """
         findings: List[Dict[str, Any]] = []
         blocking_finding: Optional[Dict[str, Any]] = None
+        redactions_made = False
+        modified_payload = None
 
         # Get views from the message
         views = payload.view(context)
@@ -185,6 +191,9 @@ class CDMContentScannerPlugin(Plugin):
             if not content:
                 continue
 
+            # Track if this view's content needs redaction
+            redacted_content = content
+
             # Check each pattern
             for pattern, compiled in self.compiled_patterns:
                 # Check if we should scan this view with this pattern
@@ -192,7 +201,7 @@ class CDMContentScannerPlugin(Plugin):
                     continue
 
                 # Scan for matches
-                matches = compiled.findall(content)
+                matches = compiled.findall(redacted_content)
                 if matches:
                     finding = {
                         "pattern_name": pattern.name,
@@ -200,6 +209,7 @@ class CDMContentScannerPlugin(Plugin):
                         "view_kind": view.kind.value,
                         "is_pre": view.is_pre,
                         "match_count": len(matches),
+                        "action": "redact" if pattern.redact else ("block" if pattern.block else "log"),
                     }
 
                     if self.scanner_config.include_match_in_metadata:
@@ -209,21 +219,42 @@ class CDMContentScannerPlugin(Plugin):
 
                     if self.scanner_config.log_matches:
                         phase = "input" if view.is_pre else "output"
+                        action = "redacting" if pattern.redact else ("blocking" if pattern.block else "logging")
                         logger.warning(
                             f"Pattern '{pattern.name}' ({pattern.severity}) found in {phase} "
-                            f"{view.kind.value}: {len(matches)} match(es)"
+                            f"{view.kind.value}: {len(matches)} match(es) - {action}"
                         )
 
-                    # Check if this should block
-                    if pattern.block and blocking_finding is None:
+                    # Handle redaction (takes priority over blocking)
+                    if pattern.redact:
+                        redacted_content = compiled.sub(pattern.redact_replacement, redacted_content)
+                        redactions_made = True
+                    # Check if this should block (only if not redacting)
+                    elif pattern.block and blocking_finding is None:
                         blocking_finding = finding
+
+            # If content was redacted, we need to create modified payload
+            if redacted_content != content:
+                # Create a modified copy of the message with redacted content
+                if modified_payload is None:
+                    # Deep copy the payload for modification
+                    modified_payload = payload.model_copy(deep=True)
+
+                # Update the content in the modified payload
+                self._apply_redaction_to_payload(modified_payload, view, redacted_content)
 
         # Store findings in metadata
         if findings:
             context.metadata["content_scan_findings"] = findings
             context.metadata["content_scan_blocked"] = blocking_finding is not None
+            context.metadata["content_scan_redacted"] = redactions_made
 
-        # If we have a blocking finding, return violation
+        # If redactions were made, return modified payload
+        if redactions_made and modified_payload is not None:
+            logger.info("Content redacted - returning modified message")
+            return MessageResult(modified_payload=modified_payload)
+
+        # If we have a blocking finding (and no redaction), return violation
         if blocking_finding:
             violation = PluginViolation(
                 reason=f"Sensitive content detected: {blocking_finding['pattern_name']}",
@@ -240,6 +271,38 @@ class CDMContentScannerPlugin(Plugin):
             return MessageResult(continue_processing=False, violation=violation)
 
         return MessageResult()
+
+    def _apply_redaction_to_payload(self, payload: MessagePayload, view: Any, redacted_content: str) -> None:
+        """Apply redacted content back to the payload.
+
+        Args:
+            payload: The message payload to modify (in place).
+            view: The view that was redacted.
+            redacted_content: The redacted content to apply.
+        """
+        from mcpgateway.plugins.framework.cdm.models import ContentType
+
+        # Handle string content (simple case)
+        if isinstance(payload.content, str):
+            payload.content = redacted_content
+            return
+
+        # Handle list of ContentParts - all now use .content field
+        if isinstance(payload.content, list):
+            for part in payload.content:
+                # Match the part to the view and update
+                if part.type == ContentType.TEXT and view.kind.value == "text":
+                    # TextContentPart.content is a str - need to replace the part
+                    part.content = redacted_content
+                elif part.type == ContentType.TOOL_CALL and view.kind.value == "tool_call":
+                    # ToolCallContentPart.content is ToolCall
+                    if hasattr(part.content, 'arguments'):
+                        if isinstance(part.content.arguments, str):
+                            part.content.arguments = redacted_content
+                elif part.type == ContentType.TOOL_RESULT and view.kind.value == "tool_result":
+                    # ToolResultContentPart.content is ToolResult
+                    if hasattr(part.content, 'content'):
+                        part.content.content = redacted_content
 
     async def shutdown(self) -> None:
         """Cleanup when plugin shuts down."""

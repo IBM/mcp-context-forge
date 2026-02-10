@@ -81,7 +81,7 @@ class ViewAction(str, Enum):
     RECEIVE = "receive"
     GENERATE = "generate"
 
-
+# Can define different message views.
 class MessageView:
     """Zero-copy view over a message component for policy evaluation.
 
@@ -406,30 +406,37 @@ class MessageView:
         Returns None if no text content is available.
         """
         if self._kind == ViewKind.TEXT:
-            return self._obj if isinstance(self._obj, str) else getattr(self._obj, "text", None)
+            # _obj is the string content directly
+            return self._obj if isinstance(self._obj, str) else str(self._obj)
 
         if self._kind == ViewKind.THINKING:
-            return getattr(self._obj, "text", None) if hasattr(self._obj, "text") else str(self._obj)
+            # _obj is the string content directly
+            return self._obj if isinstance(self._obj, str) else str(self._obj)
 
         if self._kind == ViewKind.RESOURCE:
+            # _obj is a Resource object
             return getattr(self._obj, "content", None)
 
         if self._kind == ViewKind.TOOL_CALL:
+            # _obj is a ToolCall object
             try:
                 return json.dumps(self._obj.arguments)
             except (TypeError, ValueError):
                 return str(self._obj.arguments)
 
         if self._kind == ViewKind.TOOL_RESULT:
+            # _obj is a ToolResult object
             return getattr(self._obj, "content", None)
 
         if self._kind == ViewKind.PROMPT_REQUEST:
+            # _obj is a PromptRequest object
             try:
                 return json.dumps(self._obj.arguments)
             except (TypeError, ValueError):
                 return str(self._obj.arguments)
 
         if self._kind == ViewKind.PROMPT_RESULT:
+            # _obj is a PromptResult object
             return getattr(self._obj, "content", None)
 
         return None
@@ -518,8 +525,9 @@ class MessageView:
             return self._obj.mime_type
 
         if self._kind == ViewKind.IMAGE:
-            if hasattr(self._obj, "image") and self._obj.image:
-                return self._obj.image.media_type
+            # _obj is now ImageSource directly
+            if hasattr(self._obj, "media_type"):
+                return self._obj.media_type
             return "image/*"
 
         return None
@@ -913,7 +921,7 @@ def iter_message_views(message: "Message", ctx: Optional[Any] = None) -> Iterato
     Yields:
         MessageView for each component in the message.
     """
-    from .models import ContentType
+    from .models import ContentType, Resource, ResourceReference, PromptRequest, PromptResult
 
     role = message.role
 
@@ -921,40 +929,42 @@ def iter_message_views(message: "Message", ctx: Optional[Any] = None) -> Iterato
     if isinstance(message.content, str):
         yield MessageView(message.content, ViewKind.TEXT, role, ctx)
     else:
-        # Handle multimodal content parts
+        # Handle multimodal content parts - all use .content field now
         for part in message.content:
-            if part.type == ContentType.TEXT and part.text:
-                yield MessageView(part.text, ViewKind.TEXT, role, ctx)
+            if part.type == ContentType.TEXT:
+                yield MessageView(part.content, ViewKind.TEXT, role, ctx)
 
-            elif part.type == ContentType.THINKING and part.text:
-                yield MessageView(part.text, ViewKind.THINKING, role, ctx)
+            elif part.type == ContentType.THINKING:
+                yield MessageView(part.content, ViewKind.THINKING, role, ctx)
 
             elif part.type == ContentType.RESOURCE:
-                if part.resource:
-                    yield MessageView(part.resource, ViewKind.RESOURCE, role, ctx)
-                if part.resource_ref:
-                    yield MessageView(part.resource_ref, ViewKind.RESOURCE_REF, role, ctx)
+                # Distinguish between Resource and ResourceReference
+                if isinstance(part.content, Resource):
+                    yield MessageView(part.content, ViewKind.RESOURCE, role, ctx)
+                elif isinstance(part.content, ResourceReference):
+                    yield MessageView(part.content, ViewKind.RESOURCE_REF, role, ctx)
 
-            elif part.type == ContentType.TOOL_CALL and part.tool_call:
-                yield MessageView(part.tool_call, ViewKind.TOOL_CALL, role, ctx)
+            elif part.type == ContentType.TOOL_CALL:
+                yield MessageView(part.content, ViewKind.TOOL_CALL, role, ctx)
 
-            elif part.type == ContentType.TOOL_RESULT and part.tool_result:
-                yield MessageView(part.tool_result, ViewKind.TOOL_RESULT, role, ctx)
+            elif part.type == ContentType.TOOL_RESULT:
+                yield MessageView(part.content, ViewKind.TOOL_RESULT, role, ctx)
 
             elif part.type == ContentType.PROMPT:
-                if part.prompt_request:
-                    yield MessageView(part.prompt_request, ViewKind.PROMPT_REQUEST, role, ctx)
-                if part.prompt_result:
-                    yield MessageView(part.prompt_result, ViewKind.PROMPT_RESULT, role, ctx)
+                # Distinguish between PromptRequest and PromptResult
+                if isinstance(part.content, PromptRequest):
+                    yield MessageView(part.content, ViewKind.PROMPT_REQUEST, role, ctx)
+                elif isinstance(part.content, PromptResult):
+                    yield MessageView(part.content, ViewKind.PROMPT_RESULT, role, ctx)
 
             elif part.type == ContentType.IMAGE:
-                yield MessageView(part, ViewKind.IMAGE, role, ctx)
+                yield MessageView(part.content, ViewKind.IMAGE, role, ctx)
 
             elif part.type == ContentType.VIDEO:
-                yield MessageView(part, ViewKind.VIDEO, role, ctx)
+                yield MessageView(part.content, ViewKind.VIDEO, role, ctx)
 
             elif part.type == ContentType.AUDIO:
-                yield MessageView(part, ViewKind.AUDIO, role, ctx)
+                yield MessageView(part.content, ViewKind.AUDIO, role, ctx)
 
             elif part.type == ContentType.DOCUMENT:
-                yield MessageView(part, ViewKind.DOCUMENT, role, ctx)
+                yield MessageView(part.content, ViewKind.DOCUMENT, role, ctx)
