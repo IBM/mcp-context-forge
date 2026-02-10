@@ -1114,7 +1114,7 @@ class TestSchemaValidators:
                 transport="SSE",
                 gateway_mode="invalid_mode",
             )
-        
+
         # Check that the error mentions the pattern validation
         assert "gateway_mode" in str(exc_info.value)
 
@@ -1140,7 +1140,7 @@ class TestSchemaValidators:
 
         with pytest.raises(ValidationError) as exc_info:
             GatewayUpdate(gateway_mode="invalid_mode")
-        
+
         # Check that the error mentions the pattern validation
         assert "gateway_mode" in str(exc_info.value)
 

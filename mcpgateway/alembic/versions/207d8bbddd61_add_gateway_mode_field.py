@@ -2,7 +2,7 @@
 """add_gateway_mode_field
 
 Revision ID: 207d8bbddd61
-Revises: f1a2b3c4d5e6
+Revises: 04cda6733305
 Create Date: 2026-01-21 09:48:44.636655
 
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "207d8bbddd61"
-down_revision: Union[str, Sequence[str], None] = "b1b2b3b4b5b6"
+down_revision: Union[str, Sequence[str], None] = "04cda6733305"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
