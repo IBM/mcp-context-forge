@@ -1,82 +1,19 @@
 /**
  * Unit tests for admin.js escapeHtml function.
- *
- * admin.js is a browser script (not an ES module), so functions are
- * accessed from the window object after executing the script in JSDOM.
- *
- * Coverage: admin.js is manually instrumented with istanbul before eval
- * so that coverage data flows back to Vitest's Istanbul reporter.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { createInstrumenter } from "istanbul-lib-instrument";
-import fs from "fs";
-import path from "path";
-import { JSDOM } from "jsdom";
-import { fileURLToPath } from "url";
+import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-let dom;
 let escapeHtml;
 
 beforeAll(() => {
-    const adminJsPath = path.resolve(
-        __dirname,
-        "../../mcpgateway/static/admin.js",
-    );
-    const adminJsContent = fs.readFileSync(adminJsPath, "utf8");
-
-    // Instrument admin.js with Istanbul counters so coverage data is
-    // collected when the script runs inside JSDOM's sandboxed context.
-    const instrumenter = createInstrumenter({
-        compact: false,
-        esModules: false,
-        coverageVariable: "__coverage__",
-    });
-    const instrumented = instrumenter.instrumentSync(
-        adminJsContent,
-        adminJsPath,
-    );
-
-    dom = new JSDOM("<!DOCTYPE html><html><body></body></html>", {
-        url: "http://localhost",
-        runScripts: "outside-only",
-    });
-
-    // Suppress console noise from admin.js initialization
-    dom.window.console = {
-        ...dom.window.console,
-        log: () => {},
-        warn: () => {},
-        error: () => {},
-    };
-
-    // Execute the instrumented script in JSDOM's sandbox.
-    // admin.js is a non-modular browser script that attaches functions
-    // to the window object — JSDOM eval is the standard way to load it.
-    dom.window.eval(instrumented);
-    escapeHtml = dom.window.escapeHtml;
+    const win = loadAdminJs();
+    escapeHtml = win.escapeHtml;
 });
 
 afterAll(() => {
-    // Copy Istanbul coverage data from JSDOM's sandbox into the
-    // Node.js global where Vitest's Istanbul reporter collects it.
-    const jsCoverage = dom.window.__coverage__;
-    if (jsCoverage && typeof jsCoverage === "object") {
-        const target = "__VITEST_COVERAGE__";
-        if (!globalThis[target]) {
-            globalThis[target] = {};
-        }
-        for (const [filePath, fileCov] of Object.entries(jsCoverage)) {
-            globalThis[target][filePath] = fileCov;
-        }
-    }
-
-    if (dom) {
-        dom.window.close();
-    }
+    cleanupAdminJs();
 });
 
 describe("escapeHtml", () => {
