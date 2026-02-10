@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { return false } })() }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) {} })"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -139,12 +139,21 @@
         safeReplaceState({}, '', newUrl);
       }
 
-      // Safe wrapper for history.replaceState — skips in restricted contexts (e.g. sandboxed iframes)
+      // One-time debug notice for restricted iframe contexts (e.g. sandboxed iframes)
+      var _restrictedContextLogged = false;
+      function _logRestrictedContext(e) {
+        if (!_restrictedContextLogged) {
+          _restrictedContextLogged = true;
+          console.debug('Running in restricted context — storage/history APIs unavailable:', e.message);
+        }
+      }
+
+      // Safe wrapper for history.replaceState — skips in restricted contexts
       function safeReplaceState(data, title, url) {
         try {
           window.history.replaceState(data, title, url);
         } catch (e) {
-          // Restricted context — skip URL update
+          _logRestrictedContext(e);
         }
       }
     </script>
@@ -11886,7 +11895,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) {}
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12110,7 +12119,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) {}
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
