@@ -260,6 +260,11 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **README Rationalization** ([#2365](https://github.com/IBM/mcp-context-forge/issues/2365)) - Streamlined and reorganized project README
 * **SonarQube Cleanup** ([#2367](https://github.com/IBM/mcp-context-forge/issues/2367), [#2371](https://github.com/IBM/mcp-context-forge/issues/2371), [#2372](https://github.com/IBM/mcp-context-forge/issues/2372), [#2377](https://github.com/IBM/mcp-context-forge/issues/2377), [#2382](https://github.com/IBM/mcp-context-forge/issues/2382)) - Fixed redundant ternary, removed dead code, replaced deprecated `datetime.utcnow()`, cleaned up unused imports
 
+#### OAuth Client Credentials Authentication
+* Added support for sending client credentials either in the request body (default behavior) or in the HTTP headers **for the Client Credentials grant type only**
+* Configuration exposed via a UI dropdown selector
+* Enables compliance with environments enforcing strict security policies for sensitive credentials
+* Other OAuth grant types are not affected
 ---
 
 ## [1.0.0-BETA-2] - 2026-01-20 - Performance, Scale & Reliability
