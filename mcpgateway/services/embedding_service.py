@@ -23,6 +23,8 @@ from mcpgateway.services.mcp_client_chat_service import (
     EmbeddingProviderFactory, 
     OpenAIEmbeddingConfig,
 )
+from sqlalchemy.orm import Session
+from mcpgateway.db import ToolEmbedding
 
 class EmbeddingService:
     """Service for generating text embeddings.
@@ -214,3 +216,191 @@ class EmbeddingService:
             'model': self.embedding_config.config.model,
             'initialized': self._initialized
             }
+
+    def store_tool_embedding(
+        self, 
+        db: Session, 
+        tool_id: str, 
+        embedding: List[float], 
+        model_name: str
+    ) -> ToolEmbedding:
+        """Store or update tool embedding in database.
+        
+        Args:
+            db: Database session
+            tool_id: ID of the tool
+            embedding: Embedding vector (list of floats)
+            model_name: Name of the embedding model used
+        
+        Returns:
+            ToolEmbedding: The created or updated embedding record
+        
+        Raises:
+            ValueError: If embedding is invalid
+            RuntimeError: If database operation fails
+        """
+        # Validate embedding
+        if not embedding or not isinstance(embedding, list):
+            raise ValueError("Embedding must be a non-empty list")
+        
+        if not all(isinstance(x, (int, float)) for x in embedding):
+            raise ValueError("Embedding must contain only numbers")
+        
+        try:
+            # Check if embedding already exists for this tool
+            existing = db.query(ToolEmbedding).filter(
+                ToolEmbedding.tool_id == tool_id
+            ).first()
+            
+            if existing:
+                # Update existing embedding
+                existing.embedding = embedding
+                existing.model_name = model_name
+                # updated_at will be automatically set by onupdate
+                db.commit()
+                db.refresh(existing)
+                logging.info(f"Updated embedding for tool {tool_id}")
+                return existing
+            else:
+                # Create new embedding
+                db_embedding = ToolEmbedding(
+                    tool_id=tool_id,
+                    embedding=embedding,
+                    model_name=model_name,
+                )
+                db.add(db_embedding)
+                db.commit()
+                db.refresh(db_embedding)
+                logging.info(f"Created embedding for tool {tool_id}")
+                return db_embedding
+                
+        except Exception as e:
+            db.rollback()
+            logging.error(f"Failed to store embedding for tool {tool_id}: {e}")
+            raise RuntimeError(f"Database operation failed: {e}")
+
+    def batch_store_tool_embeddings(
+        self,
+        db: Session,
+        tool_embeddings: List[tuple[str, List[float]]],
+        model_name: str
+    ) -> List[ToolEmbedding]:
+        """Store multiple tool embeddings efficiently.
+        
+        Args:
+            db: Database session
+            tool_embeddings: List of (tool_id, embedding) tuples
+            model_name: Name of the embedding model used
+        
+        Returns:
+            List of created/updated ToolEmbedding records
+        """
+        if not tool_embeddings:
+            return []
+        
+        try:
+            results = []
+            
+            # Get existing embeddings in one query
+            tool_ids = [tool_id for tool_id, _ in tool_embeddings]
+            existing_map = {
+                emb.tool_id: emb 
+                for emb in db.query(ToolEmbedding).filter(
+                    ToolEmbedding.tool_id.in_(tool_ids)
+                ).all()
+            }
+            
+            # Process each embedding
+            for tool_id, embedding in tool_embeddings:
+                if tool_id in existing_map:
+                    # Update existing
+                    existing = existing_map[tool_id]
+                    existing.embedding = embedding
+                    existing.model_name = model_name
+                    results.append(existing)
+                else:
+                    # Create new
+                    new_embedding = ToolEmbedding(
+                        tool_id=tool_id,
+                        embedding=embedding,
+                        model_name=model_name,
+                    )
+                    db.add(new_embedding)
+                    results.append(new_embedding)
+            
+            # Commit all changes at once
+            db.commit()
+            
+            # Refresh all objects
+            for result in results:
+                db.refresh(result)
+            
+            logging.info(f"Stored {len(results)} tool embeddings")
+            return results
+            
+        except Exception as e:
+            db.rollback()
+            logging.error(f"Batch store failed: {e}")
+            raise RuntimeError(f"Batch storage failed: {e}")
+    
+    async def embed_and_store_tool(
+        self, 
+        db: Session, 
+        tool
+    ) -> ToolEmbedding:
+        """Generate and store embedding for a single tool.
+        
+        Args:
+            db: Database session
+            tool: Tool object from database
+        
+        Returns:
+            ToolEmbedding: The stored embedding record
+        """
+        # Generate embedding
+        embedding = await self.embed_tool_from_db(tool)
+        
+        # Store in database
+        model_name = self.embedding_config.config.model
+        return self.store_tool_embedding(db, tool.id, embedding, model_name)
+
+
+    async def embed_and_store_tools_batch(
+        self,
+        db: Session,
+        tools: List
+    ) -> List[ToolEmbedding]:
+        """Generate and store embeddings for multiple tools efficiently.
+        
+        Args:
+            db: Database session
+            tools: List of Tool objects from database
+        
+        Returns:
+            List of stored ToolEmbedding records
+        """
+        if not tools:
+            return []
+        
+        # Convert tools to dict format
+        tools_data = []
+        for tool in tools:
+            tool_data = {
+                'original_name': tool.original_name,
+                'description': tool.description,
+                'tags': tool.tags if tool.tags else [],
+                'integration_type': tool.integration_type,
+                'input_schema': tool.input_schema if tool.input_schema else {},
+                'gateway_id': tool.gateway_id
+            }
+            tools_data.append(tool_data)
+        
+        # Generate all embeddings in batch
+        embeddings = await self.batch_embed_tools(tools_data)
+        
+        # Prepare for batch storage
+        tool_embeddings = [(tool.id, embedding) for tool, embedding in zip(tools, embeddings)]
+        
+        # Store all embeddings
+        model_name = self.embedding_config.config.model
+        return self.batch_store_tool_embeddings(db, tool_embeddings, model_name)
