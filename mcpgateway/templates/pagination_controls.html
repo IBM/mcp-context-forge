@@ -78,7 +78,7 @@
     }
 
     const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-    try { window.history.replaceState({}, '', newUrl); } catch(e) {}
+    safeReplaceState({}, '', newUrl);
   },
 
   // Load page via HTMX

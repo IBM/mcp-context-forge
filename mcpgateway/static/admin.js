@@ -7475,9 +7475,7 @@ function cleanUpUrlParamsForTab(targetTabName) {
         currentUrl.pathname +
         (newParams.toString() ? "?" + newParams.toString() : "") +
         currentUrl.hash;
-    try {
-        window.history.replaceState({}, "", newUrl);
-    } catch (e) {}
+    safeReplaceState({}, "", newUrl);
 }
 
 function showTab(tabName) {
@@ -23923,15 +23921,22 @@ function getAuthenticatedUserId() {
 function generateUserId() {
     const authenticatedUserId = getAuthenticatedUserId();
     if (authenticatedUserId) {
-        sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        try {
+            sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        } catch (e) {}
         return authenticatedUserId;
     }
     // Check if user ID exists in session storage
-    let userId = sessionStorage.getItem("llm_chat_user_id");
+    let userId;
+    try {
+        userId = sessionStorage.getItem("llm_chat_user_id");
+    } catch (e) {}
     if (!userId) {
         // Generate a unique ID
         userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        sessionStorage.setItem("llm_chat_user_id", userId);
+        try {
+            sessionStorage.setItem("llm_chat_user_id", userId);
+        } catch (e) {}
     }
     return userId;
 }
