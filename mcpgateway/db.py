@@ -42,6 +42,8 @@ from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, r
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
 
+from pgvector.sqlalchemy import Vector
+
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -2818,6 +2820,9 @@ class Tool(Base):
     # Relationship with ToolMetric records
     metrics: Mapped[List["ToolMetric"]] = relationship("ToolMetric", back_populates="tool", cascade="all, delete-orphan")
 
+    # Embeddings relationship
+    embeddings: Mapped[List["ToolEmbedding"]] = relationship("ToolEmbedding", back_populates="tool", cascade="all, delete-orphan")
+
     # Team scoping fields for resource organization
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -3159,7 +3164,63 @@ class Tool(Base):
             "last_execution_time": result[5],
         }
 
+class ToolEmbedding(Base):
+    __tablename__ = "tool_embeddings"
 
+    id: Mapped[str] = mapped_column(
+        String(36),
+        primary_key=True,
+        default=lambda: str(uuid.uuid4()),
+        nullable=False,
+    )
+    tool_id: Mapped[str] = mapped_column(
+        String(36),
+        ForeignKey("tools.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    
+    if backend == "postgresql":
+        embedding: Mapped[list[float]] = mapped_column(
+            Vector(1536),
+            nullable=False,
+        )
+    else:  # SQLite and others
+        embedding: Mapped[list[float]] = mapped_column(
+            JSON,
+            nullable=False,
+        )
+    
+    model_name: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        default="text-embedding-3-small",
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    tool: Mapped["Tool"] = relationship(
+        "Tool",
+        back_populates="embeddings",
+        passive_deletes=True,
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ToolEmbedding(id={self.id}, "
+            f"tool_id={self.tool_id}, "
+            f"model_name={self.model_name})>"
+        )
+    
 class Resource(Base):
     """
     ORM model for a registered Resource.
@@ -5560,6 +5621,15 @@ def init_db():
         Exception: If database initialization fails.
     """
     try:
+        # Enable pgvector extension for PostgreSQL
+        if backend == "postgresql":
+            with engine.connect() as conn:
+                try:
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgvector"))
+                    conn.commit()
+                except Exception as e:
+                    logger.warning(f"Could not create pgvector extension: {e}")
+
         # Apply MariaDB compatibility fix
         patch_string_columns_for_mariadb(Base, engine)
 
