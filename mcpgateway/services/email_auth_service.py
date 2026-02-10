@@ -141,6 +141,7 @@ class EmailAuthService:
     def role_service(self):
         """Lazy-initialized RoleService to avoid circular imports."""
         if self._role_service is None:
+            # First-Party
             from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
             self._role_service = RoleService(self.db)
