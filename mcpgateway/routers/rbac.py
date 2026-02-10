@@ -27,9 +27,10 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Permissions, SessionLocal
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
+from mcpgateway.services.policy_engine import require_permission_v2  # Phase 1 - #2019
 from mcpgateway.services.role_service import RoleService
 
 logger = logging.getLogger(__name__)
@@ -124,7 +125,7 @@ async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_use
 
 
 @router.get("/roles", response_model=List[RoleResponse])
-@require_permission("admin.user_management")
+@require_permission_v2("admin.user_management")
 async def list_roles(
     scope: Optional[str] = Query(None, description="Filter by scope"),
     active_only: bool = Query(True, description="Show only active roles"),
@@ -165,7 +166,7 @@ async def list_roles(
 
 
 @router.get("/roles/{role_id}", response_model=RoleResponse)
-@require_permission("admin.user_management")
+@require_permission_v2("admin.user_management")
 async def get_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get role details by ID.
 
@@ -293,7 +294,7 @@ async def delete_role(role_id: str, user=Depends(get_current_user_with_permissio
 
 
 @router.post("/users/{user_email}/roles", response_model=UserRoleResponse)
-@require_permission("admin.user_management")
+@require_permission_v2("admin.user_management")
 async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Assign a role to a user.
 
@@ -334,7 +335,7 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
 
 
 @router.get("/users/{user_email}/roles", response_model=List[UserRoleResponse])
-@require_permission("admin.user_management")
+@require_permission_v2("admin.user_management")
 async def get_user_roles(
     user_email: str,
     scope: Optional[str] = Query(None, description="Filter by scope"),
@@ -377,7 +378,7 @@ async def get_user_roles(
 
 
 @router.delete("/users/{user_email}/roles/{role_id}")
-@require_permission("admin.user_management")
+@require_permission_v2("admin.user_management")
 async def revoke_user_role(
     user_email: str,
     role_id: str,
@@ -430,7 +431,7 @@ async def revoke_user_role(
 
 
 @router.post("/permissions/check", response_model=PermissionCheckResponse)
-@require_permission("admin.security_audit")
+@require_permission_v2("admin.security_audit")
 async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Check if a user has specific permission.
 
@@ -472,7 +473,7 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
 
 
 @router.get("/permissions/user/{user_email}", response_model=List[str])
-@require_permission("admin.security_audit")
+@require_permission_v2("admin.security_audit")
 async def get_user_permissions(user_email: str, team_id: Optional[str] = Query(None, description="Team context"), user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get all effective permissions for a user.
 
