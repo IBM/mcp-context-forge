@@ -223,6 +223,7 @@ services:
       - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
+      - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
       # Security defaults (tokens require expiration and JTI for revocation)
@@ -286,6 +287,7 @@ services:
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
+      - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - LLMCHAT_ENABLED=true
       - OBSERVABILITY_ENABLED=false

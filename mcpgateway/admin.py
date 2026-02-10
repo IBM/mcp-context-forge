@@ -60,7 +60,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -134,7 +134,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -147,7 +147,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.security_cookies import set_auth_cookie
+from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
 
@@ -517,6 +517,19 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
     return str(user)
 
 
+def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
+    """Return a {team_id: role} mapping for a user's active memberships.
+
+    Args:
+        db: The SQLAlchemy database session.
+        user_email: Email address of the user to query memberships for.
+
+    Returns:
+        Dict mapping team_id to the user's role in that team.
+    """
+    return get_user_team_roles(db, user_email)
+
+
 def _get_span_entity_performance(
     db: Session,
     cutoff_time: datetime,
@@ -630,30 +643,23 @@ def _get_span_entity_performance(
         """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont).
 
         Args:
-            data: Sorted list of numeric values.
+            data: Sorted, non-empty list of numeric values.
             p: Percentile to calculate (0.0 to 1.0).
 
         Returns:
-            float: The interpolated percentile value, or 0.0 if data is empty.
+            float: The interpolated percentile value.
         """
-        if not data:
-            return 0.0
         n = len(data)
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     items: List[dict] = []
     for entity, durations in durations_by_entity.items():
         durations_sorted = sorted(durations)
         n = len(durations_sorted)
-        if n == 0:
-            continue
         items.append(
             {
                 result_key: entity,
@@ -1073,15 +1079,15 @@ async def update_global_passthrough_headers(
         # Invalidate cache so changes propagate immediately (Issue #1715)
         global_config_cache.invalidate()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
-    except (IntegrityError, ValidationError, PassthroughHeadersError) as e:
+    except IntegrityError as e:
         db.rollback()
-        if isinstance(e, IntegrityError):
-            raise HTTPException(status_code=409, detail="Passthrough headers conflict")
-        if isinstance(e, ValidationError):
-            raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
-        if isinstance(e, PassthroughHeadersError):
-            raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="Unknown error occurred")
+        raise HTTPException(status_code=409, detail="Passthrough headers conflict") from e
+    except ValidationError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Invalid passthrough headers format") from e
+    except PassthroughHeadersError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
@@ -1317,9 +1323,6 @@ async def get_configuration_settings(
                 return settings.masked_auth_value
             if value and str(value) not in ["", "None", "null"]:
                 return settings.masked_auth_value
-        # Handle SecretStr even for non-sensitive keys
-        if isinstance(value, SecretStr):
-            return value.get_secret_value()
         return value
 
     # Group settings by category
@@ -1648,6 +1651,8 @@ async def admin_servers_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "servers_partial.html",
@@ -1658,6 +1663,9 @@ async def admin_servers_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -1854,10 +1862,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    # NOTE: Pydantic validation errors subclass ValueError; CoreValidationError must be handled first.
     except ValueError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-    except ValidationError as ex:
-        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -2562,14 +2569,9 @@ async def admin_ui(
             >>> _matches_selected_team({'teams': ['t1', 't2']}, 't1')
             True
 
-            >>> _matches_selected_team({}, '')
-            True
-
             >>> _matches_selected_team(None, 'abc')
             False
         """
-        if not tid:
-            return True
         # If an item is explicitly public, it should be visible to any team
         try:
             vis = getattr(item, "visibility", None)
@@ -2831,7 +2833,7 @@ async def admin_ui(
             admin_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
 
-            # Generate a comprehensive JWT token that matches the email auth format
+            # Generate a lightweight session JWT token
             now = datetime.now(timezone.utc)
             payload = {
                 "sub": admin_email,
@@ -2841,25 +2843,16 @@ async def admin_ui(
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
                 "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
-                "teams": [],  # Teams populated downstream when needed
-                "namespaces": [f"user:{admin_email}", "public"],
+                "token_use": "session",  # nosec B105 - token type marker, not a password
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
             # Generate token using centralized token creation
             token = await create_jwt_token(payload)
 
-            # Set HTTP-only cookie for security
-            response.set_cookie(
-                key="jwt_token",
-                value=token,
-                httponly=True,
-                secure=getattr(settings, "secure_cookies", False),
-                samesite=getattr(settings, "cookie_samesite", "lax"),
-                max_age=settings.token_expiry * 60,  # Convert minutes to seconds
-                path=settings.app_root_path or "/",  # Make cookie available for all paths
-            )
-            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
+            # Set HTTP-only cookie using centralized security cookie utility
+            set_auth_cookie(response, token, remember_me=False)
+            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
@@ -2912,9 +2905,14 @@ async def admin_login_page(request: Request) -> Response:
     if settings.secure_cookies and settings.environment == "development":
         secure_cookie_warning = "Serving over HTTP with secure cookies enabled. If you have login issues, try disabling secure cookies in your configuration."
 
+    # Preserve email from failed login attempt
+    prefill_email = request.query_params.get("email", "")
+
     # Use external template file
     return request.app.state.templates.TemplateResponse(
-        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
+        request,
+        "login.html",
+        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
     )
 
 
@@ -2970,7 +2968,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
         if not email or not password:
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
+            params = "error=missing_fields"
+            if email:
+                params += f"&email={urllib.parse.quote(email)}"
+            return RedirectResponse(url=f"{root_path}/admin/login?{params}", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -2984,7 +2985,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -3034,7 +3035,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    root_path = request.scope.get("root_path", "")
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                        status_code=303,
+                    )
 
                 return response
 
@@ -3046,7 +3054,13 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
-            set_auth_cookie(response, token, remember_me=False)
+            try:
+                set_auth_cookie(response, token, remember_me=False)
+            except CookieTooLargeError:
+                return RedirectResponse(
+                    url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                    status_code=303,
+                )
 
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
@@ -3058,7 +3072,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
@@ -3123,8 +3137,8 @@ async def _admin_logout(request: Request) -> Response:
         # User-initiated logout: clear cookie and redirect to login
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
-    # Clear JWT token cookie
-    response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
+    # Clear JWT token cookie using centralized security cookie utility
+    clear_auth_cookie(response)
 
     return response
 
@@ -3280,21 +3294,15 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         # Get user from JWT token in cookie
         try:
             jwt_token = request.cookies.get("jwt_token")
-            if not jwt_token:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-
-            # Authenticate using the token
-            # Create credentials object from cookie
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-            # get_current_user now uses fresh DB sessions internally
-            current_user = await get_current_user(credentials, request=request)
-
-            if not current_user:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+            current_user = None
+            if jwt_token:
+                credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+                current_user = await get_current_user(credentials, request=request)
         except Exception as e:
             LOGGER.error(f"Authentication error: {e}")
+            current_user = None
+
+        if not current_user:
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
@@ -3341,7 +3349,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large",
+                        status_code=303,
+                    )
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
@@ -3850,23 +3864,19 @@ async def admin_teams_partial_html(
         t.member_count = counts.get(team_id, 0)
 
         # Determine relationship
+        t.relationship = "none"
+        t.pending_request = None
         if t.is_personal:
             t.relationship = "personal"
-            t.pending_request = None
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-            t.pending_request = None
         elif current_user.is_admin:
             # Admins get admin controls for teams they're not members of
             t.relationship = "none"  # Falls through to admin controls in template
-            t.pending_request = None
         elif team_id in public_team_ids:
             t.relationship = "public"
             t.pending_request = pending_requests.get(team_id)
-        else:
-            t.relationship = "none"
-            t.pending_request = None
 
         enriched_data.append(t)
 
@@ -4597,7 +4607,7 @@ async def admin_update_team(
             </div>
             """
             response = HTMLResponse(content=success_html)
-            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}}).decode()
+            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshUnifiedTeamsList": True, "delayMs": 1500}}).decode()
             return response
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
@@ -4759,9 +4769,6 @@ async def admin_add_team_members(
 
         # 1. Handle additions and updates for checked users
         for user_email in user_emails:
-            if not isinstance(user_email, str):
-                continue
-
             user_email = user_email.strip()
             if not user_email:
                 continue
@@ -6080,7 +6087,7 @@ async def admin_get_user_edit(
                         <div class="ml-3 flex-1">
                             <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
                             <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
-                                <div class="flex items-center" id="req-length">
+                                <div class="flex items-center" id="edit-req-length">
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
@@ -6089,25 +6096,25 @@ async def admin_get_user_edit(
             if settings.password_require_uppercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
+                                <div class="flex items-center" id="edit-req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
                 """
                 )
             if settings.password_require_lowercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
+                                <div class="flex items-center" id="edit-req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
                 """
                 )
             if settings.password_require_numbers:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
+                                <div class="flex items-center" id="edit-req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
                 """
                 )
             if settings.password_require_special:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
+                                <div class="flex items-center" id="edit-req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
                 """
                 )
             pr_lines.append(
@@ -6128,7 +6135,7 @@ async def admin_get_user_edit(
         edit_form = f"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#user-edit-modal-content" class="space-y-4">
+            <form hx-post="{root_path}/admin/users/{user_email}/update" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -6160,7 +6167,7 @@ async def admin_get_user_edit(
                 </div>
                 {password_requirements_html}
                 <div
-                    id="password-policy-data"
+                    id="edit-password-policy-data"
                     class="hidden"
                     data-min-length="{settings.password_min_length}"
                     data-require-uppercase="{'true' if settings.password_require_uppercase else 'false'}"
@@ -6247,7 +6254,7 @@ async def admin_update_user(
             if not is_valid:
                 return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password)
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """
@@ -6519,6 +6526,8 @@ async def admin_list_tools(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
 
     # Call tool_service.list_tools with page-based pagination
     paginated_result = await tool_service.list_tools(
@@ -6527,6 +6536,9 @@ async def admin_list_tools(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        requesting_user_email=user_email,
+        requesting_user_is_admin=_is_admin,
+        requesting_user_team_roles=_team_roles,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -6574,7 +6586,7 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -6672,10 +6684,21 @@ async def admin_tools_partial_html(
     # Team names are loaded via joinedload(DbTool.email_team) in the query
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     tools_pydantic = []
     for t in tools_db:
         try:
-            tools_pydantic.append(tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False))
+            tools_pydantic.append(
+                tool_service.convert_tool_to_read(
+                    t,
+                    include_metrics=False,
+                    include_auth=False,
+                    requesting_user_email=user_email,
+                    requesting_user_is_admin=_is_admin,
+                    requesting_user_team_roles=_team_roles,
+                )
+            )
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
 
@@ -6726,6 +6749,9 @@ async def admin_tools_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -6822,8 +6848,19 @@ async def admin_tool_ops_partial(
     )
 
     tools_db = paginated_result["data"]
-    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
-
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
+    tools_pydantic = [
+        tool_service.convert_tool_to_read(
+            t,
+            include_metrics=False,
+            include_auth=False,
+            requesting_user_email=user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+        )
+        for t in tools_db
+    ]
     db.commit()
 
     return request.app.state.templates.TemplateResponse(
@@ -6833,6 +6870,9 @@ async def admin_tool_ops_partial(
             "request": request,
             "tools": tools_pydantic,
             "root_path": request.scope.get("root_path", ""),
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7224,6 +7264,8 @@ async def admin_prompts_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "prompts_partial.html",
@@ -7234,6 +7276,9 @@ async def admin_prompts_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7276,7 +7321,7 @@ async def admin_gateways_partial_html(
         encoded gateway data when templates expect it.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7383,6 +7428,8 @@ async def admin_gateways_partial_html(
             {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "gateways_partial.html",
@@ -7393,6 +7440,9 @@ async def admin_gateways_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7902,6 +7952,8 @@ async def admin_resources_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "resources_partial.html",
@@ -7912,6 +7964,9 @@ async def admin_resources_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8474,6 +8529,8 @@ async def admin_a2a_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "agents_partial.html",
@@ -8484,6 +8541,9 @@ async def admin_a2a_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8677,8 +8737,11 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    _user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
     try:
-        tool = await tool_service.get_tool(db, tool_id)
+        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -9364,12 +9427,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except ValueError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+    except ValueError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -9564,14 +9628,15 @@ async def admin_edit_gateway(
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-        if isinstance(ex, ValueError):
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+        if isinstance(ex, ValueError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -10362,13 +10427,113 @@ async def admin_set_prompt_state(
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
+@admin_router.get("/roots/export")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_export_root(
+    uri: str,
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Export a single root configuration as JSON.
+
+    Args:
+        uri: Root URI to export (query parameter)
+        user: Authenticated user
+
+    Returns:
+        JSON file download with root configuration
+
+    Raises:
+        HTTPException: If root not found or export fails
+    """
+    try:
+        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+
+        # Get the root by URI
+        root = await root_service.get_root_by_uri(uri)
+
+        # Extract username from user
+        username = get_user_email(user)
+
+        # Create export data
+        export_data = {
+            "exported_at": datetime.now().isoformat(),
+            "exported_by": username,
+            "export_type": "root",
+            "version": "1.0",
+            "root": {
+                "uri": str(root.uri),
+                "name": root.name,
+            },
+        }
+
+        # Generate filename - sanitize URI for filename
+        # Remove protocol and special characters
+        safe_uri = uri.replace("://", "_").replace("/", "_").replace("\\", "_")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"root-export-{safe_uri}-{timestamp}.json"
+
+        # Return as downloadable file
+        content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except RootServiceNotFoundError as e:
+        LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Root export failed: {str(e)}")
+
+
+@admin_router.get("/roots/{uri:path}")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
+    """Get a specific root by URI via the admin UI.
+
+    This endpoint retrieves details for a specific root URI from the system.
+    It requires authentication and logs the operation for audit purposes.
+
+    Args:
+        uri (str): The URI of the root to retrieve.
+        user: Authenticated user dependency.
+
+    Returns:
+        dict: A dictionary containing the root information.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_get_root)
+        True
+        >>> admin_get_root.__name__
+        'admin_get_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    try:
+        root = await root_service.get_root_by_uri(uri)
+        return root.model_dump(by_alias=True)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting root {uri}: {e}")
+        raise e
+
+
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
-      - path
+      - uri
       - name (optional)
 
     Args:
@@ -10385,16 +10550,97 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> admin_add_root.__name__
         'admin_add_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new root")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is adding a new root")
+
     form = await request.form()
-    uri = str(form["uri"])
+    uri = str(form.get("uri", ""))
     name_value = form.get("name")
     name: str | None = None
-    if isinstance(name_value, str):
-        name = name_value
-    await root_service.add_root(uri, name)
+    if isinstance(name_value, str) and name_value.strip():
+        name = name_value.strip()
+
+    try:
+        if not uri:
+            raise ValueError("URI is required")
+        await root_service.add_root(str(uri), name)
+
+    except RootServiceError as e:
+        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+        error_message = "Failed to add root. Please check the URI format."
+    except ValueError as e:
+        LOGGER.warning(f"Invalid input from user {user_email}: {e}")
+        error_message = "Invalid input. Please try again."
+    except Exception as e:
+        LOGGER.error(f"Error adding root: {e}")
+        error_message = "Failed to add root. Please try again."
+
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin{error_param}#roots", status_code=303)
+
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+
+@admin_router.post("/roots/{uri:path}/update")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+    """Update a root via the admin UI.
+
+    This endpoint updates an existing root URI in the system. It expects form
+    fields for the new values and requires authentication.
+
+    Expects form fields:
+    - name (optional): New name for the root
+    - is_inactive_checked: Whether the root should be marked as inactive
+
+    Args:
+        uri (str): The URI of the root to update.
+        request (Request): FastAPI request object containing form data.
+        user: Authenticated user dependency.
+
+    Returns:
+        RedirectResponse: A redirect response to the roots section of the admin
+        dashboard with a status code of 303 (See Other).
+
+    Raises:
+        HTTPException: If the root is not found (404) or other errors occur.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_update_root)
+        True
+        >>> admin_update_root.__name__
+        'admin_update_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+
+    try:
+        form = await request.form()
+        name_value = form.get("name")
+        name: str | None = None
+
+        if isinstance(name_value, str):
+            name = name_value
+
+        await root_service.update_root(uri, name)
+
+        root_path = request.scope.get("root_path", "")
+        is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
+
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
+        return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error updating root {uri}: {e}")
+        raise e
 
 
 @admin_router.post("/roots/{uri:path}/delete")
@@ -10715,12 +10961,7 @@ async def admin_test_gateway(
             if content_type == "application/x-www-form-urlencoded":
                 # Set proper content type header and use data parameter for form encoding
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
-                if isinstance(request.body, str):
-                    # Body is already form-encoded
-                    request_kwargs["data"] = request.body
-                else:
-                    # Body is a dict, convert to form data
-                    request_kwargs["data"] = request.body
+                request_kwargs["data"] = request.body
             else:
                 # Default to JSON
                 headers["Content-Type"] = "application/json"
@@ -12320,12 +12561,6 @@ async def admin_add_a2a_agent(
     except A2AAgentError as ex:
         LOGGER.error(f"A2A agent error: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    except ValidationError as ex:
-        LOGGER.error(f"Validation error while creating A2A agent: {ex}")
-        return ORJSONResponse(
-            content=ErrorFormatter.format_validation_error(ex),
-            status_code=422,
-        )
     except IntegrityError as ex:
         return ORJSONResponse(
             content=ErrorFormatter.format_database_error(ex),
@@ -12579,17 +12814,14 @@ async def admin_set_a2a_agent_state(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    user_email = get_user_email(user)
     error_message = None
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
-        user_email = get_user_email(user)
-
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
@@ -12709,7 +12941,15 @@ async def admin_test_a2a_agent(
             # JSONRPC format for agents that expect it
             test_params = {
                 "method": "message/send",
-                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": user_query}]}},
+                # A2A v0.3.x: message.parts use "kind" (not "type").
+                "params": {
+                    "message": {
+                        "kind": "message",
+                        "messageId": f"admin-test-{int(time.time())}",
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": user_query}],
+                    }
+                },
             }
         else:
             # Generic test format
@@ -14694,16 +14934,11 @@ def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval
             float: Interpolated percentile value.
         """
         n = len(data)
-        if n == 0:
-            return 0.0
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     for bucket_time in sorted(buckets.keys()):
         durations = sorted(buckets[bucket_time])

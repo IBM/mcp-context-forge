@@ -259,7 +259,9 @@ class TestTokenCatalogService:
             assert token == "jwt_token_team"
             call_kwargs = mock_create_jwt.call_args.kwargs
             assert call_kwargs["teams"] == ["team-123"]
-            assert "team:team-123" in call_kwargs["namespaces"]
+            # namespaces removed; API tokens have token_use="api" in data dict
+            assert "namespaces" not in call_kwargs
+            assert mock_create_jwt.call_args.kwargs.get("data", {}).get("token_use") == "api" or "token_use" in mock_create_jwt.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_generate_token_with_expiry(self, token_service):
@@ -1071,7 +1073,7 @@ class TestTokenCatalogServiceEdgeCases:
             assert call_kwargs["data"]["jti"] == jti
             assert "user_data" in call_kwargs
             assert "teams" in call_kwargs
-            assert "namespaces" in call_kwargs
+            assert "namespaces" not in call_kwargs
             assert "scopes" in call_kwargs
 
 

@@ -411,10 +411,16 @@ class TestPassthroughHeaders:
         mock_global_config.passthrough_headers = []
         mock_db.query.return_value.first.return_value = mock_global_config
 
-        get_passthrough_headers({}, {}, mock_db)
+        # Force DB mode regardless of CI env vars (PASSTHROUGH_HEADERS_SOURCE can be "env").
+        with patch("mcpgateway.config.settings.passthrough_headers_source", "db"):
+            get_passthrough_headers({}, {}, mock_db)
 
         # Verify database was queried for GlobalConfig
-        mock_db.query.assert_called_once_with(GlobalConfig)
+        # Import at assertion-time to avoid stale class identity if mcpgateway.db
+        # was reloaded earlier in the session.
+        from mcpgateway.db import GlobalConfig as DbGlobalConfig
+
+        mock_db.query.assert_called_once_with(DbGlobalConfig)
         mock_db.query.return_value.first.assert_called_once()
 
     @patch("mcpgateway.utils.passthrough_headers.settings")

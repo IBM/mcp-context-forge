@@ -751,6 +751,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.email = "user@company.com"
         mock_user.full_name = "Test User"
         mock_user.is_admin = False  # Not admin initially
+        mock_user.admin_origin = None  # Not SSO granted
         mock_user.auth_provider = "entra"
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
@@ -797,6 +798,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.email = "user@company.com"
         mock_user.full_name = "Test User"
         mock_user.is_admin = True  # Admin initially (manual grant)
+        mock_user.admin_origin = None  # Manual grant - not SSO synced
         mock_user.auth_provider = "entra"
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
@@ -838,6 +840,7 @@ class TestIsAdminSyncOnLogin:
         mock_user.email = "user@company.com"
         mock_user.full_name = "Test User"
         mock_user.is_admin = True  # Already admin
+        mock_user.admin_origin = "sso"  # SSO granted
         mock_user.auth_provider = "entra"
         mock_user.email_verified = True
         mock_user.get_teams.return_value = []
@@ -880,3 +883,51 @@ class TestIsAdminSyncOnLogin:
 
                 # is_admin should NOT have been set since it already matched
                 assert is_admin_set_count == 0
+
+    @pytest.mark.asyncio
+    async def test_is_admin_revoked_when_sso_admin_removed_from_group(self, sso_service, entra_provider):
+        """Test that SSO admin user gets is_admin=False when removed from admin group.
+
+        This tests the new bidirectional sync: SSO-granted admins can be demoted
+        when they no longer belong to the admin group in the IdP.
+        """
+        # Create mock existing SSO admin user
+        mock_user = MagicMock()
+        mock_user.email = "user@company.com"
+        mock_user.full_name = "Test User"
+        mock_user.is_admin = True  # Was SSO admin
+        mock_user.admin_origin = "sso"  # SSO granted - can be demoted
+        mock_user.auth_provider = "entra"
+        mock_user.email_verified = True
+        mock_user.get_teams.return_value = []
+
+        # Mock auth service to return existing user
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=mock_user)
+        sso_service.get_provider = MagicMock(return_value=entra_provider)
+
+        # User info WITHOUT admin group (removed from admin)
+        user_info = {
+            "email": "user@company.com",
+            "full_name": "Test User",
+            "provider": "entra",
+            "groups": ["Developer"],  # No longer in admin group
+        }
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_entra_admin_groups = ["Admin"]
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_sync_roles_on_login = True
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.sso_entra_default_role = None
+
+            with patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+                mock_jwt.return_value = "mock_token"
+
+                await sso_service.authenticate_or_create_user(user_info)
+
+                # Verify is_admin was revoked since user was SSO admin and removed from group
+                assert mock_user.is_admin is False
+                # Verify admin_origin was cleared
+                assert mock_user.admin_origin is None

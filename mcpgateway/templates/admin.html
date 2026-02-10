@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -136,7 +136,25 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        window.history.replaceState({}, '', newUrl);
+        safeReplaceState({}, '', newUrl);
+      }
+
+      // One-time debug notice for restricted iframe contexts (e.g. sandboxed iframes)
+      var _restrictedContextLogged = false;
+      function _logRestrictedContext(e) {
+        if (!_restrictedContextLogged) {
+          _restrictedContextLogged = true;
+          console.debug('Running in restricted context — storage/history APIs unavailable:', e.message);
+        }
+      }
+
+      // Safe wrapper for history.replaceState — skips in restricted contexts
+      function safeReplaceState(data, title, url) {
+        try {
+          window.history.replaceState(data, title, url);
+        } catch (e) {
+          _logRestrictedContext(e);
+        }
       }
     </script>
 
@@ -2192,14 +2210,7 @@
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#servers-loading">
-              <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading servers...</span>
-              </div>
+
             </div>
           </div>
 
@@ -3147,14 +3158,7 @@
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#tools-loading">
-              <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading tools...</span>
-              </div>
+
             </div>
           </div>
 
@@ -3898,12 +3902,19 @@
               </div>
 
               <!-- This div will be the target for the HTMX initial load and subsequent swaps -->
-              <div id="tool-ops-main-content-wrapper" hx-get="{{ root_path }}/admin/tool-ops/partial" hx-trigger="load" hx-swap="innerHTML">
-                  <!-- Initial loading spinner will be here, and replaced by the partial's content -->
-                  <div id="tool-ops-loading-indicator" class="flex items-center justify-center p-4">
-                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mr-4"></div>
-                    <span class="text-gray-600 dark:text-gray-400">Loading tools...</span>
-                  </div>
+              <div id="tool-ops-main-content-wrapper" hx-get="{{ root_path }}/admin/tool-ops/partial" hx-trigger="load" hx-swap="innerHTML" hx-indicator="#tool-ops-loading-indicator">
+
+              </div>
+
+              <!-- Loading Indicator for HTMX -->
+              <div id="tool-ops-loading-indicator" class="htmx-indicator">
+                <div class="flex items-center justify-center p-4">
+                  <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tools...</span>
+                </div>
               </div>
 
             </div>
@@ -4160,11 +4171,19 @@
             >
               <!-- initial content will be swapped out by HTMX on load -->
             </div>
-            <!-- Loading indicator for resources HTMX requests -->
-            <div id="resources-loading" style="display:none">
-              <div class="spinner"></div>
+          </div>
+
+          <!-- Loading Indicator for HTMX -->
+          <div id="resources-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading resources...</span>
             </div>
           </div>
+
           <!-- Placeholder for out-of-band pagination controls (injected by partial) -->
           <div id="resources-pagination-controls"></div>
         </div>
@@ -4389,27 +4408,19 @@
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
             >
-              <!-- initial content will be swapped out by HTMX on load -->
-              <div class="text-center py-4 text-gray-500 dark:text-gray-400">
-                <svg class="animate-spin h-5 w-5 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-2">Loading prompts...</span>
-              </div>
-            </div>
 
-            <!-- Loading Indicator for HTMX (Prompts) -->
-            <div id="prompts-loading" class="htmx-indicator" style="display:none">
-              <div class="flex items-center justify-center p-4">
-                <svg class="animate-spin h-8 w-8 text-purple-600 dark:text-purple-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading prompts...</span>
-              </div>
             </div>
+          </div>
 
+          <!-- Loading Indicator for HTMX -->
+          <div id="prompts-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading prompts...</span>
+            </div>
           </div>
 
           <!-- Placeholder for out-of-band pagination controls (injected by partial) -->
@@ -4679,14 +4690,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                  hx-trigger="load"
                  hx-swap="outerHTML"
                  hx-indicator="#gateways-loading">
-              <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
-                <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading gateways...</span>
-              </div>
+
             </div>
           </div>
 
@@ -5883,7 +5887,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="email"
                     name="email"
                     required
-                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-300 dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="user@example.com"
                   />
                 </div>
@@ -5916,7 +5920,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     required
                     minlength="8"
                     oninput="validateNewUserPassword()"
-                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600"
+                    class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="Strong password"
                   />
                   <!-- Password policy guidance (visible below password field) -->
@@ -11338,6 +11342,122 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           </div>
         </div>
       </div>
+
+      <!-- Root Details Modal -->
+      <div
+        id="root-details-modal"
+        class="fixed z-10 inset-0 overflow-y-auto hidden"
+      >
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                Root Details
+              </h3>
+              <div
+                class="mt-4 space-y-4 bg-white dark:bg-gray-400"
+                id="root-details"
+              ></div>
+            </div>
+            <div
+              class="bg-gray-50 dark:bg-gray-700 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse"
+            >
+              <button
+                type="button"
+                onclick="closeModal('root-details-modal')"
+                class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Root Edit Modal -->
+      <div
+        id="root-edit-modal"
+        class="fixed z-10 inset-0 overflow-y-auto hidden"
+      >
+        <div
+          class="flex items-end justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0"
+        >
+          <div class="fixed inset-0 transition-opacity" aria-hidden="true">
+            <div class="absolute inset-0 bg-gray-500 opacity-75"></div>
+          </div>
+          <div
+            class="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full"
+          >
+            <div
+              class="bg-white dark:bg-gray-900 px-4 pt-5 pb-4 sm:p-6 sm:pb-4"
+            >
+              <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">
+                Edit Root
+              </h3>
+              <div class="mt-4">
+                <form id="edit-root-form" method="POST">
+                  <div class="grid grid-cols-1 gap-7">
+                    <div>
+                      <label class="block text-sm font-medium text-gray-700"
+                        >URI</label
+                      >
+                      <!-- URI is read-only -->
+                      <input
+                        type="text"
+                        name="uri"
+                        required
+                        id="edit-root-uri"
+                        readonly
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                    <div class="relative">
+                      <label
+                        class="block text-sm font-medium text-gray-700"
+                        for="edit-root-name"
+                        >Name</label
+                      >
+                      <input
+                        type="text"
+                        name="name"
+                        required
+                        id="edit-root-name"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      />
+                    </div>
+                  </div>
+                  <div
+                    class="mt-6 flex justify-end space-x-3 bg-white dark:bg-gray-900 dark:text-gray-100"
+                  >
+                    <button
+                      type="button"
+                      onclick="closeModal('root-edit-modal')"
+                      class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      class="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                    >
+                      Save Changes
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     <!-- Scripts -->
     <script>
       // User creation form event handler
@@ -11410,7 +11530,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            window.history.replaceState({}, '', cleanUrl);
+            safeReplaceState({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -11774,7 +11894,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -11997,7 +12118,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }

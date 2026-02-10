@@ -8,32 +8,32 @@ Tests for tool service implementation.
 """
 
 # Standard
-import base64
 import asyncio
+import base64
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import logging
-import orjson
 import time
 from types import SimpleNamespace
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
 import jsonschema
+import orjson
 import pytest
 from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.config import settings
 from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
-    extract_using_jq,
     _get_validator_class_and_check,
+    extract_using_jq,
     TextContent,
     ToolError,
     ToolInvocationError,
@@ -43,15 +43,17 @@ from mcpgateway.services.tool_service import (
     ToolService,
     ToolValidationError,
 )
-from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.pagination import decode_cursor
+from mcpgateway.utils.services_auth import encode_auth
 
 
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
     # Clear SSL context cache before each test for isolation
+    # First-Party
     from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
+
     clear_ssl_context_cache()
 
     with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
@@ -66,6 +68,7 @@ def mock_fresh_db_session():
 
     This is needed because invoke_tool now uses fresh_db_session for metrics recording.
     """
+    # Standard
     from contextlib import contextmanager
 
     @contextmanager
@@ -182,6 +185,7 @@ class TestToolServiceHelpers:
 
     def test_extract_using_jq_handles_none_result(self, monkeypatch):
         """[None] result should map to error message."""
+
         class DummyProgram:
             def input(self, _data):
                 return self
@@ -472,6 +476,21 @@ class TestToolService:
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
         assert tool_read.auth.auth_header_value == settings.masked_auth_value
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_authheaders_empty(self, tool_service, mock_tool):
+        """Check auth for authheaders auth with empty value (regression test for StopIteration)"""
+
+        mock_tool.auth_type = "authheaders"
+        # Set auth_value to something non-empty so has_encrypted_auth is True
+        mock_tool.auth_value = "some_encrypted_garbage"
+
+        # Mock decode_auth to return empty dict
+        with patch("mcpgateway.services.tool_service.decode_auth", return_value={}):
+            # Should not raise StopIteration
+            tool_read = tool_service.convert_tool_to_read(mock_tool)
+
+        assert tool_read.auth is None
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_include_auth_false_skips_decode(self, tool_service, mock_tool):
@@ -909,7 +928,9 @@ class TestToolService:
         assert len(result) == 1
         assert result[0] == tool_read
         assert next_cursor is None  # No pagination needed for single result
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False, include_auth=False)
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool, include_metrics=False, include_auth=False, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None
+        )
 
     @pytest.mark.asyncio
     async def test_list_tools_pagination(self, tool_service, test_db, monkeypatch):
@@ -1091,7 +1112,9 @@ class TestToolService:
         # Verify result
         assert len(result) == 1
         assert result[0] == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False, include_auth=False)
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool, include_metrics=False, include_auth=False, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None
+        )
 
     @pytest.mark.asyncio
     async def test_list_server_tools_active_only(self):
@@ -1106,7 +1129,9 @@ class TestToolService:
         tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
         assert tools == ["converted_tool"]
-        service.convert_tool_to_read.assert_called_once_with(mock_tool, include_metrics=False, include_auth=False)
+        service.convert_tool_to_read.assert_called_once_with(
+            mock_tool, include_metrics=False, include_auth=False, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None
+        )
 
     @pytest.mark.asyncio
     async def test_list_server_tools_include_inactive(self):
@@ -1148,7 +1173,7 @@ class TestToolService:
         # Use a mock that captures the tool's team value
         captured_tools = []
 
-        def capture_tool(tool, include_metrics=False, include_auth=False):
+        def capture_tool(tool, include_metrics=False, include_auth=False, **kwargs):
             captured_tools.append({"team": tool.team, "team_id": tool.team_id})
             return "converted_tool"
 
@@ -1212,7 +1237,7 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool)
+        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None)
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):
@@ -2452,7 +2477,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_aggregate_metrics(self, tool_service):
         """Test aggregating metrics across all tools using combined raw + rollup query."""
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         # Mock database
@@ -2489,7 +2517,10 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_aggregate_metrics_no_data(self, tool_service):
         """Test aggregating metrics when no data exists."""
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
 
         # Mock database
@@ -2910,8 +2941,8 @@ class TestToolService:
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking tool with successful plugin post-invoke hook."""
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ToolHookType
+        from mcpgateway.plugins.framework.models import PluginResult
 
         # Configure tool as REST
         mock_tool.integration_type = "REST"
@@ -3034,8 +3065,8 @@ class TestToolService:
         mock_post_result.modified_payload = mock_modified_payload
 
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ToolHookType
+        from mcpgateway.plugins.framework.models import PluginResult
 
         tool_service._plugin_manager = Mock()
 
@@ -3078,8 +3109,8 @@ class TestToolService:
 
         # Mock plugin manager with invoke_hook that raises error on POST_INVOKE
         # First-Party
-        from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ToolHookType
+        from mcpgateway.plugins.framework.models import PluginResult
 
         tool_service._plugin_manager = Mock()
 
@@ -3199,6 +3230,7 @@ class TestToolService:
 # --------------------------------------------------------------------------- #
 def test_extract_using_jq_happy_path():
     """Test jq filter extraction works correctly with caching."""
+    # First-Party
     from mcpgateway.services.tool_service import _compile_jq_filter
 
     # Clear cache for clean test state
@@ -3240,6 +3272,7 @@ class TestJqFilterCaching:
 
     def test_jq_caching_works(self):
         """Verify jq filter compilation is cached."""
+        # First-Party
         from mcpgateway.services.tool_service import _compile_jq_filter
 
         _compile_jq_filter.cache_clear()
@@ -3265,7 +3298,8 @@ class TestSchemaValidatorCaching:
 
     def test_schema_caching_works(self):
         """Verify schema validation uses cached validator class."""
-        from mcpgateway.services.tool_service import _get_validator_class_and_check, _canonicalize_schema
+        # First-Party
+        from mcpgateway.services.tool_service import _canonicalize_schema, _get_validator_class_and_check
 
         _get_validator_class_and_check.cache_clear()
 
@@ -3282,8 +3316,11 @@ class TestSchemaValidatorCaching:
 
     def test_validation_still_works(self):
         """Verify cached validation still catches errors."""
-        from mcpgateway.services.tool_service import _validate_with_cached_schema
+        # Third-Party
         import jsonschema
+
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_with_cached_schema
 
         schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
 
@@ -3562,6 +3599,7 @@ class TestToolListingGracefulErrorHandling:
     @pytest.mark.asyncio
     async def test_list_tools_continues_on_conversion_error(self, caplog):
         """Test that list_tools returns valid tools even when one fails conversion."""
+        # Standard
         import logging
 
         caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
@@ -3587,7 +3625,7 @@ class TestToolListingGracefulErrorHandling:
         tool_read_3.name = "good_tool_2"
 
         # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
-        def mock_convert(tool, include_metrics=False, include_auth=False):
+        def mock_convert(tool, include_metrics=False, include_auth=False, **kwargs):
             if tool.id == "2":
                 raise ValueError("Simulated conversion error: corrupted auth_value")
             elif tool.id == "1":
@@ -3598,7 +3636,13 @@ class TestToolListingGracefulErrorHandling:
         service = ToolService()
 
         # Use patch.object to properly mock the instance method
-        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+        # Also patch _get_registry_cache to ensure we don't hit polluted cache
+        with patch.object(service, "convert_tool_to_read", side_effect=mock_convert), patch("mcpgateway.services.tool_service._get_registry_cache") as mock_get_cache:
+
+            # Setup mock cache to miss and handle async set
+            mock_get_cache.return_value.get = AsyncMock(return_value=None)
+            mock_get_cache.return_value.set = AsyncMock()
+            mock_get_cache.return_value.hash_filters = Mock(return_value="mock_hash")
             # Call list_tools - should NOT raise an exception
             result, next_cursor = await service.list_tools(mock_db)
 
@@ -3617,6 +3661,7 @@ class TestToolListingGracefulErrorHandling:
     @pytest.mark.asyncio
     async def test_list_server_tools_continues_on_conversion_error(self, caplog):
         """Test that list_server_tools returns valid tools even when one fails conversion."""
+        # Standard
         import logging
 
         caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
@@ -3636,13 +3681,13 @@ class TestToolListingGracefulErrorHandling:
         service = ToolService()
 
         # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
-        def mock_convert(tool, include_metrics=False, include_auth=False):
+        def mock_convert(tool, include_metrics=False, include_auth=False, **kwargs):
             if tool.id == "2":
                 raise ValueError("Simulated conversion error")
             return f"converted_{tool.original_name}"
 
         # Use patch.object to properly mock the instance method
-        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+        with patch.object(service, "convert_tool_to_read", side_effect=mock_convert):
             # Call list_server_tools - should NOT raise an exception
             tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
 
@@ -3658,6 +3703,7 @@ class TestToolListingGracefulErrorHandling:
     @pytest.mark.asyncio
     async def test_list_tools_for_user_continues_on_conversion_error(self, caplog):
         """Test that list_tools_for_user returns valid tools even when one fails conversion."""
+        # Standard
         import logging
 
         caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
@@ -3683,7 +3729,7 @@ class TestToolListingGracefulErrorHandling:
         tool_read_3.name = "good_tool_2"
 
         # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
-        def mock_convert(tool, include_metrics=False, include_auth=False):
+        def mock_convert(tool, include_metrics=False, include_auth=False, **kwargs):
             if tool.id == "2":
                 raise ValueError("Simulated conversion error: corrupted data")
             elif tool.id == "1":
@@ -3699,7 +3745,7 @@ class TestToolListingGracefulErrorHandling:
             mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
 
             # Use patch.object to properly mock the instance method
-            with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            with patch.object(service, "convert_tool_to_read", side_effect=mock_convert):
                 # Call list_tools_for_user - should NOT raise an exception
                 # Returns tuple[List[ToolRead], Optional[str]]
                 result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
@@ -3874,19 +3920,22 @@ class TestAnyUrlSerialization:
 # Tool Invocation Timeouts and Circuit Breaker Tests
 # =============================================================================
 
+
 class TestToolTimeoutsAndRetries:
     """Comprehensive tests for Tool Invocation Timeouts and Circuit Breaker."""
 
     def setup_method(self):
         """Clear circuit breaker state before each test."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _STATE
+
         _STATE.clear()
 
     @pytest.mark.asyncio
     async def test_per_tool_timeout_ms_takes_priority(self):
         """Verify per-tool timeout_ms takes priority over global setting."""
         tool_timeout_ms = 5000  # 5 seconds
-        global_timeout = 60    # 60 seconds
+        global_timeout = 60  # 60 seconds
 
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
 
@@ -3939,6 +3988,7 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_asyncio_timeout_error_behavior(self):
         """Test asyncio.TimeoutError is raised correctly after timeout."""
+
         async def slow_operation():
             await asyncio.sleep(10)
             return "completed"
@@ -3948,6 +3998,7 @@ class TestToolTimeoutsAndRetries:
 
     def test_initial_state_is_closed(self):
         """Verify circuit breaker starts in closed state."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _get_state
 
         state = _get_state("test_tool")
@@ -3958,7 +4009,10 @@ class TestToolTimeoutsAndRetries:
 
     def test_state_tracks_calls_in_window(self):
         """Verify state tracks call timestamps."""
+        # Standard
         import time
+
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _get_state
 
         state = _get_state("test_tool")
@@ -3969,7 +4023,10 @@ class TestToolTimeoutsAndRetries:
 
     def test_state_tracks_failures_in_window(self):
         """Verify state tracks failure timestamps."""
+        # Standard
         import time
+
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _get_state
 
         state = _get_state("test_tool")
@@ -3980,6 +4037,7 @@ class TestToolTimeoutsAndRetries:
 
     def test_consecutive_failures_increment(self):
         """Verify consecutive failures counter increments."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _get_state
 
         state = _get_state("test_tool")
@@ -3991,6 +4049,7 @@ class TestToolTimeoutsAndRetries:
 
     def test_consecutive_failures_reset_on_success(self):
         """Verify consecutive failures reset to 0 on success."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _get_state
 
         state = _get_state("test_tool")
@@ -4003,17 +4062,15 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_half_open_transition_after_cooldown(self):
         """Verify transition to half-open state after cooldown expires."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1,
-            config={"cooldown_seconds": 1}
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1, config={"cooldown_seconds": 1})
         plugin = CircuitBreakerPlugin(config)
 
         # Open the circuit
@@ -4039,17 +4096,15 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_half_open_failure_reopens_circuit(self):
         """Verify that failure during half-open immediately reopens circuit."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with short cooldown
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1,
-            config={"cooldown_seconds": 60}
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1, config={"cooldown_seconds": 60})
         plugin = CircuitBreakerPlugin(config)
 
         # Set up half-open state
@@ -4060,22 +4115,20 @@ class TestToolTimeoutsAndRetries:
         mock_result = MagicMock()
         mock_result.is_error = True
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         # Create mock context indicating half-open test
         context = MagicMock()
-        context.get_state = MagicMock(side_effect=lambda k, d=None: {
-            "cb_call_time": time.time(),
-            "cb_half_open_test": True,
-            "cb_timeout_failure": False,
-        }.get(k, d))
+        context.get_state = MagicMock(
+            side_effect=lambda k, d=None: {
+                "cb_call_time": time.time(),
+                "cb_half_open_test": True,
+                "cb_timeout_failure": False,
+            }.get(k, d)
+        )
 
         # Process post_invoke
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Circuit should be reopened
         assert state.open_until > time.time()
@@ -4084,16 +4137,15 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_half_open_success_closes_circuit(self):
         """Verify that success during half-open fully closes circuit."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
         plugin = CircuitBreakerPlugin(config)
 
         # Set up half-open state
@@ -4105,22 +4157,20 @@ class TestToolTimeoutsAndRetries:
         mock_result = MagicMock()
         mock_result.is_error = False
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         # Create mock context indicating half-open test
         context = MagicMock()
-        context.get_state = MagicMock(side_effect=lambda k, d=None: {
-            "cb_call_time": time.time(),
-            "cb_half_open_test": True,
-            "cb_timeout_failure": False,
-        }.get(k, d))
+        context.get_state = MagicMock(
+            side_effect=lambda k, d=None: {
+                "cb_call_time": time.time(),
+                "cb_half_open_test": True,
+                "cb_timeout_failure": False,
+            }.get(k, d)
+        )
 
         # Process post_invoke
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Circuit should be fully closed
         assert state.half_open is False
@@ -4129,18 +4179,16 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_consecutive_failure_threshold_trips_breaker(self):
         """Verify consecutive failures trip the circuit breaker."""
-        import time
+        # Standard
         from collections import deque
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+        import time
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with low consecutive failure threshold
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1,
-            config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1, config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60})
         plugin = CircuitBreakerPlugin(config)
 
         # Pre-set consecutive failures to threshold - 1
@@ -4153,17 +4201,13 @@ class TestToolTimeoutsAndRetries:
         mock_result = MagicMock()
         mock_result.is_error = True
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         context = MagicMock()
         context.get_state = MagicMock(return_value=None)
 
         # Process post_invoke - should trip breaker
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Circuit should be open
         assert state.open_until > time.time()
@@ -4171,21 +4215,26 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_error_rate_threshold_trips_breaker(self):
         """Verify error rate threshold trips the circuit breaker."""
-        import time
+        # Standard
         from collections import deque
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+        import time
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with specific error rate settings
         config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            name="test",
+            kind="test",
+            hooks=[],
+            mode="enforce",
+            priority=1,
             config={
                 "error_rate_threshold": 0.5,  # 50% error rate trips
-                "min_calls": 2,               # After 2 calls
+                "min_calls": 2,  # After 2 calls
                 "cooldown_seconds": 60,
-            }
+            },
         )
         plugin = CircuitBreakerPlugin(config)
 
@@ -4200,17 +4249,13 @@ class TestToolTimeoutsAndRetries:
         mock_result = MagicMock()
         mock_result.is_error = True
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         context = MagicMock()
         context.get_state = MagicMock(side_effect=lambda k, d=None: now if k == "cb_call_time" else d)
 
         # Process post_invoke - should trip breaker (2/2 = 100% > 50%)
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Circuit should be open
         assert state.open_until > time.time()
@@ -4218,16 +4263,15 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_retry_after_seconds_in_violation(self):
         """Verify retry_after_seconds is included in violation details."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
         plugin = CircuitBreakerPlugin(config)
 
         # Open the circuit with future close time
@@ -4252,26 +4296,19 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_metadata_includes_all_fields(self):
         """Verify post_invoke metadata includes all required fields."""
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _STATE
-        )
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         # Create plugin
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
         plugin = CircuitBreakerPlugin(config)
 
         # Create mock success result
         mock_result = MagicMock()
         mock_result.is_error = False
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         context = MagicMock()
         context.get_state = MagicMock(return_value=None)
@@ -4296,35 +4333,32 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_timeout_flag_counts_as_failure(self):
         """Verify cb_timeout_failure flag counts as circuit breaker failure."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         # Create plugin
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
         plugin = CircuitBreakerPlugin(config)
 
         # Create mock result that looks successful
         mock_result = MagicMock()
         mock_result.is_error = False  # Result doesn't show error
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         # Create context with timeout flag set
         context = MagicMock()
-        context.get_state = MagicMock(side_effect=lambda k, d=None: {
-            "cb_call_time": time.time(),
-            "cb_half_open_test": False,
-            "cb_timeout_failure": True,  # TIMEOUT OCCURRED!
-        }.get(k, d))
+        context.get_state = MagicMock(
+            side_effect=lambda k, d=None: {
+                "cb_call_time": time.time(),
+                "cb_half_open_test": False,
+                "cb_timeout_failure": True,  # TIMEOUT OCCURRED!
+            }.get(k, d)
+        )
 
         # Process post_invoke
         result = await plugin.tool_post_invoke(payload, context)
@@ -4336,17 +4370,15 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_timeout_flag_can_trip_breaker(self):
         """Verify enough timeout failures can trip the circuit breaker."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with low threshold
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1,
-            config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1, config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60})
         plugin = CircuitBreakerPlugin(config)
 
         state = _get_state("test_tool")
@@ -4356,31 +4388,28 @@ class TestToolTimeoutsAndRetries:
         mock_result = MagicMock()
         mock_result.is_error = False
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         # Create context with timeout flag set
         context = MagicMock()
-        context.get_state = MagicMock(side_effect=lambda k, d=None: {
-            "cb_call_time": time.time(),
-            "cb_half_open_test": False,
-            "cb_timeout_failure": True,  # 3rd consecutive failure via timeout
-        }.get(k, d))
+        context.get_state = MagicMock(
+            side_effect=lambda k, d=None: {
+                "cb_call_time": time.time(),
+                "cb_half_open_test": False,
+                "cb_timeout_failure": True,  # 3rd consecutive failure via timeout
+            }.get(k, d)
+        )
 
         # Process post_invoke
-        result = await plugin.tool_post_invoke(payload, context)
+        await plugin.tool_post_invoke(payload, context)
 
         # Should trip the breaker
         assert state.open_until > time.time()
 
     def test_tool_overrides_apply_correctly(self):
         """Verify per-tool overrides are applied."""
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerConfig, _cfg_for
-        )
+        # First-Party
+        from plugins.circuit_breaker.circuit_breaker import _cfg_for, CircuitBreakerConfig
 
         # Create base config with tool overrides
         base_config = CircuitBreakerConfig(
@@ -4391,9 +4420,9 @@ class TestToolTimeoutsAndRetries:
             tool_overrides={
                 "critical_tool": {
                     "consecutive_failure_threshold": 2,  # More sensitive
-                    "cooldown_seconds": 120,             # Longer cooldown
+                    "cooldown_seconds": 120,  # Longer cooldown
                 }
-            }
+            },
         )
 
         # Get effective config for regular tool
@@ -4409,17 +4438,15 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_old_entries_evicted_from_window(self):
         """Verify old call/failure entries are evicted from sliding window."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state, _STATE
-        )
+
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
 
         # Create plugin with 1-second window
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1,
-            config={"window_seconds": 1}
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1, config={"window_seconds": 1})
         plugin = CircuitBreakerPlugin(config)
 
         # Add old entries
@@ -4432,11 +4459,7 @@ class TestToolTimeoutsAndRetries:
         mock_result = MagicMock()
         mock_result.is_error = False
 
-        payload = ToolPostInvokePayload(
-            name="test_tool",
-            arguments={},
-            result=mock_result
-        )
+        payload = ToolPostInvokePayload(name="test_tool", arguments={}, result=mock_result)
 
         context = MagicMock()
         context.get_state = MagicMock(return_value=None)
@@ -4450,6 +4473,7 @@ class TestToolTimeoutsAndRetries:
 
     def test_is_error_with_tool_result_attribute(self):
         """Verify is_error detection using ToolResult.is_error attribute."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _is_error
 
         mock_result = MagicMock()
@@ -4462,6 +4486,7 @@ class TestToolTimeoutsAndRetries:
 
     def test_is_error_with_dict(self):
         """Verify is_error detection using dict key."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _is_error
 
         error_dict = {"is_error": True, "content": "error message"}
@@ -4472,6 +4497,7 @@ class TestToolTimeoutsAndRetries:
 
     def test_is_error_with_missing_field_returns_false(self):
         """Verify is_error returns False when field is missing."""
+        # First-Party
         from plugins.circuit_breaker.circuit_breaker import _is_error
 
         # Object without is_error
@@ -4485,8 +4511,9 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_plugin_initialization(self):
         """Verify plugin initializes correctly with config."""
-        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
         config = PluginConfig(
             name="CircuitBreaker",
@@ -4500,7 +4527,7 @@ class TestToolTimeoutsAndRetries:
                 "min_calls": 5,
                 "consecutive_failure_threshold": 3,
                 "cooldown_seconds": 30,
-            }
+            },
         )
 
         plugin = CircuitBreakerPlugin(config)
@@ -4514,12 +4541,11 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_plugin_allows_requests_when_closed(self):
         """Verify plugin allows requests when circuit is closed."""
-        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
+        # First-Party
         from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
 
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1
-        )
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
         plugin = CircuitBreakerPlugin(config)
 
         payload = ToolPreInvokePayload(name="test_tool", arguments={})
@@ -4534,15 +4560,14 @@ class TestToolTimeoutsAndRetries:
     @pytest.mark.asyncio
     async def test_plugin_blocks_requests_when_open(self):
         """Verify plugin blocks requests when circuit is open."""
+        # Standard
         import time
-        from plugins.circuit_breaker.circuit_breaker import (
-            CircuitBreakerPlugin, _get_state
-        )
-        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
 
-        config = PluginConfig(
-            name="test", kind="test", hooks=[], mode="enforce", priority=1
-        )
+        # First-Party
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+        from plugins.circuit_breaker.circuit_breaker import _get_state, CircuitBreakerPlugin
+
+        config = PluginConfig(name="test", kind="test", hooks=[], mode="enforce", priority=1)
         plugin = CircuitBreakerPlugin(config)
 
         # Open the circuit
@@ -4561,6 +4586,7 @@ class TestToolTimeoutsAndRetries:
 class TestToolServiceHelpers:
     def test_get_validator_class_and_check_fallback_draft7(self, monkeypatch):
         """Ensure schema fallback uses Draft7 when auto-detect fails."""
+        # First-Party
         from mcpgateway.services import tool_service
 
         tool_service._get_validator_class_and_check.cache_clear()
@@ -4595,6 +4621,7 @@ class TestToolServiceHelpers:
 
     def test_validate_with_cached_schema_raises_on_invalid_instance(self):
         """Ensure validation raises when instance does not match schema."""
+        # First-Party
         from mcpgateway.services import tool_service
 
         tool_service._get_validator_class_and_check.cache_clear()
@@ -5190,10 +5217,12 @@ class TestToolServiceBulkImport:
         registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
         lookup_cache = SimpleNamespace(invalidate=AsyncMock())
 
-        with patch.object(service, "_process_tool_chunk", return_value={"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}), \
-            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache), \
-            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache), \
-            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+        with (
+            patch.object(service, "_process_tool_chunk", return_value={"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}),
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
             mock_admin_cache.invalidate_tags = AsyncMock()
 
             result = await service.register_tools_bulk(
@@ -5221,10 +5250,12 @@ class TestToolServiceBulkImport:
         registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
         lookup_cache = SimpleNamespace(invalidate=AsyncMock())
 
-        with patch.object(service, "_process_tool_chunk", return_value={"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}), \
-            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache), \
-            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache), \
-            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+        with (
+            patch.object(service, "_process_tool_chunk", return_value={"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}),
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache,
+        ):
             mock_admin_cache.invalidate_tags = AsyncMock()
 
             result = await service.register_tools_bulk(
@@ -5245,3 +5276,107 @@ class TestToolServiceBulkImport:
         result = await service.register_tools_bulk(db=MagicMock(), tools=[])
 
         assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
+
+
+class TestConvertToolToReadHeaderMasking:
+    """Tests for header masking in convert_tool_to_read based on requesting_user_* params."""
+
+    @pytest.fixture
+    def service(self):
+        return ToolService()
+
+    @pytest.fixture
+    def tool_with_headers(self, mock_tool):
+        """A mock tool with sensitive headers set."""
+        mock_tool.headers = {"Authorization": "Bearer secret-token", "X-Api-Key": "my-api-key"}
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        return mock_tool
+
+    def test_headers_masked_for_non_owner(self, service, tool_with_headers):
+        """Non-owner sees masked values for all header values."""
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="other@example.com",
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={},
+        )
+        for v in result.headers.values():
+            assert v == settings.masked_auth_value
+
+    def test_headers_visible_for_owner(self, service, tool_with_headers):
+        """Direct owner sees real header values."""
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email=tool_with_headers.owner_email,
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={},
+        )
+        assert result.headers["Authorization"] == "Bearer secret-token"
+        assert result.headers["X-Api-Key"] == "my-api-key"
+
+    def test_headers_visible_for_admin(self, service, tool_with_headers):
+        """Admin (requesting_user_is_admin=True) sees real values."""
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="admin@other.com",
+            requesting_user_is_admin=True,
+            requesting_user_team_roles={},
+        )
+        assert result.headers["Authorization"] == "Bearer secret-token"
+        assert result.headers["X-Api-Key"] == "my-api-key"
+
+    def test_headers_visible_for_team_owner(self, service, tool_with_headers):
+        """Team owner on a team-visibility tool sees real values."""
+        tool_with_headers.visibility = "team"
+        tool_with_headers.team_id = "team-123"
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="team-owner@example.com",
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={"team-123": "owner"},
+        )
+        assert result.headers["Authorization"] == "Bearer secret-token"
+
+    def test_headers_masked_for_team_member(self, service, tool_with_headers):
+        """Team member (non-owner role) sees masked values."""
+        tool_with_headers.visibility = "team"
+        tool_with_headers.team_id = "team-123"
+        result = service.convert_tool_to_read(
+            tool_with_headers,
+            requesting_user_email="member@example.com",
+            requesting_user_is_admin=False,
+            requesting_user_team_roles={"team-123": "member"},
+        )
+        for v in result.headers.values():
+            assert v == settings.masked_auth_value
+
+    def test_headers_masked_when_no_context(self, service, tool_with_headers):
+        """Default params (all None) mask headers (safe default — no context means mask everything)."""
+        result = service.convert_tool_to_read(tool_with_headers)
+        # When requesting_user_email is None, headers are masked as safe default
+        assert result.headers["Authorization"] == "*****"
+
+    def test_headers_none_no_masking(self, service, mock_tool):
+        """Tool with headers=None does not error."""
+        mock_tool.headers = None
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        result = service.convert_tool_to_read(
+            mock_tool,
+            requesting_user_email="other@example.com",
+            requesting_user_is_admin=False,
+        )
+        assert result.headers is None
+
+    def test_headers_empty_dict(self, service, mock_tool):
+        """Tool with headers={} does not error."""
+        mock_tool.headers = {}
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        result = service.convert_tool_to_read(
+            mock_tool,
+            requesting_user_email="other@example.com",
+            requesting_user_is_admin=False,
+        )
+        assert result.headers == {}

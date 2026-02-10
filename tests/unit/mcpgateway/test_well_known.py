@@ -377,7 +377,8 @@ class TestOAuthProtectedResourceEndpoint:
         from unittest.mock import MagicMock
 
         # First-Party
-        from mcpgateway.db import get_db
+        from mcpgateway.db import get_db as db_get_db
+        from mcpgateway.routers import well_known as well_known_router
 
         def _create_mock(server_data):
             mock_db = MagicMock()
@@ -388,11 +389,15 @@ class TestOAuthProtectedResourceEndpoint:
                 for key, value in server_data.items():
                     setattr(mock_server, key, value)
                 mock_db.get.return_value = mock_server
-            app.dependency_overrides[get_db] = lambda: mock_db
+            # Override the dependency callable used by the router module to avoid
+            # cross-test contamination when other tests monkeypatch mcpgateway.db.get_db.
+            app.dependency_overrides[well_known_router.get_db] = lambda: mock_db
+            app.dependency_overrides[db_get_db] = lambda: mock_db
             return mock_db
 
         yield _create_mock
-        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(well_known_router.get_db, None)
+        app.dependency_overrides.pop(db_get_db, None)
 
     def test_oauth_protected_resource_no_server_id(self, client):
         """Test that OAuth protected resource returns 404 when server_id is not provided."""
@@ -583,9 +588,8 @@ class TestServerRouterOAuthProtectedResource:
         from unittest.mock import MagicMock
 
         # First-Party
-        # main.py defines its own get_db locally, not imported from mcpgateway.db
         from mcpgateway.db import get_db as db_get_db
-        from mcpgateway.main import get_db
+        from mcpgateway.routers import server_well_known as server_well_known_router
 
         def _create_mock(server_data):
             mock_db = MagicMock()
@@ -596,12 +600,15 @@ class TestServerRouterOAuthProtectedResource:
                 for key, value in server_data.items():
                     setattr(mock_server, key, value)
                 mock_db.get.return_value = mock_server
-            app.dependency_overrides[get_db] = lambda: mock_db
-            app.dependency_overrides[db_get_db] = lambda: mock_db  # Also override db module's get_db
+            # Override the dependency callable used by the server_well_known router.
+            # This avoids hitting a real SessionLocal in unit tests when other tests
+            # have monkeypatched mcpgateway.db.get_db.
+            app.dependency_overrides[server_well_known_router.get_db] = lambda: mock_db
+            app.dependency_overrides[db_get_db] = lambda: mock_db
             return mock_db
 
         yield _create_mock
-        app.dependency_overrides.pop(get_db, None)
+        app.dependency_overrides.pop(server_well_known_router.get_db, None)
         app.dependency_overrides.pop(db_get_db, None)
 
     def test_server_oauth_protected_resource_not_found(self, client, mock_db_with_server):

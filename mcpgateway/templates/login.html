@@ -158,8 +158,9 @@
                   id="email"
                   name="email"
                   type="email"
-                  autocomplete="email"
+                  autocomplete="{{ 'off' if prefill_email else 'email' }}"
                   required
+                  value="{{ prefill_email }}"
                   placeholder="Enter your email"
                   class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:bg-gray-700/50 dark:text-white transition-all duration-200 backdrop-blur-sm"
                 />
@@ -460,6 +461,12 @@
         await loadSSOProviders();
         handleErrorMessages();
         setupAnimations();
+
+        // Focus password field if email is prefilled (failed login retry)
+        const emailField = document.getElementById("email");
+        if (emailField && emailField.value) {
+          document.getElementById("password").focus();
+        }
       });
 
       // Load available SSO providers
@@ -563,6 +570,10 @@
               break;
             case "sso_cancelled":
               errorMessage = "SSO authentication was cancelled";
+              break;
+            case "token_too_large":
+              errorMessage =
+                "Your account has too many team memberships for cookie-based authentication. Please contact your administrator.";
               break;
             default:
               errorMessage = error

@@ -237,3 +237,83 @@ def test_key_file_caching_with_mtime(mock_settings: Any):
                     result2 = get_jwt_public_key_or_secret()
                     assert result2 == "KEY_CONTENT_1"  # Still cached
                     assert mock_open.call_count == 0  # No file read
+
+
+def test_validate_asymmetric_keys_resolves_relative_paths(tmp_path, monkeypatch, mock_settings: Any):
+    """Cover relative-path resolution in _validate_asymmetric_keys()."""
+    from mcpgateway.utils.jwt_config_helper import clear_jwt_caches
+
+    clear_jwt_caches()
+    monkeypatch.chdir(tmp_path)
+
+    (tmp_path / "public.pem").write_text("PUB")
+    (tmp_path / "private.pem").write_text("PRIV")
+
+    mock_settings.jwt_algorithm = "RS256"
+    mock_settings.jwt_public_key_path = "public.pem"  # relative
+    mock_settings.jwt_private_key_path = "private.pem"  # relative
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        validate_jwt_algo_and_keys()  # should not raise
+
+
+def test_read_key_file_cached_cache_hit_without_lru_cache(monkeypatch, mock_settings: Any):
+    """Hit the manual _key_file_cache path (not the lru_cache wrapper)."""
+    from mcpgateway.utils import jwt_config_helper as jch
+
+    jch.clear_jwt_caches()
+
+    mock_settings.jwt_algorithm = "RS256"
+    mock_settings.jwt_public_key_path = "public.pem"  # relative path triggers cwd join
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        with patch.object(Path, "is_absolute", return_value=False):
+            mock_stat = type("obj", (object,), {"st_mtime": 123456.0})
+            with patch.object(Path, "stat", return_value=mock_stat):
+                with patch("builtins.open", return_value=io.StringIO("KEY_CONTENT")) as mock_open:
+                    monkeypatch.chdir(Path.cwd())  # ensure cwd is stable for this test
+
+                    # First call reads the file.
+                    jch.get_jwt_public_key_or_secret.cache_clear()
+                    assert get_jwt_public_key_or_secret() == "KEY_CONTENT"
+
+                    # Clear only the lru_cache wrapper; _key_file_cache should still serve the content.
+                    jch.get_jwt_public_key_or_secret.cache_clear()
+                    assert get_jwt_public_key_or_secret() == "KEY_CONTENT"
+
+                    assert mock_open.call_count == 1
+
+
+def test_read_key_file_cached_raises_ioerror_on_failure(monkeypatch, mock_settings: Any):
+    from mcpgateway.utils import jwt_config_helper as jch
+
+    jch.clear_jwt_caches()
+
+    mock_settings.jwt_algorithm = "RS256"
+    mock_settings.jwt_public_key_path = "public.pem"
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        with patch.object(Path, "is_absolute", return_value=False):
+            monkeypatch.chdir(Path.cwd())
+            with patch.object(Path, "stat", side_effect=OSError("boom")):
+                jch.get_jwt_public_key_or_secret.cache_clear()
+                with pytest.raises(IOError, match="Failed to read key file"):
+                    get_jwt_public_key_or_secret()
+
+
+def test_get_private_key_or_secret_resolves_relative_path(monkeypatch, mock_settings: Any):
+    """Cover relative-path resolution in get_jwt_private_key_or_secret()."""
+    from mcpgateway.utils import jwt_config_helper as jch
+
+    jch.clear_jwt_caches()
+
+    mock_settings.jwt_algorithm = "RS256"
+    mock_settings.jwt_private_key_path = "private.pem"
+
+    with patch("mcpgateway.utils.jwt_config_helper.settings", mock_settings):
+        with patch.object(Path, "is_absolute", return_value=False):
+            mock_stat = type("obj", (object,), {"st_mtime": 123456.0})
+            with patch.object(Path, "stat", return_value=mock_stat):
+                with patch("builtins.open", return_value=io.StringIO("PRIVATE_KEY_CONTENT")):
+                    jch.get_jwt_private_key_or_secret.cache_clear()
+                    assert get_jwt_private_key_or_secret() == "PRIVATE_KEY_CONTENT"

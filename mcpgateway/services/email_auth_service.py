@@ -298,7 +298,17 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False) -> EmailUser:
+    async def create_user(
+        self,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        is_active: bool = True,
+        password_change_required: bool = False,
+        auth_provider: str = "local",
+        skip_password_validation: bool = False,
+    ) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -306,6 +316,8 @@ class EmailAuthService:
             password: Plain text password (will be hashed)
             full_name: Optional full name for display
             is_admin: Whether user has admin privileges
+            is_active: Whether user account is active (default: True)
+            password_change_required: Whether user must change password on next login (default: False)
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
 
@@ -321,10 +333,13 @@ class EmailAuthService:
             # user = await service.create_user(
             #     email="new@example.com",
             #     password="secure123",
-            #     full_name="New User"
+            #     full_name="New User",
+            #     is_active=True,
+            #     password_change_required=False
             # )
             # user.email          # Returns: 'new@example.com'
             # user.full_name      # Returns: 'New User'
+            # user.is_active      # Returns: True
         """
         # Normalize email to lowercase
         email = email.lower().strip()
@@ -343,7 +358,17 @@ class EmailAuthService:
         password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
-        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
+        user = EmailUser(
+            email=email,
+            password_hash=password_hash,
+            full_name=full_name,
+            is_admin=is_admin,
+            is_active=is_active,
+            password_change_required=password_change_required,
+            auth_provider=auth_provider,
+            password_changed_at=utc_now(),
+            admin_origin="api" if is_admin else None,
+        )
 
         try:
             self.db.add(user)
@@ -370,6 +395,34 @@ class EmailAuthService:
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
             self.db.add(registration_event)
             self.db.commit()
+
+            # Auto-assign platform_admin role if is_admin=True
+            if is_admin:
+                try:
+                    # Import here to avoid circular imports
+                    # First-Party
+                    from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+                    role_service = RoleService(self.db)
+
+                    # Look up platform_admin role
+                    platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
+
+                    if platform_admin_role:
+                        # Check if assignment already exists
+                        existing_assignment = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                        if not existing_assignment or not existing_assignment.is_active:
+                            await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                            logger.info(f"Auto-assigned platform_admin role to {email}")
+                        else:
+                            logger.info(f"User {email} already has platform_admin role")
+                    else:
+                        logger.warning(f"platform_admin role not found, cannot auto-assign to {email}")
+
+                except Exception as e:
+                    logger.warning(f"Failed to auto-assign platform_admin role to {email}: {e}")
+                    # Don't fail user creation if role assignment fails
 
             return user
 
@@ -425,24 +478,33 @@ class EmailAuthService:
                 logger.info(f"Authentication failed for {email}: account disabled")
                 return None
 
-            if user.is_account_locked():
+            is_protected_admin = user.is_admin and settings.protect_all_admins
+
+            if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
                 return None
+
+            # Clear lockout for protected admins so they can always attempt login
+            if is_protected_admin and user.is_account_locked():
+                logger.info(f"Clearing lockout for protected admin {email}")
+                user.reset_failed_attempts()
+                self.db.commit()
 
             # Verify password
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts
-                max_attempts = getattr(settings, "max_failed_login_attempts", 5)
-                lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
+                # Increment failed attempts (skip for protected admins)
+                if not is_protected_admin:
+                    max_attempts = getattr(settings, "max_failed_login_attempts", 5)
+                    lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
-                is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
+                    is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
-                if is_locked:
-                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
-                    failure_reason = "Account locked due to too many failed attempts"
+                    if is_locked:
+                        logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                        failure_reason = "Account locked due to too many failed attempts"
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
@@ -982,23 +1044,38 @@ class EmailAuthService:
             logger.error(f"Error getting auth events: {e}")
             return []
 
-    async def update_user(self, email: str, full_name: Optional[str] = None, is_admin: Optional[bool] = None, password: Optional[str] = None) -> EmailUser:
+    async def update_user(
+        self,
+        email: str,
+        full_name: Optional[str] = None,
+        is_admin: Optional[bool] = None,
+        is_active: Optional[bool] = None,
+        password_change_required: Optional[bool] = None,
+        password: Optional[str] = None,
+        admin_origin_source: Optional[str] = None,
+    ) -> EmailUser:
         """Update user information.
 
         Args:
             email: User's email address (primary key)
             full_name: New full name (optional)
             is_admin: New admin status (optional)
+            is_active: New active status (optional)
+            password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
+            admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist
+            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
+            # Normalize email to match create_user() / get_user_by_email() behavior
+            email = email.lower().strip()
+
             # Get existing user
             stmt = select(EmailUser).where(EmailUser.email == email)
             result = self.db.execute(stmt)
@@ -1007,19 +1084,70 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
+            # Admin protection guard
+            if user.is_admin and user.is_active:
+                would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
+                if would_lose_admin:
+                    if settings.protect_all_admins:
+                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    if await self.is_last_active_admin(email):
+                        raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
 
             if is_admin is not None:
-                user.is_admin = is_admin
+                # Track admin_origin when status actually changes
+                if is_admin != user.is_admin:
+                    user.is_admin = is_admin
+                    user.admin_origin = admin_origin_source if is_admin else None
+
+                    # Sync platform_admin role assignment with is_admin flag
+                    try:
+                        # Import here to avoid circular imports
+                        # First-Party
+                        from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+                        role_service = RoleService(self.db)
+
+                        # Look up platform_admin role
+                        platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
+
+                        if platform_admin_role:
+                            if is_admin:
+                                # Assign platform_admin role
+                                existing_assignment = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+
+                                if not existing_assignment or not existing_assignment.is_active:
+                                    await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned platform_admin role to {email}")
+                            else:
+                                # Revoke platform_admin role
+                                revoked = await role_service.revoke_role_from_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked platform_admin role from {email}")
+                        else:
+                            logger.warning(f"platform_admin role not found, cannot sync role for {email}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to sync platform_admin role for {email}: {e}")
+                        # Don't fail user update if role sync fails
+
+            if is_active is not None:
+                user.is_active = is_active
 
             if password is not None:
-                if not self.validate_password(password):
-                    raise ValueError("Password does not meet security requirements")
+                self.validate_password(password)
                 user.password_hash = await self.password_service.hash_password_async(password)
-                user.password_change_required = False  # Clear password change requirement
-                user.password_changed_at = utc_now()  # Update password change timestamp
+                # Only clear password_change_required if it wasn't explicitly set
+                if password_change_required is None:
+                    user.password_change_required = False
+                user.password_changed_at = utc_now()
+
+            # Set password_change_required after password processing to allow explicit override
+            if password_change_required is not None:
+                user.password_change_required = password_change_required
 
             user.updated_at = datetime.now(timezone.utc)
 

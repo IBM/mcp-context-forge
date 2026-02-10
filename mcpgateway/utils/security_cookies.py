@@ -10,16 +10,40 @@ This module provides utilities for setting secure authentication cookies with pr
 security attributes to prevent common cookie-based attacks.
 """
 
+# Standard
+import logging
+
 # Third-Party
 from fastapi import Response
 
 # First-Party
 from mcpgateway.config import settings
 
+logger = logging.getLogger(__name__)
+
+# RFC 6265 §6.1: browsers SHOULD support cookies of at least 4096 bytes
+_COOKIE_HARD_LIMIT = 4096
+_COOKIE_WARN_THRESHOLD = 3800
+
+
+class CookieTooLargeError(Exception):
+    """Raised when a cookie value exceeds the browser's 4KB limit."""
+
+    def __init__(self, cookie_size: int, limit: int = _COOKIE_HARD_LIMIT):
+        """Initialize with the actual cookie size and the browser limit.
+
+        Args:
+            cookie_size: Actual size of the cookie in bytes.
+            limit: Maximum allowed cookie size in bytes.
+        """
+        self.cookie_size = cookie_size
+        self.limit = limit
+        super().__init__(f"Cookie size {cookie_size} bytes exceeds browser limit of {limit} bytes")
+
 
 def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -> None:
     """
-    Set authentication cookie with security flags.
+    Set authentication cookie with security flags and size validation.
 
     Configures the JWT token as a secure HTTP-only cookie with appropriate
     security attributes to prevent XSS and CSRF attacks.
@@ -28,6 +52,9 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
         response: FastAPI response object to set the cookie on
         token: JWT token to store in the cookie
         remember_me: If True, sets longer expiration time (30 days vs 1 hour)
+
+    Raises:
+        CookieTooLargeError: If the cookie would exceed 4096 bytes
 
     Security attributes set:
     - httponly: Prevents JavaScript access to the cookie
@@ -58,6 +85,37 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
     # Determine if we should use secure flag
     # In production or when explicitly configured, require HTTPS
     use_secure = (settings.environment == "production") or settings.secure_cookies
+    samesite = settings.cookie_samesite
+    path = settings.app_root_path or "/"
+
+    # Estimate cookie size in bytes (Set-Cookie header format)
+    # The cookie name, value, and attributes all count toward the limit
+    cookie_header = f"jwt_token={token}; HttpOnly; SameSite={samesite}; Path={path}; Max-Age={max_age}"
+    if use_secure:
+        cookie_header += "; Secure"
+    cookie_size = len(cookie_header.encode("ascii", errors="replace"))
+
+    # Extract sub claim for log context (best-effort, don't build control flow on it)
+    sub_for_log = ""
+    try:
+        # Standard
+        import base64
+        import json
+
+        parts = token.split(".")
+        if len(parts) >= 2:
+            padded = parts[1] + "=" * (-len(parts[1]) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded))
+            sub_for_log = payload.get("sub", "")
+    except Exception:  # nosec B110 - Best-effort sub extraction for logging
+        pass
+
+    if cookie_size > _COOKIE_HARD_LIMIT:
+        logger.error("JWT cookie size %d bytes exceeds %d byte browser limit (user: %s)", cookie_size, _COOKIE_HARD_LIMIT, sub_for_log)
+        raise CookieTooLargeError(cookie_size)
+
+    if cookie_size > _COOKIE_WARN_THRESHOLD:
+        logger.warning("JWT cookie size %d bytes approaching %d byte browser limit (user: %s)", cookie_size, _COOKIE_HARD_LIMIT, sub_for_log)
 
     response.set_cookie(
         key="jwt_token",
@@ -65,8 +123,8 @@ def set_auth_cookie(response: Response, token: str, remember_me: bool = False) -
         max_age=max_age,
         httponly=True,  # Prevents JavaScript access
         secure=use_secure,  # HTTPS only in production
-        samesite=settings.cookie_samesite,  # CSRF protection
-        path=settings.app_root_path or "/",  # Cookie scope
+        samesite=samesite,  # CSRF protection
+        path=path,  # Cookie scope
     )
 
 

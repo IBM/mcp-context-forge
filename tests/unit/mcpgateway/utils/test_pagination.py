@@ -17,7 +17,9 @@ This module tests pagination functionality including:
 # Standard
 import base64
 import json
+import logging
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -37,6 +39,7 @@ from mcpgateway.utils.pagination import (
     offset_paginate,
     paginate_query,
     parse_pagination_params,
+    unified_paginate,
 )
 
 
@@ -194,6 +197,20 @@ class TestPaginationLinks:
         assert cursor in unquote(links.self)
         assert next_cursor in unquote(links.next)
         assert links.prev is None
+
+    def test_generate_links_cursor_based_self_without_page_params(self):
+        """Cursor mode shouldn't require offset params when no page is provided."""
+        next_cursor = "next-cursor"
+
+        links = generate_pagination_links(
+            base_url="/admin/tools",
+            page=None,  # Cursor mode may be invoked by next_cursor without an offset page number.
+            per_page=50,
+            total_pages=0,
+            next_cursor=next_cursor,
+        )
+
+        assert links.self == "/admin/tools"
 
 
 class TestOffsetPagination:
@@ -375,6 +392,37 @@ class TestOffsetPagination:
         assert result["links"] is None
         assert "pagination" in result
 
+    @pytest.mark.asyncio
+    async def test_offset_paginate_clamps_offset_to_max(self, db_session, monkeypatch, caplog):
+        """When page would produce an offset larger than pagination_max_offset, clamp it."""
+        for i in range(30):
+            tool = Tool(
+                id=f"tool-{i}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        monkeypatch.setattr(settings, "pagination_max_offset", 5)
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.pagination"):
+            result = await offset_paginate(
+                db=db_session,
+                query=query,
+                page=100,
+                per_page=10,
+                base_url="/admin/tools",
+            )
+
+        assert len(result["data"]) == 10
+        assert any("exceeds maximum" in record.message for record in caplog.records)
+
 
 class TestCursorPagination:
     """Test cursor-based pagination."""
@@ -470,6 +518,107 @@ class TestCursorPagination:
         assert "data" in result
         assert "pagination" in result
 
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_cursor_missing_id_skips_filter(self):
+        """Cursor missing id should not apply the keyset filter and should not crash."""
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []
+        mock_query.limit.return_value = mock_query
+
+        item1 = SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0002")
+        item2 = SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0001")
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [item1, item2]
+
+        cursor = encode_cursor({"created_at": datetime.now(timezone.utc).isoformat()})
+        result = await cursor_paginate(
+            db=mock_db,
+            query=mock_query,
+            cursor=cursor,
+            per_page=1,
+            base_url="/admin/tools",
+            include_links=False,
+            total_count=2,
+        )
+
+        assert result["pagination"].has_prev is True
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_cursor_value_not_str_skips_datetime_parse(self):
+        """Cursor with non-string created_at should skip datetime parsing."""
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []
+        mock_query.limit.return_value = mock_query
+
+        item1 = SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0002")
+        item2 = SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0001")
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [item1, item2]
+
+        cursor = encode_cursor({"created_at": 123, "id": "tool-9999"})
+        result = await cursor_paginate(
+            db=mock_db,
+            query=mock_query,
+            cursor=cursor,
+            per_page=1,
+            base_url="/admin/tools",
+            include_links=False,
+            total_count=2,
+        )
+
+        assert result["pagination"].has_prev is True
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_without_links(self, db_session):
+        """Test cursor pagination skips link generation when include_links=False."""
+        for i in range(10):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.id))
+        result = await cursor_paginate(db=db_session, query=query, cursor=None, per_page=5, base_url="/admin/tools", include_links=False)
+        assert result["links"] is None
+
+    @pytest.mark.asyncio
+    async def test_cursor_paginate_cursor_parse_failure_and_no_entities(self):
+        """Cover cursor datetime parse failure and the branch where query.column_descriptions is empty."""
+        # The implementation tries to parse cursor_value with datetime.fromisoformat;
+        # provide a non-ISO string and a query with no entities so no WHERE clause is applied.
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []
+        mock_query.limit.return_value = mock_query
+
+        item1 = SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0002")
+        item2 = SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0001")
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [item1, item2]
+
+        bad_cursor = encode_cursor({"id": "tool-0009", "created_at": "not-a-datetime"})
+        result = await cursor_paginate(
+            db=mock_db,
+            query=mock_query,
+            cursor=bad_cursor,
+            per_page=1,
+            base_url="/admin/tools",
+            include_links=False,
+            total_count=2,
+        )
+
+        assert result["pagination"].has_next is True
+        assert result["pagination"].next_cursor is not None
+
 
 class TestPaginateQuery:
     """Test automatic pagination strategy selection."""
@@ -533,6 +682,329 @@ class TestPaginateQuery:
         # Cursor-based pagination doesn't use page numbers
         pagination = result["pagination"]
         assert pagination.page == 1
+
+    @pytest.mark.asyncio
+    async def test_paginate_query_switches_to_cursor_based_when_above_threshold(self, db_session, monkeypatch, caplog):
+        monkeypatch.setattr(settings, "pagination_cursor_enabled", True)
+        monkeypatch.setattr(settings, "pagination_cursor_threshold", 10)
+
+        for i in range(25):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
+
+        with caplog.at_level(logging.INFO, logger="mcpgateway.utils.pagination"):
+            result = await paginate_query(db=db_session, query=query, page=1, per_page=5, base_url="/admin/tools")
+
+        # Cursor-based PaginationMeta uses total_pages=0 and cursor fields.
+        assert result["pagination"].total_pages == 0
+        assert result["pagination"].next_cursor is not None
+        assert any("Switching to cursor-based pagination" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_paginate_query_uses_provided_total_count(self, monkeypatch, db_session):
+        monkeypatch.setattr(settings, "pagination_cursor_enabled", True)
+        monkeypatch.setattr(settings, "pagination_cursor_threshold", 1)
+
+        for i in range(3):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+        result = await paginate_query(db=db_session, query=query, page=1, per_page=2, base_url="/admin/tools", total_count=999)
+
+        assert result["pagination"].total_items == 999
+
+    @pytest.mark.asyncio
+    async def test_paginate_query_use_cursor_threshold_false_forces_offset(self, db_session):
+        for i in range(5):
+            tool = Tool(
+                id=f"tool-{i}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+        result = await paginate_query(
+            db=db_session,
+            query=query,
+            page=1,
+            per_page=2,  # Explicitly provided to cover the "per_page is not None" branch.
+            base_url="/admin/tools",
+            use_cursor_threshold=False,
+        )
+
+        assert result["pagination"].total_pages > 0
+
+
+class TestUnifiedPaginate:
+    """Tests for unified_paginate helper."""
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_page_mode_delegates_to_paginate_query(self, monkeypatch):
+        import mcpgateway.utils.pagination as pagination_mod
+
+        called: dict[str, object] = {}
+
+        async def fake_paginate_query(**kwargs):  # noqa: ANN003
+            called.update(kwargs)
+            return {"data": ["x"], "pagination": {"page": 1}, "links": None}
+
+        monkeypatch.setattr(pagination_mod, "paginate_query", fake_paginate_query)
+
+        res = await unified_paginate(
+            db=MagicMock(),
+            query=MagicMock(),
+            page=1,
+            per_page=None,
+            limit=7,  # Used as default per_page when per_page is None
+            base_url="/admin/tools",
+            query_params={"q": "x"},
+        )
+
+        assert res["data"] == ["x"]
+        assert called["use_cursor_threshold"] is False
+        assert called["per_page"] == 7
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_page_mode_respects_explicit_per_page(self, monkeypatch):
+        import mcpgateway.utils.pagination as pagination_mod
+
+        called: dict[str, object] = {}
+
+        async def fake_paginate_query(**kwargs):  # noqa: ANN003
+            called.update(kwargs)
+            return {"data": ["x"], "pagination": {"page": 1}, "links": None}
+
+        monkeypatch.setattr(pagination_mod, "paginate_query", fake_paginate_query)
+
+        res = await unified_paginate(
+            db=MagicMock(),
+            query=MagicMock(),
+            page=1,
+            per_page=3,
+            limit=7,  # Should be ignored when per_page is explicit
+            base_url="/admin/tools",
+        )
+
+        assert res["data"] == ["x"]
+        assert called["per_page"] == 3
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_cursor_mode_limit_zero_fetches_all(self, db_session):
+        for i in range(12):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
+        items, next_cursor = await unified_paginate(db=db_session, query=query, limit=0)
+
+        assert len(items) == 12
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_cursor_mode_default_page_size_when_limit_none(self, db_session):
+        for i in range(3):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
+        items, next_cursor = await unified_paginate(db=db_session, query=query, limit=None)
+
+        assert len(items) == 3
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_cursor_mode_generates_next_cursor(self, db_session):
+        for i in range(12):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
+        items, next_cursor = await unified_paginate(db=db_session, query=query, limit=5)
+
+        assert len(items) == 5
+        assert next_cursor is not None
+
+        decoded = decode_cursor(next_cursor)
+        assert "created_at" in decoded
+        assert "id" in decoded
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_cursor_mode_uses_cursor_for_next_page(self, db_session):
+        for i in range(12):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
+        page1_items, cursor1 = await unified_paginate(db=db_session, query=query, limit=5)
+        assert cursor1 is not None
+
+        page2_items, _cursor2 = await unified_paginate(db=db_session, query=query, limit=5, cursor=cursor1)
+
+        page1_ids = {t.id for t in page1_items}
+        page2_ids = {t.id for t in page2_items}
+        assert page1_ids.isdisjoint(page2_ids)
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_invalid_cursor_is_ignored(self, db_session, caplog):
+        for i in range(10):
+            tool = Tool(
+                id=f"tool-{i:04d}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True)).order_by(desc(Tool.created_at), desc(Tool.id))
+
+        bad_cursor = encode_cursor({"id": "tool-0000", "created_at": "not-a-date"})
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.pagination"):
+            items, next_cursor = await unified_paginate(db=db_session, query=query, limit=5, cursor=bad_cursor)
+
+        assert len(items) == 5
+        assert any("Invalid cursor, ignoring" in record.message for record in caplog.records)
+        assert next_cursor is not None
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_warns_when_items_lack_id_field(self, caplog):
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []
+        mock_query.limit.return_value = mock_query
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [
+            SimpleNamespace(created_at=datetime.now(timezone.utc)),
+            SimpleNamespace(created_at=datetime.now(timezone.utc)),
+        ]
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.pagination"):
+            items, next_cursor = await unified_paginate(db=mock_db, query=mock_query, limit=1)
+
+        assert len(items) == 1
+        assert next_cursor is not None
+        assert any("has no 'id' field" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_cursor_missing_created_at_in_cursor_is_ignored(self):
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []
+        mock_query.limit.return_value = mock_query
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [
+            SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0002"),
+            SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0001"),
+        ]
+
+        cursor = encode_cursor({"id": "tool-9999"})  # created_at omitted
+        items, next_cursor = await unified_paginate(db=mock_db, query=mock_query, limit=1, cursor=cursor)
+
+        assert len(items) == 1
+        assert next_cursor is not None
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_cursor_entities_empty_skips_filter(self):
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []  # Forces the entities=False branch
+        mock_query.limit.return_value = mock_query
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [
+            SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0002"),
+            SimpleNamespace(created_at=datetime.now(timezone.utc), id="tool-0001"),
+        ]
+
+        cursor = encode_cursor({"id": "tool-9999", "created_at": datetime.now(timezone.utc).isoformat()})
+        items, next_cursor = await unified_paginate(db=mock_db, query=mock_query, limit=1, cursor=cursor)
+
+        assert len(items) == 1
+        assert next_cursor is not None
+
+    @pytest.mark.asyncio
+    async def test_unified_paginate_next_cursor_skips_datetime_serialization_when_missing(self):
+        mock_query = MagicMock()
+        mock_query.column_descriptions = []
+        mock_query.limit.return_value = mock_query
+
+        mock_db = MagicMock()
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [
+            SimpleNamespace(created_at=None, id="tool-0002"),
+            SimpleNamespace(created_at=None, id="tool-0001"),
+        ]
+
+        items, next_cursor = await unified_paginate(db=mock_db, query=mock_query, limit=1)
+
+        assert len(items) == 1
+        assert next_cursor is not None
+        decoded = decode_cursor(next_cursor)
+        assert decoded["created_at"] is None
 
 
 class TestParsePaginationParams:

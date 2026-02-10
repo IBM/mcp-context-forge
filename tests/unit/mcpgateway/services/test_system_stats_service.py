@@ -337,3 +337,59 @@ def test_get_comprehensive_stats_error():
 
     with pytest.raises(Exception, match="Database connection failed"):
         service.get_comprehensive_stats(mock_db)
+
+
+def test_get_admin_stats_cache_lazy_import():
+    """Test _get_admin_stats_cache loads the singleton lazily."""
+    import mcpgateway.services.system_stats_service as mod
+
+    # Reset the global so lazy import runs
+    original = mod._ADMIN_STATS_CACHE
+    mod._ADMIN_STATS_CACHE = None
+    try:
+        cache = mod._get_admin_stats_cache()
+        assert cache is not None
+        # Second call returns the same cached instance
+        cache2 = mod._get_admin_stats_cache()
+        assert cache is cache2
+    finally:
+        mod._ADMIN_STATS_CACHE = original
+
+
+@pytest.mark.asyncio
+async def test_get_comprehensive_stats_cached_cache_hit():
+    """Test cached path returns cached stats without computing."""
+    from unittest.mock import AsyncMock
+
+    service = SystemStatsService()
+    cached_data = {"users": {"total": 5}}
+
+    mock_cache = AsyncMock()
+    mock_cache.get_system_stats.return_value = cached_data
+
+    with patch("mcpgateway.services.system_stats_service._get_admin_stats_cache", return_value=mock_cache):
+        result = await service.get_comprehensive_stats_cached(MagicMock())
+        assert result == cached_data
+        mock_cache.get_system_stats.assert_awaited_once()
+        mock_cache.set_system_stats.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_get_comprehensive_stats_cached_cache_miss():
+    """Test cache miss computes stats and caches them."""
+    from unittest.mock import AsyncMock
+
+    service = SystemStatsService()
+    computed_data = {"users": {"total": 10}}
+
+    mock_cache = AsyncMock()
+    mock_cache.get_system_stats.return_value = None
+    mock_cache.set_system_stats.return_value = None
+
+    with patch.object(service, "get_comprehensive_stats", return_value=computed_data) as mock_compute:
+        mock_db = MagicMock()
+        with patch("mcpgateway.services.system_stats_service._get_admin_stats_cache", return_value=mock_cache):
+            result = await service.get_comprehensive_stats_cached(mock_db)
+            assert result == computed_data
+            mock_compute.assert_called_once_with(mock_db)
+            mock_cache.set_system_stats.assert_awaited_once_with(computed_data)

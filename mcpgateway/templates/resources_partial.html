@@ -14,11 +14,13 @@
   </thead>
   <tbody id="resources-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
     {% for resource in data %}
-      <tr data-enabled="{{ resource.enabled|lower }}">
+      {% set can_modify = is_admin or resource.ownerEmail == current_user_email or (resource.visibility == 'team' and resource.teamId and user_team_roles.get(resource.teamId|string) == 'owner') %}
+      <tr data-enabled="{{ resource.enabled|lower }}" data-owner-email="{{ resource.ownerEmail }}" data-team-id="{{ resource.teamId or '' }}" data-visibility="{{ resource.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
             <button onclick="testResource('{{ resource.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">Test</button>
             <button onclick="viewResource('{{ resource.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+            {% if can_modify %}
             <button onclick="editResource('{{ resource.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
             <div class="col-span-2 flex flex-col space-y-1">
               {% if resource.enabled %}
@@ -36,6 +38,7 @@
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
               </form>
             </div>
+            {% endif %}
           </div>
         </td>
         <td class="px-6 py-4 text-sm w-36">
