@@ -4442,9 +4442,9 @@ define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
-.PHONY: compose-up compose-restart compose-build compose-pull \
+.PHONY: compose-up compose-lite-up compose-restart compose-build compose-pull \
 	compose-logs compose-ps compose-shell compose-stop compose-down \
-	compose-rm compose-clean compose-validate compose-exec \
+	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe
 
 # Validate compose file
@@ -4476,6 +4476,14 @@ compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
+compose-lite-up: ## 💻 Start lite stack (docker-compose-lite.yml)
+	@if [ ! -f "docker-compose-lite.yml" ]; then \
+		echo "❌ Compose file not found: docker-compose-lite.yml"; \
+		exit 1; \
+	fi
+	@echo "🚀  Starting lite stack..."
+	IMAGE_LOCAL=$(call get_image_name) docker compose -f docker-compose-lite.yml up -d
+
 compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
@@ -4502,6 +4510,56 @@ compose-stop:
 
 compose-down:
 	$(COMPOSE) down --remove-orphans
+
+compose-lite-down: ## 💻 Stop lite stack (docker-compose-lite.yml)
+	@echo "🛑  Stopping lite stack..."
+	@docker compose -f docker-compose-lite.yml stop -t 10 2>/dev/null || true
+	docker compose -f docker-compose-lite.yml down --remove-orphans
+	@echo "✅ Lite stack stopped."
+
+monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, Grafana, exporters - excludes pgAdmin, Redis CLI)
+	@echo "📊 Starting lite monitoring stack (docker-compose-lite.yml)..."
+	@echo "🔎 Preflight: checking host port 8080 (nginx)"
+	@if command -v ss >/dev/null 2>&1; then \
+		if ss -H -ltn 'sport = :8080' | grep -q .; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	elif command -v lsof >/dev/null 2>&1; then \
+		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
+			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
+			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
+			echo "   Stop the process or change the nginx host port mapping."; \
+			exit 1; \
+		fi; \
+	else \
+		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
+	fi
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_TRACES_EXPORTER=otlp \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+	docker compose -f docker-compose-lite.yml --profile monitoring-lite up -d
+	@echo "⏳ Waiting for Grafana to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
+		echo "  Attempt $$i: Grafana not ready yet..."; \
+		sleep 2; \
+	done
+	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
+	@echo ""
+	@echo "✅ Lite monitoring stack started!"
+	@echo "📊 Grafana:    http://localhost:3000 (admin/changeme)"
+	@echo "📈 Prometheus: http://localhost:9090"
+
+monitoring-lite-down: ## 📊 Stop lite monitoring stack
+	@echo "📊 Stopping lite monitoring stack..."
+	@docker compose -f docker-compose-lite.yml --profile monitoring-lite stop -t 10 2>/dev/null || true
+	docker compose -f docker-compose-lite.yml --profile monitoring-lite down --remove-orphans
+	@echo "✅ Lite monitoring stack stopped."
 
 compose-rm:
 	$(COMPOSE) rm -f
