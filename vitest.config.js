@@ -19,7 +19,7 @@ export default defineConfig({
             "**/tests/jmeter/**",
         ],
         coverage: {
-            provider: "v8",
+            provider: "istanbul",
             reporter: ["text", "json", "html", "lcov"],
             include: ["mcpgateway/static/**/*.js"],
             exclude: ["mcpgateway/static/bundle.js", "**/node_modules/**"],

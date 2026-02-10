@@ -3254,6 +3254,37 @@ format-web:
 	                 "mcpgateway/static/**/*.css" \
 	                 "mcpgateway/static/**/*.js"
 
+# =============================================================================
+# 🧪 JAVASCRIPT UNIT TESTING (Vitest)
+# =============================================================================
+# help: 🧪 JAVASCRIPT UNIT TESTING (Vitest)
+# help: test-js              - Run JavaScript unit tests with Vitest
+# help: test-js-coverage     - Run JS tests with Istanbul coverage report
+# help: test-js-watch        - Run Vitest in watch mode (re-runs on file changes)
+# help: test-js-ui           - Run Vitest with interactive browser UI
+
+.PHONY: test-js test-js-coverage test-js-watch test-js-ui
+
+test-js:
+	@echo "🧪 Running JavaScript unit tests with Vitest..."
+	@npm install --no-save
+	@npx vitest run
+
+test-js-coverage:
+	@echo "📊 Running JavaScript tests with Istanbul coverage..."
+	@npm install --no-save
+	@npx vitest run --coverage
+
+test-js-watch:
+	@echo "👀 Running Vitest in watch mode..."
+	@npm install --no-save
+	@npx vitest
+
+test-js-ui:
+	@echo "🎭 Running Vitest with interactive UI..."
+	@npm install --no-save
+	@npx vitest --ui
+
 ################################################################################
 # 🛡️  OSV-SCANNER  ▸  vulnerabilities scanner
 ################################################################################
@@ -5782,12 +5813,12 @@ test-ui-clean:
 	@echo "✅ Playwright artifacts cleaned!"
 
 ## --- Combined Testing -------------------------------------------------------
-test-all: test test-ui-headless
-	@echo "✅ All tests completed (unit + UI)!"
+test-all: test test-js test-ui-headless
+	@echo "✅ All tests completed (Python + JavaScript + UI)!"
 
 # Add UI tests to your existing test suite if needed
-test-full: coverage test-ui-report
-	@echo "📊 Full test suite completed with coverage and UI tests!"
+test-full: coverage test-js test-ui-report
+	@echo "📊 Full test suite completed with coverage, JavaScript and UI tests!"
 
 
 # =============================================================================

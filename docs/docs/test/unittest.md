@@ -12,12 +12,14 @@ MCP Gateway uses **Vitest** for JavaScript unit testing, providing fast and mode
 ```bash
 # Run all tests
 npm test
+# or: make test-js
+
+# Run with coverage report
+npm run test:coverage
+# or: make test-js-coverage
 
 # Watch mode (auto-rerun on changes)
 npm run test:watch
-
-# Generate coverage report
-npm run test:coverage
 
 # Interactive UI mode
 npm run test:ui
@@ -46,15 +48,6 @@ describe('MyFunction', () => {
     expect(myFunction('input')).toBe('expected output');
   });
 });
-```
-
-### Coverage
-
-JavaScript coverage is generated separately from Python coverage:
-
-```bash
-npm run test:coverage
-# Coverage report: coverage/index.html
 ```
 
 ---
