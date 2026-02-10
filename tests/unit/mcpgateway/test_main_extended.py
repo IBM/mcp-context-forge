@@ -106,6 +106,10 @@ def _import_fresh_main_module(
         for key, value in env.items():
             monkeypatch.setenv(key, value)
 
+    # Use in-memory session registry to avoid dependence on SQLALCHEMY_AVAILABLE
+    # module-level state which can be polluted by other tests that reload session_registry.
+    monkeypatch.setattr(settings_mod, "cache_type", "memory", raising=False)
+
     # Avoid import-time side effects (DB/Redis readiness + bootstrap).
     monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", lambda *_a, **_k: None)
 
@@ -1472,6 +1476,7 @@ class TestCrudEndpoints:
             await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
+
 class TestPassthroughHeaderSetup:
     """Cover passthrough header setup."""
 
@@ -2005,6 +2010,7 @@ class TestGatewayEndpointsCoverage:
             )
         assert excinfo.value.status_code == 409
 
+
 class TestLifespanAdvanced:
     """Cover lifespan startup/shutdown branches."""
 
@@ -2249,6 +2255,8 @@ class TestLifespanAdvanced:
         await main_mod.shutdown_services([bad, good])
 
         good.shutdown.assert_awaited_once()
+
+
 class TestUtilityFunctions:
     """Test utility functions for edge cases."""
 
@@ -2473,7 +2481,7 @@ class TestUtilityFunctions:
 
     def test_sse_endpoint_edge_cases(self, test_client, auth_headers):
         """Test SSE endpoint edge cases."""
-        with patch("mcpgateway.main.SSETransport") as mock_transport_class, patch("mcpgateway.main.session_registry.add_session") as mock_add_session:
+        with patch("mcpgateway.main.SSETransport") as mock_transport_class, patch("mcpgateway.main.session_registry.add_session"):
             mock_transport = MagicMock()
             mock_transport.session_id = "test-session"
 
@@ -3023,6 +3031,7 @@ class TestA2ABranchCoverage:
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 404
+
 
 class TestRpcHandling:
     """Cover RPC handler branches."""
