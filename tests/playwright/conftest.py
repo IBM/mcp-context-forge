@@ -107,7 +107,7 @@ def _wait_for_login_response(page: Page) -> Optional[int]:
 def _set_admin_jwt_cookie(page: Page, email: str) -> None:
     """Seed an admin JWT cookie to bypass UI login when credentials are unknown."""
     try:
-        token = _create_jwt_token({"sub": email})
+        token = _create_jwt_token({"sub": email}, user_data={"email": email, "is_admin": True, "auth_provider": "local"}, teams=None)
     except Exception as exc:  # pragma: no cover - should only fail on misconfig
         raise AssertionError(f"Failed to create admin JWT token: {exc}") from exc
 
