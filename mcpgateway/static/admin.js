@@ -1,5 +1,28 @@
-/* global marked, DOMPurify */
+/* global marked, DOMPurify, safeReplaceState, _logRestrictedContext */
 const MASKED_AUTH_VALUE = "*****";
+
+// Runtime fallbacks when admin.js is loaded outside admin.html
+window._restrictedContextLogged = window._restrictedContextLogged || false;
+window._logRestrictedContext =
+    window._logRestrictedContext ||
+    function (e) {
+        if (!window._restrictedContextLogged) {
+            window._restrictedContextLogged = true;
+            console.debug(
+                "Running in restricted context — storage/history APIs unavailable:",
+                e.message,
+            );
+        }
+    };
+window.safeReplaceState =
+    window.safeReplaceState ||
+    function (data, title, url) {
+        try {
+            window.history.replaceState(data, title, url);
+        } catch (e) {
+            window._logRestrictedContext(e);
+        }
+    };
 
 // ===================================================================
 // GLOBAL CHART.JS INSTANCE REGISTRY
@@ -7475,7 +7498,7 @@ function cleanUpUrlParamsForTab(targetTabName) {
         currentUrl.pathname +
         (newParams.toString() ? "?" + newParams.toString() : "") +
         currentUrl.hash;
-    window.history.replaceState({}, "", newUrl);
+    safeReplaceState({}, "", newUrl);
 }
 
 function showTab(tabName) {
@@ -21112,7 +21135,11 @@ async function getAuthToken() {
 
     // Fallback to localStorage for compatibility
     if (!token) {
-        token = localStorage.getItem("auth_token");
+        try {
+            token = localStorage.getItem("auth_token");
+        } catch (e) {
+            _logRestrictedContext(e);
+        }
     }
     return token || "";
 }
@@ -23919,15 +23946,28 @@ function getAuthenticatedUserId() {
 function generateUserId() {
     const authenticatedUserId = getAuthenticatedUserId();
     if (authenticatedUserId) {
-        sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        try {
+            sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        } catch (e) {
+            _logRestrictedContext(e);
+        }
         return authenticatedUserId;
     }
     // Check if user ID exists in session storage
-    let userId = sessionStorage.getItem("llm_chat_user_id");
+    let userId;
+    try {
+        userId = sessionStorage.getItem("llm_chat_user_id");
+    } catch (e) {
+        console.debug("sessionStorage unavailable:", e.message);
+    }
     if (!userId) {
         // Generate a unique ID
         userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        sessionStorage.setItem("llm_chat_user_id", userId);
+        try {
+            sessionStorage.setItem("llm_chat_user_id", userId);
+        } catch (e) {
+            _logRestrictedContext(e);
+        }
     }
     return userId;
 }
