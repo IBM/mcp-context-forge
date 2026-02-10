@@ -10,13 +10,14 @@ in direct_proxy mode, ensuring consistent RBAC enforcement across the codebase.
 """
 
 # Standard
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 # Third-Party
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import Gateway as DbGateway
+from mcpgateway.utils.services_auth import decode_auth
 
 
 async def check_gateway_access(
@@ -89,7 +90,53 @@ async def check_gateway_access(
         if visibility in ["team", "public"] and gateway_team_id in team_ids:
             return True
 
+    # Default: deny access
     return False
+
+
+def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
+    """Build authentication headers for gateway requests.
+
+    Extracts and formats authentication headers from gateway configuration,
+    handling both bearer and basic auth types with dict or encoded string values.
+
+    Args:
+        gateway: Gateway ORM object with auth_type and auth_value attributes.
+
+    Returns:
+        Dictionary of HTTP headers with Authorization header if auth is configured.
+        Returns empty dict if no auth is configured or if token/credentials are empty.
+
+    Examples:
+        >>> gateway = DbGateway(auth_type="bearer", auth_value={"Authorization": "Bearer token123"})
+        >>> headers = build_gateway_auth_headers(gateway)
+        >>> headers["Authorization"]
+        'Bearer token123'
+    """
+    headers: Dict[str, str] = {}
+
+    if gateway.auth_type == "bearer" and gateway.auth_value:
+        if isinstance(gateway.auth_value, dict):
+            token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
+            if token:  # Only add header if token is not empty
+                headers["Authorization"] = f"Bearer {token}"
+        elif isinstance(gateway.auth_value, str):
+            decoded = decode_auth(gateway.auth_value)
+            token = decoded.get("Authorization", "").replace("Bearer ", "")
+            if token:  # Only add header if token is not empty
+                headers["Authorization"] = f"Bearer {token}"
+    elif gateway.auth_type == "basic" and gateway.auth_value:
+        if isinstance(gateway.auth_value, dict):
+            auth_header = gateway.auth_value.get("Authorization", "")
+            if auth_header:  # Only add header if not empty
+                headers["Authorization"] = auth_header
+        elif isinstance(gateway.auth_value, str):
+            decoded = decode_auth(gateway.auth_value)
+            auth_header = decoded.get("Authorization", "")
+            if auth_header:  # Only add header if not empty
+                headers["Authorization"] = auth_header
+
+    return headers
 
 # Made with Bob
 # Co-authored by Venkat (010gvr@gmail.com)
