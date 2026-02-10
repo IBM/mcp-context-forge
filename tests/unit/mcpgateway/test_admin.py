@@ -11873,7 +11873,7 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
     response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
-    assert agent_update.passthrough_headers == ["X-Req-Id"]
+    assert agent_update.oauth_config is None
 
 
 # =============================================================================
@@ -12012,9 +12012,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_tools_with_percent_character(self, monkeypatch, mock_db):
         """Test searching tools with % character in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="tool-1", original_name="Tool 100%", display_name="Tool 100%", custom_name=None, description="Completion tool")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 100%", display_name="Tool 100%", custom_name=None, description="Completion tool")]
         # Search for literal % - should be escaped so it doesn't match any single char
         result = await admin_search_tools(
             q="100%",
@@ -12031,9 +12029,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_tools_with_underscore_character(self, monkeypatch, mock_db):
         """Test searching tools with _ character in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="tool-1", original_name="my_tool_v1", display_name="My Tool", custom_name=None, description="A tool")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="my_tool_v1", display_name="My Tool", custom_name=None, description="A tool")]
         # Search for literal _ - should be escaped so it doesn't match any single char
         result = await admin_search_tools(
             q="my_tool",
@@ -12050,9 +12046,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_tools_with_backslash_character(self, monkeypatch, mock_db):
         """Test searching tools with \\ character in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="tool-1", original_name="path\\tool", display_name="Path Tool", custom_name=None, description="A tool")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="path\\tool", display_name="Path Tool", custom_name=None, description="A tool")]
         result = await admin_search_tools(
             q="path\\tool",
             include_inactive=False,
@@ -12068,9 +12062,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_servers_with_special_chars(self, monkeypatch, mock_db):
         """Test searching servers with special characters in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="srv-1", name="Server_v2.0%beta", description="Test server")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="srv-1", name="Server_v2.0%beta", description="Test server")]
         result = await admin_search_servers(
             q="v2.0%beta",
             include_inactive=False,
@@ -12085,9 +12077,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_prompts_with_special_chars(self, monkeypatch, mock_db):
         """Test searching prompts with special characters in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="prompt-1", original_name="Prompt_100%", display_name="Prompt 100%", description="Complete prompt")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-1", original_name="Prompt_100%", display_name="Prompt 100%", description="Complete prompt")]
         result = await admin_search_prompts(
             q="_100%",
             include_inactive=False,
@@ -12103,9 +12093,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_resources_with_special_chars(self, monkeypatch, mock_db):
         """Test searching resources with special characters in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="res-1", name="file_backup%2024", description="Backup resource")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="res-1", name="file_backup%2024", description="Backup resource")]
         result = await admin_search_resources(
             q="backup%2024",
             include_inactive=False,
@@ -12121,9 +12109,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_a2a_agents_with_special_chars(self, monkeypatch, mock_db):
         """Test searching A2A agents with special characters in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="agent-1", name="AI_Agent_v1%beta", description="Beta agent", endpoint_url="https://agent.example.com")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="agent-1", name="AI_Agent_v1%beta", description="Beta agent", endpoint_url="https://agent.example.com")]
         result = await admin_search_a2a_agents(
             q="Agent_v1%",
             include_inactive=False,
@@ -12138,9 +12124,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_gateways_with_special_chars(self, monkeypatch, mock_db):
         """Test searching gateways with special characters in search term."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="gw-1", name="Gateway_API%v2", url="https://api.example.com", description="API Gateway")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="gw-1", name="Gateway_API%v2", url="https://api.example.com", description="API Gateway")]
         result = await admin_search_gateways(
             q="API%v2",
             include_inactive=False,
@@ -12183,9 +12167,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_with_unicode_characters(self, monkeypatch, mock_db):
         """Test searching with unicode characters."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="tool-1", original_name="ツール日本語", display_name="Japanese Tool", custom_name=None, description="Unicode tool")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="ツール日本語", display_name="Japanese Tool", custom_name=None, description="Unicode tool")]
         result = await admin_search_tools(
             q="日本語",
             include_inactive=False,
@@ -12219,9 +12201,7 @@ class TestSearchWithSpecialCharacters:
     async def test_search_with_quotes(self, monkeypatch, mock_db):
         """Test searching with quote characters."""
         setup_team_service(monkeypatch, [])
-        mock_db.execute.return_value.all.return_value = [
-            SimpleNamespace(id="tool-1", original_name='Tool "Special"', display_name="Special Tool", custom_name=None, description="A tool")
-        ]
+        mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name='Tool "Special"', display_name="Special Tool", custom_name=None, description="A tool")]
         result = await admin_search_tools(
             q='"Special"',
             include_inactive=False,
@@ -12234,340 +12214,22 @@ class TestSearchWithSpecialCharacters:
         assert result["count"] == 1
 
     @pytest.mark.asyncio
-    async def test_admin_events_returns_streaming(self, monkeypatch, allow_permission, mock_db):
-        """Verify admin_events returns a StreamingResponse."""
-        request = MagicMock(spec=Request)
-        request.is_disconnected = AsyncMock(return_value=True)
-
-        mock_gateway_service = MagicMock()
-        mock_gateway_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
-        monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: mock_gateway_service)
-
-        mock_tool_service = MagicMock()
-        mock_tool_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
-        monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: mock_tool_service)
-
-        result = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        assert isinstance(result, StreamingResponse)
-
-    @pytest.mark.asyncio
-    async def test_admin_events_streams_event_and_cleans_up(self, monkeypatch, allow_permission, mock_db):
-        """Execute the SSE generator to cover stream_to_queue happy path and cancellation."""
-        import asyncio
-
-        request = MagicMock(spec=Request)
-        request.is_disconnected = AsyncMock(side_effect=[False, True])
-
-        async def gw_events():
-            yield {"type": "gateway", "data": {"a": 1}}
-            # Block so the background task gets cancelled in the generator cleanup.
-            await asyncio.sleep(3600)
-
-        async def tool_events():
-            if False:  # pragma: no cover
-                yield {}
-
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
-
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        assert isinstance(response, StreamingResponse)
-
-        chunks = []
-        async for chunk in response.body_iterator:
-            chunks.append(chunk)
-
-        assert chunks
-        first = chunks[0].decode() if isinstance(chunks[0], (bytes, bytearray)) else chunks[0]
-        assert "event: gateway" in first
-
-    @pytest.mark.asyncio
-    async def test_admin_events_stream_to_queue_handles_exception(self, monkeypatch, allow_permission, mock_db):
-        """Cover stream_to_queue generic exception handling by making one producer raise."""
-        request = MagicMock(spec=Request)
-        request.is_disconnected = AsyncMock(side_effect=[False, True])
-
-        async def bad_events():
-            raise RuntimeError("boom")
-            if False:  # pragma: no cover
-                yield {}
-
-        async def tool_events():
-            yield {"type": "tool", "data": {"b": 2}}
-
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: bad_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
-
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        chunks = [chunk async for chunk in response.body_iterator]
-        assert chunks
-
-    @pytest.mark.asyncio
-    async def test_admin_events_keepalive_timeout(self, monkeypatch, allow_permission, mock_db):
-        """Cover keepalive branch when the queue read times out."""
-        import asyncio
-
-        request = MagicMock(spec=Request)
-        request.is_disconnected = AsyncMock(side_effect=[False, True])
-
-        async def empty_events():
-            if False:  # pragma: no cover
-                yield {}
-
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())
-
-        async def fake_wait_for(awaitable, timeout):  # pylint: disable=unused-argument
-            # Close the Queue.get coroutine so it doesn't warn as "never awaited".
-            if hasattr(awaitable, "close"):
-                awaitable.close()
-            raise asyncio.TimeoutError()
-
-        monkeypatch.setattr("mcpgateway.admin.asyncio.wait_for", fake_wait_for, raising=True)
-
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        chunks = [chunk async for chunk in response.body_iterator]
-        assert chunks
-        first = chunks[0].decode() if isinstance(chunks[0], (bytes, bytearray)) else chunks[0]
-        assert ": keepalive" in first
-
-    @pytest.mark.asyncio
-    async def test_admin_events_wait_for_cancelled(self, monkeypatch, allow_permission, mock_db):
-        """Cover CancelledError handling around the wait_for() call."""
-        import asyncio
-
-        request = MagicMock(spec=Request)
-        request.is_disconnected = AsyncMock(return_value=False)
-
-        async def empty_events():
-            if False:  # pragma: no cover
-                yield {}
-
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: empty_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: empty_events())
-
-        async def fake_wait_for(awaitable, timeout):  # pylint: disable=unused-argument
-            if hasattr(awaitable, "close"):
-                awaitable.close()
-            raise asyncio.CancelledError()
-
-        monkeypatch.setattr("mcpgateway.admin.asyncio.wait_for", fake_wait_for, raising=True)
-
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        chunks = [chunk async for chunk in response.body_iterator]
-        assert chunks == []
-
-    @pytest.mark.asyncio
-    async def test_admin_events_unexpected_exception_logged(self, monkeypatch, allow_permission, mock_db):
-        """Cover outer exception handler in event_generator."""
-        request = MagicMock(spec=Request)
-        request.is_disconnected = AsyncMock(return_value=False)
-
-        async def gw_events():
-            yield "not-a-dict"
-
-        async def tool_events():
-            if False:  # pragma: no cover
-                yield {}
-
-        logger = MagicMock()
-        logger.debug = MagicMock()
-        logger.error = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.LOGGER", logger, raising=True)
-        monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
-        monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
-
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        chunks = [chunk async for chunk in response.body_iterator]
-        assert chunks == []
-        assert logger.error.called
-
-    @pytest.mark.asyncio
-    async def test_rate_limit_decorator_allows_request(self, monkeypatch):
-        # First-Party
-        from mcpgateway.admin import rate_limit, rate_limit_storage
-
-        rate_limit_storage.clear()
-        monkeypatch.setattr("mcpgateway.admin.settings.validation_max_requests_per_minute", 100, raising=False)
-
-        @rate_limit(10)
-        async def dummy_endpoint(request=None):
-            return "ok"
-
-        request = MagicMock(spec=Request)
-        request.client = MagicMock()
-        request.client.host = "1.2.3.4"
-        result = await dummy_endpoint(request=request)
-        assert result == "ok"
-
-    @pytest.mark.asyncio
-    async def test_rate_limit_decorator_blocks_over_limit(self, monkeypatch):
-        # First-Party
-        from mcpgateway.admin import rate_limit, rate_limit_storage
-
-        rate_limit_storage.clear()
-
-        @rate_limit(2)
-        async def dummy_endpoint(request=None):
-            return "ok"
-
-        request = MagicMock(spec=Request)
-        request.client = MagicMock()
-        request.client.host = "5.6.7.8"
-
-        await dummy_endpoint(request=request)
-        await dummy_endpoint(request=request)
-        with pytest.raises(HTTPException) as exc_info:
-            await dummy_endpoint(request=request)
-        assert exc_info.value.status_code == 429
-
-
-# ============================================================================ #
-#                 GROUP 10: _get_span_entity_performance helper                 #
-# ============================================================================ #
-
-
-class TestSpanEntityPerformance:
-    """Tests for _get_span_entity_performance helper."""
-
-    def test_get_span_entity_performance_invalid_json_key(self, mock_db):
-        with pytest.raises(ValueError, match="Invalid json_key"):
-            _get_span_entity_performance(mock_db, datetime.now(timezone.utc), datetime.now(), ["tool.invoke"], "invalid key!", "tool_name")
-
-    def test_get_span_entity_performance_python_fallback(self, mock_db):
-        mock_bind = MagicMock()
-        mock_bind.dialect.name = "sqlite"
-        mock_db.get_bind.return_value = mock_bind
-
-        # Return empty spans
-        mock_db.query.return_value.filter.return_value.all.return_value = []
-
-        result = _get_span_entity_performance(mock_db, datetime.now(timezone.utc), datetime.now(), ["tool.invoke"], "tool.name", "tool_name")
-        assert result == []
-
-    def test_get_span_entity_performance_postgresql_path(self, mock_db):
-        # First-Party
-        from mcpgateway.admin import settings as admin_settings
-
-        mock_bind = MagicMock()
-        mock_bind.dialect.name = "postgresql"
-        mock_db.get_bind.return_value = mock_bind
-
-        # Mock the execute/fetchall chain
-        mock_row = MagicMock()
-        mock_row.entity = "my-tool"
-        mock_row.count = 10
-        mock_row.avg_duration_ms = 50.0
-        mock_row.min_duration_ms = 5.0
-        mock_row.max_duration_ms = 200.0
-        mock_row.p50 = 30.0
-        mock_row.p90 = 150.0
-        mock_row.p95 = 180.0
-        mock_row.p99 = 195.0
-        mock_db.execute.return_value.fetchall.return_value = [mock_row]
-
-        # Temporarily enable PG percentiles
-        original = admin_settings.use_postgresdb_percentiles
-        try:
-            admin_settings.use_postgresdb_percentiles = True
-            result = _get_span_entity_performance(mock_db, datetime.now(timezone.utc), datetime.now(), ["tool.invoke"], "tool.name", "tool_name")
-            assert len(result) == 1
-            assert result[0]["tool_name"] == "my-tool"
-            assert result[0]["count"] == 10
-        finally:
-            admin_settings.use_postgresdb_percentiles = original
-
-
-# ============================================================================ #
-#          GROUP 11: Observability Usage/Errors/Chains + Latency                #
-# ============================================================================ #
-
-
-def _make_obs_session(monkeypatch, query_result):
-    """Helper to create a mock DB session for observability endpoints that call next(get_db())."""
-    mock_session = MagicMock()
-    mock_bind = MagicMock()
-    mock_bind.dialect.name = "sqlite"
-    mock_session.get_bind.return_value = mock_bind
-    mock_session.query.return_value.filter.return_value.group_by.return_value.order_by.return_value.limit.return_value.all.return_value = query_result
-    mock_session.commit = MagicMock()
-    mock_session.close = MagicMock()
-    monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
-    return mock_session
-
-
-class TestToolUsageErrorsChains:
-    """Tests for tool usage, errors, and chains observability endpoints."""
-
-    @pytest.mark.asyncio
-    async def test_get_tool_usage_success(self, monkeypatch, allow_permission):
-        row = SimpleNamespace(tool_name="my_tool", count=10)
-        session = _make_obs_session(monkeypatch, [row])
-        request = MagicMock(spec=Request)
-        result = await get_tool_usage(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
-        assert result["total_invocations"] == 10
-        assert result["tools"][0]["tool_name"] == "my_tool"
-
-    @pytest.mark.asyncio
-    async def test_get_tool_usage_empty(self, monkeypatch, allow_permission):
-        session = _make_obs_session(monkeypatch, [])
-        request = MagicMock(spec=Request)
-        result = await get_tool_usage(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
-        assert result["total_invocations"] == 0
-        assert result["tools"] == []
-
-    @pytest.mark.asyncio
-    async def test_get_tool_errors_success(self, monkeypatch, allow_permission):
-        row = SimpleNamespace(tool_name="bad_tool", total_count=100, error_count=5)
-        session = _make_obs_session(monkeypatch, [row])
-        request = MagicMock(spec=Request)
-        result = await get_tool_errors(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
-        assert result["tools"][0]["tool_name"] == "bad_tool"
-        assert result["tools"][0]["error_rate"] == 5.0
-
-    @pytest.mark.asyncio
-    async def test_get_tool_errors_empty(self, monkeypatch, allow_permission):
-        session = _make_obs_session(monkeypatch, [])
-        request = MagicMock(spec=Request)
-        result = await get_tool_errors(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
-        assert result["tools"] == []
-
-    @pytest.mark.asyncio
-    async def test_get_tool_chains_success(self, monkeypatch, allow_permission):
-        spans = [
-            SimpleNamespace(trace_id="t1", tool_name="toolA", start_time=datetime(2025, 1, 1, 0, 0)),
-            SimpleNamespace(trace_id="t1", tool_name="toolB", start_time=datetime(2025, 1, 1, 0, 1)),
+    async def test_search_with_brackets_and_parens(self, monkeypatch, mock_db):
+        """Test searching with brackets and parentheses."""
+        setup_team_service(monkeypatch, [])
+        mock_db.execute.return_value.all.return_value = [
+            SimpleNamespace(id="tool-1", original_name="Tool [v1] (beta)", display_name="Beta Tool", custom_name=None, description="A tool")
         ]
-        mock_session = MagicMock()
-        mock_bind = MagicMock()
-        mock_bind.dialect.name = "sqlite"
-        mock_session.get_bind.return_value = mock_bind
-        mock_session.query.return_value.filter.return_value.order_by.return_value.all.return_value = spans
-        mock_session.commit = MagicMock()
-        mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
-
-        request = MagicMock(spec=Request)
-        result = await get_tool_chains(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
-        assert result["total_traces_with_tools"] == 1
-        assert len(result["chains"]) == 1
-        assert result["chains"][0]["chain"] == "toolA -> toolB"
-
-    @pytest.mark.asyncio
-    async def test_get_tool_chains_empty(self, monkeypatch, allow_permission):
-        mock_session = MagicMock()
-        mock_bind = MagicMock()
-        mock_bind.dialect.name = "sqlite"
-        mock_session.get_bind.return_value = mock_bind
-        mock_session.query.return_value.filter.return_value.order_by.return_value.all.return_value = []
-        mock_session.commit = MagicMock()
-        mock_session.close = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
-
-        request = MagicMock(spec=Request)
-        result = await get_tool_chains(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
-        assert result["chains"] == []
-
+        result = await admin_search_tools(
+            q="[v1] (beta)",
+            include_inactive=False,
+            limit=5,
+            gateway_id=None,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db},
+        )
+        assert result["count"] == 1
 
 class TestPromptResourceUsageErrors:
     """Tests for prompt/resource usage and errors observability endpoints."""

@@ -13551,15 +13551,15 @@ async def admin_edit_a2a_agent(
                 auth_headers = []
 
         # Passthrough headers
-        passthrough_headers = str(form.get("passthrough_headers"))
-        if passthrough_headers and passthrough_headers.strip():
+        passthrough_headers_raw = form.get("passthrough_headers")
+        passthrough_headers = None
+        if passthrough_headers_raw and str(passthrough_headers_raw).strip():
+            passthrough_headers_str = str(passthrough_headers_raw)
             try:
-                passthrough_headers = orjson.loads(passthrough_headers)
+                passthrough_headers = orjson.loads(passthrough_headers_str)
             except (orjson.JSONDecodeError, ValueError):
                 # Fallback to comma-separated parsing
-                passthrough_headers = [h.strip() for h in passthrough_headers.split(",") if h.strip()]
-        else:
-            passthrough_headers = None
+                passthrough_headers = [h.strip() for h in passthrough_headers_str.split(",") if h.strip()]
 
         # Parse OAuth configuration - support both JSON string and individual form fields
         oauth_config_json = str(form.get("oauth_config"))
