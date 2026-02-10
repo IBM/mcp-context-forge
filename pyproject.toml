@@ -322,6 +322,7 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 mcpgateway = "mcpgateway.cli:main"
 mcpplugins = "mcpgateway.plugins.tools.cli:main"
 cforge = "mcpgateway.tools.cli:main"
+init-secrets = "mcpgateway.scripts.init_secrets:main"
 
 # --------------------------------------------------------------------
 #  🔧 setuptools-specific configuration
