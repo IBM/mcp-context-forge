@@ -163,3 +163,93 @@ def test_get_audit_trail_commits_and_returns(monkeypatch):
     assert len(result) == 1
     assert dummy_session.committed is True
     assert dummy_session.closed is True
+
+
+def test_determine_requires_review_respects_explicit_param():
+    service = svc.AuditTrailService()
+    assert service._determine_requires_review(action="CREATE", data_classification=None, requires_review_param=True) is True
+    assert service._determine_requires_review(action="CREATE", data_classification=None, requires_review_param=False) is False
+
+
+def test_determine_requires_review_flags_review_required_actions():
+    service = svc.AuditTrailService()
+    assert service._determine_requires_review(action="delete_tool", data_classification=None, requires_review_param=None) is True
+
+
+def test_log_crud_operation_confidential_resource_requires_review(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_crud_operation(
+        operation="CREATE",
+        resource_type="token",
+        resource_id="tok-1",
+        user_id="user-1",
+    )
+
+    assert captured["data_classification"] == svc.DataClassification.CONFIDENTIAL.value
+    assert captured["requires_review"] is True
+
+
+def test_log_crud_operation_delete_tool_requires_review(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_crud_operation(
+        operation="DELETE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert captured["requires_review"] is True
+
+
+def test_log_audit_builds_context_from_description(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_audit(
+        user_id="user-1",
+        resource_type="tool",
+        resource_id="tool-1",
+        action="EXECUTE",
+        description="ran tool",
+    )
+
+    assert captured["context"]["description"] == "ran tool"
+
+
+def test_get_audit_trail_applies_filters(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.AuditTrailService()
+    now = svc.datetime.now(svc.timezone.utc)
+    result = service.get_audit_trail(
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+        action="UPDATE",
+        start_time=now,
+        end_time=now,
+        limit=1,
+        offset=0,
+    )
+    assert len(result) == 1

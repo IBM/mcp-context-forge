@@ -248,6 +248,7 @@ async def enrich_tool(tool_id: str, tool_service: ToolService, db: Session) -> t
         mcp_cf_tool = tool_schema.to_dict(use_alias=True)
     except Exception as e:
         logger.error(f"Failed to convert tool {tool_id} to schema: {e}")
+        raise
 
     toolops_enrichment = ToolOpsMCPCFToolEnrichment(llm_client=None, gen_mode=None)
     enriched_description = await toolops_enrichment.enrich_mc_cf_tool(mcp_cf_toolspec=mcp_cf_tool)

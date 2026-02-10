@@ -451,6 +451,119 @@ class TestResourceListing:
 
         assert len(result) == 1
 
+    @pytest.mark.asyncio
+    async def test_list_resources_cache_hit_returns_cached(self, resource_service, mock_db):
+        """Cover list_resources cache-hit reconstruction (ResourceRead.model_validate)."""
+        cached = {"resources": [{"id": "r1"}], "next_cursor": "c1"}
+
+        with (
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch.object(ResourceRead, "model_validate", staticmethod(lambda d: d)),
+        ):
+            mock_cache = AsyncMock()
+            mock_cache.hash_filters = MagicMock(return_value="hash123")
+            mock_cache.get = AsyncMock(return_value=cached)
+            mock_cache_fn.return_value = mock_cache
+
+            resources, cursor = await resource_service.list_resources(mock_db)
+
+        assert resources == [{"id": "r1"}]
+        assert cursor == "c1"
+
+    @pytest.mark.asyncio
+    async def test_list_resources_user_email_empty_string_sets_team_ids_empty(self, resource_service, mock_db):
+        """Empty-string user_email should still apply secure public-only filtering in list_resources."""
+        with (
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock, return_value=([], None)),
+        ):
+            mock_cache_fn.return_value = AsyncMock()
+            resources, cursor = await resource_service.list_resources(mock_db, user_email="")
+
+        assert resources == []
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_resources_team_id_access_and_visibility_filter(self, resource_service, mock_db):
+        """Covers team_id access conditions + visibility filter branches in list_resources."""
+        mock_resource = MagicMock()
+        mock_resource.team_id = None
+
+        with (
+            patch.object(resource_service, "convert_resource_to_read", return_value="converted"),
+            patch("mcpgateway.services.resource_service._get_registry_cache") as mock_cache_fn,
+            patch("mcpgateway.services.resource_service.unified_paginate", new_callable=AsyncMock, return_value=([mock_resource], None)),
+        ):
+            mock_cache_fn.return_value = AsyncMock()
+            resources, cursor = await resource_service.list_resources(
+                mock_db,
+                user_email="user@test.com",
+                token_teams=["team-1"],
+                team_id="team-1",
+                visibility="team",
+            )
+
+        assert resources == ["converted"]
+        assert cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_server_resources_token_teams_scoped_branch(self, resource_service, mock_db):
+        """Cover token_teams branch in list_server_resources visibility filtering."""
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_execute_result
+        mock_db.commit = MagicMock()
+
+        result = await resource_service.list_server_resources(mock_db, "server123", token_teams=["team-1"])
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_server_resources_user_email_db_team_lookup_team_map_and_conversion_error(self, resource_service, mock_db):
+        """Cover DB team lookup, team_map batch fetch, and per-resource conversion error handling."""
+        r1 = MagicMock()
+        r1.team_id = "team-1"
+        r2 = MagicMock()
+        r2.team_id = "team-1"
+
+        result1 = MagicMock()
+        result1.scalars.return_value.all.return_value = [r1, r2]
+
+        team_row = MagicMock()
+        team_row.id = "team-1"
+        team_row.name = "Engineering"
+        result2 = MagicMock()
+        result2.all.return_value = [team_row]
+
+        mock_db.execute = MagicMock(side_effect=[result1, result2])
+        mock_db.commit = MagicMock()
+
+        team = MagicMock()
+        team.id = "team-1"
+
+        with (
+            patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS,
+            patch.object(resource_service, "convert_resource_to_read", side_effect=[ValueError("bad"), "ok"]),
+        ):
+            mock_ts = MagicMock()
+            mock_ts.get_user_teams = AsyncMock(return_value=[team])
+            MockTMS.return_value = mock_ts
+
+            result = await resource_service.list_server_resources(mock_db, "server123", user_email="user@test.com")
+
+        assert result == ["ok"]
+        assert getattr(r1, "team") == "Engineering"
+
+    @pytest.mark.asyncio
+    async def test_list_server_resources_user_email_empty_string_sets_team_ids_empty(self, resource_service, mock_db):
+        """Empty-string user_email should hit team_ids=[] branch in list_server_resources."""
+        mock_execute_result = MagicMock()
+        mock_execute_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_execute_result
+        mock_db.commit = MagicMock()
+
+        result = await resource_service.list_server_resources(mock_db, "server123", user_email="")
+        assert result == []
+
 
 # --------------------------------------------------------------------------- #
 # Resource reading tests                                                      #
@@ -3014,6 +3127,363 @@ class TestInvokeResourceCoverage:
                 obs.end_span.assert_called_once()
         finally:
             current_trace_id.reset(token)
+
+    @pytest.mark.asyncio
+    async def test_query_param_auth_decrypts_applies_and_metrics_failure_swallowed(self, resource_service, monkeypatch):
+        """Cover gateway query_param decryption/apply + metrics buffer failure path in invoke_resource()."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="query_param")
+        gateway.url = "http://gw.test"
+        gateway.auth_query_params = {"bad": "bad_enc", "api_key": "enc_val"}
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        # Mock SSE session to succeed so metrics recording runs.
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        mock_span = MagicMock()
+
+        def decode_side_effect(v):
+            if v == "bad_enc":
+                raise RuntimeError("decrypt fail")
+            return {"api_key": "secret123"}
+
+        captured_sse_url: dict[str, str] = {}
+
+        def fake_apply(url, params):
+            return f"{url}?api_key={params.get('api_key')}"
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=mock_span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.resource_service.decode_auth", side_effect=decode_side_effect),
+            patch("mcpgateway.services.resource_service.apply_query_param_auth", side_effect=fake_apply),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", side_effect=RuntimeError("metrics down")),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            def _capture_url(*_a, **kw):
+                captured_sse_url["url"] = kw.get("url") or ""
+                return mock_sse.return_value
+
+            mock_sse.side_effect = _capture_url
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        assert result == "ok"
+        assert captured_sse_url["url"].startswith("http://gw.test?api_key=secret123")
+
+    @pytest.mark.asyncio
+    async def test_oauth_authorization_code_no_token_marks_span_unhealthy(self, resource_service):
+        """Cover OAuth auth_code path when no stored token exists."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="oauth")
+        gateway.oauth_config = {"grant_type": "authorization_code"}
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        span = MagicMock()
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.resource_service.fresh_db_session") as mock_fresh,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_fresh.return_value.__enter__.return_value = MagicMock()
+            mock_fresh.return_value.__exit__.return_value = False
+            mock_tss.return_value.get_user_token = AsyncMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        assert result == "ok"
+        span.set_attribute.assert_any_call("health.status", "unhealthy")
+        span.set_attribute.assert_any_call("error.message", "No valid OAuth token for user")
+
+    @pytest.mark.asyncio
+    async def test_oauth_client_credentials_error_marks_span_unhealthy(self, resource_service):
+        """Cover OAuth client_credentials exception path (sets span attributes, continues)."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="oauth")
+        gateway.oauth_config = {"grant_type": "client_credentials"}
+
+        # Force OAuth manager failure
+        resource_service.oauth_manager.get_access_token = AsyncMock(side_effect=RuntimeError("boom"))
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        span = MagicMock()
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        assert result == "ok"
+        span.set_attribute.assert_any_call("health.status", "unhealthy")
+        span.set_attribute.assert_any_call("error.message", "boom")
+
+    @pytest.mark.asyncio
+    async def test_sse_auth_value_string_decode_returns_none_defaults_authentication_to_empty_dict(self, resource_service):
+        """Cover non-OAuth auth decode returning None which triggers authentication defaulting in connect_to_sse_session()."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type="header")
+        gateway.auth_value = "encoded-auth"
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="ok", blob=None)])
+
+        span = MagicMock()
+        captured_headers: dict[str, object] = {}
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.resource_service.decode_auth", return_value=None),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            def _sse_side_effect(*_a, **kw):
+                captured_headers["headers"] = kw.get("headers")
+                return mock_sse.return_value
+
+            mock_sse.side_effect = _sse_side_effect
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        assert result == "ok"
+        assert captured_headers["headers"] == {}
+
+    @pytest.mark.asyncio
+    async def test_streamablehttp_non_pooled_reads_resource_and_defaults_authentication(self, resource_service):
+        """Cover StreamableHTTP non-pooled path including authentication None defaulting."""
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="streamablehttp", auth_type="header")
+        gateway.auth_value = "encoded-auth"
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        cs_session = AsyncMock()
+        cs_session.initialize = AsyncMock(return_value=None)
+        cs_session.read_resource.return_value = MagicMock(contents=[MagicMock(text="http-ok", blob=None)])
+
+        span = MagicMock()
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.resource_service.decode_auth", return_value=None),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+            patch("mcpgateway.services.resource_service.streamablehttp_client") as mock_http,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+
+            mock_http.return_value.__aenter__ = AsyncMock(return_value=(AsyncMock(), AsyncMock(), MagicMock(return_value="sid")))
+            mock_http.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=cs_session)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        assert result == "http-ok"
+
+    @pytest.mark.asyncio
+    async def test_sse_session_pool_used_and_signature_validated(self, resource_service):
+        """Cover session pool path (SSE) and certificate signature validation branch."""
+        from mcpgateway.services.mcp_session_pool import TransportType
+
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse", auth_type=None)
+        gateway.ca_certificate = "dummy-cert"
+        gateway.ca_certificate_sig = "dummy-sig"
+
+        db = MagicMock()
+        db.close = MagicMock()
+
+        captured_pool_kwargs: dict[str, object] = {}
+
+        pooled_session = AsyncMock()
+        pooled_session.read_resource = AsyncMock(return_value=MagicMock(contents=[MagicMock(text="pooled-ok", blob=None)]))
+
+        class _PooledCM:
+            async def __aenter__(self):
+                return MagicMock(session=pooled_session)
+
+            async def __aexit__(self, *exc):
+                return False
+
+        def pool_session(**kwargs):
+            captured_pool_kwargs.update(kwargs)
+            return _PooledCM()
+
+        pool = MagicMock()
+        pool.session = pool_session
+
+        span = MagicMock()
+
+        # Avoid real SSL context creation; we're only covering validation branch.
+        resource_service.create_ssl_context = MagicMock(return_value=MagicMock())
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=True,
+                    ed25519_public_key="pk",
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=True,
+                    health_check_timeout=1,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.current_trace_id") as mock_trace,
+            patch(
+                "mcpgateway.services.resource_service.create_span",
+                MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=span), __exit__=MagicMock(return_value=False))),
+            ),
+            patch("mcpgateway.services.resource_service.validate_signature", return_value=True),
+            patch("mcpgateway.services.resource_service.get_mcp_session_pool", return_value=pool),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_metrics_buffer,
+        ):
+            mock_trace.get = MagicMock(return_value=None)
+            mock_metrics_buffer.return_value = MagicMock()
+            result = await resource_service.invoke_resource(db, "res-1", "http://test.com", resource_obj=resource, gateway_obj=gateway)
+        assert result == "pooled-ok"
+        assert captured_pool_kwargs.get("transport_type") == TransportType.SSE
 
 
 # ============================================================================

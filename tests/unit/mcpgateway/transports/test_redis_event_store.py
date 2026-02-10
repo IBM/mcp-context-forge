@@ -10,6 +10,7 @@ import asyncio
 import os
 import time
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -338,3 +339,115 @@ class TestRedisEventStore:
         assert len(replayed) == 15
         for i, msg in enumerate(replayed):
             assert msg["method"] == f"msg_{i + 5}"
+
+    async def test_store_event_raises_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+
+        with pytest.raises(RuntimeError, match="Redis client not available"):
+            await store.store_event("stream", {"jsonrpc": "2.0", "method": "test", "id": 1})
+
+    async def test_replay_events_after_returns_none_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=None),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_returns_none_for_invalid_index_data(self, monkeypatch: pytest.MonkeyPatch):
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=b"{")  # invalid JSON
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_returns_none_when_index_missing_fields(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": "s"}))  # seq_num missing
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
+
+    async def test_replay_events_after_handles_bad_start_seq_and_bad_messages(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        stream_id = "s"
+        meta_key = store._get_stream_meta_key(stream_id)
+        messages_key = store._get_stream_messages_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.zrangebyscore = AsyncMock(return_value=[b"ev-1", b"ev-2"])
+                self.hget = AsyncMock(side_effect=self._hget)
+
+            async def _hget(self, key: str, field: str):
+                if key == meta_key and field == "start_seq":
+                    return b"not-int"
+                if key == messages_key and field == "ev-1":
+                    return None
+                if key == messages_key and field == "ev-2":
+                    return b"{"  # invalid JSON -> replay None
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) == stream_id
+        callback.assert_awaited_once_with(None)
+
+    async def test_replay_events_after_returns_none_when_event_evicted_by_start_seq(self, monkeypatch: pytest.MonkeyPatch):
+        import orjson
+
+        store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
+        stream_id = "s"
+        meta_key = store._get_stream_meta_key(stream_id)
+
+        class DummyRedis:
+            def __init__(self) -> None:
+                self.get = AsyncMock(return_value=orjson.dumps({"stream_id": stream_id, "seq_num": 1}))
+                self.hget = AsyncMock(side_effect=self._hget)
+                self.zrangebyscore = AsyncMock()
+
+            async def _hget(self, key: str, field: str):
+                if key == meta_key and field == "start_seq":
+                    return b"10"  # start_seq > last_seq -> evicted
+                raise AssertionError(f"Unexpected hget: {key=} {field=}")
+
+        monkeypatch.setattr(
+            "mcpgateway.transports.redis_event_store.get_redis_client",
+            AsyncMock(return_value=DummyRedis()),
+        )
+
+        callback = AsyncMock()
+        assert await store.replay_events_after("event-id", callback) is None
+        callback.assert_not_awaited()
