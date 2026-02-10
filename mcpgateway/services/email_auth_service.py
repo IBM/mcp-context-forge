@@ -450,24 +450,33 @@ class EmailAuthService:
                 logger.info(f"Authentication failed for {email}: account disabled")
                 return None
 
-            if user.is_account_locked():
+            is_protected_admin = user.is_admin and settings.protect_all_admins
+
+            if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
                 return None
+
+            # Clear lockout for protected admins so they can always attempt login
+            if is_protected_admin and user.is_account_locked():
+                logger.info(f"Clearing lockout for protected admin {email}")
+                user.reset_failed_attempts()
+                self.db.commit()
 
             # Verify password
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts
-                max_attempts = getattr(settings, "max_failed_login_attempts", 5)
-                lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
+                # Increment failed attempts (skip for protected admins)
+                if not is_protected_admin:
+                    max_attempts = getattr(settings, "max_failed_login_attempts", 5)
+                    lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
-                is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
+                    is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
-                if is_locked:
-                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
-                    failure_reason = "Account locked due to too many failed attempts"
+                    if is_locked:
+                        logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                        failure_reason = "Account locked due to too many failed attempts"
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
