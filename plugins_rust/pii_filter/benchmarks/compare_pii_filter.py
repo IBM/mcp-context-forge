@@ -22,8 +22,9 @@ import statistics
 from typing import Dict, List, Tuple
 from dataclasses import dataclass, asdict
 
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path (go up 3 levels: benchmarks -> pii_filter -> plugins_rust -> project_root)
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, project_root)
 
 from plugins.pii_filter.pii_filter import PIIDetector as PythonPIIDetector, PIIFilterConfig
 
