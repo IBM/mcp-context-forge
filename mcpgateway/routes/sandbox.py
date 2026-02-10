@@ -56,87 +56,87 @@ router = APIRouter(
 # Core Simulation Endpoints
 # ---------------------------------------------------------------------------
 
-
-@router.post(
-    "/simulate",
-    response_model=SimulationResult,
-    status_code=status.HTTP_200_OK,
-    summary="Simulate single test case",
-    description="""
-    Simulate a single test case against a policy draft.
-    
-    This endpoint creates an isolated PDP instance with the draft policy,
-    evaluates the test case, and returns detailed results including whether
-    the test passed and a full explanation of the decision.
-    
-    **Use case**: Test a specific access scenario before deploying a policy change.
-    
-    **Example**:
-    ```json
-    {
-        "policy_draft_id": "draft-123",
-        "test_case": {
-            "subject": {"email": "dev@example.com", "roles": ["developer"]},
-            "action": "tools.invoke",
-            "resource": {"type": "tool", "id": "db-query"},
-            "expected_decision": "allow"
-        },
-        "include_explanation": true
-    }
-    ```
-    """,
-)
-async def simulate_single_request(
-    request: SimulateRequest,
-    sandbox: SandboxService = Depends(get_sandbox_service),
-) -> SimulationResult:
-    """Simulate a single test case against a policy draft.
-
-    Args:
-        request: Simulation request containing policy draft ID and test case
-        sandbox: Injected sandbox service
-
-    Returns:
-        SimulationResult with actual vs expected decision, timing, and explanation
-
-    Raises:
-        HTTPException: 404 if policy draft not found, 500 on evaluation error
-    """
-    logger.info(
-        "Simulating single test case against policy draft %s",
-        request.policy_draft_id,
-    )
-
-    try:
-        result = await sandbox.simulate_single(
-            policy_draft_id=request.policy_draft_id,
-            test_case=request.test_case,
-            include_explanation=request.include_explanation,
-        )
-
-        logger.info(
-            "Simulation complete: test_case=%s, passed=%s, duration=%.1fms",
-            result.test_case_id,
-            result.passed,
-            result.execution_time_ms,
-        )
-
-        return result
-
-    except ValueError as e:
-        logger.error("Policy draft not found: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Policy draft not found: {request.policy_draft_id}",
-        ) from e
-
-    except Exception as e:
-        logger.error("Simulation failed: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Simulation failed: {str(e)}",
-        ) from e
-
+# 
+# @router.post(
+#     "/simulate",
+#     response_model=SimulationResult,
+#     status_code=status.HTTP_200_OK,
+#     summary="Simulate single test case",
+#     description="""
+#     Simulate a single test case against a policy draft.
+#     
+#     This endpoint creates an isolated PDP instance with the draft policy,
+#     evaluates the test case, and returns detailed results including whether
+#     the test passed and a full explanation of the decision.
+#     
+#     **Use case**: Test a specific access scenario before deploying a policy change.
+#     
+#     **Example**:
+#     ```json
+#     {
+#         "policy_draft_id": "draft-123",
+#         "test_case": {
+#             "subject": {"email": "dev@example.com", "roles": ["developer"]},
+#             "action": "tools.invoke",
+#             "resource": {"type": "tool", "id": "db-query"},
+#             "expected_decision": "allow"
+#         },
+#         "include_explanation": true
+#     }
+#     ```
+#     """,
+# )
+# async def simulate_single_request(
+#     request: SimulateRequest,
+#     sandbox: SandboxService = Depends(get_sandbox_service),
+# ) -> SimulationResult:
+#     """Simulate a single test case against a policy draft.
+# 
+#     Args:
+#         request: Simulation request containing policy draft ID and test case
+#         sandbox: Injected sandbox service
+# 
+#     Returns:
+#         SimulationResult with actual vs expected decision, timing, and explanation
+# 
+#     Raises:
+#         HTTPException: 404 if policy draft not found, 500 on evaluation error
+#     """
+#     logger.info(
+#         "Simulating single test case against policy draft %s",
+#         request.policy_draft_id,
+#     )
+# 
+#     try:
+#         result = await sandbox.simulate_single(
+#             policy_draft_id=request.policy_draft_id,
+#             test_case=request.test_case,
+#             include_explanation=request.include_explanation,
+#         )
+# 
+#         logger.info(
+#             "Simulation complete: test_case=%s, passed=%s, duration=%.1fms",
+#             result.test_case_id,
+#             result.passed,
+#             result.execution_time_ms,
+#         )
+# 
+#         return result
+# 
+#     except ValueError as e:
+#         logger.error("Policy draft not found: %s", e)
+#         raise HTTPException(
+#             status_code=status.HTTP_404_NOT_FOUND,
+#             detail=f"Policy draft not found: {request.policy_draft_id}",
+#         ) from e
+# 
+#     except Exception as e:
+#         logger.error("Simulation failed: %s", e, exc_info=True)
+#         raise HTTPException(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             detail=f"Simulation failed: {str(e)}",
+#         ) from e
+# 
 
 @router.post(
     "/batch",
@@ -566,23 +566,9 @@ async def simulate_form_submit(
 
     except Exception as e:
         logger.exception("Error running simulation")
-        error_html = f"""
-        <div class="bg-red-50 dark:bg-red-900 border-l-4 border-red-400 p-4 rounded-md">
-            <div class="flex">
-                <div class="flex-shrink-0">
-                    <svg class="h-5 w-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </div>
-                <div class="ml-3">
-                    <h3 class="text-sm font-medium text-red-800 dark:text-red-200">
-                        Simulation Error
-                    </h3>
-                    <div class="mt-2 text-sm text-red-700 dark:text-red-300">
-                        <p>{str(e)}</p>
-                    </div>
-                </div>
-            </div>
-        </div>
-        """
-        return HTMLResponse(content=error_html, status_code=500)
+        return request.app.state.templates.TemplateResponse(
+            request,
+            "sandbox_simulate_error.html",
+            {"error_message": str(e)},
+            status_code=500
+        )

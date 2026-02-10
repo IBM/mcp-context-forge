@@ -4,6 +4,7 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
+from uuid import uuid4
 MCP Gateway Schema Definitions.
 This module provides Pydantic models for request/response validation in the MCP Gateway.
 It implements schemas for:
@@ -38,6 +39,7 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
+from plugins.unified_pdp.pdp_models import AccessDecision, CombinationMode, Context, Decision, DecisionExplanation, EngineDecision, EngineType, Resource, Subject
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
