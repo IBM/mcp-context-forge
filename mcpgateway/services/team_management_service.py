@@ -40,6 +40,21 @@ from mcpgateway.utils.redis_client import get_redis_client
 
 # Initialize logging
 logging_service = LoggingService()
+
+
+def _escape_like_wildcards(search_term: str) -> str:
+    """Escape SQL LIKE wildcard characters in search terms.
+
+    Escapes % and _ characters to prevent unexpected wildcard matching
+    when users search for literal percent or underscore characters.
+
+    Args:
+        search_term: The raw search term from user input.
+
+    Returns:
+        str: Search term with % and _ characters escaped.
+    """
+    return search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 logger = logging_service.get_logger(__name__)
 
 
@@ -1259,12 +1274,13 @@ class TeamManagementService:
             query = query.where(EmailTeam.visibility == visibility_filter)
 
         if search_query:
-            search_term = f"%{search_query}%"
+            escaped_query = _escape_like_wildcards(search_query)
+            search_term = f"%{escaped_query}%"
             query = query.where(
                 or_(
-                    EmailTeam.name.ilike(search_term),
-                    EmailTeam.slug.ilike(search_term),
-                    EmailTeam.description.ilike(search_term),
+                    EmailTeam.name.ilike(search_term, escape="\\"),
+                    EmailTeam.slug.ilike(search_term, escape="\\"),
+                    EmailTeam.description.ilike(search_term, escape="\\"),
                 )
             )
 
@@ -1326,11 +1342,12 @@ class TeamManagementService:
             query = query.where(EmailTeam.visibility == visibility_filter)
 
         if search_query:
-            search_term = f"%{search_query}%"
+            escaped_query = _escape_like_wildcards(search_query)
+            search_term = f"%{escaped_query}%"
             query = query.where(
                 or_(
-                    EmailTeam.name.ilike(search_term),
-                    EmailTeam.slug.ilike(search_term),
+                    EmailTeam.name.ilike(search_term, escape="\\"),
+                    EmailTeam.slug.ilike(search_term, escape="\\"),
                 )
             )
 
@@ -1369,11 +1386,12 @@ class TeamManagementService:
             query = query.where(EmailTeam.visibility == visibility_filter)
 
         if search_query:
-            search_term = f"%{search_query}%"
+            escaped_query = _escape_like_wildcards(search_query)
+            search_term = f"%{escaped_query}%"
             query = query.where(
                 or_(
-                    EmailTeam.name.ilike(search_term),
-                    EmailTeam.slug.ilike(search_term),
+                    EmailTeam.name.ilike(search_term, escape="\\"),
+                    EmailTeam.slug.ilike(search_term, escape="\\"),
                 )
             )
 

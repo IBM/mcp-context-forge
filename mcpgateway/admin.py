@@ -464,6 +464,65 @@ def rate_limit(requests_per_minute: Optional[int] = None):
     return decorator
 
 
+def escape_like_wildcards(search_term: str) -> str:
+    """Escape SQL LIKE wildcard characters in search terms.
+
+    Escapes % and _ characters to prevent unexpected wildcard matching
+    when users search for literal percent or underscore characters.
+
+    Args:
+        search_term: The raw search term from user input.
+
+    Returns:
+        str: Search term with % and _ characters escaped.
+    """
+    # Escape backslash first, then wildcards
+    return search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def apply_search_filter(query, model, search_term: str, fields: list):
+    """Apply a case-insensitive LIKE search filter across multiple fields.
+
+    This helper function reduces code repetition by consolidating the search
+    filter logic used across servers, tools, prompts, resources, and A2A agents.
+
+    Args:
+        query: SQLAlchemy select query to modify.
+        model: The ORM model class (e.g., DbServer, DbTool).
+        search_term: The user's search term (will be escaped and wrapped with %).
+        fields: List of tuples (field, is_nullable, is_json) specifying:
+            - field: The model attribute to search (e.g., model.name)
+            - is_nullable: Whether to use coalesce for NULL handling
+            - is_json: Whether to cast JSON field to String
+
+    Returns:
+        Modified query with search filter applied.
+    """
+    escaped_term = escape_like_wildcards(search_term.lower())
+    like_pattern = f"%{escaped_term}%"
+    # Use backslash as escape character so % and _ are treated literally
+    escape_char = "\\"
+
+    search_conditions = []
+    for field, is_nullable, is_json in fields:
+        if is_json:
+            # JSON fields need to be cast to String
+            condition = func.lower(cast(field, String)).like(like_pattern, escape=escape_char)
+        elif is_nullable:
+            # Nullable fields need coalesce to handle NULLs
+            condition = func.lower(func.coalesce(field, "")).like(like_pattern, escape=escape_char)
+        else:
+            # Non-nullable string fields - direct comparison
+            # For ID fields (which are not lowered), use direct like
+            if hasattr(field, "type") and isinstance(field.type, String) and field.key == "id":
+                condition = field.like(like_pattern, escape=escape_char)
+            else:
+                condition = func.lower(field).like(like_pattern, escape=escape_char)
+        search_conditions.append(condition)
+
+    return query.where(or_(*search_conditions))
+
+
 def get_user_email(user: Union[str, dict, object] = None) -> str:
     """Return the user email from a JWT payload, user object, or string.
 
@@ -1609,16 +1668,19 @@ async def admin_servers_partial_html(
 
     # Apply search filter if provided (searches across multiple fields)
     if tag_search and isinstance(tag_search, str):
-        search_term = f"%{tag_search.lower()}%"
-        search_conditions = [
-            DbServer.id.like(search_term),
-            func.lower(DbServer.name).like(search_term),
-            func.lower(func.coalesce(DbServer.description, '')).like(search_term),
-            func.lower(cast(DbServer.tags, String)).like(search_term),
-            func.lower(func.coalesce(DbServer.owner_email, '')).like(search_term),
-            func.lower(func.coalesce(DbServer.federation_source, '')).like(search_term),
-        ]
-        query = query.where(or_(*search_conditions))
+        query = apply_search_filter(
+            query,
+            DbServer,
+            tag_search,
+            [
+                (DbServer.id, False, False),
+                (DbServer.name, False, False),
+                (DbServer.description, True, False),
+                (DbServer.tags, False, True),
+                (DbServer.owner_email, True, False),
+                (DbServer.federation_source, True, False),
+            ],
+        )
         LOGGER.info(f"🔍 Servers search filter applied: {tag_search}")
 
     # Apply pagination ordering for cursor support
@@ -7078,17 +7140,20 @@ async def admin_tools_partial_html(
 
     # Apply search filter if provided (searches across multiple fields)
     if tag_search and isinstance(tag_search, str):
-        search_term = f"%{tag_search.lower()}%"
-        search_conditions = [
-            DbTool.id.like(search_term),
-            func.lower(DbTool.original_name).like(search_term),
-            func.lower(func.coalesce(DbTool.description, '')).like(search_term),
-            func.lower(cast(DbTool.tags, String)).like(search_term),
-            func.lower(func.coalesce(DbTool.owner_email, '')).like(search_term),
-            func.lower(func.coalesce(DbTool.url, '')).like(search_term),
-            func.lower(func.coalesce(DbTool.federation_source, '')).like(search_term),
-        ]
-        query = query.where(or_(*search_conditions))
+        query = apply_search_filter(
+            query,
+            DbTool,
+            tag_search,
+            [
+                (DbTool.id, False, False),
+                (DbTool.original_name, False, False),
+                (DbTool.description, True, False),
+                (DbTool.tags, False, True),
+                (DbTool.owner_email, True, False),
+                (DbTool.url, True, False),
+                (DbTool.federation_source, True, False),
+            ],
+        )
         LOGGER.info(f"🔍 Tools search filter applied: {tag_search}")
 
     # Apply sorting: alphabetical by URL, then name, then ID (for UI display)
@@ -7496,11 +7561,17 @@ async def admin_search_tools(
 
     # Add search conditions - search in display fields and description
     # Using the same priority as display: displayName -> customName -> original_name
+    # Escape special characters for LIKE queries
+    escaped_query = escape_like_wildcards(search_query)
+    like_pattern = f"%{escaped_query}%"
+    starts_pattern = f"{escaped_query}%"
+    escape_char = "\\"
+
     search_conditions = [
-        func.lower(coalesce(DbTool.display_name, "")).contains(search_query),
-        func.lower(coalesce(DbTool.custom_name, "")).contains(search_query),
-        func.lower(DbTool.original_name).contains(search_query),
-        func.lower(coalesce(DbTool.description, "")).contains(search_query),
+        func.lower(coalesce(DbTool.display_name, "")).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbTool.custom_name, "")).like(like_pattern, escape=escape_char),
+        func.lower(DbTool.original_name).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbTool.description, "")).like(like_pattern, escape=escape_char),
     ]
 
     query = query.where(or_(*search_conditions))
@@ -7508,9 +7579,9 @@ async def admin_search_tools(
     # Order by relevance - prioritize matches at start of names
     query = query.order_by(
         case(
-            (func.lower(DbTool.original_name).startswith(search_query), 1),
-            (func.lower(coalesce(DbTool.custom_name, "")).startswith(search_query), 1),
-            (func.lower(coalesce(DbTool.display_name, "")).startswith(search_query), 1),
+            (func.lower(DbTool.original_name).like(starts_pattern, escape=escape_char), 1),
+            (func.lower(coalesce(DbTool.custom_name, "")).like(starts_pattern, escape=escape_char), 1),
+            (func.lower(coalesce(DbTool.display_name, "")).like(starts_pattern, escape=escape_char), 1),
             else_=2,
         ),
         func.lower(DbTool.original_name),
@@ -7631,16 +7702,19 @@ async def admin_prompts_partial_html(
 
     # Apply search filter if provided (searches across multiple fields)
     if tag_search and isinstance(tag_search, str):
-        search_term = f"%{tag_search.lower()}%"
-        search_conditions = [
-            DbPrompt.id.like(search_term),
-            func.lower(DbPrompt.name).like(search_term),
-            func.lower(func.coalesce(DbPrompt.description, '')).like(search_term),
-            func.lower(cast(DbPrompt.tags, String)).like(search_term),
-            func.lower(func.coalesce(DbPrompt.owner_email, '')).like(search_term),
-            func.lower(func.coalesce(DbPrompt.federation_source, '')).like(search_term),
-        ]
-        query = query.where(or_(*search_conditions))
+        query = apply_search_filter(
+            query,
+            DbPrompt,
+            tag_search,
+            [
+                (DbPrompt.id, False, False),
+                (DbPrompt.name, False, False),
+                (DbPrompt.description, True, False),
+                (DbPrompt.tags, False, True),
+                (DbPrompt.owner_email, True, False),
+                (DbPrompt.federation_source, True, False),
+            ],
+        )
         LOGGER.info(f"🔍 Prompts search filter applied: {tag_search}")
 
     # Apply pagination ordering for cursor support
@@ -8048,17 +8122,23 @@ async def admin_search_gateways(
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
         query = query.where(or_(*access_conditions))
 
+    # Escape special characters for LIKE queries
+    escaped_query = escape_like_wildcards(search_query)
+    like_pattern = f"%{escaped_query}%"
+    starts_pattern = f"{escaped_query}%"
+    escape_char = "\\"
+
     search_conditions = [
-        func.lower(DbGateway.name).contains(search_query),
-        func.lower(coalesce(DbGateway.url, "")).contains(search_query),
-        func.lower(coalesce(DbGateway.description, "")).contains(search_query),
+        func.lower(DbGateway.name).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbGateway.url, "")).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbGateway.description, "")).like(like_pattern, escape=escape_char),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbGateway.name).startswith(search_query), 1),
-            (func.lower(coalesce(DbGateway.url, "")).startswith(search_query), 1),
+            (func.lower(DbGateway.name).like(starts_pattern, escape=escape_char), 1),
+            (func.lower(coalesce(DbGateway.url, "")).like(starts_pattern, escape=escape_char), 1),
             else_=2,
         ),
         func.lower(DbGateway.name),
@@ -8212,15 +8292,21 @@ async def admin_search_servers(
         access_conditions.append(DbServer.visibility == "public")
         query = query.where(or_(*access_conditions))
 
+    # Escape special characters for LIKE queries
+    escaped_query = escape_like_wildcards(search_query)
+    like_pattern = f"%{escaped_query}%"
+    starts_pattern = f"{escaped_query}%"
+    escape_char = "\\"
+
     search_conditions = [
-        func.lower(DbServer.name).contains(search_query),
-        func.lower(coalesce(DbServer.description, "")).contains(search_query),
+        func.lower(DbServer.name).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbServer.description, "")).like(like_pattern, escape=escape_char),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbServer.name).startswith(search_query), 1),
+            (func.lower(DbServer.name).like(starts_pattern, escape=escape_char), 1),
             else_=2,
         ),
         func.lower(DbServer.name),
@@ -8347,17 +8433,20 @@ async def admin_resources_partial_html(
 
     # Apply search filter if provided (searches across multiple fields)
     if tag_search and isinstance(tag_search, str):
-        search_term = f"%{tag_search.lower()}%"
-        search_conditions = [
-            DbResource.id.like(search_term),
-            func.lower(DbResource.name).like(search_term),
-            func.lower(func.coalesce(DbResource.description, '')).like(search_term),
-            func.lower(cast(DbResource.tags, String)).like(search_term),
-            func.lower(func.coalesce(DbResource.owner_email, '')).like(search_term),
-            func.lower(DbResource.uri).like(search_term),
-            func.lower(func.coalesce(DbResource.federation_source, '')).like(search_term),
-        ]
-        query = query.where(or_(*search_conditions))
+        query = apply_search_filter(
+            query,
+            DbResource,
+            tag_search,
+            [
+                (DbResource.id, False, False),
+                (DbResource.name, False, False),
+                (DbResource.description, True, False),
+                (DbResource.tags, False, True),
+                (DbResource.owner_email, True, False),
+                (DbResource.uri, False, False),
+                (DbResource.federation_source, True, False),
+            ],
+        )
         LOGGER.info(f"🔍 Resources search filter applied: {tag_search}")
 
     # Add sorting for consistent pagination
@@ -8718,12 +8807,21 @@ async def admin_search_resources(
         access_conditions.append(DbResource.visibility == "public")
         query = query.where(or_(*access_conditions))
 
-    search_conditions = [func.lower(DbResource.name).contains(search_query), func.lower(coalesce(DbResource.description, "")).contains(search_query)]
+    # Escape special characters for LIKE queries
+    escaped_query = escape_like_wildcards(search_query)
+    like_pattern = f"%{escaped_query}%"
+    starts_pattern = f"{escaped_query}%"
+    escape_char = "\\"
+
+    search_conditions = [
+        func.lower(DbResource.name).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbResource.description, "")).like(like_pattern, escape=escape_char),
+    ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbResource.name).startswith(search_query), 1),
+            (func.lower(DbResource.name).like(starts_pattern, escape=escape_char), 1),
             else_=2,
         ),
         func.lower(DbResource.name),
@@ -8824,17 +8922,23 @@ async def admin_search_prompts(
         access_conditions.append(DbPrompt.visibility == "public")
         query = query.where(or_(*access_conditions))
 
+    # Escape special characters for LIKE queries
+    escaped_query = escape_like_wildcards(search_query)
+    like_pattern = f"%{escaped_query}%"
+    starts_pattern = f"{escaped_query}%"
+    escape_char = "\\"
+
     search_conditions = [
-        func.lower(DbPrompt.original_name).contains(search_query),
-        func.lower(coalesce(DbPrompt.display_name, "")).contains(search_query),
-        func.lower(coalesce(DbPrompt.description, "")).contains(search_query),
+        func.lower(DbPrompt.original_name).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbPrompt.display_name, "")).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbPrompt.description, "")).like(like_pattern, escape=escape_char),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbPrompt.original_name).startswith(search_query), 1),
-            (func.lower(coalesce(DbPrompt.display_name, "")).startswith(search_query), 1),
+            (func.lower(DbPrompt.original_name).like(starts_pattern, escape=escape_char), 1),
+            (func.lower(coalesce(DbPrompt.display_name, "")).like(starts_pattern, escape=escape_char), 1),
             else_=2,
         ),
         func.lower(DbPrompt.original_name),
@@ -9197,17 +9301,20 @@ async def admin_a2a_partial_html(
 
     # Apply search filter if provided (searches across multiple fields)
     if tag_search and isinstance(tag_search, str):
-        search_term = f"%{tag_search.lower()}%"
-        search_conditions = [
-            DbA2AAgent.id.like(search_term),
-            func.lower(DbA2AAgent.name).like(search_term),
-            func.lower(func.coalesce(DbA2AAgent.description, '')).like(search_term),
-            func.lower(cast(DbA2AAgent.tags, String)).like(search_term),
-            func.lower(func.coalesce(DbA2AAgent.owner_email, '')).like(search_term),
-            func.lower(func.coalesce(DbA2AAgent.endpoint_url, '')).like(search_term),
-            func.lower(func.coalesce(DbA2AAgent.federation_source, '')).like(search_term),
-        ]
-        query = query.where(or_(*search_conditions))
+        query = apply_search_filter(
+            query,
+            DbA2AAgent,
+            tag_search,
+            [
+                (DbA2AAgent.id, False, False),
+                (DbA2AAgent.name, False, False),
+                (DbA2AAgent.description, True, False),
+                (DbA2AAgent.tags, False, True),
+                (DbA2AAgent.owner_email, True, False),
+                (DbA2AAgent.endpoint_url, True, False),
+                (DbA2AAgent.federation_source, True, False),
+            ],
+        )
         LOGGER.info(f"🔍 A2A Agents search filter applied: {tag_search}")
 
     # Apply pagination ordering for cursor support
@@ -9446,17 +9553,23 @@ async def admin_search_a2a_agents(
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
         query = query.where(or_(*access_conditions))
 
+    # Escape special characters for LIKE queries
+    escaped_query = escape_like_wildcards(search_query)
+    like_pattern = f"%{escaped_query}%"
+    starts_pattern = f"{escaped_query}%"
+    escape_char = "\\"
+
     search_conditions = [
-        func.lower(DbA2AAgent.name).contains(search_query),
-        func.lower(coalesce(DbA2AAgent.endpoint_url, "")).contains(search_query),
-        func.lower(coalesce(DbA2AAgent.description, "")).contains(search_query),
+        func.lower(DbA2AAgent.name).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbA2AAgent.endpoint_url, "")).like(like_pattern, escape=escape_char),
+        func.lower(coalesce(DbA2AAgent.description, "")).like(like_pattern, escape=escape_char),
     ]
     query = query.where(or_(*search_conditions))
 
     query = query.order_by(
         case(
-            (func.lower(DbA2AAgent.name).startswith(search_query), 1),
-            (func.lower(coalesce(DbA2AAgent.endpoint_url, "")).startswith(search_query), 1),
+            (func.lower(DbA2AAgent.name).like(starts_pattern, escape=escape_char), 1),
+            (func.lower(coalesce(DbA2AAgent.endpoint_url, "")).like(starts_pattern, escape=escape_char), 1),
             else_=2,
         ),
         func.lower(DbA2AAgent.name),
@@ -11036,12 +11149,23 @@ async def admin_edit_prompt(
     # Parse tags from comma-separated string
     tags_str = str(form.get("tags", ""))
     tags: List[str] = [tag.strip() for tag in tags_str.split(",") if tag.strip()] if tags_str else []
+
+    # Safely extract form values, treating empty strings as None
+    raw_custom_name = form.get("customName") or form.get("name")
+    custom_name_value = str(raw_custom_name).strip() if raw_custom_name else None
+
+    raw_display_name = form.get("displayName") or form.get("display_name") or form.get("name")
+    display_name_value = str(raw_display_name).strip() if raw_display_name else None
+
+    raw_description = form.get("description")
+    description_value = str(raw_description) if raw_description else None
+
     try:
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         prompt = PromptUpdate(
-            custom_name=str(form.get("customName") or form.get("name")),
-            display_name=str(form.get("displayName") or form.get("display_name") or form.get("name")),
-            description=str(form.get("description")),
+            custom_name=custom_name_value,
+            display_name=display_name_value,
+            description=description_value,
             template=str(form["template"]),
             arguments=arguments,
             tags=tags,
