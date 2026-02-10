@@ -14065,11 +14065,24 @@ class TestTemplateButtonGating:
     @pytest.fixture
     def jinja_env(self):
         """Create a real Jinja2 environment for rendering partial templates."""
+        # Standard
+        import html
+
         # Third-Party
         from jinja2 import Environment, FileSystemLoader
 
         templates_dir = str(settings.templates_dir)
-        return Environment(loader=FileSystemLoader(templates_dir), autoescape=True)
+        env = Environment(loader=FileSystemLoader(templates_dir), autoescape=True)
+        
+        # Register the decode_html filter (same as in main.py)
+        def decode_html_entities(value: str) -> str:
+            """Decode HTML entities in strings for display."""
+            if not value:
+                return value
+            return html.unescape(value)
+        
+        env.filters["decode_html"] = decode_html_entities
+        return env
 
     def _render_tools_partial(self, jinja_env, tool_data, current_user_email, is_admin=False, user_team_roles=None):
         """Helper to render tools_partial.html with given context."""

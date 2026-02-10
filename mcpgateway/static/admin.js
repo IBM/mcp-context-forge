@@ -356,6 +356,21 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Decode HTML entities back to their original characters.
+ * Used when populating form fields to prevent double-encoding.
+ * @param {string} html - The HTML-encoded string
+ * @returns {string} Decoded string
+ */
+function decodeHtml(html) {
+    if (html === null || html === undefined) {
+        return "";
+    }
+    const txt = document.createElement("textarea");
+    txt.innerHTML = html;
+    return txt.value;
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response
@@ -3040,11 +3055,16 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
-            descField.value = tool.description || "";
+            // Decode HTML entities to prevent double-encoding when saving
+            const cleanDesc = tool.description
+                ? tool.description.slice(
+                      0,
+                      tool.description.indexOf("*") > 0
+                          ? tool.description.indexOf("*")
+                          : tool.description.length,
+                  )
+                : "";
+            descField.value = decodeHtml(cleanDesc);
         }
         if (typeField) {
             typeField.value = tool.integrationType || "MCP";
@@ -3445,7 +3465,10 @@ async function viewAgent(agentId) {
                 { label: "Endpoint URL", value: agent.endpointUrl },
                 { label: "Agent Type", value: agent.agentType },
                 { label: "Protocol Version", value: agent.protocolVersion },
-                { label: "Description", value: agent.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(agent.description) || "N/A",
+                },
                 { label: "Visibility", value: agent.visibility || "private" },
             ];
 
@@ -3708,7 +3731,7 @@ async function editA2AAgent(agentId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = agent.description || "";
+            descField.value = decodeHtml(agent.description || "");
         }
 
         // Set tags field
@@ -4346,7 +4369,10 @@ async function viewResource(resourceId) {
                 { label: "URI", value: resource.uri },
                 { label: "Name", value: resource.name },
                 { label: "Type", value: resource.mimeType || "N/A" },
-                { label: "Description", value: resource.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(resource.description) || "N/A",
+                },
                 {
                     label: "Visibility",
                     value: resource.visibility || "private",
@@ -4689,7 +4715,7 @@ async function editResource(resourceId) {
             nameField.value = nameValidation.value;
         }
         if (descField) {
-            descField.value = resource.description || "";
+            descField.value = decodeHtml(resource.description || "");
         }
         if (mimeField) {
             mimeField.value = resource.mimeType || "";
@@ -4945,7 +4971,10 @@ async function viewPrompt(promptName) {
             setText(".prompt-custom-name", prompt.customName || "N/A");
             setText(".prompt-gateway", gatewayLabel);
             setText(".prompt-visibility", prompt.visibility || "private");
-            setText(".prompt-description", prompt.description || "N/A");
+            setText(
+                ".prompt-description",
+                decodeHtml(prompt.description) || "N/A",
+            );
 
             const tagsEl = promptDetailsDiv.querySelector(".prompt-tags");
             if (tagsEl) {
@@ -5200,7 +5229,7 @@ async function editPrompt(promptId) {
             displayNameField.value = prompt.displayName || "";
         }
         if (descField) {
-            descField.value = prompt.description || "";
+            descField.value = decodeHtml(prompt.description || "");
         }
 
         // Set tags field
@@ -5287,7 +5316,10 @@ async function viewGateway(gatewayId) {
             const fields = [
                 { label: "Name", value: gateway.name },
                 { label: "URL", value: gateway.url },
-                { label: "Description", value: gateway.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(gateway.description) || "N/A",
+                },
                 { label: "Visibility", value: gateway.visibility || "private" },
             ];
 
@@ -5520,7 +5552,7 @@ async function editGateway(gatewayId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = gateway.description || "";
+            descField.value = decodeHtml(gateway.description || "");
         }
 
         // Set tags field
@@ -5866,7 +5898,7 @@ async function viewServer(serverId) {
                 const serverDesc = document.createElement("p");
                 serverDesc.className =
                     "text-sm text-gray-600 dark:text-gray-400 mt-1";
-                serverDesc.textContent = server.description;
+                serverDesc.textContent = decodeHtml(server.description);
                 headerTextDiv.appendChild(serverDesc);
             }
 
@@ -6399,7 +6431,7 @@ async function editServer(serverId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = server.description || "";
+            descField.value = decodeHtml(server.description || "");
         }
 
         const idField = safeGetElement("edit-server-id");
@@ -11012,8 +11044,9 @@ async function testTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Escape HTML and then replace newlines with <br/> tags
-                descElement.innerHTML = escapeHtml(tool.description).replace(
+                // Decode HTML entities first, then escape and replace newlines with <br/> tags
+                const decodedDesc = decodeHtml(tool.description);
+                descElement.innerHTML = escapeHtml(decodedDesc).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -11967,12 +12000,15 @@ async function validateTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Escape HTML and then replace newlines with <br/> tags
-                tool.description = tool.description.slice(
+                // Decode HTML entities first, then escape and replace newlines with <br/> tags
+                const cleanDesc = tool.description.slice(
                     0,
-                    tool.description.indexOf("*"),
+                    tool.description.indexOf("*") > 0
+                        ? tool.description.indexOf("*")
+                        : tool.description.length,
                 );
-                descElement.innerHTML = escapeHtml(tool.description).replace(
+                const decodedDesc = decodeHtml(cleanDesc);
+                descElement.innerHTML = escapeHtml(decodedDesc).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -14389,14 +14425,19 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
+            const cleanDesc = tool.description
+                ? tool.description.slice(
+                      0,
+                      tool.description.indexOf("*") > 0
+                          ? tool.description.indexOf("*")
+                          : tool.description.length,
+                  )
+                : "";
+            const decodedDesc = decodeHtml(cleanDesc);
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
-            setTextSafely(".tool-description", tool.description);
+            setTextSafely(".tool-description", decodedDesc);
             setTextSafely(".tool-visibility", tool.visibility);
 
             // Set tags as HTML with badges
@@ -15245,6 +15286,12 @@ async function handleEditToolFormSubmit(event) {
     try {
         const formData = new FormData(form);
 
+        // Decode HTML entities in description field before submission
+        const description = formData.get("description");
+        if (description) {
+            formData.set("description", decodeHtml(description));
+        }
+
         // Basic validation (customize as needed)
         const name = formData.get("name");
         const url = formData.get("url");
@@ -15567,6 +15614,12 @@ async function handleEditResFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
     const formData = new FormData(form);
+
+    // Decode HTML entities in description field before submission
+    const description = formData.get("description");
+    if (description) {
+        formData.set("description", decodeHtml(description));
+    }
 
     try {
         // Validate inputs

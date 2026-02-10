@@ -2377,7 +2377,7 @@
                   <td
                     class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {{ server.description }}
+                    {{ server.description | decode_html }}
                   </td>
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300"
@@ -6535,7 +6535,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <td class="px-6 py-4 whitespace-nowrap">
                         <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
                       </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description }}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description | decode_html }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.endpointUrl }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                         {% if agent.tags %}
@@ -11627,6 +11627,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function createRowElement(sectionType, item) {
         const row = document.createElement('tr');
+        // XSS SAFETY: All user-provided data is escaped via escapeHtml() before being inserted into innerHTML.
+        // This pattern (escape then innerHTML) is safe as long as escapeHtml() is always called on untrusted data.
+        // DO NOT remove escapeHtml() calls - they prevent XSS attacks from malicious database content.
+
 
         // Create row content based on section type
         if (sectionType === 'tools') {

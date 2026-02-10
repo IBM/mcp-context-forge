@@ -56,7 +56,7 @@
         <td class="px-6 py-4 whitespace-nowrap">
           <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
         </td>
-        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-600 dark:text-gray-400">{{ agent.description if agent.description else '' }}</td>
+        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-600 dark:text-gray-400">{{ (agent.description if agent.description else '') | decode_html }}</td>
         <td class="px-6 py-4 whitespace-normal break-all text-sm text-gray-600 dark:text-gray-400 max-w-xs">{{ agent.endpointUrl }}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
           {% if agent.tags %}

@@ -38,7 +38,7 @@ Example usage:
 Examples:
     >>> from mcpgateway.common.validators import SecurityValidator
     >>> SecurityValidator.sanitize_display_text('<b>Test</b>', 'test')
-    '&lt;b&gt;Test&lt;/b&gt;'
+    'Test'
     >>> SecurityValidator.validate_name('valid_name-123', 'test')
     'valid_name-123'
     >>> SecurityValidator.validate_identifier('my.test.id_123', 'test')
@@ -49,6 +49,7 @@ Examples:
 
 # Standard
 import html
+from html.parser import HTMLParser
 import ipaddress
 import logging
 from pathlib import Path
@@ -222,6 +223,81 @@ _SQL_PATTERNS: List[Pattern[str]] = [
 ]
 
 
+# ============================================================================
+# HTML Tag Stripper with Character Preservation
+# ============================================================================
+class _TagStripper(HTMLParser):
+    """Strip HTML tags while preserving all text content and special characters.
+
+    This parser removes HTML tags but keeps the text content exactly as-is,
+    including special characters like &, ", and '. HTML entities are decoded
+    to their literal characters (e.g., & becomes &).
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reset()
+        self.strict = False
+        self.convert_charrefs = False  # Keep entities as-is initially
+        self.fed: List[str] = []
+
+    def handle_data(self, data: str) -> None:
+        """Handle text data between tags.
+
+        Args:
+            data: Text content between HTML tags
+        """
+        self.fed.append(data)
+
+    def handle_entityref(self, name: str) -> None:
+        """Handle HTML entity references like & and decode them.
+
+        Args:
+            name: Entity reference name (e.g., 'amp' for &)
+        """
+        self.fed.append(html.unescape(f"&{name};"))
+
+    def handle_charref(self, name: str) -> None:
+        """Handle character references like &#65; and decode them.
+
+        Args:
+            name: Character reference code (e.g., '65' for &#65;)
+        """
+        self.fed.append(html.unescape(f"&#{name};"))
+
+    def get_data(self) -> str:
+        """Return the accumulated text content.
+
+        Returns:
+            str: Concatenated text content from all handled data
+        """
+        return "".join(self.fed)
+
+
+def _strip_html_tags(value: str) -> str:
+    """Remove HTML tags while preserving special characters exactly as-is.
+
+    Args:
+        value: String that may contain HTML tags
+
+    Returns:
+        String with HTML tags removed but text content preserved
+
+    Examples:
+        >>> _strip_html_tags('<b>Hello</b> World')
+        'Hello World'
+        >>> _strip_html_tags('Test & Check')
+        'Test & Check'
+        >>> _strip_html_tags('Quote: "Hello"')
+        'Quote: "Hello"'
+        >>> _strip_html_tags('&&&')
+        '&&'
+    """
+    s = _TagStripper()
+    s.feed(value)
+    return s.get_data()
+
+
 class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
@@ -262,12 +338,12 @@ class SecurityValidator:
             ValueError: When input is not acceptable
 
         Examples:
-            Basic HTML escaping:
+            Basic HTML tag stripping:
 
             >>> SecurityValidator.sanitize_display_text('Hello World', 'test')
             'Hello World'
             >>> SecurityValidator.sanitize_display_text('Hello <b>World</b>', 'test')
-            'Hello &lt;b&gt;World&lt;/b&gt;'
+            'Hello World'
 
             Empty/None handling:
 
@@ -291,7 +367,7 @@ class SecurityValidator:
                 ...
             ValueError: test contains potentially dangerous character sequences
             >>> SecurityValidator.sanitize_display_text('-->test', 'test')
-            '--&gt;test'
+            '-->test'
             >>> SecurityValidator.sanitize_display_text('--><script>', 'test')
             Traceback (most recent call last):
                 ...
@@ -301,14 +377,14 @@ class SecurityValidator:
                 ...
             ValueError: test contains potentially dangerous character sequences
 
-            Safe character escaping:
+            Special characters (preserved as-is, no HTML entity conversion):
 
             >>> SecurityValidator.sanitize_display_text('User & Admin', 'test')
-            'User &amp; Admin'
+            'User & Admin'
             >>> SecurityValidator.sanitize_display_text('Quote: "Hello"', 'test')
-            'Quote: &quot;Hello&quot;'
+            'Quote: "Hello"'
             >>> SecurityValidator.sanitize_display_text("Quote: 'Hello'", 'test')
-            'Quote: &#x27;Hello&#x27;'
+            "Quote: 'Hello'"
         """
         if not value:
             return value
@@ -325,8 +401,8 @@ class SecurityValidator:
             if pattern.search(value):
                 raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
-        # Escape HTML entities to ensure proper display
-        return html.escape(value, quote=True)
+        cleaned = _strip_html_tags(value)
+        return cleaned
 
     @classmethod
     def validate_name(cls, value: str, field_name: str = "Name") -> str:

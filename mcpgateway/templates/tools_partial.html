@@ -128,9 +128,9 @@
         <td
           class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
         >
-          {% set clean_desc = (tool.description or "") | replace('\n', ' ') |
+          {% set clean_desc = (tool.description or "") | decode_html | replace('\n', ' ') |
           replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags |
-          trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{
+          trim %} {% if refactor_desc | length is greaterthan 220 %} {{
           refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}
         </td>
         <td class="px-2 py-4 whitespace-normal break-words">
