@@ -1937,16 +1937,22 @@ class TestEmailAuthServiceUserDeletion:
 
     @pytest.mark.asyncio
     async def test_delete_user_success(self, service, mock_db, mock_user):
-        """Test successful user deletion."""
+        """Test successful user deletion including role cleanup."""
         # Setup mock returns
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_result.scalars.return_value.all.return_value = []  # No teams owned
         mock_db.execute.return_value = mock_result
 
-        result = await service.delete_user("test@example.com")
+        # Mock role_service to verify role deletion
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=2)
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            result = await service.delete_user("test@example.com")
 
         assert result is True
+        mock_role_svc.delete_all_user_roles.assert_called_once_with("test@example.com")
         mock_db.delete.assert_called_once_with(mock_user)
         mock_db.commit.assert_called()
 
@@ -1994,10 +2000,15 @@ class TestEmailAuthServiceUserDeletion:
 
         mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result]
 
-        result = await service.delete_user("test@example.com")
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            result = await service.delete_user("test@example.com")
 
         assert result is True
         assert mock_team.created_by == "other@example.com"  # Ownership transferred
+        mock_role_svc.delete_all_user_roles.assert_called_once_with("test@example.com")
         mock_db.delete.assert_called_once_with(mock_user)
         mock_db.commit.assert_called()
 
@@ -2036,9 +2047,14 @@ class TestEmailAuthServiceUserDeletion:
             mock_empty,  # Delete user team members
         ]
 
-        result = await service.delete_user("test@example.com")
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            result = await service.delete_user("test@example.com")
 
         assert result is True
+        mock_role_svc.delete_all_user_roles.assert_called_once_with("test@example.com")
         mock_db.delete.assert_any_call(mock_team)  # Team should be deleted
         mock_db.delete.assert_any_call(mock_user)  # User should be deleted
         mock_db.commit.assert_called()

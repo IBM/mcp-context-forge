@@ -16,7 +16,7 @@ import logging
 from typing import List, Optional
 
 # Third-Party
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -869,3 +869,21 @@ class RoleService:
             current = result.scalar_one_or_none()
 
         return False
+
+    async def delete_all_user_roles(self, user_email: str) -> int:
+        """Delete all role assignments for a user.
+
+        Hard-deletes all role assignments (active and inactive) for the given user.
+        Intended for use when permanently deleting a user account.
+
+        Args:
+            user_email: Email of user whose roles should be deleted
+
+        Returns:
+            int: Number of role assignments deleted
+        """
+        stmt = delete(UserRole).where(UserRole.user_email == user_email)
+        result = self.db.execute(stmt)
+        deleted_count = result.rowcount
+        logger.info(f"Deleted {deleted_count} role assignment(s) for user {user_email}")
+        return deleted_count

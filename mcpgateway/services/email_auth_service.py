@@ -134,7 +134,17 @@ class EmailAuthService:
         """
         self.db = db
         self.password_service = Argon2PasswordService()
+        self._role_service = None
         logger.debug("EmailAuthService initialized")
+
+    @property
+    def role_service(self):
+        """Lazy-initialized RoleService to avoid circular imports."""
+        if self._role_service is None:
+            from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+            self._role_service = RoleService(self.db)
+        return self._role_service
 
     def validate_email(self, email: str) -> bool:
         """Validate email address format.
@@ -397,12 +407,9 @@ class EmailAuthService:
 
             # Auto-assign dual roles using RoleService (after personal team creation)
             try:
-                # Import here to avoid circular imports
                 # First-Party
                 from mcpgateway.db import Role  # pylint: disable=import-outside-toplevel
-                from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
 
-                role_service = RoleService(self.db)
                 granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
 
                 # Assign roles based on is_admin flag
@@ -414,7 +421,7 @@ class EmailAuthService:
 
                     if platform_admin_role:
                         try:
-                            await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=granter)
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=granter)
                             logger.info(f"Assigned platform_admin role (global scope) to admin user {email}")
                         except ValueError as e:
                             logger.warning(f"Could not assign platform_admin role to {email}: {e}")
@@ -427,7 +434,7 @@ class EmailAuthService:
 
                         if team_admin_role:
                             try:
-                                await role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                                await self.role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
                                 logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to admin user {email}")
                             except ValueError as e:
                                 logger.warning(f"Could not assign team_admin role to {email}: {e}")
@@ -442,7 +449,7 @@ class EmailAuthService:
 
                     if platform_viewer_role:
                         try:
-                            await role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=granter)
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=granter)
                             logger.info(f"Assigned platform_viewer role (global scope) to user {email}")
                         except ValueError as e:
                             logger.warning(f"Could not assign viewer role to {email}: {e}")
@@ -455,7 +462,7 @@ class EmailAuthService:
 
                         if team_admin_role:
                             try:
-                                await role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                                await self.role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
                                 logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to user {email}")
                             except ValueError as e:
                                 logger.warning(f"Could not assign team_admin role to {email}: {e}")
@@ -1155,40 +1162,34 @@ class EmailAuthService:
                     # Promotion: revoke platform_viewer, assign platform_admin
                     # Demotion: revoke platform_admin, assign platform_viewer
                     try:
-                        # Import here to avoid circular imports
-                        # First-Party
-                        from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
-
-                        role_service = RoleService(self.db)
-
-                        platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
-                        platform_viewer_role = await role_service.get_role_by_name("platform_viewer", "global")
+                        platform_admin_role = await self.role_service.get_role_by_name("platform_admin", "global")
+                        platform_viewer_role = await self.role_service.get_role_by_name("platform_viewer", "global")
 
                         if is_admin:
                             # Promotion: assign platform_admin, revoke platform_viewer
                             if platform_admin_role:
-                                existing = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
                                     logger.info(f"Assigned platform_admin role to {email}")
                             else:
                                 logger.warning(f"platform_admin role not found, cannot assign to {email}")
 
                             if platform_viewer_role:
-                                revoked = await role_service.revoke_role_from_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
                                 if revoked:
                                     logger.info(f"Revoked platform_viewer role from {email}")
                         else:
                             # Demotion: revoke platform_admin, assign platform_viewer
                             if platform_admin_role:
-                                revoked = await role_service.revoke_role_from_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
                                 if revoked:
                                     logger.info(f"Revoked platform_admin role from {email}")
 
                             if platform_viewer_role:
-                                existing = await role_service.get_user_role_assignment(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=email)
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=email)
                                     logger.info(f"Assigned platform_viewer role to {email}")
                             else:
                                 logger.warning(f"platform_viewer role not found, cannot assign to {email}")
@@ -1346,7 +1347,13 @@ class EmailAuthService:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
 
-            # Delete related auth events first
+            # Delete all role assignments for the user
+            try:
+                await self.role_service.delete_all_user_roles(email)
+            except Exception as e:
+                logger.warning(f"Failed to delete role assignments for {email}: {e}")
+
+            # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
             self.db.execute(auth_events_stmt)
 
