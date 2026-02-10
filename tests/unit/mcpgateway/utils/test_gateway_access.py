@@ -13,6 +13,154 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+
+
+class TestBuildGatewayAuthHeaders:
+    """Test suite for build_gateway_auth_headers function."""
+
+    def test_bearer_auth_with_dict_value(self):
+        """Should extract bearer token from dict auth_value."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"Authorization": "Bearer token123"}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {"Authorization": "Bearer token123"}
+
+    def test_bearer_auth_with_dict_value_no_bearer_prefix(self):
+        """Should add Bearer prefix if missing in dict auth_value."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"Authorization": "token123"}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {"Authorization": "Bearer token123"}
+
+    def test_bearer_auth_with_encoded_string(self):
+        """Should decode and extract bearer token from encoded string."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = "encoded_string"
+
+        with patch("mcpgateway.utils.gateway_access.decode_auth") as mock_decode:
+            mock_decode.return_value = {"Authorization": "Bearer decoded_token"}
+
+            headers = build_gateway_auth_headers(gateway)
+
+            assert headers == {"Authorization": "Bearer decoded_token"}
+            mock_decode.assert_called_once_with("encoded_string")
+
+    def test_bearer_auth_with_encoded_string_no_bearer_prefix(self):
+        """Should add Bearer prefix when decoding encoded string."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = "encoded_string"
+
+        with patch("mcpgateway.utils.gateway_access.decode_auth") as mock_decode:
+            mock_decode.return_value = {"Authorization": "decoded_token"}
+
+            headers = build_gateway_auth_headers(gateway)
+
+            assert headers == {"Authorization": "Bearer decoded_token"}
+
+    def test_basic_auth_with_dict_value(self):
+        """Should extract basic auth header from dict auth_value."""
+        gateway = MagicMock()
+        gateway.auth_type = "basic"
+        gateway.auth_value = {"Authorization": "Basic dXNlcjpwYXNz"}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+
+    def test_basic_auth_with_encoded_string(self):
+        """Should decode and extract basic auth from encoded string."""
+        gateway = MagicMock()
+        gateway.auth_type = "basic"
+        gateway.auth_value = "encoded_string"
+
+        with patch("mcpgateway.utils.gateway_access.decode_auth") as mock_decode:
+            mock_decode.return_value = {"Authorization": "Basic dXNlcjpwYXNz"}
+
+            headers = build_gateway_auth_headers(gateway)
+
+            assert headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+            mock_decode.assert_called_once_with("encoded_string")
+
+    def test_no_auth_type(self):
+        """Should return empty dict when no auth_type is set."""
+        gateway = MagicMock()
+        gateway.auth_type = None
+        gateway.auth_value = {"Authorization": "Bearer token"}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+    def test_no_auth_value(self):
+        """Should return empty dict when no auth_value is set."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = None
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+    def test_empty_auth_value_dict(self):
+        """Should return empty dict when auth_value dict is empty."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+    def test_missing_authorization_key_in_dict(self):
+        """Should return empty dict when Authorization key is missing."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"SomeOtherKey": "value"}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+    def test_unknown_auth_type(self):
+        """Should return empty dict for unknown auth types."""
+        gateway = MagicMock()
+        gateway.auth_type = "oauth"
+        gateway.auth_value = {"Authorization": "Bearer token"}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+    def test_bearer_auth_empty_token(self):
+        """Should return empty dict when token is empty."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"Authorization": ""}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+    def test_basic_auth_empty_value(self):
+        """Should return empty dict when basic auth value is empty."""
+        gateway = MagicMock()
+        gateway.auth_type = "basic"
+        gateway.auth_value = {"Authorization": ""}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {}
+
+
 from mcpgateway.utils.gateway_access import check_gateway_access
 
 

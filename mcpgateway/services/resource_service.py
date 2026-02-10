@@ -64,6 +64,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -2188,22 +2189,7 @@ class ResourceService:
                             gateway = resource_db.gateway
 
                             # Prepare headers with gateway auth
-                            headers = {}
-                            if gateway.auth_type == "bearer" and gateway.auth_value:
-                                if isinstance(gateway.auth_value, dict):
-                                    token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
-                                    headers["Authorization"] = f"Bearer {token}"
-                                elif isinstance(gateway.auth_value, str):
-                                    decoded = decode_auth(gateway.auth_value)
-                                    token = decoded.get("Authorization", "").replace("Bearer ", "")
-                                    headers["Authorization"] = f"Bearer {token}"
-                            elif gateway.auth_type == "basic" and gateway.auth_value:
-                                if isinstance(gateway.auth_value, dict):
-                                    auth_header = gateway.auth_value.get("Authorization", "")
-                                    headers["Authorization"] = auth_header
-                                elif isinstance(gateway.auth_value, str):
-                                    decoded = decode_auth(gateway.auth_value)
-                                    headers["Authorization"] = decoded.get("Authorization", "")
+                            headers = build_gateway_auth_headers(gateway)
 
                             # Use MCP SDK to connect and read resource
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):

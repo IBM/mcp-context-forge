@@ -84,7 +84,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
-from mcpgateway.utils.gateway_access import check_gateway_access
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -2595,20 +2595,7 @@ class ToolService:
                 raise ToolInvocationError(f"Gateway {gateway_id} is not in direct_proxy mode")
 
             # Prepare headers with gateway auth
-            headers = {}
-            if gateway.auth_type == "bearer" and gateway.auth_value:
-                if isinstance(gateway.auth_value, dict):
-                    token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
-                    headers["Authorization"] = f"Bearer {token}"
-                elif isinstance(gateway.auth_value, str):
-                    decoded = decode_auth(gateway.auth_value)
-                    headers["Authorization"] = decoded.get("Authorization", "")
-            elif gateway.auth_type == "basic" and gateway.auth_value:
-                if isinstance(gateway.auth_value, dict):
-                    headers["Authorization"] = gateway.auth_value.get("Authorization", "")
-                elif isinstance(gateway.auth_value, str):
-                    decoded = decode_auth(gateway.auth_value)
-                    headers["Authorization"] = decoded.get("Authorization", "")
+            headers = build_gateway_auth_headers(gateway)
 
             # Forward passthrough headers if configured
             if gateway.passthrough_headers and request_headers:

@@ -66,9 +66,8 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
-from mcpgateway.utils.gateway_access import check_gateway_access
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.verify_credentials import verify_credentials
 
 # Initialize logging service first
@@ -475,24 +474,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
     """
     try:  # pragma: no cover - integration test
         # Prepare headers with gateway auth
-        headers = {}
-
-        # Handle different auth types
-        if gateway.auth_type == "bearer" and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
-                headers["Authorization"] = f"Bearer {token}"
-            elif isinstance(gateway.auth_value, str):
-                decoded = decode_auth(gateway.auth_value)
-                token = decoded.get("Authorization", "").replace("Bearer ", "")
-                headers["Authorization"] = f"Bearer {token}"
-        elif gateway.auth_type == "basic" and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                auth_header = gateway.auth_value.get("Authorization", "")
-                headers["Authorization"] = auth_header
-            elif isinstance(gateway.auth_value, str):
-                decoded = decode_auth(gateway.auth_value)
-                headers["Authorization"] = decoded.get("Authorization", "")
+        headers = build_gateway_auth_headers(gateway)
 
         # Forward passthrough headers if configured
         if gateway.passthrough_headers and request_headers:
@@ -535,24 +517,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
     """
     try:  # pragma: no cover - integration test
         # Prepare headers with gateway auth
-        headers = {}
-
-        # Handle different auth types
-        if gateway.auth_type == "bearer" and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
-                headers["Authorization"] = f"Bearer {token}"
-            elif isinstance(gateway.auth_value, str):
-                decoded = decode_auth(gateway.auth_value)
-                token = decoded.get("Authorization", "").replace("Bearer ", "")
-                headers["Authorization"] = f"Bearer {token}"
-        elif gateway.auth_type == "basic" and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                auth_header = gateway.auth_value.get("Authorization", "")
-                headers["Authorization"] = auth_header
-            elif isinstance(gateway.auth_value, str):
-                decoded = decode_auth(gateway.auth_value)
-                headers["Authorization"] = decoded.get("Authorization", "")
+        headers = build_gateway_auth_headers(gateway)
 
         # Forward passthrough headers if configured
         if gateway.passthrough_headers and request_headers:
@@ -601,24 +566,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
     """
     try:  # pragma: no cover - integration test
         # Prepare headers with gateway auth
-        headers = {}
-
-        # Handle different auth types
-        if gateway.auth_type == "bearer" and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
-                headers["Authorization"] = f"Bearer {token}"
-            elif isinstance(gateway.auth_value, str):
-                decoded = decode_auth(gateway.auth_value)
-                token = decoded.get("Authorization", "").replace("Bearer ", "")
-                headers["Authorization"] = f"Bearer {token}"
-        elif gateway.auth_type == "basic" and gateway.auth_value:
-            if isinstance(gateway.auth_value, dict):
-                auth_header = gateway.auth_value.get("Authorization", "")
-                headers["Authorization"] = auth_header
-            elif isinstance(gateway.auth_value, str):
-                decoded = decode_auth(gateway.auth_value)
-                headers["Authorization"] = decoded.get("Authorization", "")
+        headers = build_gateway_auth_headers(gateway)
 
         # Get request headers
         request_headers = request_headers_var.get()
