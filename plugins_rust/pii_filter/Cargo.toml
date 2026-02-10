@@ -22,8 +22,7 @@ sha2 = "0.10"
 uuid = { version = "1.18", features = ["v4"] }
 
 [dev-dependencies]
-criterion = { version = "0.7", features = ["html_reports"] }
-proptest = "1.8"
+criterion = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
 name = "pii_filter"

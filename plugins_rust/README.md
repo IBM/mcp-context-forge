@@ -240,20 +240,6 @@ pytest ../tests/differential/test_pii_filter_differential.py -v
 
 This runs 1000+ test cases through both implementations and asserts byte-for-byte identical results.
 
-### Property-Based Testing
-
-Uses `proptest` to generate random inputs:
-
-```rust
-proptest! {
-    #[test]
-    fn test_never_crashes(text in ".*") {
-        let _ = detect_pii(&text, &patterns);
-        // Should never panic
-    }
-}
-```
-
 ## 🔒 Security
 
 ### Dependency Audit

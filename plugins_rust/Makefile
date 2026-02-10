@@ -63,34 +63,26 @@ dev-debug: ## Build and install workspace module (debug) in development mode
 install: ## Build and install workspace module (uses maturin develop)
 	@echo "$(GREEN)Installing workspace module...$(NC)"
 	maturin develop --release
+	@echo "$(GREEN)Verifying installation...$(NC)"
+	@python -c "import plugins_rust; import os; import time; stat = os.stat(plugins_rust.__file__); print('✓ plugins_rust installed at:', plugins_rust.__file__); print('✓ Version:', getattr(plugins_rust, '__version__', 'unknown')); print('✓ Install time:', time.ctime(stat.st_mtime))" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
+	@echo "$(GREEN)Installation verified successfully!$(NC)"
 
 # Testing targets (workspace)
 test: ## Run Rust tests for all plugins in workspace
 	@echo "$(GREEN)Running workspace tests...$(NC)"
-	cargo test --workspace --lib --bins --no-default-features
+	cargo test --workspace
 
 test-verbose: ## Run workspace tests (verbose)
 	@echo "$(GREEN)Running workspace tests (verbose)...$(NC)"
-	cargo test --workspace --lib --bins --verbose --no-default-features
-
-test-integration: dev ## Run workspace integration tests (requires Python module built)
-	@echo "$(GREEN)Running workspace integration tests...$(NC)"
-	cargo test --workspace --test integration --verbose
+	cargo test --workspace --verbose
 
 test-python: ## Run Python tests for workspace (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd .. && pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
+	cd .. && pytest tests/unit/mcpgateway/plugins/ -k rust -v
 
 test-differential: ## Run differential tests (Rust vs Python)
 	@echo "$(GREEN)Running differential tests...$(NC)"
-	cd .. && pytest tests/differential/test_pii_filter_differential.py -v
-
-test-all: test test-integration test-python test-differential ## Run all tests (Rust + Python)
-	@echo "$(GREEN)All tests completed!$(NC)"
-
-# Code quality targets
-check: fmt clippy test ## Run all checks (format, lint, test)
-	@echo "$(GREEN)All checks passed!$(NC)"
+	cd .. && pytest tests/differential/ -k differential -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
@@ -104,22 +96,25 @@ clippy: ## Run clippy linter
 	@echo "$(GREEN)Running clippy...$(NC)"
 	cargo clippy --all-targets --all-features -- -D warnings
 
-lint: clippy ## Alias for clippy
-	@echo "$(GREEN)Linting completed!$(NC)"
-
 # Benchmarking targets (workspace)
 bench: ## Run Rust benchmarks for all plugins
 	@echo "$(GREEN)Running workspace benchmarks...$(NC)"
-	cargo bench --workspace --no-default-features
+	cargo bench --workspace
 
-bench-compare: dev ## Run Python comparison benchmarks
-	@echo "$(GREEN)Running Python vs Rust comparison...$(NC)"
-	cd .. && python benchmarks/compare_pii_filter.py
-
-bench-save: dev ## Run benchmarks and save results
-	@echo "$(GREEN)Running benchmarks and saving results...$(NC)"
-	cd .. && python benchmarks/compare_pii_filter.py --output benchmark-results.json
-	@echo "$(GREEN)Results saved to ../benchmark-results.json$(NC)"
+bench-compare: ## Run Python comparison benchmarks for all plugins
+	@echo "$(GREEN)Running Python vs Rust comparison benchmarks...$(NC)"
+	@test -d "$(HOME)/.venv/mcpgateway" || { echo "$(RED)Virtual environment not found. Run 'make venv' from project root first.$(NC)"; exit 1; }
+	@for dir in */benchmarks; do \
+		if [ -d "$$dir" ]; then \
+			plugin=$$(dirname "$$dir"); \
+			echo "$(BLUE)Running benchmarks for $$plugin...$(NC)"; \
+			if [ -f "$$dir/compare_$${plugin}.py" ]; then \
+				cd "$$plugin" && $(HOME)/.venv/mcpgateway/bin/python benchmarks/compare_$${plugin}.py && cd ..; \
+			else \
+				echo "$(YELLOW)No compare script found for $$plugin$(NC)"; \
+			fi; \
+		fi; \
+	done
 
 bench-all: bench bench-compare ## Run all benchmarks (Rust + Python comparison)
 	@echo "$(GREEN)All benchmarks completed!$(NC)"
@@ -137,21 +132,17 @@ audit-fix: ## Run security audit and apply fixes
 # Documentation targets
 doc: ## Build Rust documentation
 	@echo "$(GREEN)Building documentation...$(NC)"
-	cargo doc --no-deps --document-private-items
+	cargo doc --workspace --no-deps --document-private-items
 
 doc-open: doc ## Build and open documentation in browser
 	@echo "$(GREEN)Opening documentation...$(NC)"
-	cargo doc --no-deps --document-private-items --open
+	cargo doc --workspace --no-deps --document-private-items --open
 
 # Coverage targets
 coverage: ## Generate code coverage report
 	@echo "$(GREEN)Generating code coverage...$(NC)"
 	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
 	cargo tarpaulin --workspace --lib --no-default-features --out Html --out Xml --output-dir coverage
-
-coverage-open: coverage ## Generate and open coverage report
-	@echo "$(GREEN)Opening coverage report...$(NC)"
-	@command -v xdg-open >/dev/null 2>&1 && xdg-open coverage/index.html || open coverage/index.html
 
 # Cleaning targets
 clean: ## Remove build artifacts
@@ -172,24 +163,6 @@ clean-all: clean ## Remove all generated files including caches
 	@echo "$(RED)Cleaning all generated files...$(NC)"
 	rm -rf ~/.cargo/registry/cache/
 	rm -rf ~/.cargo/git/db/
-
-# Development workflow targets
-dev-cycle: fmt clippy test ## Quick development cycle (format, lint, test)
-	@echo "$(GREEN)Development cycle completed!$(NC)"
-
-ci: fmt-check clippy test ## Run CI checks (format check, lint, test)
-	@echo "$(GREEN)CI checks passed!$(NC)"
-
-pre-commit: fmt clippy test ## Run pre-commit checks
-	@echo "$(GREEN)Pre-commit checks passed!$(NC)"
-
-
-# Utility targets
-verify: ## Verify workspace module installation
-	@echo "$(GREEN)Verifying workspace module (plugins_rust)...$(NC)"
-	@python -c "from plugins_rust import PIIDetectorRust; print('✓ plugins_rust module available')" && \
-		echo "$(GREEN)✓ Workspace module verified$(NC)" || \
-		echo "$(RED)✗ Installation failed - run 'make dev' first$(NC)"
 
 info: ## Show build information
 	@echo "$(BLUE)Build Information:$(NC)"
@@ -237,13 +210,6 @@ release-build: clean ## Build release packages for all platforms
 	@echo "$(GREEN)Building release packages...$(NC)"
 	maturin build --release --out dist
 
-release-check: fmt-check clippy test audit ## Run all release checks
-	@echo "$(GREEN)Release checks passed!$(NC)"
-
-release: release-check release-build ## Full release workflow (checks + build)
-	@echo "$(GREEN)Release build completed!$(NC)"
-	@echo "$(YELLOW)Wheels created in dist/:$(NC)"
-	@ls -lh dist/
 
 # Watch targets (requires cargo-watch)
 watch: ## Watch for changes and run tests
@@ -258,7 +224,8 @@ watch-dev: ## Watch for changes and rebuild in dev mode
 profile: ## Profile Rust code with flamegraph
 	@command -v cargo-flamegraph >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-flamegraph...$(NC)"; cargo install flamegraph; }
 	@echo "$(GREEN)Profiling with flamegraph...$(NC)"
-	cargo flamegraph --bench pii_filter
+	@echo "$(YELLOW)Note: Specify benchmark with --bench flag$(NC)"
+	cargo flamegraph --workspace
 
 # Statistics
 stats: ## Show code statistics
@@ -272,20 +239,15 @@ stats: ## Show code statistics
 	@echo "$(BLUE)Dependency Tree:$(NC)"
 	@cargo tree --depth 1
 
-# Quick commands
-q: dev-cycle ## Quick: format, lint, test (alias for dev-cycle)
-
-qq: fmt test ## Very quick: format and test only (no clippy)
-
+# All PHONY targets
 .PHONY: help build build-debug dev dev-debug install \
-        test test-verbose test-integration test-python test-differential test-all \
-        check fmt fmt-check clippy lint \
-        bench bench-compare bench-save bench-all \
+        test test-verbose test-python test-differential \
+        fmt fmt-check clippy \
+        bench bench-compare bench-all \
         audit audit-fix \
         doc doc-open \
-        coverage coverage-open \
+        coverage \
         clean clean-all \
-        dev-cycle ci pre-commit \
-        verify verify-plugin info deps upgrade-deps-check upgrade-deps \
-        release-build release-check release \
-        watch watch-dev profile stats q qq
+        info deps upgrade-deps-check upgrade-deps \
+        release-build \
+        watch watch-dev profile stats
