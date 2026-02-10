@@ -1,0 +1,37 @@
+name: "SourceScannerPlugin"
+kind: "plugins.source_scanner.source_scanner.SourceScannerPlugin"
+
+description: "Scan MCP server source code for security vulnerabilities using Semgrep and Bandit"
+author: "MCP Gateway Team"
+version: "0.1.0"
+
+available_hooks:
+  - "server_pre_register"
+  - "catalog_pre_deploy"
+
+default_configs:
+  scanners:
+    semgrep:
+      enabled: true
+      rulesets:
+        - "p/security-audit"
+        - "p/owasp-top-ten"
+        - "p/python"
+        - "p/javascript"
+      extra_args: []
+    bandit:
+      enabled: true
+      severity: "medium"
+      confidence: "medium"
+
+  severity_threshold: "WARNING"
+  fail_on_critical: true
+
+  clone_timeout_seconds: 120
+  scan_timeout_seconds: 600
+  max_repo_size_mb: 500
+
+  github_token_env: "GITHUB_TOKEN"
+
+  cache_by_commit: true
+  cache_ttl_hours: 168
