@@ -204,8 +204,8 @@ class MetricsCache:
         """
         if self.use_redis and not self._sync_method_warned:
             logger.warning(
-                "Sync methods (get/set/invalidate) called with Redis backend active. "
-                "Only local cache will be used. Use async methods for Redis support. "
+                "Sync methods (get/set/invalidate) called with Redis backend active. " +
+                "Only local cache will be used. Use async methods for Redis support. " +
                 "This warning will only be shown once."
             )
             self._sync_method_warned = True
@@ -284,8 +284,8 @@ class MetricsCache:
         """
         if self.use_redis and not self._sync_method_warned:
             logger.warning(
-                "Sync methods (get/set/invalidate) called with Redis backend active. "
-                "Only local cache will be used. Use async methods for Redis support. "
+                "Sync methods (get/set/invalidate) called with Redis backend active. " +
+                "Only local cache will be used. Use async methods for Redis support. " +
                 "This warning will only be shown once."
             )
             self._sync_method_warned = True
@@ -377,6 +377,32 @@ class MetricsCache:
                 self._expiries.pop(metric_type, None)
                 logger.debug(f"Invalidated metrics cache for '{metric_type}' (local)")
 
+    async def invalidate_prefix_async(self, prefix: str) -> None:
+        """Invalidate all cached metrics with keys starting with prefix (async version for Redis).
+
+        Args:
+            prefix: Key prefix to match for invalidation.
+        """
+        # Invalidate in Redis if enabled
+        if self.use_redis:
+            try:
+                pattern = f"metrics:{prefix}*"
+                keys = [key async for key in self.redis_client.scan_iter(pattern)]
+                if keys:
+                    await self.redis_client.delete(*keys)
+                    logger.debug("Invalidated %d metrics cache entries with prefix '%s' in Redis", len(keys), prefix)
+            except RedisError as e:
+                logger.warning("Redis prefix invalidation failed for '%s': %s", prefix, e, extra={"prefix": prefix, "error": str(e)})
+
+        # Also invalidate local cache
+        with self._lock:
+            keys_to_remove = [k for k in self._caches if k.startswith(prefix)]
+            for key in keys_to_remove:
+                self._caches.pop(key, None)
+                self._expiries.pop(key, None)
+            if keys_to_remove:
+                logger.debug("Invalidated %d metrics cache entries with prefix '%s' (local)", len(keys_to_remove), prefix)
+
     def invalidate_prefix(self, prefix: str) -> None:
         """Invalidate all cached metrics with keys starting with prefix.
 
@@ -402,8 +428,8 @@ class MetricsCache:
         """
         if self.use_redis and not self._sync_method_warned:
             logger.warning(
-                "Sync methods (get/set/invalidate) called with Redis backend active. "
-                "Only local cache will be used. Use async methods for Redis support. "
+                "Sync methods (get/set/invalidate) called with Redis backend active. " +
+                "Only local cache will be used. Use async methods for Redis support. " +
                 "This warning will only be shown once."
             )
             self._sync_method_warned = True

@@ -12,6 +12,10 @@ import tempfile
 import warnings
 from unittest.mock import AsyncMock
 
+# Set environment variable BEFORE any other imports to disable Redis in tests
+# This must happen at module level, before pytest collects tests
+os.environ["METRICS_CACHE_USE_REDIS"] = "false"
+
 # Third-Party
 from _pytest.monkeypatch import MonkeyPatch
 import pytest
