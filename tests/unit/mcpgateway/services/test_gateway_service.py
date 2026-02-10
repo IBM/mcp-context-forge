@@ -5262,6 +5262,32 @@ class TestListGatewaysTokenTeams:
         assert cursor is None
 
     @pytest.mark.asyncio
+    async def test_empty_token_teams_cache_set_called_when_results_support_model_dump(self, gateway_service, monkeypatch):
+        """Public-only cache miss should populate cache when result objects support model_dump()."""
+        db = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="h")
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: mock_cache)
+
+        gw = MagicMock(spec=DbGateway)
+        gw.id = 1
+        gw.visibility = "public"
+
+        # Return a gateway record and ensure converter returns an object with model_dump()
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.unified_paginate",
+            AsyncMock(return_value=([gw], None)),
+        )
+        gateway_service.convert_gateway_to_read = MagicMock(return_value=SimpleNamespace(model_dump=lambda **_kw: {"id": 1}))
+
+        result, cursor = await gateway_service.list_gateways(db, token_teams=[])
+        assert len(result) == 1
+        assert cursor is None
+        mock_cache.set.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_scoped_token_teams(self, gateway_service, monkeypatch):
         """Team-scoped token returns team + public gateways."""
         db = MagicMock()
@@ -5351,6 +5377,36 @@ class TestListGatewaysTokenTeams:
             db, user_email="user@test.com", team_id="t-other"
         )
         assert result == ([], None)
+
+    @pytest.mark.asyncio
+    async def test_user_email_specific_team_with_access_and_visibility_filter(self, gateway_service, monkeypatch):
+        """User requesting a team they belong to should build access conditions (team_id branch)."""
+        db = MagicMock()
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()
+        mock_cache.hash_filters = MagicMock(return_value="h")
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: mock_cache)
+
+        mock_team_svc = MagicMock()
+        mock_team_svc.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.TeamManagementService",
+            MagicMock(return_value=mock_team_svc),
+        )
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.unified_paginate",
+            AsyncMock(return_value=([], None)),
+        )
+
+        result, cursor = await gateway_service.list_gateways(
+            db,
+            user_email="user@test.com",
+            team_id="team-1",
+            visibility="team",
+        )
+        assert result == []
+        assert cursor is None
 
     @pytest.mark.asyncio
     async def test_page_based_pagination(self, gateway_service, monkeypatch):

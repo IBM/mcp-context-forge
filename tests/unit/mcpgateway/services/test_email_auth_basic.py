@@ -344,6 +344,13 @@ class TestEmailAuthBasic:
             with pytest.raises(PasswordValidationError, match="special"):
                 service.validate_password("NoSpecialChar123")
 
+    def test_validate_password_policy_disabled_returns_true(self, service):
+        """Test password validation returns True when global password policy is disabled."""
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_policy_enabled = False
+            # Even a weak password should be accepted when policy is disabled (non-empty is still required).
+            assert service.validate_password("x") is True
+
 
 class TestEmailAuthServiceUserManagement:
     """Tests for user management functionality."""
@@ -835,6 +842,12 @@ class TestEmailAuthServiceUserManagement:
     # =========================================================================
 
     @pytest.mark.asyncio
+    async def test_change_password_requires_old_password(self, service):
+        """Test change_password raises when old_password is missing."""
+        with pytest.raises(AuthenticationError, match="Current password is required"):
+            await service.change_password(email="test@example.com", old_password=None, new_password="NewSecurePass123!")
+
+    @pytest.mark.asyncio
     async def test_change_password_success(self, service, mock_db, mock_user, mock_password_service):
         """Test successful password change."""
         service.password_service = mock_password_service
@@ -851,6 +864,85 @@ class TestEmailAuthServiceUserManagement:
         assert result is True
         assert mock_user.password_hash == "new_hashed_password"
         mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_change_password_logs_debug_when_password_changed_at_fails(self, service, mock_db, mock_user, mock_password_service):
+        """Test change_password continues when setting password_changed_at fails."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+            with patch("mcpgateway.services.email_auth_service.utc_now", side_effect=Exception("utc-now-failure")):
+                # Avoid hitting real Redis/cache interactions
+                from mcpgateway.cache.auth_cache import auth_cache
+
+                with patch.object(auth_cache, "invalidate_user", new=AsyncMock(return_value=None)):
+                    with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                        mock_settings.password_policy_enabled = True
+                        mock_settings.password_min_length = 1
+                        mock_settings.password_require_uppercase = False
+                        mock_settings.password_require_lowercase = False
+                        mock_settings.password_require_numbers = False
+                        mock_settings.password_require_special = False
+                        mock_settings.password_prevent_reuse = True
+
+                        result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!")
+
+        assert result is True
+        assert mock_user.password_hash == "new_hashed_password"
+        assert mock_db.commit.call_count >= 2  # password update + event logging
+
+    @pytest.mark.asyncio
+    async def test_change_password_auth_cache_invalidation_timeout_is_non_fatal(self, service, mock_user, mock_password_service):
+        """Test change_password continues when auth cache invalidation times out."""
+        import asyncio
+
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        async def fake_wait_for(awaitable, timeout):  # noqa: ARG001 - signature must match asyncio.wait_for
+            await awaitable
+            raise asyncio.TimeoutError()
+
+        with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+            from mcpgateway.cache.auth_cache import auth_cache
+
+            with patch.object(auth_cache, "invalidate_user", new=AsyncMock(return_value=None)):
+                with patch("asyncio.wait_for", new=fake_wait_for):
+                    with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                        mock_settings.password_policy_enabled = True
+                        mock_settings.password_min_length = 1
+                        mock_settings.password_require_uppercase = False
+                        mock_settings.password_require_lowercase = False
+                        mock_settings.password_require_numbers = False
+                        mock_settings.password_require_special = False
+                        mock_settings.password_prevent_reuse = True
+
+                        assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!") is True
+
+    @pytest.mark.asyncio
+    async def test_change_password_auth_cache_invalidation_exception_is_non_fatal(self, service, mock_user, mock_password_service):
+        """Test change_password continues when auth cache invalidation raises."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+            from mcpgateway.cache.auth_cache import auth_cache
+
+            with patch.object(auth_cache, "invalidate_user", new=AsyncMock(side_effect=RuntimeError("cache-down"))):
+                with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                    mock_settings.password_policy_enabled = True
+                    mock_settings.password_min_length = 1
+                    mock_settings.password_require_uppercase = False
+                    mock_settings.password_require_lowercase = False
+                    mock_settings.password_require_numbers = False
+                    mock_settings.password_require_special = False
+                    mock_settings.password_prevent_reuse = True
+
+                    assert await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!") is True
 
     @pytest.mark.asyncio
     async def test_change_password_clears_password_change_required_flag(self, service, mock_db, mock_user, mock_password_service):
@@ -931,6 +1023,37 @@ class TestEmailAuthServiceUserManagement:
             # Verify rollback was called after the first commit failed
             mock_db.rollback.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_change_password_rolls_back_on_commit_error(self, service, mock_db, mock_user, mock_password_service):
+        """Test change_password rolls back and re-raises when DB commit fails."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        commit_calls = {"count": 0}
+
+        def commit_side_effect():
+            commit_calls["count"] += 1
+            if commit_calls["count"] == 1:
+                raise Exception("Database error")
+
+        mock_db.commit.side_effect = commit_side_effect
+
+        with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_policy_enabled = True
+                mock_settings.password_min_length = 1
+                mock_settings.password_require_uppercase = False
+                mock_settings.password_require_lowercase = False
+                mock_settings.password_require_numbers = False
+                mock_settings.password_require_special = False
+                mock_settings.password_prevent_reuse = True
+
+                with pytest.raises(Exception, match="Database error"):
+                    await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!")
+
+        mock_db.rollback.assert_called_once()
+
     # =========================================================================
     # Platform Admin Tests
     # =========================================================================
@@ -979,6 +1102,24 @@ class TestEmailAuthServiceUserManagement:
         assert mock_user.is_admin is True
         assert mock_user.is_active is True
         mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_create_platform_admin_existing_password_changed_at_failure_is_non_fatal(self, service, mock_user, mock_password_service):
+        """Test create_platform_admin continues when setting password_changed_at fails for existing admin."""
+        service.password_service = mock_password_service
+        mock_user.is_admin = True
+
+        with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=mock_user)):
+            mock_password_service.verify_password_async = AsyncMock(return_value=False)
+            mock_password_service.hash_password_async = AsyncMock(return_value="new_admin_hash")
+
+            with patch("mcpgateway.services.email_auth_service.utc_now", side_effect=Exception("utc-now-failure")):
+                result = await service.create_platform_admin(email="test@example.com", password="NewAdminPass123!", full_name="Admin")
+
+        assert result == mock_user
+        assert mock_user.password_hash == "new_admin_hash"
+        assert mock_user.is_admin is True
+        assert mock_user.is_active is True
 
     @pytest.mark.asyncio
     async def test_create_platform_admin_existing_update_name(self, service, mock_db, mock_user, mock_password_service):
@@ -1133,6 +1274,186 @@ class TestEmailAuthServiceUserListing:
         assert len(result.data) == 5
 
     @pytest.mark.asyncio
+    async def test_list_users_page_based_exception_returns_fallback(self, service):
+        """Test list_users returns page-based fallback structure on exception."""
+        with patch("mcpgateway.services.email_auth_service.unified_paginate", new=AsyncMock(side_effect=Exception("paginate-failure"))):
+            result = await service.list_users(page=2, per_page=10)
+
+        assert result.data == []
+        assert result.pagination is not None
+        assert result.pagination.page == 2
+        assert result.pagination.per_page == 10
+        assert result.links is not None
+
+    @pytest.mark.asyncio
+    async def test_list_users_cursor_based_exception_returns_fallback(self, service, mock_db):
+        """Test list_users returns cursor-based fallback structure on exception."""
+        mock_db.execute.side_effect = Exception("Database error")
+
+        result = await service.list_users(cursor="invalid-cursor", limit=10)
+
+        assert result.data == []
+        assert result.next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_users_cursor_missing_keys_does_not_apply_keyset_filter(self, service, mock_db, mock_users):
+        """Test list_users with a cursor missing created_at/email does not apply keyset filter."""
+        cursor_data = {
+            "email": "user2@example.com",
+            # missing created_at on purpose
+        }
+        cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_users[:2]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users(cursor=cursor, limit=10)
+
+        assert len(result.data) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_users_limit_zero_returns_all_users_no_cursor(self, service, mock_db, mock_users):
+        """Test list_users(limit=0) returns all results without generating a next cursor."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_users
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users(cursor=None, limit=0)
+
+        assert len(result.data) == 5
+        assert result.next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_page_based_success(self, service):
+        """Test list_users_not_in_team page-based mode uses unified_paginate."""
+        # First-Party
+        from mcpgateway.schemas import PaginationLinks, PaginationMeta
+
+        users = [MagicMock(spec=EmailUser, email="a@example.com"), MagicMock(spec=EmailUser, email="b@example.com")]
+        pagination = PaginationMeta(page=1, per_page=30, total_items=2, total_pages=1, has_next=False, has_prev=False)
+        links = PaginationLinks(self="/admin/teams/team-123/non-members?page=1&per_page=30", first="/admin/teams/team-123/non-members?page=1&per_page=30", last="/admin/teams/team-123/non-members?page=1&per_page=30")
+
+        with patch(
+            "mcpgateway.services.email_auth_service.unified_paginate",
+            new=AsyncMock(return_value={"data": users, "pagination": pagination, "links": links}),
+        ) as mock_paginate:
+            result = await service.list_users_not_in_team(team_id="team-123", page=1, per_page=30, search="john")
+
+        assert result.data == users
+        assert result.pagination == pagination
+        assert result.links == links
+        mock_paginate.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_cursor_based_generates_next_cursor_and_commits(self, service, mock_db):
+        """Test list_users_not_in_team cursor mode generates next cursor and commits."""
+        users = []
+        for i in range(3):  # limit=2 + 1
+            user = MagicMock(spec=EmailUser)
+            user.email = f"user{i}@example.com"
+            user.created_at = datetime(2024, 1, 15, 10, 0, i, tzinfo=timezone.utc)
+            users.append(user)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users_not_in_team(team_id="team-123", cursor=None, limit=2)
+
+        assert len(result.data) == 2
+        assert result.next_cursor is not None
+        cursor_json = base64.urlsafe_b64decode(result.next_cursor.encode()).decode()
+        cursor_data = orjson.loads(cursor_json)
+        assert cursor_data["email"] == "user1@example.com"
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_cursor_with_cursor_decodes_and_applies_keyset_filter(self, service, mock_db):
+        """Test list_users_not_in_team decodes cursor and still returns results."""
+        cursor_data = {
+            "created_at": "2024-01-15T10:00:02+00:00",
+            "email": "user2@example.com",
+        }
+        cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "user3@example.com"
+        mock_user.created_at = datetime(2024, 1, 15, 10, 0, 3, tzinfo=timezone.utc)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_user]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users_not_in_team(team_id="team-123", cursor=cursor, limit=50)
+
+        assert len(result.data) == 1
+        assert result.data[0].email == "user3@example.com"
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_cursor_invalid_cursor_is_ignored(self, service, mock_db):
+        """Test list_users_not_in_team ignores invalid cursor payloads."""
+        # Valid base64, invalid JSON => triggers inner (ValueError, TypeError) handling.
+        cursor = base64.urlsafe_b64encode(b"not-json").decode()
+
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "user3@example.com"
+        mock_user.created_at = datetime(2024, 1, 15, 10, 0, 3, tzinfo=timezone.utc)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_user]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users_not_in_team(team_id="team-123", cursor=cursor, limit=50)
+
+        assert len(result.data) == 1
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_cursor_missing_keys_does_not_apply_keyset_filter(self, service, mock_db):
+        """Test list_users_not_in_team cursor missing required keys skips keyset filter."""
+        cursor_data = {
+            "email": "user2@example.com",
+            # missing created_at on purpose
+        }
+        cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "user3@example.com"
+        mock_user.created_at = datetime(2024, 1, 15, 10, 0, 3, tzinfo=timezone.utc)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_user]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users_not_in_team(team_id="team-123", cursor=cursor, limit=50)
+
+        assert len(result.data) == 1
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_page_based_exception_returns_fallback(self, service):
+        """Test list_users_not_in_team returns page-based fallback on exception."""
+        with patch("mcpgateway.services.email_auth_service.unified_paginate", new=AsyncMock(side_effect=Exception("paginate-failure"))):
+            result = await service.list_users_not_in_team(team_id="team-123", page=1, per_page=10)
+
+        assert result.data == []
+        assert result.pagination is not None
+        assert result.pagination.page == 1
+        assert result.links is not None
+
+    @pytest.mark.asyncio
+    async def test_list_users_not_in_team_cursor_based_exception_returns_fallback(self, service, mock_db):
+        """Test list_users_not_in_team returns cursor-based fallback on exception."""
+        mock_db.execute.side_effect = Exception("Database error")
+
+        result = await service.list_users_not_in_team(team_id="team-123", cursor=None, limit=10)
+
+        assert result.data == []
+        assert result.next_cursor is None
+
+    @pytest.mark.asyncio
     async def test_get_all_users(self, service, mock_db, mock_users):
         """Test getting all users without explicit pagination."""
         EmailAuthService.get_all_users_deprecated_warned = False
@@ -1147,6 +1468,26 @@ class TestEmailAuthServiceUserListing:
 
         assert len(result) == 5
         assert mock_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_all_users_no_warning_when_already_warned(self, service, mock_db, mock_users):
+        """Test get_all_users does not emit DeprecationWarning after the first call."""
+        # Standard
+        import warnings
+
+        EmailAuthService.get_all_users_deprecated_warned = True
+        mock_count_result = MagicMock()
+        mock_count_result.scalar.return_value = len(mock_users)
+        mock_list_result = MagicMock()
+        mock_list_result.scalars.return_value.all.return_value = mock_users
+        mock_db.execute.side_effect = [mock_count_result, mock_list_result]
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            result = await service.get_all_users()
+
+        assert len(result) == 5
+        assert not any(isinstance(w.message, DeprecationWarning) and "get_all_users()" in str(w.message) for w in caught)
 
     @pytest.mark.asyncio
     async def test_get_all_users_raises_when_exceeds_limit(self, service, mock_db):
@@ -1461,6 +1802,27 @@ class TestEmailAuthServiceUserUpdates:
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
+    async def test_update_user_blocks_demote_last_active_admin(self, service, mock_db, monkeypatch):
+        """Test update_user blocks demoting/deactivating the last active admin when protection is off."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "protect_all_admins", False)
+
+        admin_user = MagicMock(spec=EmailUser)
+        admin_user.email = "admin@example.com"
+        admin_user.is_admin = True
+        admin_user.is_active = True
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = admin_user
+        mock_db.execute.return_value = mock_result
+
+        with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=True)):
+            with pytest.raises(ValueError, match="last remaining active admin"):
+                await service.update_user(email="admin@example.com", is_admin=False)
+
+    @pytest.mark.asyncio
     async def test_activate_user_success(self, service, mock_db, mock_user):
         """Test activating a user account."""
         mock_user.is_active = False
@@ -1587,6 +1949,19 @@ class TestEmailAuthServiceUserDeletion:
         assert result is True
         mock_db.delete.assert_called_once_with(mock_user)
         mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_cache_invalidation_exception_is_non_fatal(self, service, mock_db, mock_user):
+        """Test delete_user continues when auth cache invalidation fails."""
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_result.scalars.return_value.all.return_value = []  # No teams owned
+        mock_db.execute.return_value = mock_result
+
+        with patch("asyncio.create_task", side_effect=Exception("task-failure")):
+            result = await service.delete_user("test@example.com")
+
+        assert result is True
 
     @pytest.mark.asyncio
     async def test_delete_user_not_found(self, service, mock_db):
