@@ -1,0 +1,54 @@
+# ===============================================================
+# 🧪 JavaScript Unit Tests (Vitest)
+# ===============================================================
+# Authors: Gabriel Costa, Mihai Criveti
+#   - runs Vitest unit tests for browser-side JavaScript
+#   - uses jsdom environment to test non-modular browser scripts
+#   - installs dependencies from package.json / package-lock.json
+# ---------------------------------------------------------------
+
+name: JavaScript Tests (Vitest)
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  vitest:
+    name: vitest
+    runs-on: ubuntu-latest
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      # -----------------------------------------------------------
+      # 1️⃣  Node.js Setup
+      # -----------------------------------------------------------
+      - name: 📦  Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          cache: npm
+
+      # -----------------------------------------------------------
+      # 2️⃣  Install Dependencies
+      # -----------------------------------------------------------
+      - name: 📥  Install dependencies
+        run: npm ci
+
+      # -----------------------------------------------------------
+      # 3️⃣  Run Vitest
+      # -----------------------------------------------------------
+      - name: 🧪  Run Vitest
+        run: npx vitest run
