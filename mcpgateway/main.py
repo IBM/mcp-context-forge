@@ -7321,7 +7321,7 @@ logger.info(f"Admin API enabled: {ADMIN_API_ENABLED}")
 # Conditional UI and admin API handling
 if ADMIN_API_ENABLED:
     logger.info("Including admin_router - Admin API enabled")
-app.include_router(sandbox_router, prefix="/api/sandbox", tags=["Sandbox"])
+    app.include_router(sandbox_router, prefix="/api/sandbox", tags=["Sandbox"])
     app.include_router(admin_router)  # Admin routes imported from admin.py
 else:
     logger.warning("Admin API routes not mounted - Admin API disabled via MCPGATEWAY_ADMIN_API_ENABLED=False")

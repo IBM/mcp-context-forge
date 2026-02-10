@@ -27,9 +27,11 @@ import time
 from typing import List, Optional
 
 # Third-Party
+from fastapi import Depends
 from sqlalchemy.orm import Session
 
 # Local
+from mcpgateway.db import get_db
 from plugins.unified_pdp.pdp import PolicyDecisionPoint
 from plugins.unified_pdp.pdp_models import (
     CacheConfig,
@@ -672,7 +674,7 @@ class SandboxService:
 # ---------------------------------------------------------------------------
 
 
-def get_sandbox_service(db: Session) -> SandboxService:
+def get_sandbox_service(db: Session = Depends(get_db)) -> SandboxService:
     """Dependency injection helper for FastAPI routes.
 
     Args:
