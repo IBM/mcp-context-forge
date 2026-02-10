@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: JSON.parse(localStorage.getItem('darkMode') || 'false') }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => localStorage.setItem('darkMode', val))"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -136,7 +136,25 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        window.history.replaceState({}, '', newUrl);
+        safeReplaceState({}, '', newUrl);
+      }
+
+      // One-time debug notice for restricted iframe contexts (e.g. sandboxed iframes)
+      var _restrictedContextLogged = false;
+      function _logRestrictedContext(e) {
+        if (!_restrictedContextLogged) {
+          _restrictedContextLogged = true;
+          console.debug('Running in restricted context — storage/history APIs unavailable:', e.message);
+        }
+      }
+
+      // Safe wrapper for history.replaceState — skips in restricted contexts
+      function safeReplaceState(data, title, url) {
+        try {
+          window.history.replaceState(data, title, url);
+        } catch (e) {
+          _logRestrictedContext(e);
+        }
       }
     </script>
 
@@ -11512,7 +11530,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            window.history.replaceState({}, '', cleanUrl);
+            safeReplaceState({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -11876,7 +11894,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12099,7 +12118,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         };
 
         // Add authentication if available
-        const token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token');
+        let token = null;
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }

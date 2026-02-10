@@ -219,6 +219,53 @@ def test_serialize_datetime_and_password_strength(monkeypatch):
     assert ok is False and "uppercase" in msg
 
 
+@pytest.mark.parametrize(
+    ("required_attr", "password", "expected_fragment"),
+    [
+        ("password_require_lowercase", "ABCDEFGH", "lowercase"),
+        ("password_require_numbers", "Abcdefgh", "number"),
+        ("password_require_special", "Abcdefg1", "special character"),
+    ],
+)
+def test_validate_password_strength_requirement_failures(monkeypatch, required_attr, password, expected_fragment):
+    monkeypatch.setattr(admin.settings, "password_policy_enabled", True)
+    monkeypatch.setattr(admin.settings, "password_min_length", 1)
+    monkeypatch.setattr(admin.settings, "password_require_uppercase", False)
+    monkeypatch.setattr(admin.settings, "password_require_lowercase", False)
+    monkeypatch.setattr(admin.settings, "password_require_numbers", False)
+    monkeypatch.setattr(admin.settings, "password_require_special", False)
+    monkeypatch.setattr(admin.settings, required_attr, True)
+
+    ok, msg = admin.validate_password_strength(password)
+    assert ok is False
+    assert expected_fragment in msg.lower()
+
+
+def test_admin_module_grpc_import_error_fallback(monkeypatch):
+    import builtins
+    import importlib.util
+    from pathlib import Path
+
+    real_import = builtins.__import__
+
+    def _guarded_import(name, globals=None, locals=None, fromlist=(), level=0):  # type: ignore[no-redef]
+        if name == "mcpgateway.services.grpc_service":
+            raise ImportError("grpc not installed")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _guarded_import)
+
+    admin_path = Path(admin.__file__)
+    spec = importlib.util.spec_from_file_location("mcpgateway_admin_no_grpc", admin_path)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+
+    assert module.GRPC_AVAILABLE is False
+    assert module.GrpcServiceCreate is None
+    assert issubclass(module.GrpcServiceNotFoundError, module.GrpcServiceError)
+
+
 @pytest.mark.asyncio
 async def test_global_passthrough_headers_endpoints(monkeypatch):
     _allow_permissions(monkeypatch)
@@ -264,6 +311,16 @@ async def test_update_global_passthrough_headers_errors(monkeypatch):
     with pytest.raises(admin.HTTPException) as excinfo:
         await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
     assert excinfo.value.status_code == 409
+    db.rollback.assert_called()
+
+    # Pydantic ValidationError is a subclass of ValueError; ensure it's handled distinctly (422).
+    from pydantic import ValidationError
+    from pydantic_core import InitErrorDetails
+
+    db.commit.side_effect = ValidationError.from_exception_data("test", [InitErrorDetails(type="missing", loc=("passthrough_headers",), input={})])
+    with pytest.raises(admin.HTTPException) as excinfo:
+        await update_func(MagicMock(), config_update, db, _user={"email": "user@example.com"})
+    assert excinfo.value.status_code == 422
     db.rollback.assert_called()
 
     db.commit.side_effect = PassthroughHeadersError("boom")

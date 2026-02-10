@@ -3503,7 +3503,7 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
 
 
 # ---------------------------------------------------------------------------
-# streamable_http_auth: positive team membership cache (Line 1844)
+# streamable_http_auth: positive team membership cache
 # ---------------------------------------------------------------------------
 
 

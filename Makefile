@@ -548,7 +548,8 @@ clean:
 # help: test                 - Run unit tests with pytest
 # help: test-altk            - Run tests with ALTK (agent-lifecycle-toolkit) installed
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
-# help: coverage             - Run tests with coverage, emit md/HTML/XML + badge, generate annotated files
+# help: coverage             - Run tests with coverage, emit HTML/XML + badge, generate annotated files
+# help: test-docs            - Run coverage and generate docs/docs/test/unittest.md report
 # help: htmlcov              - (re)build just the HTML coverage report into docs
 # help: test-curl            - Smoke-test API endpoints with curl script
 # help: pytest-examples      - Run README / examples through pytest-examples
@@ -563,7 +564,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-altk test-profile coverage pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -608,6 +609,32 @@ test-profile:
 coverage:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(TEST_DOCS_DIR)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+			--cov=mcpgateway mcpgateway/ || true"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --cov-report=term --cov=mcpgateway \
+			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
+	@echo "🔍  Generating annotated coverage files..."
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."
+	@echo "✅  Coverage artefacts: HTML in $(COVERAGE_DIR), XML, badge & annotated files (.py,cover) ✔"
+
+test-docs:
+	@echo "📝  Generating test documentation (docs/docs/test/unittest.md)..."
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(TEST_DOCS_DIR)
 	@printf "# Unit tests\n\n" > $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
@@ -628,13 +655,7 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
-	@echo "🔍  Generating annotated coverage files..."
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."
-	@echo "✅  Coverage artefacts: md, HTML in $(COVERAGE_DIR), XML, badge & annotated files (.py,cover) ✔"
+	@echo "✅  Test docs generated → $(DOCS_DIR)/docs/test/unittest.md"
 
 htmlcov:
 	@echo "📊  Generating HTML coverage report..."

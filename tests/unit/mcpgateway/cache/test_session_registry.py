@@ -420,7 +420,7 @@ def test_sqlalchemy_importerror_isolated():
         importlib.reload(mcpgateway.cache.session_registry)
         assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
 
-    # Cleanup: restore the original sys.modules entries
+    # Cleanup: restore the original sys.modules entries and reload to reset SQLALCHEMY_AVAILABLE
     if original_sqlalchemy is not None:
         sys.modules["sqlalchemy"] = original_sqlalchemy
     else:
@@ -430,6 +430,10 @@ def test_sqlalchemy_importerror_isolated():
         sys.modules["mcpgateway.cache.session_registry"] = original_my_module
     else:
         sys.modules.pop("mcpgateway.cache.session_registry", None)
+
+    import mcpgateway.cache.session_registry
+
+    importlib.reload(mcpgateway.cache.session_registry)
 
 
 # --------------------------------------------------------------------------- #

@@ -60,7 +60,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -517,6 +517,19 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
     return str(user)
 
 
+def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
+    """Return a {team_id: role} mapping for a user's active memberships.
+
+    Args:
+        db: The SQLAlchemy database session.
+        user_email: Email address of the user to query memberships for.
+
+    Returns:
+        Dict mapping team_id to the user's role in that team.
+    """
+    return get_user_team_roles(db, user_email)
+
+
 def _get_span_entity_performance(
     db: Session,
     cutoff_time: datetime,
@@ -630,30 +643,23 @@ def _get_span_entity_performance(
         """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont).
 
         Args:
-            data: Sorted list of numeric values.
+            data: Sorted, non-empty list of numeric values.
             p: Percentile to calculate (0.0 to 1.0).
 
         Returns:
-            float: The interpolated percentile value, or 0.0 if data is empty.
+            float: The interpolated percentile value.
         """
-        if not data:
-            return 0.0
         n = len(data)
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     items: List[dict] = []
     for entity, durations in durations_by_entity.items():
         durations_sorted = sorted(durations)
         n = len(durations_sorted)
-        if n == 0:
-            continue
         items.append(
             {
                 result_key: entity,
@@ -1073,15 +1079,15 @@ async def update_global_passthrough_headers(
         # Invalidate cache so changes propagate immediately (Issue #1715)
         global_config_cache.invalidate()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
-    except (IntegrityError, ValidationError, PassthroughHeadersError) as e:
+    except IntegrityError as e:
         db.rollback()
-        if isinstance(e, IntegrityError):
-            raise HTTPException(status_code=409, detail="Passthrough headers conflict")
-        if isinstance(e, ValidationError):
-            raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
-        if isinstance(e, PassthroughHeadersError):
-            raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="Unknown error occurred")
+        raise HTTPException(status_code=409, detail="Passthrough headers conflict") from e
+    except ValidationError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Invalid passthrough headers format") from e
+    except PassthroughHeadersError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
@@ -1317,9 +1323,6 @@ async def get_configuration_settings(
                 return settings.masked_auth_value
             if value and str(value) not in ["", "None", "null"]:
                 return settings.masked_auth_value
-        # Handle SecretStr even for non-sensitive keys
-        if isinstance(value, SecretStr):
-            return value.get_secret_value()
         return value
 
     # Group settings by category
@@ -1648,6 +1651,8 @@ async def admin_servers_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "servers_partial.html",
@@ -1658,6 +1663,9 @@ async def admin_servers_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -1854,10 +1862,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    # NOTE: Pydantic validation errors subclass ValueError; CoreValidationError must be handled first.
     except ValueError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-    except ValidationError as ex:
-        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -2562,14 +2569,9 @@ async def admin_ui(
             >>> _matches_selected_team({'teams': ['t1', 't2']}, 't1')
             True
 
-            >>> _matches_selected_team({}, '')
-            True
-
             >>> _matches_selected_team(None, 'abc')
             False
         """
-        if not tid:
-            return True
         # If an item is explicitly public, it should be visible to any team
         try:
             vis = getattr(item, "visibility", None)
@@ -3862,23 +3864,19 @@ async def admin_teams_partial_html(
         t.member_count = counts.get(team_id, 0)
 
         # Determine relationship
+        t.relationship = "none"
+        t.pending_request = None
         if t.is_personal:
             t.relationship = "personal"
-            t.pending_request = None
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-            t.pending_request = None
         elif current_user.is_admin:
             # Admins get admin controls for teams they're not members of
             t.relationship = "none"  # Falls through to admin controls in template
-            t.pending_request = None
         elif team_id in public_team_ids:
             t.relationship = "public"
             t.pending_request = pending_requests.get(team_id)
-        else:
-            t.relationship = "none"
-            t.pending_request = None
 
         enriched_data.append(t)
 
@@ -4771,9 +4769,6 @@ async def admin_add_team_members(
 
         # 1. Handle additions and updates for checked users
         for user_email in user_emails:
-            if not isinstance(user_email, str):
-                continue
-
             user_email = user_email.strip()
             if not user_email:
                 continue
@@ -6531,6 +6526,8 @@ async def admin_list_tools(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
 
     # Call tool_service.list_tools with page-based pagination
     paginated_result = await tool_service.list_tools(
@@ -6539,6 +6536,9 @@ async def admin_list_tools(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        requesting_user_email=user_email,
+        requesting_user_is_admin=_is_admin,
+        requesting_user_team_roles=_team_roles,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -6586,7 +6586,7 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -6684,10 +6684,21 @@ async def admin_tools_partial_html(
     # Team names are loaded via joinedload(DbTool.email_team) in the query
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     tools_pydantic = []
     for t in tools_db:
         try:
-            tools_pydantic.append(tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False))
+            tools_pydantic.append(
+                tool_service.convert_tool_to_read(
+                    t,
+                    include_metrics=False,
+                    include_auth=False,
+                    requesting_user_email=user_email,
+                    requesting_user_is_admin=_is_admin,
+                    requesting_user_team_roles=_team_roles,
+                )
+            )
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
 
@@ -6738,6 +6749,9 @@ async def admin_tools_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -6834,8 +6848,19 @@ async def admin_tool_ops_partial(
     )
 
     tools_db = paginated_result["data"]
-    tools_pydantic = [tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False) for t in tools_db]
-
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
+    tools_pydantic = [
+        tool_service.convert_tool_to_read(
+            t,
+            include_metrics=False,
+            include_auth=False,
+            requesting_user_email=user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+        )
+        for t in tools_db
+    ]
     db.commit()
 
     return request.app.state.templates.TemplateResponse(
@@ -6845,6 +6870,9 @@ async def admin_tool_ops_partial(
             "request": request,
             "tools": tools_pydantic,
             "root_path": request.scope.get("root_path", ""),
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7236,6 +7264,8 @@ async def admin_prompts_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "prompts_partial.html",
@@ -7246,6 +7276,9 @@ async def admin_prompts_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7288,7 +7321,7 @@ async def admin_gateways_partial_html(
         encoded gateway data when templates expect it.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7395,6 +7428,8 @@ async def admin_gateways_partial_html(
             {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "gateways_partial.html",
@@ -7405,6 +7440,9 @@ async def admin_gateways_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7914,6 +7952,8 @@ async def admin_resources_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "resources_partial.html",
@@ -7924,6 +7964,9 @@ async def admin_resources_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8486,6 +8529,8 @@ async def admin_a2a_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "agents_partial.html",
@@ -8496,6 +8541,9 @@ async def admin_a2a_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8689,8 +8737,11 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    _user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
     try:
-        tool = await tool_service.get_tool(db, tool_id)
+        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -9376,12 +9427,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except ValueError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+    except ValueError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -9576,14 +9628,15 @@ async def admin_edit_gateway(
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-        if isinstance(ex, ValueError):
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+        if isinstance(ex, ValueError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -10908,12 +10961,7 @@ async def admin_test_gateway(
             if content_type == "application/x-www-form-urlencoded":
                 # Set proper content type header and use data parameter for form encoding
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
-                if isinstance(request.body, str):
-                    # Body is already form-encoded
-                    request_kwargs["data"] = request.body
-                else:
-                    # Body is a dict, convert to form data
-                    request_kwargs["data"] = request.body
+                request_kwargs["data"] = request.body
             else:
                 # Default to JSON
                 headers["Content-Type"] = "application/json"
@@ -12513,12 +12561,6 @@ async def admin_add_a2a_agent(
     except A2AAgentError as ex:
         LOGGER.error(f"A2A agent error: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    except ValidationError as ex:
-        LOGGER.error(f"Validation error while creating A2A agent: {ex}")
-        return ORJSONResponse(
-            content=ErrorFormatter.format_validation_error(ex),
-            status_code=422,
-        )
     except IntegrityError as ex:
         return ORJSONResponse(
             content=ErrorFormatter.format_database_error(ex),
@@ -12772,17 +12814,14 @@ async def admin_set_a2a_agent_state(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    user_email = get_user_email(user)
     error_message = None
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
-        user_email = get_user_email(user)
-
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
@@ -14895,16 +14934,11 @@ def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval
             float: Interpolated percentile value.
         """
         n = len(data)
-        if n == 0:
-            return 0.0
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     for bucket_time in sorted(buckets.keys()):
         durations = sorted(buckets[bucket_time])
