@@ -410,6 +410,69 @@ class TestDocsAuthMiddleware:
         assert response == "ok"
         call_next.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_docs_auth_normalizes_prefixed_scope_path(self):
+        """When proxy forwards full path, scope_path includes root_path prefix and must be stripped."""
+        middleware = DocsAuthMiddleware(None)
+        request = _make_request("/qa/gateway/docs", root_path="/qa/gateway")
+        call_next = AsyncMock(return_value=StarletteResponse("ok"))
+
+        with patch("mcpgateway.main.require_docs_auth_override", side_effect=HTTPException(status_code=401, detail="nope")):
+            response = await middleware.dispatch(request, call_next)
+
+        # After normalization the path matches /docs, so auth is enforced
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_docs_auth_prefixed_unprotected_path_passes_through(self):
+        """An unprotected path with root_path prefix must still pass through after normalization."""
+        middleware = DocsAuthMiddleware(None)
+        request = _make_request("/qa/gateway/health", root_path="/qa/gateway")
+        call_next = AsyncMock(return_value="ok")
+
+        response = await middleware.dispatch(request, call_next)
+
+        assert response == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_docs_auth_root_path_slash_does_not_break_paths(self):
+        """root_path of '/' must be ignored to avoid stripping leading slash from every path."""
+        middleware = DocsAuthMiddleware(None)
+        request = _make_request("/docs", root_path="/")
+        call_next = AsyncMock(return_value=StarletteResponse("ok"))
+
+        with patch("mcpgateway.main.require_docs_auth_override", side_effect=HTTPException(status_code=401, detail="nope")):
+            response = await middleware.dispatch(request, call_next)
+
+        # /docs is still recognized as protected (leading slash not stripped)
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_docs_auth_partial_prefix_not_stripped(self):
+        """root_path='/app' must not strip from '/application/docs' (partial segment match)."""
+        middleware = DocsAuthMiddleware(None)
+        request = _make_request("/application/docs", root_path="/app")
+        call_next = AsyncMock(return_value="ok")
+
+        response = await middleware.dispatch(request, call_next)
+
+        # "/application/docs" is not a protected path, so it passes through
+        assert response == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_docs_auth_trailing_slash_root_path(self):
+        """root_path with trailing slash must still strip prefix correctly."""
+        middleware = DocsAuthMiddleware(None)
+        request = _make_request("/qa/gateway/docs", root_path="/qa/gateway/")
+        call_next = AsyncMock(return_value=StarletteResponse("ok"))
+
+        with patch("mcpgateway.main.require_docs_auth_override", side_effect=HTTPException(status_code=401, detail="nope")):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 401
+
 
 class TestAdminAuthMiddleware:
     """Cover AdminAuthMiddleware branches."""
@@ -574,6 +637,62 @@ class TestAdminAuthMiddleware:
         response = await middleware.dispatch(request, call_next)
         assert response == "ok"
         call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_exempt_login_with_prefixed_scope_path(self, monkeypatch):
+        """When proxy forwards full path, /admin/login must still be exempt after normalization."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/qa/gateway/admin/login", root_path="/qa/gateway")
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = await middleware.dispatch(request, call_next)
+        assert response == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_root_path_slash_does_not_break_paths(self, monkeypatch):
+        """root_path of '/' must be ignored so /admin routes are still detected."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/login", root_path="/")
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = await middleware.dispatch(request, call_next)
+        # /admin/login is exempt; leading slash must not be stripped
+        assert response == "ok"
+        call_next.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_prefixed_non_exempt_path_enforces_auth(self, monkeypatch):
+        """A non-exempt prefixed admin path must be detected as admin and require auth."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/qa/gateway/admin/tools", root_path="/qa/gateway", headers={"accept": "text/html"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = await middleware.dispatch(request, call_next)
+        # No credentials: should redirect to login (302), not pass through
+        assert response.status_code == 302
+        assert "/admin/login" in response.headers.get("location", "")
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_trailing_slash_root_path(self, monkeypatch):
+        """root_path with trailing slash must still normalize correctly."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/qa/gateway/admin/tools", root_path="/qa/gateway/", headers={"accept": "text/html"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+
+        response = await middleware.dispatch(request, call_next)
+        assert response.status_code == 302
+        assert "/admin/login" in response.headers.get("location", "")
+        call_next.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_admin_auth_cookie_token_revocation_check_failure_still_allows(self, monkeypatch):
