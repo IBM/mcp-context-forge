@@ -8,11 +8,16 @@ Tests the automatic assignment and revocation of platform_admin role
 when is_admin flag changes.
 """
 
-import pytest
+# Standard
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
+import pytest
 from sqlalchemy.orm import Session
-from mcpgateway.services.email_auth_service import EmailAuthService
+
+# First-Party
 from mcpgateway.db import EmailUser
+from mcpgateway.services.email_auth_service import EmailAuthService
 
 
 @pytest.fixture
@@ -27,28 +32,24 @@ async def test_create_user_admin_role_not_found(mock_db):
     service = EmailAuthService(mock_db)
 
     # Mock get_user_by_email to return None (user doesn't exist)
-    with patch.object(service, 'get_user_by_email', new=AsyncMock(return_value=None)):
+    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
         # Mock password hashing
-        with patch.object(service.password_service, 'hash_password_async', new=AsyncMock(return_value='hashed')):
+        with patch.object(service.password_service, "hash_password_async", new=AsyncMock(return_value="hashed")):
             # Mock RoleService.get_role_by_name to return None (role not found)
-            with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
                 mock_role_service = AsyncMock()
                 mock_role_service.get_role_by_name = AsyncMock(return_value=None)
-                MockRoleService.return_value = mock_role_service
+                mock_role_service_cls.return_value = mock_role_service
 
                 # Create admin user
-                user = await service.create_user(
-                    email='test@example.com',
-                    password='TestPass123!',
-                    is_admin=True
-                )
+                user = await service.create_user(email="test@example.com", password="TestPass123!", is_admin=True)
 
                 # Verify user was created despite role not found
                 assert user.is_admin is True
-                assert user.email == 'test@example.com'
+                assert user.email == "test@example.com"
 
                 # Verify warning was logged (role not found)
-                mock_role_service.get_role_by_name.assert_called_once_with('platform_admin', 'global')
+                mock_role_service.get_role_by_name.assert_called_once_with("platform_admin", "global")
 
 
 @pytest.mark.asyncio
@@ -57,28 +58,24 @@ async def test_create_user_admin_role_assignment_exception(mock_db):
     service = EmailAuthService(mock_db)
 
     # Mock get_user_by_email to return None
-    with patch.object(service, 'get_user_by_email', new=AsyncMock(return_value=None)):
+    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
         # Mock password hashing
-        with patch.object(service.password_service, 'hash_password_async', new=AsyncMock(return_value='hashed')):
+        with patch.object(service.password_service, "hash_password_async", new=AsyncMock(return_value="hashed")):
             # Mock RoleService to raise exception during assignment
-            with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
                 mock_role_service = AsyncMock()
-                mock_role = MagicMock(id='role-123')
+                mock_role = MagicMock(id="role-123")
                 mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
                 mock_role_service.get_user_role_assignment = AsyncMock(return_value=None)
-                mock_role_service.assign_role_to_user = AsyncMock(side_effect=Exception('DB error'))
-                MockRoleService.return_value = mock_role_service
+                mock_role_service.assign_role_to_user = AsyncMock(side_effect=Exception("DB error"))
+                mock_role_service_cls.return_value = mock_role_service
 
                 # Create admin user - should succeed despite role assignment failure
-                user = await service.create_user(
-                    email='test@example.com',
-                    password='TestPass123!',
-                    is_admin=True
-                )
+                user = await service.create_user(email="test@example.com", password="TestPass123!", is_admin=True)
 
                 # Verify user was created despite role assignment failure
                 assert user.is_admin is True
-                assert user.email == 'test@example.com'
+                assert user.email == "test@example.com"
 
 
 @pytest.mark.asyncio
@@ -87,12 +84,7 @@ async def test_update_user_admin_role_not_found(mock_db):
     service = EmailAuthService(mock_db)
 
     # Create existing user
-    existing_user = EmailUser(
-        email='test@example.com',
-        password_hash='hashed',
-        is_admin=False,
-        is_active=True
-    )
+    existing_user = EmailUser(email="test@example.com", password_hash="hashed", is_admin=False, is_active=True)
 
     # Mock database query to return existing user
     mock_result = MagicMock()
@@ -100,22 +92,19 @@ async def test_update_user_admin_role_not_found(mock_db):
     mock_db.execute.return_value = mock_result
 
     # Mock RoleService.get_role_by_name to return None
-    with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+    with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
         mock_role_service = AsyncMock()
         mock_role_service.get_role_by_name = AsyncMock(return_value=None)
-        MockRoleService.return_value = mock_role_service
+        mock_role_service_cls.return_value = mock_role_service
 
         # Update user to admin
-        updated_user = await service.update_user(
-            email='test@example.com',
-            is_admin=True
-        )
+        updated_user = await service.update_user(email="test@example.com", is_admin=True)
 
         # Verify user was updated despite role not found
         assert updated_user.is_admin is True
 
         # Verify warning was logged
-        mock_role_service.get_role_by_name.assert_called_once_with('platform_admin', 'global')
+        mock_role_service.get_role_by_name.assert_called_once_with("platform_admin", "global")
 
 
 @pytest.mark.asyncio
@@ -124,12 +113,7 @@ async def test_update_user_revoke_admin_role(mock_db):
     service = EmailAuthService(mock_db)
 
     # Create existing admin user
-    existing_user = EmailUser(
-        email='test@example.com',
-        password_hash='hashed',
-        is_admin=True,
-        is_active=True
-    )
+    existing_user = EmailUser(email="test@example.com", password_hash="hashed", is_admin=True, is_active=True)
 
     # Mock database query to return existing user
     mock_result = MagicMock()
@@ -137,35 +121,27 @@ async def test_update_user_revoke_admin_role(mock_db):
     mock_db.execute.return_value = mock_result
 
     # Mock is_last_active_admin to return False (not last admin)
-    with patch.object(service, 'is_last_active_admin', new=AsyncMock(return_value=False)):
+    with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
         # Mock settings.protect_all_admins to False
-        with patch('mcpgateway.services.email_auth_service.settings') as mock_settings:
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.protect_all_admins = False
 
             # Mock RoleService
-            with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
                 mock_role_service = AsyncMock()
-                mock_role = MagicMock(id='role-123')
+                mock_role = MagicMock(id="role-123")
                 mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
                 mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
-                MockRoleService.return_value = mock_role_service
+                mock_role_service_cls.return_value = mock_role_service
 
                 # Update user to non-admin
-                updated_user = await service.update_user(
-                    email='test@example.com',
-                    is_admin=False
-                )
+                updated_user = await service.update_user(email="test@example.com", is_admin=False)
 
                 # Verify user was demoted
                 assert updated_user.is_admin is False
 
                 # Verify role was revoked
-                mock_role_service.revoke_role_from_user.assert_called_once_with(
-                    user_email='test@example.com',
-                    role_id='role-123',
-                    scope='global',
-                    scope_id=None
-                )
+                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="role-123", scope="global", scope_id=None)
 
 
 @pytest.mark.asyncio
@@ -174,12 +150,7 @@ async def test_update_user_admin_role_sync_exception(mock_db):
     service = EmailAuthService(mock_db)
 
     # Create existing user
-    existing_user = EmailUser(
-        email='test@example.com',
-        password_hash='hashed',
-        is_admin=False,
-        is_active=True
-    )
+    existing_user = EmailUser(email="test@example.com", password_hash="hashed", is_admin=False, is_active=True)
 
     # Mock database query to return existing user
     mock_result = MagicMock()
@@ -187,18 +158,15 @@ async def test_update_user_admin_role_sync_exception(mock_db):
     mock_db.execute.return_value = mock_result
 
     # Mock RoleService to raise exception
-    with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+    with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
         mock_role_service = AsyncMock()
-        mock_role = MagicMock(id='role-123')
+        mock_role = MagicMock(id="role-123")
         mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
-        mock_role_service.get_user_role_assignment = AsyncMock(side_effect=Exception('DB error'))
-        MockRoleService.return_value = mock_role_service
+        mock_role_service.get_user_role_assignment = AsyncMock(side_effect=Exception("DB error"))
+        mock_role_service_cls.return_value = mock_role_service
 
         # Update user to admin - should succeed despite role sync failure
-        updated_user = await service.update_user(
-            email='test@example.com',
-            is_admin=True
-        )
+        updated_user = await service.update_user(email="test@example.com", is_admin=True)
 
         # Verify user was updated despite role sync failure
         assert updated_user.is_admin is True
@@ -210,30 +178,26 @@ async def test_create_user_admin_role_already_assigned(mock_db):
     service = EmailAuthService(mock_db)
 
     # Mock get_user_by_email to return None (user doesn't exist)
-    with patch.object(service, 'get_user_by_email', new=AsyncMock(return_value=None)):
+    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
         # Mock password hashing
-        with patch.object(service.password_service, 'hash_password_async', new=AsyncMock(return_value='hashed')):
+        with patch.object(service.password_service, "hash_password_async", new=AsyncMock(return_value="hashed")):
             # Mock RoleService with existing active assignment
-            with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
                 mock_role_service = AsyncMock()
-                mock_role = MagicMock(id='role-123')
+                mock_role = MagicMock(id="role-123")
                 mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
 
                 # Mock existing active assignment
                 mock_assignment = MagicMock(is_active=True)
                 mock_role_service.get_user_role_assignment = AsyncMock(return_value=mock_assignment)
-                MockRoleService.return_value = mock_role_service
+                mock_role_service_cls.return_value = mock_role_service
 
                 # Create admin user
-                user = await service.create_user(
-                    email='test@example.com',
-                    password='TestPass123!',
-                    is_admin=True
-                )
+                user = await service.create_user(email="test@example.com", password="TestPass123!", is_admin=True)
 
                 # Verify user was created
                 assert user.is_admin is True
-                assert user.email == 'test@example.com'
+                assert user.email == "test@example.com"
 
                 # Verify role assignment was checked but not called (already exists)
                 mock_role_service.get_user_role_assignment.assert_called_once()
@@ -246,39 +210,29 @@ async def test_create_user_admin_role_successful_assignment(mock_db):
     service = EmailAuthService(mock_db)
 
     # Mock get_user_by_email to return None (user doesn't exist)
-    with patch.object(service, 'get_user_by_email', new=AsyncMock(return_value=None)):
+    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
         # Mock password hashing
-        with patch.object(service.password_service, 'hash_password_async', new=AsyncMock(return_value='hashed')):
+        with patch.object(service.password_service, "hash_password_async", new=AsyncMock(return_value="hashed")):
             # Mock RoleService with no existing assignment
-            with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
                 mock_role_service = AsyncMock()
-                mock_role = MagicMock(id='role-123')
+                mock_role = MagicMock(id="role-123")
                 mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
 
                 # Mock no existing assignment
                 mock_role_service.get_user_role_assignment = AsyncMock(return_value=None)
                 mock_role_service.assign_role_to_user = AsyncMock()
-                MockRoleService.return_value = mock_role_service
+                mock_role_service_cls.return_value = mock_role_service
 
                 # Create admin user
-                user = await service.create_user(
-                    email='test@example.com',
-                    password='TestPass123!',
-                    is_admin=True
-                )
+                user = await service.create_user(email="test@example.com", password="TestPass123!", is_admin=True)
 
                 # Verify user was created
                 assert user.is_admin is True
-                assert user.email == 'test@example.com'
+                assert user.email == "test@example.com"
 
                 # Verify role was assigned
-                mock_role_service.assign_role_to_user.assert_called_once_with(
-                    user_email='test@example.com',
-                    role_id='role-123',
-                    scope='global',
-                    scope_id=None,
-                    granted_by='test@example.com'
-                )
+                mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="role-123", scope="global", scope_id=None, granted_by="test@example.com")
 
 
 @pytest.mark.asyncio
@@ -287,12 +241,7 @@ async def test_update_user_assign_admin_role_inactive_assignment(mock_db):
     service = EmailAuthService(mock_db)
 
     # Create existing user
-    existing_user = EmailUser(
-        email='test@example.com',
-        password_hash='hashed',
-        is_admin=False,
-        is_active=True
-    )
+    existing_user = EmailUser(email="test@example.com", password_hash="hashed", is_admin=False, is_active=True)
 
     # Mock database query to return existing user
     mock_result = MagicMock()
@@ -300,31 +249,22 @@ async def test_update_user_assign_admin_role_inactive_assignment(mock_db):
     mock_db.execute.return_value = mock_result
 
     # Mock RoleService with inactive assignment
-    with patch('mcpgateway.services.role_service.RoleService') as MockRoleService:
+    with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
         mock_role_service = AsyncMock()
-        mock_role = MagicMock(id='role-123')
+        mock_role = MagicMock(id="role-123")
         mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
 
         # Mock existing but inactive assignment
         mock_assignment = MagicMock(is_active=False)
         mock_role_service.get_user_role_assignment = AsyncMock(return_value=mock_assignment)
         mock_role_service.assign_role_to_user = AsyncMock()
-        MockRoleService.return_value = mock_role_service
+        mock_role_service_cls.return_value = mock_role_service
 
         # Update user to admin
-        updated_user = await service.update_user(
-            email='test@example.com',
-            is_admin=True
-        )
+        updated_user = await service.update_user(email="test@example.com", is_admin=True)
 
         # Verify user was promoted
         assert updated_user.is_admin is True
 
         # Verify role was assigned (because existing assignment was inactive)
-        mock_role_service.assign_role_to_user.assert_called_once_with(
-            user_email='test@example.com',
-            role_id='role-123',
-            scope='global',
-            scope_id=None,
-            granted_by='test@example.com'
-        )
+        mock_role_service.assign_role_to_user.assert_called_once_with(user_email="test@example.com", role_id="role-123", scope="global", scope_id=None, granted_by="test@example.com")
