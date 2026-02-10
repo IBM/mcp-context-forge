@@ -50,6 +50,11 @@ This release updates the authentication model with revised defaults and improved
 * **Configuration Section** in `.env.example` with documented settings
 * **Deferred Issues Tracking** in documentation
 
+#### OAuth Client Credentials Authentication
+* Added support for sending client credentials either in the request body (default behavior) or in the HTTP headers **for the Client Credentials grant type only**
+* Configuration exposed via a UI dropdown selector
+* Enables compliance with environments enforcing strict security policies for sensitive credentials
+* Other OAuth grant types are not affected
 ---
 
 ## [1.0.0-BETA-2] - 2026-01-20 - Performance, Scale & Reliability
