@@ -472,34 +472,6 @@ class EmailAuthService:
             self.db.add(registration_event)
             self.db.commit()
 
-            # Auto-assign platform_admin role if is_admin=True
-            if is_admin:
-                try:
-                    # Import here to avoid circular imports
-                    # First-Party
-                    from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
-
-                    role_service = RoleService(self.db)
-
-                    # Look up platform_admin role
-                    platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
-
-                    if platform_admin_role:
-                        # Check if assignment already exists
-                        existing_assignment = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
-
-                        if not existing_assignment or not existing_assignment.is_active:
-                            await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
-                            logger.info(f"Auto-assigned platform_admin role to {email}")
-                        else:
-                            logger.info(f"User {email} already has platform_admin role")
-                    else:
-                        logger.warning(f"platform_admin role not found, cannot auto-assign to {email}")
-
-                except Exception as e:
-                    logger.warning(f"Failed to auto-assign platform_admin role to {email}: {e}")
-                    # Don't fail user creation if role assignment fails
-
             return user
 
         except IntegrityError as e:
@@ -1179,7 +1151,9 @@ class EmailAuthService:
                     user.is_admin = is_admin
                     user.admin_origin = admin_origin_source if is_admin else None
 
-                    # Sync platform_admin role assignment with is_admin flag
+                    # Sync global role assignment with is_admin flag:
+                    # Promotion: revoke platform_viewer, assign platform_admin
+                    # Demotion: revoke platform_admin, assign platform_viewer
                     try:
                         # Import here to avoid circular imports
                         # First-Party
@@ -1187,27 +1161,40 @@ class EmailAuthService:
 
                         role_service = RoleService(self.db)
 
-                        # Look up platform_admin role
                         platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
+                        platform_viewer_role = await role_service.get_role_by_name("platform_viewer", "global")
 
-                        if platform_admin_role:
-                            if is_admin:
-                                # Assign platform_admin role
-                                existing_assignment = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
-
-                                if not existing_assignment or not existing_assignment.is_active:
+                        if is_admin:
+                            # Promotion: assign platform_admin, revoke platform_viewer
+                            if platform_admin_role:
+                                existing = await role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                                if not existing or not existing.is_active:
                                     await role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
                                     logger.info(f"Assigned platform_admin role to {email}")
                             else:
-                                # Revoke platform_admin role
+                                logger.warning(f"platform_admin role not found, cannot assign to {email}")
+
+                            if platform_viewer_role:
+                                revoked = await role_service.revoke_role_from_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked platform_viewer role from {email}")
+                        else:
+                            # Demotion: revoke platform_admin, assign platform_viewer
+                            if platform_admin_role:
                                 revoked = await role_service.revoke_role_from_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
                                 if revoked:
                                     logger.info(f"Revoked platform_admin role from {email}")
-                        else:
-                            logger.warning(f"platform_admin role not found, cannot sync role for {email}")
+
+                            if platform_viewer_role:
+                                existing = await role_service.get_user_role_assignment(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
+                                if not existing or not existing.is_active:
+                                    await role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned platform_viewer role to {email}")
+                            else:
+                                logger.warning(f"platform_viewer role not found, cannot assign to {email}")
 
                     except Exception as e:
-                        logger.warning(f"Failed to sync platform_admin role for {email}: {e}")
+                        logger.warning(f"Failed to sync global roles for {email}: {e}")
                         # Don't fail user update if role sync fails
 
             if is_active is not None:
