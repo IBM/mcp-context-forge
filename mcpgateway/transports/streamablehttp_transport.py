@@ -592,8 +592,8 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         # Use MCP SDK to connect and read resource
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
-                # Initialize session
-                await session.initialize()
+                # Skip initialize() for stateless MCP servers
+                # await session.initialize()
 
                 # Prepare request params with _meta if provided
                 if meta:

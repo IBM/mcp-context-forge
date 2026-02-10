@@ -2610,7 +2610,8 @@ class ToolService:
         try:  # pragma: no cover - integration test
             async with streamablehttp_client(url=gateway_url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
-                    await session.initialize()
+                    # Skip session initialize for stateless servers
+                    # await session.initialize()
 
                     # Call tool with meta if provided
                     if meta_data:
