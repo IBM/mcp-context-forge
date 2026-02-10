@@ -3110,7 +3110,7 @@ class TestConvertToolToReadMetrics:
 
 class TestExtractUsingJqErrors:
     def test_jq_filter_returns_none_result(self):
-        """When jq filter produces [None], returns error string."""
+        """When jq filter produces [None], returns error TextContent in list."""
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter") as mock_compile:
@@ -3121,16 +3121,21 @@ class TestExtractUsingJqErrors:
             mock_compile.return_value = mock_prog
 
             result = extract_using_jq({"key": "value"}, ".x")
-        assert result == "Error applying jsonpath filter"
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], TextContent)
+        assert result[0].text == "Error applying jsonpath filter"
 
     def test_jq_filter_exception(self):
-        """When jq raises exception, returns error message."""
+        """When jq raises exception, returns error message as TextContent in list."""
         import mcpgateway.services.tool_service as ts
 
         with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
             result = extract_using_jq({"data": 1}, "bad_filter")
-        assert isinstance(result, str)
-        assert "Error" in result
+        assert isinstance(result, list)
+        assert len(result) == 1
+        assert isinstance(result[0], TextContent)
+        assert "Error" in result[0].text
 
 
 # ---------------------------------------------------------------------------
