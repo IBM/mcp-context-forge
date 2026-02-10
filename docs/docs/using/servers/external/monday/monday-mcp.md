@@ -44,9 +44,11 @@ Before integrating monday.com MCP Server with MCP Gateway, ensure you have:
 1. Navigate to your monday.com account settings
 2. Go to **Developers** → **My Apps** → **Create App**
 3. Configure your OAuth application:
+
    - **App Name**: Choose a descriptive name (e.g., "MCP Gateway Integration")
    - **Redirect URI**: Set to your MCP Gateway callback URL (e.g., `https://your-gateway.com/oauth/callback`)
    - **Scopes**: Select required permissions (see [Required Permissions](#required-permissions))
+
 4. Save your **Client ID** and **Client Secret** securely
 
 ### Required Permissions

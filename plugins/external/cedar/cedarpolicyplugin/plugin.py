@@ -42,6 +42,9 @@ from mcpgateway.services.logging_service import LoggingService
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+# Precompiled regex pattern for DSL parsing
+_DSL_ROLE_PATTERN_RE = re.compile(r"\[role:([A-Za-z0-9_]+):(resource|prompt|server|agent)/([^\]]+)\]")
+
 
 class CedarCodes(str, Enum):
     """CedarCodes implementation."""
@@ -178,9 +181,8 @@ class CedarPolicyPlugin(Plugin):
         resource_category = None
         resource_name = None
 
-        pattern = r"\[role:([A-Za-z0-9_]+):(resource|prompt|server|agent)/([^\]]+)\]"
         for line in lines:
-            match = re.match(pattern, line)
+            match = _DSL_ROLE_PATTERN_RE.match(line)
             if match:
                 if current_role and resource_category and resource_name and current_actions:
                     resource_category = resource_category.capitalize()

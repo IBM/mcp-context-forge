@@ -28,7 +28,9 @@ spec:
         - name: {{ . }}
         {{- end }}
       {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
       containers:
         - name: pgadmin
           image: "{{ .Values.pgadmin.image.repository }}:{{ .Values.pgadmin.image.tag }}"
@@ -58,8 +60,8 @@ spec:
             - name: PGADMIN_DEFAULT_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
-                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+                  name: {{ include "mcp-stack.pgadminSecretName" . | trim }}
+                  key: {{ .Values.pgadmin.passwordKey | default "PGADMIN_DEFAULT_PASSWORD" }}
             - name: PGADMIN_LISTEN_PORT
               value: "{{ .Values.pgadmin.service.port }}"
 

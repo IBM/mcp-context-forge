@@ -14,7 +14,16 @@ tests/
 ├── playwright/        # UI automation (requires extra setup)
 ├── security/          # Security validation tests
 ├── fuzz/             # Fuzzing & property-based testing
+├── load/             # Load testing scenarios
+├── loadtest/         # Locust load test configurations
+├── jmeter/           # JMeter performance test plans
+├── client/           # MCP client testing
+├── async/            # Async operation tests
+├── migration/        # Database migration tests
+├── differential/     # Differential testing
+├── manual/           # Manual test scenarios
 ├── helpers/           # Test utilities (query_counter.py, conftest.py)
+├── utils/            # Additional test utilities
 └── conftest.py        # Shared pytest fixtures
 ```
 
@@ -40,6 +49,13 @@ make dev-query-log                # Dev server with query logging
 make query-log-tail               # Tail query log in another terminal
 make query-log-analyze            # Analyze for N+1 patterns
 make test-db-perf                 # Run performance tests
+
+# JMeter load testing
+make jmeter-rest-baseline         # REST API baseline (1,000 RPS, 10min)
+make jmeter-mcp-baseline          # MCP JSON-RPC baseline (1,000 RPS, 15min)
+make jmeter-load                  # Production load test (4,000 RPS, 30min)
+make jmeter-stress                # Stress test (ramp to 10,000 RPS)
+make jmeter-report                # Generate HTML report from JTL file
 
 # PR readiness
 make doctest test htmlcov smoketest lint-web flake8 bandit interrogate pylint verify

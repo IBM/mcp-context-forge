@@ -387,6 +387,118 @@ class TestGetCurrentUser:
                             assert user.is_active is True
 
     @pytest.mark.asyncio
+    async def test_require_user_in_db_rejects_platform_admin(self):
+        """Test that REQUIRE_USER_IN_DB=true rejects even platform admin when user not in DB."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+
+        jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):  # User not in DB
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.config.settings.platform_admin_email", "admin@example.com"):
+                        with patch("mcpgateway.config.settings.require_user_in_db", True):
+                            with pytest.raises(HTTPException) as exc_info:
+                                await get_current_user(credentials=credentials)
+
+                            assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                            assert exc_info.value.detail == "User not found in database"
+
+    @pytest.mark.asyncio
+    async def test_require_user_in_db_allows_existing_user(self):
+        """Test that REQUIRE_USER_IN_DB=true allows users that exist in the database."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+
+        jwt_payload = {"sub": "existing@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="existing@example.com",
+            password_hash="hash",
+            full_name="Existing User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.config.settings.require_user_in_db", True):
+                        user = await get_current_user(credentials=credentials)
+
+                        assert user.email == "existing@example.com"
+                        assert user.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_require_user_in_db_logs_rejection(self, caplog):
+        """Test that REQUIRE_USER_IN_DB rejection is logged."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+
+        jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.config.settings.require_user_in_db", True):
+                        with caplog.at_level(logging.WARNING):
+                            with pytest.raises(HTTPException):
+                                await get_current_user(credentials=credentials)
+
+                        assert any("REQUIRE_USER_IN_DB is enabled" in record.message for record in caplog.records)
+                        assert any("user not found in database" in record.message for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_require_user_in_db_rejects_cached_user_not_in_db(self):
+        """Test that REQUIRE_USER_IN_DB=true rejects cached users that no longer exist in DB."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")
+
+        jwt_payload = {"sub": "cached@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        # Mock cached auth context with a user
+        mock_cached_ctx = MagicMock()
+        mock_cached_ctx.is_token_revoked = False
+        mock_cached_ctx.user = {"email": "cached@example.com", "is_active": True, "is_admin": False}
+        mock_cached_ctx.personal_team_id = None
+
+        mock_auth_cache = MagicMock()
+        mock_auth_cache.get_auth_context = AsyncMock(return_value=mock_cached_ctx)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.config.settings.auth_cache_enabled", True):
+                with patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth_cache):
+                    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):  # User deleted from DB
+                        with patch("mcpgateway.config.settings.require_user_in_db", True):
+                            with pytest.raises(HTTPException) as exc_info:
+                                await get_current_user(credentials=credentials)
+
+                            assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                            assert exc_info.value.detail == "User not found in database"
+
+    @pytest.mark.asyncio
+    async def test_require_user_in_db_batched_path_rejects_missing_user(self):
+        """Test that REQUIRE_USER_IN_DB=true rejects users via batched auth path."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="admin_jwt")
+
+        jwt_payload = {"sub": "admin@example.com", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        # Mock the batched query to return no user (user=None means not found)
+        mock_batch_result = {"user": None, "is_token_revoked": False, "personal_team_id": None}
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.config.settings.auth_cache_enabled", False):  # Disable cache
+                with patch("mcpgateway.config.settings.auth_cache_batch_queries", True):  # Enable batched queries
+                    with patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=mock_batch_result):
+                        with patch("mcpgateway.config.settings.platform_admin_email", "admin@example.com"):
+                            with patch("mcpgateway.config.settings.require_user_in_db", True):
+                                with pytest.raises(HTTPException) as exc_info:
+                                    await get_current_user(credentials=credentials)
+
+                                assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+                                assert exc_info.value.detail == "User not found in database"
+
+    @pytest.mark.asyncio
     async def test_inactive_user_raises_401(self):
         """Test that inactive user account raises 401."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")

@@ -119,7 +119,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "client_id": settings.sso_github_client_id,
                 "client_secret": settings.sso_github_client_secret.get_secret_value() if settings.sso_github_client_secret else "",
                 "authorization_url": "https://github.com/login/oauth/authorize",
-                "token_url": "https://github.com/login/oauth/access_token",
+                "token_url": "https://github.com/login/oauth/access_token",  # nosec B105 - public OAuth endpoint
                 "userinfo_url": "https://api.github.com/user",
                 "scope": "user:email",
                 "trusted_domains": settings.sso_trusted_domains,
@@ -139,7 +139,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "client_id": settings.sso_google_client_id,
                 "client_secret": settings.sso_google_client_secret.get_secret_value() if settings.sso_google_client_secret else "",
                 "authorization_url": "https://accounts.google.com/o/oauth2/auth",
-                "token_url": "https://oauth2.googleapis.com/token",
+                "token_url": "https://oauth2.googleapis.com/token",  # nosec B105 - public OAuth endpoint
                 "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
                 "issuer": "https://accounts.google.com",
                 "scope": "openid profile email",
@@ -213,6 +213,10 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
                 "team_mapping": {},
+                "provider_metadata": {
+                    "groups_claim": settings.sso_entra_groups_claim,
+                    "role_mappings": settings.sso_entra_role_mappings,
+                },
             }
         )
 
@@ -242,7 +246,7 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "trusted_domains": settings.sso_trusted_domains,
                         "auto_create_users": settings.sso_auto_create_users,
                         "team_mapping": {},
-                        "metadata": {
+                        "provider_metadata": {
                             "realm": settings.sso_keycloak_realm,
                             "base_url": settings.sso_keycloak_base_url,
                             "map_realm_roles": settings.sso_keycloak_map_realm_roles,
@@ -285,7 +289,7 @@ def get_predefined_sso_providers() -> List[Dict]:
     return providers
 
 
-def bootstrap_sso_providers() -> None:
+async def bootstrap_sso_providers() -> None:
     """Bootstrap SSO providers from environment configuration.
 
     This function should be called during application startup to
@@ -293,7 +297,8 @@ def bootstrap_sso_providers() -> None:
 
     Examples:
         >>> # This would typically be called during app startup
-        >>> bootstrap_sso_providers()  # doctest: +SKIP
+        >>> import asyncio
+        >>> asyncio.run(bootstrap_sso_providers())  # doctest: +SKIP
     """
     if not settings.sso_enabled:
         return
@@ -316,12 +321,32 @@ def bootstrap_sso_providers() -> None:
             existing_by_name = sso_service.get_provider_by_name(provider_config["name"])
 
             if not existing_by_id and not existing_by_name:
-                sso_service.create_provider(provider_config)
+                await sso_service.create_provider(provider_config)
                 print(f"✅ Created SSO provider: {provider_config['display_name']}")
             else:
                 # Update existing provider with current configuration
                 existing_provider = existing_by_id or existing_by_name
-                updated = sso_service.update_provider(existing_provider.id, provider_config)
+
+                # Smart merge for provider_metadata (see ADR-0003 for rationale):
+                # - Env config provides DEFAULTS for keys not in DB
+                # - DB values are PRESERVED (Admin API changes survive restarts)
+                # - New env keys introduced in upgrades APPLY automatically
+                #
+                # Trade-off: To change a key that exists in DB, use Admin API or reset provider.
+                # This prevents env config from unexpectedly overriding intentional Admin API changes.
+                #
+                # Example:
+                #   env:  {"groups_claim": "groups", "new_setting": "value"}
+                #   db:   {"groups_claim": "custom", "sync_roles": false}
+                #   result: {"groups_claim": "custom", "new_setting": "value", "sync_roles": false}
+                if "provider_metadata" in provider_config and existing_provider.provider_metadata:
+                    env_metadata = provider_config["provider_metadata"] or {}
+                    db_metadata = existing_provider.provider_metadata or {}
+                    # Env provides base, DB values override (preserving Admin API changes)
+                    merged_metadata = {**env_metadata, **db_metadata}
+                    provider_config["provider_metadata"] = merged_metadata
+
+                updated = await sso_service.update_provider(existing_provider.id, provider_config)
                 if updated:
                     print(f"🔄 Updated SSO provider: {provider_config['display_name']} (ID: {existing_provider.id})")
                 else:
@@ -341,4 +366,7 @@ def bootstrap_sso_providers() -> None:
 
 
 if __name__ == "__main__":
-    bootstrap_sso_providers()
+    # Standard
+    import asyncio
+
+    asyncio.run(bootstrap_sso_providers())

@@ -17,16 +17,9 @@ window.createMetricsController = function() {
      * Destroy all Chart.js instances to prevent canvas reuse errors
      */
     destroyAllCharts() {
-      Object.keys(this.charts).forEach(key => {
-        if (this.charts[key]) {
-          try {
-            this.charts[key].destroy();
-          } catch (e) {
-            console.warn(`Failed to destroy chart ${key}:`, e);
-          }
-          this.charts[key] = null;
-        }
-      });
+      // Use global registry for centralized cleanup
+      window.chartRegistry.destroyByPrefix('metrics-');
+      this.charts = {};
     },
 
     /**
@@ -47,16 +40,27 @@ window.createMetricsController = function() {
         if (document.hidden) {
           this.stopAutoRefresh();
         } else {
-          this.startAutoRefresh();
-          // Refresh data when tab becomes visible
-          if (!this.loading) {
-            this.loadAllMetrics();
+          // Check if we're still on the observability tab
+          const panel = document.getElementById('observability-panel');
+          if (panel && !panel.classList.contains('hidden')) {
+            this.startAutoRefresh();
+            // Refresh data when tab becomes visible
+            if (!this.loading) {
+              this.loadAllMetrics();
+            }
           }
         }
       };
       document.addEventListener('visibilitychange', this.visibilityHandler);
 
-      // Add cleanup on page unload as fallback
+      // Listen for tab leave event to stop auto-refresh and cleanup
+      this.leaveHandler = () => {
+        console.log('Metrics: received observability:leave event, stopping auto-refresh');
+        this.cleanup();
+      };
+      document.addEventListener('observability:leave', this.leaveHandler);
+
+      // Cleanup on page unload as fallback
       window.addEventListener('beforeunload', () => this.cleanup());
     },
 
@@ -68,6 +72,9 @@ window.createMetricsController = function() {
       this.stopAutoRefresh();
       if (this.visibilityHandler) {
         document.removeEventListener('visibilitychange', this.visibilityHandler);
+      }
+      if (this.leaveHandler) {
+        document.removeEventListener('observability:leave', this.leaveHandler);
       }
     },
     /**
@@ -155,26 +162,39 @@ window.createMetricsController = function() {
      * Render percentile chart with proper cleanup and error handling
      */
     renderPercentileChart(data) {
-      const ctx = document.getElementById('percentileChart');
-      if (!ctx) {
+      const canvas = document.getElementById('percentileChart');
+      if (!canvas) {
         console.warn('percentileChart canvas not found');
         return;
       }
 
-      // Destroy existing chart
-      if (this.charts.percentile) {
-        try {
-          this.charts.percentile.destroy();
-        } catch (e) {
-          console.warn('Failed to destroy percentile chart:', e);
-        }
-        this.charts.percentile = null;
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('percentileChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('metrics-percentile');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
         try {
-          this.charts.percentile = new Chart(ctx, {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('percentileChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for percentileChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
@@ -220,9 +240,13 @@ window.createMetricsController = function() {
             title: {
               display: true,
               text: 'Latency Percentiles Over Time',
+              color: defaults.titleColor,
             },
             legend: {
               position: 'bottom',
+              labels: {
+                color: defaults.color,
+              },
             },
             tooltip: {
               callbacks: {
@@ -238,11 +262,29 @@ window.createMetricsController = function() {
               title: {
                 display: true,
                 text: 'Latency (ms)',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
+            x: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('metrics-percentile', chart);
+          this.charts.percentile = chart;
         } catch (e) {
           console.error('Failed to create percentile chart:', e);
           this.error = 'Failed to render percentile chart';
@@ -253,26 +295,39 @@ window.createMetricsController = function() {
      * Render time series chart with proper cleanup and error handling
      */
     renderTimeSeriesChart(data) {
-      const ctx = document.getElementById('timeSeriesChart');
-      if (!ctx) {
+      const canvas = document.getElementById('timeSeriesChart');
+      if (!canvas) {
         console.warn('timeSeriesChart canvas not found');
         return;
       }
 
-      // Destroy existing chart
-      if (this.charts.timeSeries) {
-        try {
-          this.charts.timeSeries.destroy();
-        } catch (e) {
-          console.warn('Failed to destroy time series chart:', e);
-        }
-        this.charts.timeSeries = null;
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('timeSeriesChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('metrics-timeseries');
 
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
         try {
-          this.charts.timeSeries = new Chart(ctx, {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('timeSeriesChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for timeSeriesChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
         type: 'line',
         data: {
           labels: data.timestamps.map((t) => new Date(t).toLocaleTimeString()),
@@ -306,12 +361,24 @@ window.createMetricsController = function() {
             title: {
               display: true,
               text: 'Request Rate & Error Rate',
+              color: defaults.titleColor,
             },
             legend: {
               position: 'bottom',
+              labels: {
+                color: defaults.color,
+              },
             },
           },
           scales: {
+            x: {
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
+              },
+            },
             y: {
               type: 'linear',
               display: true,
@@ -319,6 +386,13 @@ window.createMetricsController = function() {
               title: {
                 display: true,
                 text: 'Requests',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
             y1: {
@@ -328,6 +402,10 @@ window.createMetricsController = function() {
               title: {
                 display: true,
                 text: 'Error Rate (%)',
+                color: defaults.titleColor,
+              },
+              ticks: {
+                color: defaults.tickColor,
               },
               grid: {
                 drawOnChartArea: false,
@@ -336,6 +414,9 @@ window.createMetricsController = function() {
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('metrics-timeseries', chart);
+          this.charts.timeSeries = chart;
         } catch (e) {
           console.error('Failed to create time series chart:', e);
           this.error = 'Failed to render time series chart';
@@ -349,12 +430,12 @@ window.createMetricsController = function() {
       tbody.innerHTML = data.endpoints
         .map(
           (ep, idx) => `
-            <tr>
-              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-500">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-300">${ep.endpoint}</td>
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-400">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200">${ep.endpoint}</td>
               <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${ep.count}</td>
-              <td class="px-4 py-2 text-sm text-orange-600 font-medium">${ep.avg_duration_ms} ms</td>
-              <td class="px-4 py-2 text-sm text-red-600">${ep.max_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-orange-600 dark:text-orange-400 font-medium">${ep.avg_duration_ms} ms</td>
+              <td class="px-4 py-2 text-sm text-red-600 dark:text-red-400">${ep.max_duration_ms} ms</td>
             </tr>
           `
         )
@@ -367,10 +448,10 @@ window.createMetricsController = function() {
       tbody.innerHTML = data.endpoints
         .map(
           (ep, idx) => `
-            <tr>
-              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-500">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-300">${ep.endpoint}</td>
-              <td class="px-4 py-2 text-sm font-medium text-blue-600">${ep.count}</td>
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-400">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200">${ep.endpoint}</td>
+              <td class="px-4 py-2 text-sm font-medium text-blue-600 dark:text-blue-400">${ep.count}</td>
               <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${ep.avg_duration_ms} ms</td>
             </tr>
           `
@@ -384,12 +465,12 @@ window.createMetricsController = function() {
       tbody.innerHTML = data.endpoints
         .map(
           (ep, idx) => `
-            <tr>
-              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-500">${idx + 1}</td>
-              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-300">${ep.endpoint}</td>
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+              <td class="px-4 py-2 text-sm text-gray-700 dark:text-gray-400">${idx + 1}</td>
+              <td class="px-4 py-2 text-sm font-mono text-gray-900 dark:text-gray-200">${ep.endpoint}</td>
               <td class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400">${ep.total_count}</td>
-              <td class="px-4 py-2 text-sm text-red-600 font-medium">${ep.error_count}</td>
-              <td class="px-4 py-2 text-sm text-red-700 font-bold">${ep.error_rate}%</td>
+              <td class="px-4 py-2 text-sm text-red-600 dark:text-red-400 font-medium">${ep.error_count}</td>
+              <td class="px-4 py-2 text-sm text-red-700 dark:text-red-300 font-bold">${ep.error_rate}%</td>
             </tr>
           `
         )
@@ -399,21 +480,20 @@ window.createMetricsController = function() {
      * Render heatmap chart with proper cleanup and error handling
      */
     renderHeatmap(data) {
-      const ctx = document.getElementById('heatmapChart');
-      if (!ctx) {
+      const canvas = document.getElementById('heatmapChart');
+      if (!canvas) {
         console.warn('heatmapChart canvas not found');
         return;
       }
 
-      // Destroy existing chart
-      if (this.charts.heatmap) {
-        try {
-          this.charts.heatmap.destroy();
-        } catch (e) {
-          console.warn('Failed to destroy heatmap chart:', e);
-        }
-        this.charts.heatmap = null;
+      // Check if canvas is visible before rendering
+      if (canvas.offsetParent === null) {
+        console.warn('heatmapChart canvas is hidden, deferring render');
+        return;
       }
+
+      // Destroy existing chart via global registry
+      window.chartRegistry.destroy('metrics-heatmap');
 
       // Flatten the 2D heatmap data for Chart.js matrix
       const heatmapData = [];
@@ -430,7 +510,21 @@ window.createMetricsController = function() {
       // Use requestAnimationFrame to ensure canvas is ready
       requestAnimationFrame(() => {
         try {
-          this.charts.heatmap = new Chart(ctx, {
+          // Double-check visibility after animation frame
+          if (canvas.offsetParent === null) {
+            console.warn('heatmapChart canvas became hidden, aborting render');
+            return;
+          }
+
+          // Verify canvas is still in DOM and get valid context
+          const ctx = canvas.getContext('2d');
+          if (!ctx) {
+            console.error('Failed to get 2d context for heatmapChart');
+            return;
+          }
+
+          const defaults = getChartDefaults();
+          const chart = new Chart(ctx, {
             type: 'scatter',
         data: {
           datasets: [
@@ -455,6 +549,7 @@ window.createMetricsController = function() {
             title: {
               display: true,
               text: 'Latency Distribution Heatmap',
+              color: defaults.titleColor,
             },
             legend: {
               display: false,
@@ -478,6 +573,7 @@ window.createMetricsController = function() {
               position: 'bottom',
               ticks: {
                 stepSize: 1,
+                color: defaults.tickColor,
                 callback: function (value) {
                   return data.time_labels[value] || '';
                 },
@@ -485,12 +581,17 @@ window.createMetricsController = function() {
               title: {
                 display: true,
                 text: 'Time',
+                color: defaults.titleColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
             y: {
               type: 'linear',
               ticks: {
                 stepSize: 1,
+                color: defaults.tickColor,
                 callback: function (value) {
                   return data.latency_labels[value] || '';
                 },
@@ -498,11 +599,18 @@ window.createMetricsController = function() {
               title: {
                 display: true,
                 text: 'Latency',
+                color: defaults.titleColor,
+              },
+              grid: {
+                color: defaults.gridColor,
               },
             },
           },
         },
       });
+          // Register with global registry
+          window.chartRegistry.register('metrics-heatmap', chart);
+          this.charts.heatmap = chart;
         } catch (e) {
           console.error('Failed to create heatmap chart:', e);
           this.error = 'Failed to render heatmap chart';
@@ -543,7 +651,7 @@ window.createMetricsController = function() {
 
 <div class="metrics-dashboard" x-data="createMetricsController()" x-init="init()" @destroy.window="cleanup()">
   <!-- Controls -->
-  <div class="mb-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow">
+  <div class="mb-6 p-4 bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30">
     <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
       <div>
         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
@@ -552,7 +660,7 @@ window.createMetricsController = function() {
         <select
           x-model="timeRange"
           @change="applyFilters()"
-          class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
         >
           <option value="1">Last Hour</option>
           <option value="6">Last 6 Hours</option>
@@ -569,7 +677,7 @@ window.createMetricsController = function() {
         <select
           x-model="interval"
           @change="applyFilters()"
-          class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
         >
           <option value="5">5 Minutes</option>
           <option value="15">15 Minutes</option>
@@ -586,7 +694,7 @@ window.createMetricsController = function() {
         <select
           x-model="limit"
           @change="applyFilters()"
-          class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-400"
         >
           <option value="5">Top 5</option>
           <option value="10" selected>Top 10</option>
@@ -599,7 +707,7 @@ window.createMetricsController = function() {
         <button
           @click="applyFilters()"
           :disabled="loading"
-          class="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          class="w-full px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 disabled:opacity-50 transition-colors"
         >
           <span x-show="!loading">Refresh</span>
           <span x-show="loading">Loading...</span>
@@ -607,29 +715,29 @@ window.createMetricsController = function() {
       </div>
     </div>
 
-    <div x-show="error" class="mt-4 p-3 bg-red-100 text-red-700 rounded-lg" x-text="error"></div>
+    <div x-show="error" class="mt-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 rounded-lg" x-text="error"></div>
   </div>
 
   <!-- Charts Grid -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
     <!-- Percentile Chart -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-      <div style="height: 300px">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4">
+      <div class="h-[300px]">
         <canvas id="percentileChart"></canvas>
       </div>
     </div>
 
     <!-- Time Series Chart -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-      <div style="height: 300px">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4">
+      <div class="h-[300px]">
         <canvas id="timeSeriesChart"></canvas>
       </div>
     </div>
   </div>
 
   <!-- Heatmap -->
-  <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 mb-6">
-    <div style="height: 400px">
+  <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30 p-4 mb-6">
+    <div class="h-[400px]">
       <canvas id="heatmapChart"></canvas>
     </div>
   </div>
@@ -637,42 +745,42 @@ window.createMetricsController = function() {
   <!-- Top N Tables -->
   <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
     <!-- Top Slow Endpoints -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
-      <div class="px-4 py-3 border-b border-gray-200">
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white">📉 Slowest Endpoints</h3>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30">
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">📉 Slowest Endpoints</h3>
       </div>
       <div class="overflow-x-auto">
-        <table id="topSlowTable" class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50 dark:bg-gray-700">
+        <table id="topSlowTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700/50">
             <tr>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 #
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Endpoint
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Count
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Avg
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Max
               </th>
             </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             <!-- Populated by Alpine.js -->
           </tbody>
         </table>
@@ -680,37 +788,37 @@ window.createMetricsController = function() {
     </div>
 
     <!-- Top Volume Endpoints -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
-      <div class="px-4 py-3 border-b border-gray-200">
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white">📊 Highest Volume</h3>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30">
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">📊 Highest Volume</h3>
       </div>
       <div class="overflow-x-auto">
-        <table id="topVolumeTable" class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50 dark:bg-gray-700">
+        <table id="topVolumeTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700/50">
             <tr>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 #
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Endpoint
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Requests
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Avg
               </th>
             </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             <!-- Populated by Alpine.js -->
           </tbody>
         </table>
@@ -718,42 +826,42 @@ window.createMetricsController = function() {
     </div>
 
     <!-- Top Error Endpoints -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
-      <div class="px-4 py-3 border-b border-gray-200">
-        <h3 class="text-lg font-medium text-gray-900 dark:text-white">❌ Most Errors</h3>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow-sm dark:shadow-gray-900/30">
+      <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-medium text-gray-900 dark:text-gray-100">❌ Most Errors</h3>
       </div>
       <div class="overflow-x-auto">
-        <table id="topErrorsTable" class="min-w-full divide-y divide-gray-200">
-          <thead class="bg-gray-50 dark:bg-gray-700">
+        <table id="topErrorsTable" class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-700/50">
             <tr>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 #
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Endpoint
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Total
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Errors
               </th>
               <th
-                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-200 uppercase tracking-wider"
+                class="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
               >
                 Rate
               </th>
             </tr>
           </thead>
-          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200">
+          <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
             <!-- Populated by Alpine.js -->
           </tbody>
         </table>

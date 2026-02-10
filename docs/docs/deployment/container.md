@@ -15,24 +15,24 @@ docker run -d --name mcpgateway \
   -e JWT_SECRET_KEY=my-test-key \
   -e JWT_AUDIENCE=mcpgateway-api \
   -e JWT_ISSUER=mcpgateway \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
-  --network=host \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 
 docker logs mcpgateway
 ```
 
-You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin)
+You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin) using email/password authentication.
+
+!!! info "Authentication"
+    The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
 
 ### Multi-architecture containers
-Note: the container build process creates container images for 'amd64', 'arm64' and 's390x' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
-not points to a manifest so that if all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).
+Note: the container build process creates container images for 'amd64', 'arm64', 's390x', and 'ppc64le' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
+points to a manifest so that all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).
 
 If the specific image is needed for one architecture on a different architecture use the appropriate arguments for your given container execution tool:
 
@@ -65,7 +65,7 @@ make podman
 docker build -t mcpgateway:latest -f Containerfile .
 ```
 
-> The base image uses `python:3.11-slim` with Gunicorn and Uvicorn workers.
+> The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.
 
 ---
 
@@ -101,9 +101,9 @@ docker run -d --name mcpgateway \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
   -e JWT_SECRET_KEY=my-test-key \
-  -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
   -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e DATABASE_URL=sqlite:///./mcp.db \
   mcpgateway:airgapped
 ```

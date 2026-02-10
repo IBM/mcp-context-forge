@@ -63,9 +63,15 @@ class SearchReplacePlugin(Plugin):
         """
         super().__init__(config)
         self._srconfig = SearchReplaceConfig.model_validate(self._config.config)
+        # Precompile regex patterns at initialization
         self.__patterns = []
         for word in self._srconfig.words:
-            self.__patterns.append((r"{}".format(word.search), word.replace))
+            try:
+                compiled_pattern = re.compile(word.search)
+                self.__patterns.append((compiled_pattern, word.replace))
+            except re.error:
+                # Skip invalid regex patterns
+                pass
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """The plugin hook run before a prompt is retrieved and rendered.
@@ -78,9 +84,9 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the prompt can proceed.
         """
         if payload.args:
-            for pattern in self.__patterns:
+            for pattern, replacement in self.__patterns:
                 for key in payload.args:
-                    value = re.sub(pattern[0], pattern[1], payload.args[key])
+                    value = pattern.sub(replacement, payload.args[key])
                     payload.args[key] = value
         return PromptPrehookResult(modified_payload=payload)
 
@@ -97,8 +103,8 @@ class SearchReplacePlugin(Plugin):
 
         if payload.result.messages:
             for index, message in enumerate(payload.result.messages):
-                for pattern in self.__patterns:
-                    value = re.sub(pattern[0], pattern[1], message.content.text)
+                for pattern, replacement in self.__patterns:
+                    value = pattern.sub(replacement, message.content.text)
                     payload.result.messages[index].content.text = value
         return PromptPosthookResult(modified_payload=payload)
 
@@ -113,10 +119,10 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool can proceed.
         """
         if payload.args:
-            for pattern in self.__patterns:
+            for pattern, replacement in self.__patterns:
                 for key in payload.args:
                     if isinstance(payload.args[key], str):
-                        value = re.sub(pattern[0], pattern[1], payload.args[key])
+                        value = pattern.sub(replacement, payload.args[key])
                         payload.args[key] = value
         return ToolPreInvokeResult(modified_payload=payload)
 
@@ -131,12 +137,12 @@ class SearchReplacePlugin(Plugin):
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
         if payload.result and isinstance(payload.result, dict):
-            for pattern in self.__patterns:
+            for pattern, replacement in self.__patterns:
                 for key in payload.result:
                     if isinstance(payload.result[key], str):
-                        value = re.sub(pattern[0], pattern[1], payload.result[key])
+                        value = pattern.sub(replacement, payload.result[key])
                         payload.result[key] = value
         elif payload.result and isinstance(payload.result, str):
-            for pattern in self.__patterns:
-                payload.result = re.sub(pattern[0], pattern[1], payload.result)
+            for pattern, replacement in self.__patterns:
+                payload.result = pattern.sub(replacement, payload.result)
         return ToolPostInvokeResult(modified_payload=payload)

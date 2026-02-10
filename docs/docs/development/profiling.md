@@ -12,7 +12,8 @@ This guide covers tools and techniques for profiling MCP Gateway performance und
 | **PostgreSQL EXPLAIN** | Query analysis | Find slow/inefficient queries |
 | **pg_stat_activity** | Connection monitoring | Debug idle transactions |
 | **pg_stat_user_tables** | Table scan stats | Find full table scans |
-| **py-spy** | Python profiling | Find CPU hotspots |
+| **py-spy** | Python CPU profiling | Find CPU hotspots |
+| **memray** | Python memory profiling | Find memory leaks and allocation hotspots |
 | **docker stats** | Resource monitoring | Track CPU/memory usage |
 | **Redis CLI** | Cache analysis | Check hit rates |
 
@@ -236,6 +237,162 @@ py-spy record -o flamegraph.svg -- python -m mcpgateway
 
 ---
 
+## Memory Profiling with memray
+
+[memray](https://github.com/bloomberg/memray) is a memory profiler for Python that tracks allocations in Python code, native extension modules, and the Python interpreter itself. It's ideal for finding memory leaks, high-water marks, and allocation hotspots.
+
+### Installing memray
+
+```bash
+pip install memray
+
+# Or in a container
+docker exec mcp-context-forge-gateway-1 pip install memray
+```
+
+### Profiling Locally
+
+```bash
+# Run your application with memray tracking
+memray run -o output.bin python -m mcpgateway
+
+# Or run a specific script
+memray run -o output.bin python script.py
+```
+
+### Attaching to a Running Process
+
+memray can attach to an already-running Python process to capture memory allocations:
+
+```bash
+# Find the Python process ID inside the container
+docker exec mcp-context-forge-gateway-1 ps aux | grep python
+
+# Attach memray to a running process (requires ptrace permissions)
+# Option 1: Run memray inside the container
+docker exec -it mcp-context-forge-gateway-1 memray attach <PID> -o /tmp/profile.bin
+
+# Option 2: If using privileged container or with SYS_PTRACE capability
+docker exec mcp-context-forge-gateway-1 memray attach --aggregate <PID> -o /tmp/profile.bin
+
+# After capturing, copy the profile out
+docker cp mcp-context-forge-gateway-1:/tmp/profile.bin ./profile.bin
+```
+
+**Note:** `memray attach` requires `ptrace` permissions. You may need to run the container with `--cap-add=SYS_PTRACE` or in privileged mode for profiling.
+
+### Generating Reports
+
+memray provides multiple output formats:
+
+```bash
+# Interactive flamegraph (opens in browser)
+memray flamegraph output.bin -o flamegraph.html
+
+# Table view (terminal-friendly)
+memray table output.bin
+
+# Tree view (call hierarchy)
+memray tree output.bin
+
+# Summary statistics
+memray stats output.bin
+
+# Identify memory leaks
+memray summary output.bin
+```
+
+### Live Mode (Real-time Monitoring)
+
+For development, use live mode to see allocations in real-time:
+
+```bash
+# Run with live TUI
+memray run --live python -m mcpgateway
+
+# Attach to running process with live mode
+memray attach --live <PID>
+```
+
+### Container Profiling Workflow
+
+Complete workflow for profiling a gateway container:
+
+```bash
+# 1. Install memray in the container (if not already installed)
+docker exec mcp-context-forge-gateway-1 pip install memray
+
+# 2. Find worker PIDs
+docker exec mcp-context-forge-gateway-1 ps aux | grep "mcpgateway work" | head -5
+
+# 3. Attach to one worker (e.g., PID 123) for 60 seconds
+docker exec mcp-context-forge-gateway-1 timeout 60 memray attach 123 -o /tmp/worker_profile.bin || true
+
+# 4. Copy profile to host
+docker cp mcp-context-forge-gateway-1:/tmp/worker_profile.bin ./worker_profile.bin
+
+# 5. Generate reports
+memray flamegraph worker_profile.bin -o memory_flamegraph.html
+memray stats worker_profile.bin
+memray table worker_profile.bin | head -50
+```
+
+**Container Profiling Limitations:**
+
+- `memray attach` requires `gdb` or `lldb`, which may not be available in minimal containers
+- Python version must match between memray and the target process (e.g., memray compiled for Python 3.13 won't work with Python 3.12 containers)
+- Requires ptrace permissions (`--cap-add=SYS_PTRACE` or privileged mode)
+- For production containers without pip, consider:
+
+  1. Building a debug image with memray pre-installed
+  2. Using `memray run` locally to reproduce the issue
+  3. Using py-spy for CPU profiling (works cross-version and is more portable)
+
+### Interpreting memray Output
+
+**Flamegraph:**
+
+- **Width** = amount of memory allocated by that call stack
+- **Color**: Red = Python code, Green = C extensions, Blue = Python internals
+- Click on frames to zoom in
+
+**Table view columns:**
+
+- `Total memory` = all memory allocated by this function and its callees
+- `Own memory` = memory allocated directly by this function
+- `Allocations` = number of allocation calls
+
+**Common patterns to look for:**
+
+- Large allocations in template rendering (Jinja2)
+- JSON serialization of large datasets
+- ORM model instantiation (SQLAlchemy)
+- Response buffering in ASGI middleware
+- Caches growing unbounded
+
+**Example high-memory patterns:**
+```
+# Pattern: Large list comprehensions in API responses
+mcpgateway/main.py:handle_rpc    Total: 500MB  Own: 450MB  Allocations: 10000
+
+# Pattern: Template rendering accumulating data
+jinja2/environment.py:render    Total: 200MB  Own: 50MB   Allocations: 5000
+```
+
+### py-spy vs memray
+
+| Aspect | py-spy | memray |
+|--------|--------|--------|
+| Focus | CPU time | Memory allocation |
+| Overhead | Very low (~1%) | Medium (10-30%) |
+| Attach support | Yes | Yes |
+| Native code | No | Yes |
+| Use when | High CPU usage | OOM errors, memory leaks |
+
+Use **py-spy** when CPU is the bottleneck. Use **memray** when memory usage is high or you're seeing OOM kills.
+
+---
+
 ## Container Resource Monitoring
 
 ### Real-time Stats
@@ -389,11 +546,13 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 **Symptom:** `seq_tup_read` in billions
 
 **Causes:**
+
 - Missing index
 - Non-selective filter (e.g., 7-day filter matches all recent data)
 - Short cache TTL causing repeated queries
 
 **Solutions:**
+
 - Add covering index
 - Increase cache TTL
 - Add materialized view for aggregations
@@ -403,11 +562,13 @@ ORDER BY seq_tup_read DESC LIMIT 10;
 **Symptom:** 50+ connections in `idle in transaction` state
 
 **Causes:**
+
 - N+1 query patterns
 - Long-running requests holding transactions
 - Missing connection pool limits
 
 **Solutions:**
+
 - Use batch queries instead of loops
 - Set `idle_in_transaction_session_timeout`
 - Optimize slow queries
@@ -428,6 +589,7 @@ GROUP BY left(query, 50);
 ```
 
 **Causes:**
+
 - PgBouncer in `transaction` mode holds backend connections until `COMMIT`/`ROLLBACK`
 - Health endpoints using `Depends(get_db)` rely on dependency cleanup, which may not execute on timeout/cancellation
 - `async def` endpoints calling blocking SQLAlchemy code on event loop thread
@@ -527,11 +689,13 @@ except Exception as e:
 **Symptom:** Gateway at 600%+ CPU
 
 **Causes:**
+
 - Template rendering overhead
 - JSON serialization of large responses
 - Pydantic validation overhead
 
 **Solutions:**
+
 - Enable response caching
 - Paginate large result sets
 - Use orjson for serialization (enabled by default)

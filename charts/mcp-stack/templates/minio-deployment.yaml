@@ -19,7 +19,9 @@ spec:
         app.kubernetes.io/component: minio
         app: {{ include "mcp-stack.fullname" . }}-minio
     spec:
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
       containers:
         - name: minio
           image: "{{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}"

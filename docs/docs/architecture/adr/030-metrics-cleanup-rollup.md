@@ -13,6 +13,7 @@ In production deployments with high API traffic, the raw metrics tables (`tool_m
 3. **Backup/restore overhead**: Large tables increase backup times and costs
 
 At 1000+ requests/minute, metrics tables can grow by:
+
 - ~1.5 million records/day per active table
 - ~45 million records/month
 - Query latency increases from <10ms to >500ms for aggregation queries
@@ -48,6 +49,7 @@ Pre-aggregation of raw metrics into hourly summary tables for efficient historic
 ### 3. Hourly Summary Tables
 
 Five new database tables for pre-aggregated metrics:
+
 - `tool_metrics_hourly`
 - `resource_metrics_hourly`
 - `prompt_metrics_hourly`
@@ -55,6 +57,7 @@ Five new database tables for pre-aggregated metrics:
 - `a2a_agent_metrics_hourly`
 
 Each table includes:
+
 - Entity ID and name (preserved snapshot)
 - Hour start timestamp
 - Total/success/failure counts
@@ -73,12 +76,14 @@ Each table includes:
 ### 5. Configuration Settings
 
 **Cleanup Configuration:**
+
 - `METRICS_CLEANUP_ENABLED` (default: true)
 - `METRICS_RETENTION_DAYS` (default: 7, range: 1-365) - fallback when rollup disabled
 - `METRICS_CLEANUP_INTERVAL_HOURS` (default: 1, range: 1-168)
 - `METRICS_CLEANUP_BATCH_SIZE` (default: 10000, range: 100-100000)
 
 **Rollup Configuration:**
+
 - `METRICS_ROLLUP_ENABLED` (default: true)
 - `METRICS_ROLLUP_INTERVAL_HOURS` (default: 1, range: 1-24)
 - `METRICS_ROLLUP_RETENTION_DAYS` (default: 365, range: 30-3650)

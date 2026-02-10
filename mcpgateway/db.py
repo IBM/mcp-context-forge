@@ -33,7 +33,7 @@ import uuid
 import jsonschema
 from sqlalchemy import Boolean, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
 from sqlalchemy import inspect as sa_inspect
-from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, Text, UniqueConstraint, VARCHAR
+from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint, VARCHAR
 from sqlalchemy.engine import Engine
 from sqlalchemy.event import listen
 from sqlalchemy.exc import OperationalError, ProgrammingError, SQLAlchemyError
@@ -288,8 +288,8 @@ if backend == "sqlite":
         cursor = dbapi_conn.cursor()
         # Enable WAL mode for better concurrency
         cursor.execute("PRAGMA journal_mode=WAL")
-        # Set busy timeout to 30 seconds (30000 ms) to handle lock contention from observability
-        cursor.execute("PRAGMA busy_timeout=30000")
+        # Configure SQLite lock wait upper bound (ms) to prevent prolonged blocking under contention
+        cursor.execute(f"PRAGMA busy_timeout={settings.db_sqlite_busy_timeout}")
         # Synchronous=NORMAL is safe with WAL mode and improves performance
         cursor.execute("PRAGMA synchronous=NORMAL")
         # Increase cache size for better performance (negative value = KB)
@@ -598,7 +598,7 @@ def reset_connection_on_checkin(dbapi_connection, _connection_record):
 
 
 @event.listens_for(engine, "reset")
-def reset_connection_on_reset(dbapi_connection, _connection_record):
+def reset_connection_on_reset(dbapi_connection, _connection_record, _reset_state):
     """Reset connection state when the pool resets a connection.
 
     This handles the case where a connection is being reset before reuse.
@@ -937,12 +937,12 @@ class Permissions:
     RESOURCES_DELETE = "resources.delete"
     RESOURCES_SHARE = "resources.share"
 
-     # Gateway permissions
+    # Gateway permissions
     GATEWAYS_CREATE = "gateways.create"
     GATEWAYS_READ = "gateways.read"
     GATEWAYS_UPDATE = "gateways.update"
     GATEWAYS_DELETE = "gateways.delete"
-    
+
     # Prompt permissions
     PROMPTS_CREATE = "prompts.create"
     PROMPTS_READ = "prompts.read"
@@ -967,6 +967,24 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_OVERVIEW = "admin.overview"
+    ADMIN_DASHBOARD = "admin.dashboard"
+    ADMIN_EVENTS = "admin.events"
+    ADMIN_GRPC = "admin.grpc"
+    ADMIN_PLUGINS = "admin.plugins"
+
+    # A2A Agent permissions
+    A2A_CREATE = "a2a.create"
+    A2A_READ = "a2a.read"
+    A2A_UPDATE = "a2a.update"
+    A2A_DELETE = "a2a.delete"
+    A2A_INVOKE = "a2a.invoke"
+
+    # Tag permissions
+    TAGS_READ = "tags.read"
+    TAGS_CREATE = "tags.create"
+    TAGS_UPDATE = "tags.update"
+    TAGS_DELETE = "tags.delete"
 
     # Special permissions
     ALL_PERMISSIONS = "*"  # Wildcard for all permissions
@@ -1049,7 +1067,7 @@ class EmailUser(Base):
     # Core identity fields
     email: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
-    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Status fields
@@ -1062,6 +1080,7 @@ class EmailUser(Base):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     password_change_required: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    password_changed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
@@ -1447,6 +1466,9 @@ class EmailTeam(Base):
     invitations: Mapped[List["EmailTeamInvitation"]] = relationship("EmailTeamInvitation", back_populates="team", cascade="all, delete-orphan")
     api_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="team", cascade="all, delete-orphan")
     creator: Mapped["EmailUser"] = relationship("EmailUser", foreign_keys=[created_by])
+
+    # Index for search and pagination performance
+    __table_args__ = (Index("ix_email_teams_name_id", "name", "id"),)
 
     def __repr__(self) -> str:
         """String representation of the team.
@@ -3212,7 +3234,8 @@ class Resource(Base):
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_resource_association, back_populates="resources")
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "uri", name="uq_team_owner_uri_resource"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "uri", name="uq_team_owner_gateway_uri_resource"),
+        Index("uq_team_owner_uri_resource_local", "team_id", "owner_email", "uri", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_resources_created_at_id", "created_at", "id"),
     )
 
@@ -3628,8 +3651,9 @@ class Prompt(Base):
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
     __table_args__ = (
-        UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_prompt"),
+        UniqueConstraint("team_id", "owner_email", "gateway_id", "name", name="uq_team_owner_gateway_name_prompt"),
         UniqueConstraint("gateway_id", "original_name", name="uq_gateway_id__original_name_prompt"),
+        Index("uq_team_owner_name_prompt_local", "team_id", "owner_email", "name", unique=True, postgresql_where=text("gateway_id IS NULL"), sqlite_where=text("gateway_id IS NULL")),
         Index("idx_prompts_created_at_id", "created_at", "id"),
     )
 
@@ -4245,6 +4269,11 @@ class Server(Base):
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
 
+    # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+    # When enabled, MCP clients can authenticate using OAuth with browser-based IDP SSO
+    oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
@@ -4287,7 +4316,7 @@ class Gateway(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     reachable: Mapped[bool] = mapped_column(default=True)
     last_seen: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
+    tags: Mapped[List[Dict[str, str]]] = mapped_column(JSON, default=list, nullable=False)
 
     # Comprehensive metadata for audit tracking
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
@@ -4331,8 +4360,14 @@ class Gateway(Base):
     # federated_prompts: Mapped[List["Prompt"]] = relationship(secondary=prompt_gateway_table, back_populates="federated_with")
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Encrypted query parameters for auth. Format: {'param_name': 'encrypted_value'}",
+    )
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -4341,6 +4376,25 @@ class Gateway(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship for loading team names (only active teams)
+    # Uses default lazy loading - team name is only loaded when accessed
+    # For list/admin views, use explicit joinedload(DbGateway.email_team) for single-query loading
+    # This avoids adding overhead to hot paths that don't need team names
+    email_team: Mapped[Optional["EmailTeam"]] = relationship(
+        "EmailTeam",
+        primaryjoin="and_(Gateway.team_id == EmailTeam.id, EmailTeam.is_active == True)",
+        foreign_keys=[team_id],
+    )
+
+    @property
+    def team(self) -> Optional[str]:
+        """Return the team name from the `email_team` relationship.
+
+        Returns:
+            Optional[str]: The team name if the gateway belongs to an active team, otherwise None.
+        """
+        return self.email_team.name if self.email_team else None
 
     # Per-gateway refresh configuration
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
@@ -4450,8 +4504,14 @@ class A2AAgent(Base):
     config: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
 
     # Authorizations
-    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth" or None
+    auth_type: Mapped[Optional[str]] = mapped_column(String(20), default=None)  # "basic", "bearer", "headers", "oauth", "query_param" or None
     auth_value: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON)
+    auth_query_params: Mapped[Optional[Dict[str, str]]] = mapped_column(
+        JSON,
+        nullable=True,
+        default=None,
+        comment="Encrypted query parameters for auth. Format: {'param_name': 'encrypted_value'}",
+    )
 
     # OAuth configuration
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="OAuth 2.0 configuration including grant_type, client_id, encrypted client_secret, URLs, and scopes")
@@ -5096,7 +5156,10 @@ class SSOProvider(Base):
     auto_create_users: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     team_mapping: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
 
-    # Metadata
+    # Provider-specific metadata (e.g., role mappings, claim configurations)
+    provider_metadata: Mapped[dict] = mapped_column(JSON, default=dict, nullable=False)
+
+    # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
 
@@ -5194,17 +5257,33 @@ def validate_tool_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
-    Raises:
-        ValueError: If the tool input schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "input_schema"):
+        schema = target.input_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.input_schema)
+            validator = jsonschema.validators.validator_for(schema)
+
+            if validator.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+
+            validator.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid tool input schema: {str(e)}") from e
+            logger.warning(f"Invalid tool input schema: {str(e)}")
 
 
 def validate_tool_name(mapper, connection, target):
@@ -5238,17 +5317,33 @@ def validate_prompt_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
-    Raises:
-        ValueError: If the prompt argument schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
     _ = connection
+
+    allowed_validator_names = {
+        "Draft4Validator",
+        "Draft6Validator",
+        "Draft7Validator",
+        "Draft201909Validator",
+        "Draft202012Validator",
+    }
+
     if hasattr(target, "argument_schema"):
+        schema = target.argument_schema
+        if schema is None:
+            return
+
         try:
-            jsonschema.Draft7Validator.check_schema(target.argument_schema)
+            validator = jsonschema.validators.validator_for(schema)
+
+            if validator.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+
+            validator.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
-            raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
+            logger.warning(f"Invalid prompt argument schema: {str(e)}")
 
 
 # Register validation listeners
@@ -5301,7 +5396,16 @@ def get_db() -> Generator[Session, Any, None]:
         db.close()
 
 
-def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = None, skip_locked: bool = False, options: Optional[List] = None):
+def get_for_update(
+    db: Session,
+    model,
+    entity_id=None,
+    where: Optional[Any] = None,
+    skip_locked: bool = False,
+    nowait: bool = False,
+    lock_timeout_ms: Optional[int] = None,
+    options: Optional[List] = None,
+):
     """Get entity with row lock for update operations.
 
     Args:
@@ -5312,10 +5416,19 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
         skip_locked: If False (default), wait for locked rows. If True, skip locked
             rows (returns None if row is locked). Use False for conflict checks and
             entity updates to ensure consistency. Use True only for job-queue patterns.
+        nowait: If True, fail immediately if row is locked (raises OperationalError).
+            Use this for operations that should not block. Default False.
+        lock_timeout_ms: Optional lock timeout in milliseconds for PostgreSQL.
+            If set, the query will wait at most this long for locks before failing.
+            Only applies to PostgreSQL. Default None (use database default).
         options: Optional list of loader options (e.g., selectinload(...))
 
     Returns:
         The model instance or None
+
+    Raises:
+        sqlalchemy.exc.OperationalError: If nowait=True and row is locked, or if
+            lock_timeout_ms is exceeded.
 
     Notes:
         - On PostgreSQL this acquires a FOR UPDATE row lock.
@@ -5348,54 +5461,17 @@ def get_for_update(db: Session, model, entity_id=None, where: Optional[Any] = No
             return db.get(model, entity_id)
         return db.execute(stmt).scalar_one_or_none()
 
-    # PostgreSQL: apply FOR UPDATE
-    stmt = stmt.with_for_update(skip_locked=skip_locked)
+    # PostgreSQL: set lock timeout if specified
+    if lock_timeout_ms is not None:
+        db.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'"))
+
+    # PostgreSQL: apply FOR UPDATE with optional nowait
+    stmt = stmt.with_for_update(skip_locked=skip_locked, nowait=nowait)
     return db.execute(stmt).scalar_one_or_none()
 
 
-@contextmanager
-def fresh_db_session() -> Generator[Session, Any, None]:
-    """Get a fresh database session for isolated operations.
-
-    Use this when you need a new session independent of the request lifecycle,
-    such as for metrics recording after releasing the main session.
-
-    This is a synchronous context manager that creates a new database session
-    from the SessionLocal factory. The session is automatically committed on
-    successful exit or rolled back on exception, then closed.
-
-    Note: Prior to this fix, sessions were closed without commit, causing
-    PostgreSQL to implicitly rollback all transactions (even read-only SELECTs).
-    This was causing ~40% rollback rate under load.
-
-    Yields:
-        Session: A fresh SQLAlchemy database session.
-
-    Raises:
-        Exception: Any exception raised during database operations is re-raised
-            after rolling back the transaction.
-
-    Examples:
-        >>> from mcpgateway.db import fresh_db_session
-        >>> with fresh_db_session() as db:
-        ...     hasattr(db, 'query')
-        True
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()  # Commit on successful exit (even for read-only operations)
-    except Exception:
-        try:
-            db.rollback()  # Explicit rollback on exception
-        except Exception:
-            try:
-                db.invalidate()  # Connection broken, discard from pool
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
+# Using the existing get_db generator to create a context manager for fresh sessions
+fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
 def patch_string_columns_for_mariadb(base, engine_) -> None:
@@ -6098,6 +6174,11 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Updates name to gateway_slug + separator + custom_name_slug.
     - Sets display_name to custom_name if not provided.
 
+    Note: The gateway relationship must be explicitly set (via target.gateway = gateway_obj)
+    before adding the tool to the session if gateway namespacing is needed. If only
+    gateway_id is set without the relationship, we look up the gateway name via a direct
+    SQL query.
+
     Args:
         mapper: SQLAlchemy mapper for the Tool model.
         connection: Database connection.
@@ -6111,8 +6192,27 @@ def set_custom_name_and_slug(mapper, connection, target):  # pylint: disable=unu
         target.display_name = target.custom_name
     # Always update custom_name_slug from custom_name
     target.custom_name_slug = slugify(target.custom_name)
-    # Update name field
-    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+
+    # Get gateway_slug - check for explicitly set gateway relationship first
+    gateway_slug = ""
+    if target.gateway:
+        # Gateway relationship is already loaded
+        gateway_slug = slugify(target.gateway.name)
+    elif target.gateway_id:
+        # Gateway relationship not loaded but gateway_id is set
+        # Use a cached gateway name if available from gateway_name_cache attribute
+        if hasattr(target, "gateway_name_cache") and target.gateway_name_cache:
+            gateway_slug = slugify(target.gateway_name_cache)
+        else:
+            # Fall back to querying the database
+            try:
+                result = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id})
+                row = result.fetchone()
+                if row:
+                    gateway_slug = slugify(row[0])
+            except Exception:  # nosec B110 - intentionally proceed without prefix on failure
+                pass
+
     if gateway_slug:
         sep = settings.gateway_tool_name_separator
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"
@@ -6131,6 +6231,11 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     - Calculates custom_name_slug from custom_name.
     - Updates name to gateway_slug + separator + custom_name_slug.
 
+    Note: The gateway relationship must be explicitly set (via target.gateway = gateway_obj)
+    before adding the prompt to the session if gateway namespacing is needed. If only
+    gateway_id is set without the relationship, we look up the gateway name via a direct
+    SQL query.
+
     Args:
         mapper: SQLAlchemy mapper for the Prompt model.
         connection: Database connection for the insert/update.
@@ -6143,7 +6248,27 @@ def set_prompt_name_and_slug(mapper, connection, target):  # pylint: disable=unu
     if not target.display_name:
         target.display_name = target.custom_name
     target.custom_name_slug = slugify(target.custom_name)
-    gateway_slug = slugify(target.gateway.name) if target.gateway else ""
+
+    # Get gateway_slug - check for explicitly set gateway relationship first
+    gateway_slug = ""
+    if target.gateway:
+        # Gateway relationship is already loaded
+        gateway_slug = slugify(target.gateway.name)
+    elif target.gateway_id:
+        # Gateway relationship not loaded but gateway_id is set
+        # Use a cached gateway name if available from gateway_name_cache attribute
+        if hasattr(target, "gateway_name_cache") and target.gateway_name_cache:
+            gateway_slug = slugify(target.gateway_name_cache)
+        else:
+            # Fall back to querying the database
+            try:
+                result = connection.execute(text("SELECT name FROM gateways WHERE id = :gw_id"), {"gw_id": target.gateway_id})
+                row = result.fetchone()
+                if row:
+                    gateway_slug = slugify(row[0])
+            except Exception:  # nosec B110 - intentionally proceed without prefix on failure
+                pass
+
     if gateway_slug:
         sep = settings.gateway_tool_name_separator
         target.name = f"{gateway_slug}{sep}{target.custom_name_slug}"

@@ -551,9 +551,6 @@ Configure export/import behavior:
 ```bash
 # Authentication (required for API access)
 MCPGATEWAY_BEARER_TOKEN=your-jwt-token
-# OR
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASSWORD=your-password
 
 # Encryption for auth data
 AUTH_ENCRYPTION_SECRET=your-encryption-key
@@ -562,6 +559,9 @@ AUTH_ENCRYPTION_SECRET=your-encryption-key
 HOST=localhost
 PORT=4444
 ```
+
+!!! info "Authentication Methods"
+    **JWT tokens are the recommended authentication method.** Basic authentication for API endpoints is disabled by default for security. If you need Basic auth for CLI tools, set `API_ALLOW_BASIC_AUTH=true` in your environment.
 
 ---
 

@@ -1,0 +1,84 @@
+<!-- htmlhint doctype-first:false, tag-pair:false -->
+<!-- User selector with team membership info for adding members to teams -->
+{% for user in data %}
+{% set is_member = user.email in team_member_emails %}
+{% set member_data = team_member_data.get(user.email) %}
+{% set member_role = member_data.role if member_data else 'member' %}
+{% set is_last_owner = member_data.is_last_owner if member_data else false %}
+<div
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border {% if is_member %}border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20{% else %}border-transparent{% endif %}"
+  data-user-email="{{ user.email }}"
+  data-is-member="{{ 'true' if is_member else 'false' }}"
+>
+  <!-- Avatar Circle -->
+  <div class="flex-shrink-0">
+    <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
+      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ user.email[0].upper() }}</span>
+    </div>
+  </div>
+
+  <!-- Hidden input to track loaded members (for safe removal with pagination) -->
+  {% if is_member %}
+  <input type="hidden" name="loadedMembers" value="{{ user.email }}" />
+  {% endif %}
+
+  <!-- Checkbox -->
+  <input
+    type="checkbox"
+    name="associatedUsers"
+    value="{{ user.email }}"
+    data-user-name="{{ user.full_name }}"
+    class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
+    {% if is_member %}data-auto-check="true" checked{% endif %}
+  />
+
+  <!-- User Info with Badges -->
+  <div class="flex-grow min-w-0">
+    <div class="flex items-center gap-2 flex-wrap">
+      <span class="select-none font-medium text-gray-900 dark:text-white truncate">{{ user.full_name or user.email }}</span>
+
+      {% if user.email == current_user_email %}
+      <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>
+      {% endif %}
+
+      {% if is_last_owner %}
+      <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>
+      {% endif %}
+
+      {% if is_member and member_role == 'owner' and not is_last_owner %}
+      <span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>
+      {% endif %}
+    </div>
+
+    <div class="text-sm text-gray-500 dark:text-gray-400 truncate">{{ user.email }}</div>
+  </div>
+
+  <!-- Role Selector -->
+  <select
+    name="role_{{ user.email | urlencode }}"
+    class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
+  >
+    <option value="member" {{ 'selected' if member_role == 'member' else '' }}>Member</option>
+    <option value="owner" {{ 'selected' if member_role == 'owner' else '' }}>Owner</option>
+  </select>
+</div>
+{% endfor %}
+
+{% if pagination.has_next %}
+<!-- Infinite scroll trigger -->
+<div
+  id="user-selector-scroll-trigger-{{ pagination.page }}"
+  hx-get="{{ root_path }}/admin/users/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if team_id %}&team_id={{ team_id }}{% endif %}"
+  hx-trigger="intersect once"
+  hx-swap="outerHTML"
+  class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
+>
+  <span class="inline-block">
+    <svg class="animate-spin h-4 w-4 text-indigo-600 dark:text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    Loading more users...
+  </span>
+</div>
+{% endif %}

@@ -49,11 +49,13 @@ Examples:
 
 # Standard
 import html
+import ipaddress
 import logging
 from pathlib import Path
 import re
 import shlex
-from typing import Any, List, Optional, Pattern
+import socket
+from typing import Any, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
 
@@ -71,7 +73,7 @@ logger = logging.getLogger(__name__)
 # precompiled at module level.
 
 # Static inline patterns used multiple times
-_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\'/]')
+_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
 _DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
 _EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
 _MIME_TYPE_RE: Pattern[str] = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*$")
@@ -90,18 +92,114 @@ _POLYGLOT_PATTERNS: List[Pattern[str]] = [
     re.compile(r"javascript:.*\(", re.IGNORECASE),
 ]
 
-# SSTI prevention patterns (precompiled with IGNORECASE)
-_SSTI_PATTERNS: List[Pattern[str]] = [
-    re.compile(r"\{\{.*(__|\.|config|self|request|application|globals|builtins|import).*\}\}", re.IGNORECASE),
-    re.compile(r"\{%.*(__|\.|config|self|request|application|globals|builtins|import).*%\}", re.IGNORECASE),
-    re.compile(r"\$\{.*\}", re.IGNORECASE),
-    re.compile(r"#\{.*\}", re.IGNORECASE),
-    re.compile(r"%\{.*\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\*.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\/.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\+.*\}\}", re.IGNORECASE),
-    re.compile(r"\{\{.*\-.*\}\}", re.IGNORECASE),
-]
+# SSTI prevention - safe scanning without regex backtracking.
+_SSTI_DANGEROUS_SUBSTRINGS: tuple[str, ...] = (
+    "__",
+    ".",
+    "config",
+    "self",
+    "request",
+    "application",
+    "globals",
+    "builtins",
+    "import",
+    "getattr",  # Python getattr function
+    "|attr",  # Jinja2 attr filter (checked after whitespace normalization)
+    "|selectattr",  # Jinja2 selectattr filter (takes attribute name as arg)
+    "|sort",  # Jinja2 sort filter with attribute parameter
+    "|map",  # Jinja2 map filter with attribute parameter
+    "attribute=",  # Jinja2 filters: map(attribute=...), selectattr, sort(attribute=...)
+    "\\x",  # Hex escape sequences (e.g., \x5f for underscore)
+    "\\u",  # Unicode escape sequences (e.g., \u005f for underscore)
+    "\\n{",  # Named unicode escapes (e.g., \N{LOW LINE})
+    "\\0",
+    "\\1",
+    "\\2",
+    "\\3",
+    "\\4",
+    "\\5",
+    "\\6",
+    "\\7",  # Octal escapes
+)
+# Operators that enable code execution or dynamic construction
+_SSTI_DANGEROUS_OPERATORS: tuple[str, ...] = (
+    "*",
+    "/",
+    "+",
+    "-",
+    "~",  # Jinja2 string concatenation (can build dunder names dynamically)
+    "[",  # Bracket notation for dynamic attribute access
+    "%",  # Python string formatting (e.g., '%c' % 95 produces '_')
+)
+_SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
+
+
+def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
+    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+        end (str): Closing delimiter.
+
+    Yields:
+        str: The template expression contents between delimiters.
+
+    Raises:
+        ValueError: If an unterminated template expression is found (fail-closed behavior).
+    """
+    start_len = len(start)
+    end_len = len(end)
+    i = 0
+    value_len = len(value)
+    while i <= value_len - start_len:
+        if value.startswith(start, i):
+            j = i + start_len
+            in_quote: Optional[str] = None
+            escaped = False
+            while j <= value_len - end_len:
+                ch = value[j]
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif in_quote:
+                    if ch == in_quote:
+                        in_quote = None
+                else:
+                    if ch in ("'", '"'):
+                        in_quote = ch
+                    elif value.startswith(end, j):
+                        yield value[i + start_len : j]
+                        i = j + end_len
+                        break
+                j += 1
+            else:
+                raise ValueError("Template contains potentially dangerous expressions")
+        else:
+            i += 1
+
+
+def _has_simple_template_expression(value: str, start: str) -> bool:
+    """Return True if start is followed by any closing brace.
+
+    Uses O(n) linear scan by finding last } first, then checking prefixes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+
+    Returns:
+        bool: True if a closing brace exists after the delimiter.
+    """
+    # Find the last closing brace - if none exists, no expression can be complete
+    last_close = value.rfind("}")
+    if last_close == -1:
+        return False
+    # Check if any prefix exists before the last closing brace - O(n) single find
+    idx = value.find(start)
+    return idx != -1 and idx < last_close
+
 
 # Dangerous URL protocol patterns (precompiled with IGNORECASE)
 _DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
@@ -139,7 +237,7 @@ class SecurityValidator:
     IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
     VALIDATION_SAFE_URI_PATTERN = settings.validation_safe_uri_pattern  # Default: ^[a-zA-Z0-9_\-.:/?=&%]+$
     VALIDATION_UNSAFE_URI_PATTERN = settings.validation_unsafe_uri_pattern  # Default: [<>"\'\\]
-    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z][a-zA-Z0-9_-]*$
+    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$ (SEP-986)
 
     # MCP-compliant limits (configurable)
     MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
@@ -450,33 +548,33 @@ class SecurityValidator:
         Examples:
             >>> SecurityValidator.validate_tool_name('tool_1')
             'tool_1'
+            >>> SecurityValidator.validate_tool_name('_5gpt_query')
+            '_5gpt_query'
             >>> SecurityValidator.validate_tool_name('1tool')
-            Traceback (most recent call last):
-                ...
-            ValueError: Tool name must start with a letter and contain only letters, numbers, and underscore
+            '1tool'
 
-            Test HTML special characters (line 310):
+            Test invalid characters (rejected by pattern):
 
             >>> try:
             ...     SecurityValidator.validate_tool_name('tool<script>')
             ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
+            ...     'must start with a letter, number, or underscore' in str(e)
             True
             >>> try:
             ...     SecurityValidator.validate_tool_name('tool"test')
             ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
+            ...     'must start with a letter, number, or underscore' in str(e)
             True
             >>> try:
             ...     SecurityValidator.validate_tool_name("tool'test")
             ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
+            ...     'must start with a letter, number, or underscore' in str(e)
             True
-            >>> try:
-            ...     SecurityValidator.validate_tool_name('tool/test')
-            ... except ValueError as e:
-            ...     'must start with a letter' in str(e)
-            True
+            >>> # Slashes are allowed per SEP-986
+            >>> SecurityValidator.validate_tool_name('tool/test')
+            'tool/test'
+            >>> SecurityValidator.validate_tool_name('namespace/subtool')
+            'namespace/subtool'
 
             Test length limit (line 313):
 
@@ -492,7 +590,7 @@ class SecurityValidator:
 
         # MCP tools have specific naming requirements
         if not re.match(cls.TOOL_NAME_PATTERN, value):
-            raise ValueError("Tool name must start with a letter and contain only letters, numbers, and underscore")
+            raise ValueError("Tool name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes")
 
         # Ensure no HTML-like content (uses precompiled regex)
         if _HTML_SPECIAL_CHARS_RE.search(value):
@@ -695,10 +793,29 @@ class SecurityValidator:
         if _EVENT_HANDLER_RE.search(value):
             raise ValueError("Template contains event handlers that may cause display issues")
 
-        # SSTI Prevention - block dangerous template expressions (uses precompiled regex list)
-        for pattern in _SSTI_PATTERNS:
-            if pattern.search(value):
+        # SSTI prevention - scan expressions without regex backtracking.
+        for expr in _iter_template_expressions(value, "{{", "}}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
                 raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        for expr in _iter_template_expressions(value, "{%", "%}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
+                raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        if any(_has_simple_template_expression(value, prefix) for prefix in _SSTI_SIMPLE_TEMPLATE_PREFIXES):
+            raise ValueError("Template contains potentially dangerous expressions")
 
         return value
 
@@ -837,10 +954,10 @@ class SecurityValidator:
             Traceback (most recent call last):
                 ...
             ValueError: URL contains invalid IP address (0.0.0.0)
-            >>> SecurityValidator.validate_url('https://169.254.169.254/')
+            >>> SecurityValidator.validate_url('https://169.254.169.254/')  # doctest: +ELLIPSIS
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains restricted IP address
+            ValueError: URL contains IP address blocked by SSRF protection ...
 
             Invalid port numbers:
 
@@ -919,20 +1036,16 @@ class SecurityValidator:
             if "[" in result.netloc or "]" in result.netloc:
                 raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
-            # Block dangerous IP addresses
+            # SSRF Protection: Block dangerous IP addresses and hostnames
             hostname = result.hostname
             if hostname:
-                # Block 0.0.0.0 (all interfaces)
+                # Always block 0.0.0.0 (all interfaces) regardless of SSRF settings
                 if hostname == "0.0.0.0":  # nosec B104 - we're blocking this for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
-                # Block AWS metadata service
-                if hostname == "169.254.169.254":
-                    raise ValueError(f"{field_name} contains restricted IP address")
-
-                # Optional: Block localhost/loopback (uncomment if needed)
-                # if hostname in ["127.0.0.1", "localhost"]:
-                #     raise ValueError(f"{field_name} contains localhost address")
+                # Apply SSRF protection if enabled
+                if settings.ssrf_protection_enabled:
+                    cls._validate_ssrf(hostname, field_name)
 
             # Validate port number
             if result.port is not None:
@@ -957,6 +1070,123 @@ class SecurityValidator:
             raise ValueError(f"{field_name} is not a valid URL")
 
         return value
+
+    @classmethod
+    def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
+        """Validate hostname/IP against SSRF protection rules.
+
+        This method implements configurable SSRF (Server-Side Request Forgery) protection
+        to prevent the gateway from being used to access internal resources or cloud
+        metadata services.
+
+        Args:
+            hostname (str): The hostname or IP address to validate.
+            field_name (str): Name of field being validated (for error messages).
+
+        Raises:
+            ValueError: If the hostname/IP is blocked by SSRF protection rules.
+
+        Configuration (via settings):
+            - ssrf_protection_enabled: Master switch (must be True for this to be called)
+            - ssrf_blocked_networks: CIDR ranges always blocked (e.g., cloud metadata)
+            - ssrf_blocked_hosts: Hostnames always blocked
+            - ssrf_allow_localhost: If False, blocks 127.0.0.0/8 and localhost
+            - ssrf_allow_private_networks: If False, blocks RFC 1918 private ranges
+
+        Examples:
+            Cloud metadata (always blocked):
+
+            >>> from unittest.mock import patch, MagicMock
+            >>> mock_settings = MagicMock()
+            >>> mock_settings.ssrf_protection_enabled = True
+            >>> mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+            >>> mock_settings.ssrf_blocked_hosts = ["metadata.google.internal"]
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('169.254.169.254', 'URL')
+            ...     except ValueError as e:
+            ...         'blocked by SSRF protection' in str(e)
+            True
+
+            Localhost (configurable):
+
+            >>> mock_settings.ssrf_allow_localhost = False
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('127.0.0.1', 'URL')
+            ...     except ValueError as e:
+            ...         'localhost' in str(e).lower()
+            True
+
+            Public IPs (always allowed):
+
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
+        """
+        # Normalize hostname: lowercase, strip trailing dots (DNS FQDN notation)
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Check blocked hostnames (case-insensitive, normalized)
+        for blocked_host in settings.ssrf_blocked_hosts:
+            blocked_normalized = blocked_host.lower().rstrip(".")
+            if hostname_normalized == blocked_normalized:
+                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+
+        # Resolve hostname to IP for network-based checks
+        # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
+        ip_addresses: list = []
+        try:
+            # Try to parse as IP address directly
+            ip_addresses = [ipaddress.ip_address(hostname)]
+        except ValueError:
+            # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+            try:
+                # getaddrinfo returns all A/AAAA records
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for _, _, _, _, sockaddr in addr_info:
+                    try:
+                        ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
+                    except ValueError:
+                        continue
+            except (socket.gaierror, socket.herror):
+                # DNS resolution failed
+                if settings.ssrf_dns_fail_closed:
+                    raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
+                # Fail open: allow through (hostname blocking above catches known dangerous hostnames)
+                return
+
+        if not ip_addresses:
+            if settings.ssrf_dns_fail_closed:
+                raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+            return
+
+        # Check ALL resolved addresses - if ANY is blocked, reject the request
+        for ip_addr in ip_addresses:
+            # Check against blocked networks (always blocked regardless of other settings)
+            for network_str in settings.ssrf_blocked_networks:
+                try:
+                    network = ipaddress.ip_network(network_str, strict=False)
+                except ValueError:
+                    # Invalid network in config - log and skip
+                    logger.warning(f"Invalid CIDR in ssrf_blocked_networks: {network_str}")
+                    continue
+
+                if ip_addr in network:
+                    raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
+
+            # Check localhost/loopback (if not allowed)
+            if not settings.ssrf_allow_localhost:
+                if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
+                    raise ValueError(f"{field_name} contains localhost address which is blocked by SSRF protection")
+
+            # Check private networks (if not allowed)
+            if not settings.ssrf_allow_private_networks:
+                if ip_addr.is_private and not ip_addr.is_loopback:
+                    raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:
@@ -1349,7 +1579,7 @@ class SecurityValidator:
         return value
 
     @classmethod
-    def validate_parameter_length(cls, value: str, max_length: int = None) -> str:
+    def validate_parameter_length(cls, value: str, max_length: Optional[int] = None) -> str:
         """Validate parameter length against configured limits.
 
         Args:

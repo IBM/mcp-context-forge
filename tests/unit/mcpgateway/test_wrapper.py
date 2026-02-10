@@ -114,6 +114,31 @@ def test_send_to_stdout_oserror(monkeypatch):
     assert wrapper.shutting_down()
 
 
+def test_send_to_stdout_no_buffer_fallback(monkeypatch):
+    wrapper._shutdown.clear()
+    captured = []
+
+    class DummyStdout:
+        def write(self, text):
+            captured.append(text)
+            return len(text)
+
+        def flush(self):
+            return None
+
+    def raises(_):
+        raise TypeError("boom")
+
+    monkeypatch.setattr(wrapper, "orjson", types.SimpleNamespace(dumps=raises))
+    monkeypatch.setattr(sys, "stdout", DummyStdout())
+
+    wrapper.send_to_stdout("plain text")
+    wrapper.send_to_stdout(b"bytes")
+
+    assert any("plain text" in s for s in captured)
+    assert any("bytes" in s for s in captured)
+
+
 # -------------------
 # Async stream parsers
 # -------------------
@@ -233,6 +258,35 @@ async def test_stdin_reader_valid_and_invalid(monkeypatch):
         await task
 
 
+@pytest.mark.asyncio
+async def test_stdin_reader_no_buffer_path(monkeypatch):
+    wrapper._shutdown.clear()
+    q = asyncio.Queue()
+
+    lines = iter(["{bad json}\n", ""])
+
+    class DummyStdin:
+        def readline(self):
+            return next(lines)
+
+    async def fake_to_thread(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(sys, "stdin", DummyStdin())
+    monkeypatch.setattr(wrapper.asyncio, "to_thread", fake_to_thread)
+
+    task = asyncio.create_task(wrapper.stdin_reader(q))
+    got1 = await asyncio.wait_for(q.get(), timeout=1)
+    got2 = await asyncio.wait_for(q.get(), timeout=1)
+
+    assert isinstance(got1, dict) and "error" in got1
+    assert got2 is None
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+
 # -------------------
 # forward_once (JSON / NDJSON / SSE / HTTP error)
 # -------------------
@@ -269,6 +323,16 @@ class DummyClient:
 
     def stream(self, *a, **k):
         # returning the response instance which implements async context manager
+        return self._resp
+
+
+class CapturingClient:
+    def __init__(self, resp):
+        self._resp = resp
+        self.calls = []
+
+    def stream(self, *a, **k):
+        self.calls.append(k)
         return self._resp
 
 
@@ -311,6 +375,37 @@ async def test_forward_once_ndjson_and_sse_and_http_error(monkeypatch):
     # http error (non-2xx)
     client = DummyClient(DummyResp(500, "application/json", b""))
     await wrapper.forward_once(client, wrapper.Settings("x", None), {"e": 1})
+    assert any(isinstance(d, dict) and "error" in d for d in captured)
+
+
+@pytest.mark.asyncio
+async def test_forward_once_form_encoding_and_auth_header(monkeypatch):
+    wrapper._shutdown.clear()
+    captured = []
+    monkeypatch.setattr(wrapper, "send_to_stdout", lambda obj: captured.append(obj))
+
+    client = CapturingClient(DummyResp(200, "application/json", b'{"ok":true}'))
+    settings = wrapper.Settings("http://x/mcp", "Bearer token")
+    settings.content_type = "application/x-www-form-urlencoded"
+
+    await wrapper.forward_once(client, settings, {"a": "b", "c": 1})
+    call = client.calls[0]
+    assert call["headers"]["Authorization"] == "Bearer token"
+    assert call["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
+    assert b"a=b" in call["data"]
+    assert b"c=1" in call["data"]
+    assert any(isinstance(o, dict) and o.get("ok") is True for o in captured)
+
+
+@pytest.mark.asyncio
+async def test_forward_once_sse_invalid_json(monkeypatch):
+    wrapper._shutdown.clear()
+    captured = []
+    monkeypatch.setattr(wrapper, "send_to_stdout", lambda obj: captured.append(obj))
+
+    sse_chunk = b"data: notjson\n\n"
+    client = DummyClient(DummyResp(200, "text/event-stream", sse_chunk))
+    await wrapper.forward_once(client, wrapper.Settings("x", None), {"w": 4})
     assert any(isinstance(d, dict) and "error" in d for d in captured)
 
 

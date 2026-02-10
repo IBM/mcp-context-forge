@@ -28,6 +28,7 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import TaggedEntity, TagInfo, TagStats
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 logger = logging.getLogger(__name__)
 
@@ -341,6 +342,7 @@ class TagService:
             >>> # Setup service and mock database
             >>> service = TagService()
             >>> mock_db = MagicMock()
+            >>> mock_db.get_bind.return_value.dialect.name = "sqlite"
             >>>
             >>> # Mock entity with tag
             >>> mock_entity = MagicMock()
@@ -373,7 +375,7 @@ class TagService:
             - Tag matching is exact and case-sensitive
             - Entities without the specified tag are filtered out after database query
             - Performance scales with the number of entities in filtered types
-            - Uses JSON LIKE queries for database-level filtering when possible
+            - Uses json_contains_tag_expr for cross-database filtering (PostgreSQL/SQLite)
         """
         entities = []
 
@@ -397,8 +399,8 @@ class TagService:
             model = entity_map[entity_type]
 
             # Query entities that have this tag
-            # Using JSON contains for PostgreSQL/SQLite JSON columns
-            stmt = select(model).where(func.json_extract(model.tags, "$").op("LIKE")(f'%"{tag_name}"%'))
+            # Using json_contains_tag_expr for cross-database compatibility (PostgreSQL/SQLite)
+            stmt = select(model).where(json_contains_tag_expr(db, model.tags, [tag_name], match_any=True))
             result = db.execute(stmt)
 
             for entity in result.scalars():

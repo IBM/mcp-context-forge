@@ -18,18 +18,16 @@ import sys
 import yaml
 from pathlib import Path
 
-try:
-    import openpyxl
-    from openpyxl.styles import PatternFill, Font
-    from openpyxl.utils import get_column_letter
-    from openpyxl.worksheet.table import Table, TableStyleInfo
-except ImportError:
-    print("❌ Install: pip install openpyxl pyyaml")
-    sys.exit(1)
-
 
 def generate_excel_from_yaml():
     """Generate Excel file from YAML test definitions."""
+    try:
+        import openpyxl
+        from openpyxl.styles import PatternFill, Font
+        from openpyxl.utils import get_column_letter
+    except ImportError:
+        print("❌ Install: pip install openpyxl pyyaml")
+        return False
 
     print("📊 GENERATING EXCEL FROM YAML TEST FILES")
     print("=" * 60)

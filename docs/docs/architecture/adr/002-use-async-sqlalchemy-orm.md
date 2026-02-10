@@ -28,6 +28,7 @@ We will use:
 This provides consistent, well-understood relational behavior and integrates cleanly with FastAPI.
 
 Connection pooling is configured via environment variables:
+
 - `DB_POOL_SIZE`: Persistent connections per worker (default: 50)
 - `DB_MAX_OVERFLOW`: Additional connections allowed (default: 10)
 - `DB_POOL_TIMEOUT`: Wait time before timeout (default: 60s)

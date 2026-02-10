@@ -4,6 +4,11 @@
 
 MCP Gateway now supports multiple custom authentication headers for gateway connections. This feature allows you to configure multiple header key-value pairs that will be sent with every request to your MCP servers.
 
+!!! tip "Admin UI URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444/admin/`
+    - Docker Compose (nginx proxy): `http://localhost:8080/admin/`
+    - Dev server (`make dev`): `http://localhost:8000/admin/`
+
 ## Use Cases
 
 Multiple authentication headers are useful when:
@@ -17,9 +22,10 @@ Multiple authentication headers are useful when:
 
 ### Via Admin UI
 
-1. Navigate to the Admin Panel at `http://localhost:8000/admin/`
+1. Navigate to the Admin Panel (see Admin UI URL above)
 2. Click on the "Gateways" tab
 3. When adding or editing a gateway:
+
    - Select "Custom Headers" as the Authentication Type
    - Click "Add Header" to add multiple header pairs
    - Enter the header key (e.g., `X-API-Key`) and value for each header

@@ -78,6 +78,7 @@ Each repo must include a `Containerfile` (Podman-compatible, Docker-compatible) 
 ## 📚 Dependency Management
 - All Python projects must use `pyproject.toml` and follow PEP standards.
 - Dependencies must either be:
+
   - Included in the repo
   - Pulled from PyPI (no external links)
 

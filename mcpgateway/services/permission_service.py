@@ -17,9 +17,10 @@ from typing import Dict, List, Optional, Set
 
 # Third-Party
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import contains_eager, Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
 
 logger = logging.getLogger(__name__)
@@ -49,16 +50,19 @@ class PermissionService:
         True
     """
 
-    def __init__(self, db: Session, audit_enabled: bool = True):
+    def __init__(self, db: Session, audit_enabled: Optional[bool] = None):
         """Initialize permission service.
 
         Args:
             db: Database session
-            audit_enabled: Whether to enable permission auditing
+            audit_enabled: Whether to enable permission auditing (defaults to settings.permission_audit_enabled / PERMISSION_AUDIT_ENABLED)
         """
         self.db = db
+        if audit_enabled is None:
+            audit_enabled = settings.permission_audit_enabled
         self.audit_enabled = audit_enabled
         self._permission_cache: Dict[str, Set[str]] = {}
+        self._roles_cache: Dict[str, List[UserRole]] = {}
         self._cache_timestamps: Dict[str, datetime] = {}
         self.cache_ttl = 300  # 5 minutes
 
@@ -71,6 +75,7 @@ class PermissionService:
         team_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        allow_admin_bypass: bool = True,
     ) -> bool:
         """Check if user has specific permission.
 
@@ -85,6 +90,9 @@ class PermissionService:
             team_id: Team context for the permission check
             ip_address: IP address for audit logging
             user_agent: User agent for audit logging
+            allow_admin_bypass: If True, admin users bypass all permission checks.
+                               If False, admins must have explicit permissions.
+                               Default is True for backward compatibility.
 
         Returns:
             bool: True if permission is granted, False otherwise
@@ -104,8 +112,8 @@ class PermissionService:
             True
         """
         try:
-            # First check if user is admin (bypass all permission checks)
-            if await self._is_user_admin(user_email):
+            # Check if user is admin (bypass all permission checks if allowed)
+            if allow_admin_bypass and await self._is_user_admin(user_email):
                 return True
 
             # Get user's effective permissions from roles
@@ -131,7 +139,7 @@ class PermissionService:
                     resource_id=resource_id,
                     team_id=team_id,
                     granted=granted,
-                    roles_checked=await self._get_roles_for_audit(user_email, team_id),
+                    roles_checked=self._get_roles_for_audit(user_email, team_id),
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
@@ -143,6 +151,42 @@ class PermissionService:
         except Exception as e:
             logger.error(f"Error checking permission for {user_email}: {e}")
             # Default to deny on error
+            return False
+
+    async def has_admin_permission(self, user_email: str) -> bool:
+        """Check if user has any admin-level permission.
+
+        This is used by AdminAuthMiddleware to allow access to /admin/* routes
+        for users who have admin permissions via RBAC, even if they're not
+        marked as is_admin in the database.
+
+        Args:
+            user_email: Email of the user to check
+
+        Returns:
+            bool: True if user is an admin OR has any admin.* permission
+        """
+        try:
+            # First check if user is a database admin
+            if await self._is_user_admin(user_email):
+                return True
+
+            # Get user's permissions and check for any admin.* permission
+            user_permissions = await self.get_user_permissions(user_email)
+
+            # Check for wildcard or any admin permission
+            if Permissions.ALL_PERMISSIONS in user_permissions:
+                return True
+
+            # Check for any admin.* permission
+            for perm in user_permissions:
+                if perm.startswith("admin."):
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking admin permission for {user_email}: {e}")
             return False
 
     async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None) -> Set[str]:
@@ -176,7 +220,7 @@ class PermissionService:
 
         permissions = set()
 
-        # Get all active roles for the user
+        # Get all active roles for the user (with eager-loaded role relationship)
         user_roles = await self._get_user_roles(user_email, team_id)
 
         # Collect permissions from all roles
@@ -184,8 +228,9 @@ class PermissionService:
             role_permissions = user_role.role.get_effective_permissions()
             permissions.update(role_permissions)
 
-        # Cache the result
+        # Cache both permissions and roles (roles reused by _get_roles_for_audit)
         self._permission_cache[cache_key] = permissions
+        self._roles_cache[cache_key] = user_roles
         self._cache_timestamps[cache_key] = utc_now()
 
         return permissions
@@ -353,6 +398,7 @@ class PermissionService:
 
         for key in keys_to_remove:
             self._permission_cache.pop(key, None)
+            self._roles_cache.pop(key, None)
             self._cache_timestamps.pop(key, None)
 
         logger.debug(f"Cleared permission cache for user: {user_email}")
@@ -373,6 +419,7 @@ class PermissionService:
             True
         """
         self._permission_cache.clear()
+        self._roles_cache.clear()
         self._cache_timestamps.clear()
         logger.debug("Cleared all permission cache")
 
@@ -388,7 +435,7 @@ class PermissionService:
         Returns:
             List[UserRole]: List of active roles for the user
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).join(Role).options(contains_eager(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
         # Include global roles and team-specific roles
         scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
@@ -403,7 +450,7 @@ class PermissionService:
         query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
         result = self.db.execute(query)
-        user_roles = result.scalars().all()
+        user_roles = result.unique().scalars().all()
         return user_roles
 
     async def _log_permission_check(
@@ -446,17 +493,20 @@ class PermissionService:
         self.db.add(audit_log)
         self.db.commit()
 
-    async def _get_roles_for_audit(self, user_email: str, team_id: Optional[str]) -> Dict:
-        """Get role information for audit logging.
+    def _get_roles_for_audit(self, user_email: str, team_id: Optional[str]) -> Dict:
+        """Get role information for audit logging from cached roles.
+
+        Uses roles cached by get_user_permissions() to avoid a duplicate DB query.
 
         Args:
-            user_email: Email address of the user
-            team_id: Optional team ID for context
+            user_email: Email address of the user.
+            team_id: Optional team ID for context.
 
         Returns:
             Dict: Role information for audit logging
         """
-        user_roles = await self._get_user_roles(user_email, team_id)
+        cache_key = f"{user_email}:{team_id or 'global'}"
+        user_roles = self._roles_cache.get(cache_key, [])
         return {"roles": [{"id": ur.role_id, "name": ur.role.name, "scope": ur.scope, "permissions": ur.role.permissions} for ur in user_roles]}
 
     def _is_cache_valid(self, cache_key: str) -> bool:
@@ -487,7 +537,6 @@ class PermissionService:
             bool: True if user is admin
         """
         # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
         # Special case for platform admin (virtual user)

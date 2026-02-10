@@ -1,7 +1,7 @@
 # Single Sign-On (SSO) Authentication
 
-!!! note "Multi‑Tenancy in v0.7.0"
-    v0.7.0 brings multi‑tenancy with email authentication, teams, RBAC, and resource visibility. If you're upgrading from 0.6.0, review the
+!!! note "Multi‑Tenancy (introduced in v0.7.0)"
+    Multi‑tenancy (email authentication, teams, RBAC, resource visibility) was introduced in v0.7.0. If you're upgrading from 0.6.0, review the
     [Migration Guide](https://github.com/IBM/mcp-context-forge/blob/main/MIGRATION-0.7.0.md) and [Changelog](https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md).
 
     For SSO deployments, configure group‑to‑team mappings to auto‑assign users on first login. See [Team Management](teams.md) and the provider tutorials for examples.
@@ -233,6 +233,7 @@ Response:
 
 1. **GitHub Settings** → **Developer settings** → **OAuth Apps**
 2. **New OAuth App**:
+
    - **Application name**: `MCP Gateway - YourOrg`
    - **Homepage URL**: `https://your-gateway.com`
    - **Authorization callback URL**: `https://your-gateway.com/auth/sso/callback/github`
@@ -332,9 +333,11 @@ SSO_OKTA_ISSUER=https://your-company.okta.com
 
 1. **Azure Portal** → **Microsoft Entra ID** → **App registrations**
 2. **New registration**:
+
    - **Name**: `MCP Gateway - YourOrg`
    - **Supported account types**: Accounts in this organizational directory only
    - **Redirect URI**: `https://your-gateway.com/auth/sso/callback/entra`
+
 3. After creation, note the **Application (client) ID** and **Directory (tenant) ID**
 4. **Certificates & secrets** → **New client secret** → Note the secret value
 
@@ -387,6 +390,7 @@ SSO_KEYCLOAK_MAP_CLIENT_ROLES=false
 #### 3. Auto-Discovery Benefits
 
 Keycloak's auto-discovery reduces configuration by 40%:
+
 - Automatically discovers authorization, token, and userinfo endpoints
 - Only requires base URL and realm name
 - No need to manually specify 5+ endpoint URLs
@@ -743,21 +747,15 @@ curl -I https://api.github.com/user
    ```
 
 2. **Configure first provider** (e.g., GitHub)
-
 3. **Test SSO flow** with test users
-
 4. **Gradually migrate** production users
-
 5. **Optional**: Disable local auth after full migration
 
 ### Adding New Providers
 
 1. **Implement provider-specific** user info normalization in `SSOService._normalize_user_info`
-
 2. **Add environment variables** in `config.py`
-
 3. **Update bootstrap utilities** in `sso_bootstrap.py`
-
 4. **Test integration** thoroughly
 
 ## Best Practices

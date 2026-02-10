@@ -22,12 +22,12 @@ import ipaddress
 import os
 import re
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Pattern
 from urllib.parse import unquote, urlparse
 
 # Third-Party
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # First-Party
 from mcpgateway.plugins.framework import (
@@ -125,7 +125,7 @@ class VirusTotalConfig(BaseModel):
     # Scan URLs in tool outputs
     scan_tool_outputs: bool = Field(default=True)
     max_urls_per_call: int = Field(default=5, ge=0)
-    url_pattern: str = Field(default=r"https?://[\w\-\._~:/%#\[\]@!\$&'\(\)\*\+,;=]+")
+    url_pattern: Pattern[str] = Field(default=re.compile(r"https?://[\w\-\._~:/%#\[\]@!\$&'\(\)\*\+,;=]+"))
 
     # Scan URLs in prompts and resource contents
     scan_prompt_outputs: bool = Field(default=True)
@@ -134,14 +134,54 @@ class VirusTotalConfig(BaseModel):
     # Policy extras
     min_harmless_ratio: float = Field(default=0.0, ge=0.0, le=1.0, description="Require harmless/(total) >= ratio; 0 disables")
 
-    # Local overrides
-    allow_url_patterns: list[str] = Field(default_factory=list)
-    deny_url_patterns: list[str] = Field(default_factory=list)
+    # Local overrides - compiled patterns
+    allow_url_patterns: list[Pattern[str]] = Field(default_factory=list)
+    deny_url_patterns: list[Pattern[str]] = Field(default_factory=list)
     allow_domains: list[str] = Field(default_factory=list)
     deny_domains: list[str] = Field(default_factory=list)
     allow_ip_cidrs: list[str] = Field(default_factory=list)
     deny_ip_cidrs: list[str] = Field(default_factory=list)
     override_precedence: str = Field(default="deny_over_allow", description="deny_over_allow | allow_over_deny")
+
+    @field_validator('url_pattern', mode='before')
+    @classmethod
+    def compile_url_pattern(cls, v: Any) -> Pattern[str]:
+        """Compile url_pattern string to regex Pattern object.
+
+        Args:
+            v: Regex pattern string or Pattern object.
+
+        Returns:
+            Compiled Pattern object.
+        """
+        if isinstance(v, str):
+            return re.compile(v)
+        return v
+
+    @field_validator('allow_url_patterns', 'deny_url_patterns', mode='before')
+    @classmethod
+    def compile_url_pattern_lists(cls, v: Any) -> list[Pattern[str]]:
+        """Compile list of pattern strings to regex Pattern objects.
+
+        Args:
+            v: List of regex pattern strings or Pattern objects.
+
+        Returns:
+            List of compiled Pattern objects.
+        """
+        if not isinstance(v, list):
+            return v
+        compiled = []
+        for item in v:
+            if isinstance(item, str):
+                compiled.append(re.compile(item))
+            elif isinstance(item, Pattern):
+                compiled.append(item)
+            else:
+                compiled.append(item)
+        return compiled
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
 _CACHE: Dict[str, tuple[float, dict[str, Any]]] = {}
@@ -170,6 +210,86 @@ def _b64_url_id(url: str) -> str:
     """
     raw = base64.urlsafe_b64encode(url.encode("utf-8")).decode("ascii")
     return raw.strip("=")
+
+
+def _compute_file_hash(file_path: str, alg: str) -> str:
+    """Compute file hash synchronously (called via asyncio.to_thread).
+
+    Args:
+        file_path: Path to file to hash.
+        alg: Hash algorithm (sha256, md5, sha1).
+
+    Returns:
+        Hex digest of the file hash.
+    """
+    h = hashlib.new(alg)
+    with open(file_path, "rb") as f:  # nosec B108
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _upload_file_sync(
+    url: str,
+    file_path: str,
+    headers: dict[str, str],
+    timeout: float,
+    max_retries: int = 3,
+    base_backoff: float = 0.5,
+    max_delay: float = 8.0,
+    jitter_max: float = 0.2,
+) -> dict[str, Any]:
+    """Upload file synchronously with streaming and retry logic (called via asyncio.to_thread).
+
+    Implements exponential backoff with jitter matching ResilientHttpClient semantics.
+
+    Args:
+        url: URL to upload to.
+        file_path: Path to file to upload.
+        headers: HTTP headers including API key.
+        timeout: Request timeout in seconds.
+        max_retries: Maximum retry attempts.
+        base_backoff: Base delay in seconds before retrying.
+        max_delay: Maximum backoff delay in seconds.
+        jitter_max: Maximum jitter to add to backoff.
+
+    Returns:
+        JSON response from the upload endpoint.
+
+    Raises:
+        httpx.HTTPStatusError: If request fails after all retries.
+    """
+    import random  # pylint: disable=import-outside-toplevel
+
+    retryable_status_codes = {429, 500, 502, 503, 504}
+    last_exc: Optional[Exception] = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            with open(file_path, "rb") as f:  # nosec B108
+                files = {"file": (os.path.basename(file_path), f)}
+                with httpx.Client(headers=headers, timeout=timeout) as sync_client:
+                    resp = sync_client.post(url, files=files)
+                    resp.raise_for_status()
+                    return resp.json()
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            if exc.response.status_code not in retryable_status_codes:
+                raise
+            if attempt < max_retries:
+                delay = min(base_backoff * (2**attempt), max_delay)
+                delay += random.uniform(0, jitter_max)  # nosec B311
+                time.sleep(delay)
+        except (httpx.NetworkError, httpx.TimeoutException) as exc:
+            last_exc = exc
+            if attempt < max_retries:
+                delay = min(base_backoff * (2**attempt), max_delay)
+                delay += random.uniform(0, jitter_max)  # nosec B311
+                time.sleep(delay)
+
+    if last_exc:
+        raise last_exc
+    raise RuntimeError("Upload failed after retries")
 
 
 def _from_cache(key: str) -> Optional[dict[str, Any]]:
@@ -267,21 +387,21 @@ def _domain_matches(host: str, patterns: list[str]) -> bool:
     return False
 
 
-def _url_matches(url: str, patterns: list[str]) -> bool:
+def _url_matches(url: str, patterns: list[Pattern[str]]) -> bool:
     """Check if URL matches any regex pattern.
 
     Args:
         url: URL to check.
-        patterns: List of regex patterns to match against.
+        patterns: List of compiled regex patterns to match against.
 
     Returns:
         True if URL matches any pattern, False otherwise.
     """
     for pat in patterns or []:
         try:
-            if re.search(pat, url):
+            if pat.search(url):
                 return True
-        except re.error:
+        except Exception:
             continue
     return False
 
@@ -552,27 +672,30 @@ class VirusTotalURLCheckerPlugin(Plugin):
                     # Resolve local path
                     file_path = unquote(parsed.path)
                     if os.path.isfile(file_path):
-                        # Compute hash
+                        # Compute hash (async via to_thread)
                         if cfg.file_hash_alg.lower() not in ("sha256", "md5", "sha1"):
                             alg = "sha256"
                         else:
                             alg = cfg.file_hash_alg.lower()
-                        h = hashlib.new(alg)
-                        with open(file_path, "rb") as f:  # nosec B108
-                            for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                                h.update(chunk)
-                        digest = h.hexdigest()
+                        digest = await asyncio.to_thread(_compute_file_hash, file_path, alg)
                         finfo = await _http_get(client, f"{cfg.base_url}/files/{digest}")
                         if finfo is None and cfg.upload_if_unknown:
                             size = os.path.getsize(file_path)
                             if size <= cfg.upload_max_bytes:
-                                # Upload file for analysis
-                                with open(file_path, "rb") as f:  # nosec B108
-                                    files = {"file": (os.path.basename(file_path), f)}
-                                    resp = await client.post(f"{cfg.base_url}/files", files=files)
-                                    resp.raise_for_status()
-                                    data = resp.json()
-                                    analysis_id = data.get("data", {}).get("id")
+                                # Upload file for analysis (async via to_thread with sync httpx + retry)
+                                upload_headers = {"x-apikey": api_key}
+                                data = await asyncio.to_thread(
+                                    _upload_file_sync,
+                                    f"{cfg.base_url}/files",
+                                    file_path,
+                                    upload_headers,
+                                    cfg.timeout_seconds,
+                                    cfg.max_retries,
+                                    cfg.base_backoff,
+                                    cfg.max_delay,
+                                    cfg.jitter_max,
+                                )
+                                analysis_id = data.get("data", {}).get("id")
                                 if cfg.wait_for_analysis and analysis_id:
                                     deadline = time.time() + cfg.max_wait_seconds
                                     while time.time() < deadline:
@@ -681,7 +804,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
 
         # Local allow/deny on any URL encountered
         urls: list[str] = []
-        pattern = re.compile(cfg.url_pattern)
+        pattern = cfg.url_pattern
 
         def add_from(obj: Any):
             """Recursively extract URLs from nested data structures.
@@ -783,7 +906,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
         if not texts:
             return PromptPosthookResult(continue_processing=True)
 
-        pattern = re.compile(cfg.url_pattern)
+        pattern = cfg.url_pattern
         urls: list[str] = []
         for t in texts:
             urls.extend(pattern.findall(t))
@@ -859,7 +982,7 @@ class VirusTotalURLCheckerPlugin(Plugin):
         if not isinstance(text, str) or not text:
             return ResourcePostFetchResult(continue_processing=True)
 
-        pattern = re.compile(cfg.url_pattern)
+        pattern = cfg.url_pattern
         urls = pattern.findall(text)[: cfg.max_urls_per_call]
         if not urls:
             return ResourcePostFetchResult(continue_processing=True)

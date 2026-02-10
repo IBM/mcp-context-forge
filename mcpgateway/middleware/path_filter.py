@@ -84,6 +84,16 @@ def _matches_prefix(path: str, prefixes: Tuple[str, ...]) -> bool:
 
     Returns:
         True if path starts with any of the prefixes
+
+    Examples:
+        >>> _matches_prefix("/static/css/app.css", ("/static/", "/assets/"))
+        True
+        >>> _matches_prefix("/api/users", ("/static/", "/assets/"))
+        False
+        >>> _matches_prefix("/health", ("/health",))
+        True
+        >>> _matches_prefix("/healthy", ("/health/",))
+        False
     """
     return any(path.startswith(prefix) for prefix in prefixes)
 
@@ -97,6 +107,18 @@ def _matches_any_regex(path: str, patterns: Tuple[Pattern[str], ...]) -> bool:
 
     Returns:
         True if any pattern matches the path.
+
+    Examples:
+        >>> import re
+        >>> patterns = (re.compile(r"^/api/v[0-9]+/"), re.compile(r"^/rpc/?$"))
+        >>> _matches_any_regex("/api/v1/users", patterns)
+        True
+        >>> _matches_any_regex("/rpc", patterns)
+        True
+        >>> _matches_any_regex("/health", patterns)
+        False
+        >>> _matches_any_regex("/api/users", patterns)
+        False
     """
     return any(pattern.search(path) for pattern in patterns)
 
@@ -256,6 +278,11 @@ def clear_all_caches() -> None:
     """Clear all path filter caches.
 
     Useful for testing to ensure cache state doesn't affect test isolation.
+
+    Examples:
+        >>> clear_all_caches()
+        >>> should_skip_request_logging.cache_info().currsize >= 0
+        True
     """
     should_skip_observability.cache_clear()
     should_skip_auth_context.cache_clear()

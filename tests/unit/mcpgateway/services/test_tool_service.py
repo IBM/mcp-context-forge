@@ -11,10 +11,15 @@ Tests for tool service implementation.
 import base64
 import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import logging
-from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+import orjson
+import time
+from types import SimpleNamespace
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, call, patch
 
 # Third-Party
+import jsonschema
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -28,6 +33,7 @@ from mcpgateway.plugins.framework import PluginManager
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
 from mcpgateway.services.tool_service import (
     extract_using_jq,
+    _get_validator_class_and_check,
     TextContent,
     ToolError,
     ToolInvocationError,
@@ -44,6 +50,10 @@ from mcpgateway.utils.pagination import decode_cursor
 @pytest.fixture(autouse=True)
 def mock_logging_services():
     """Mock audit_trail and structured_logger to prevent database writes during tests."""
+    # Clear SSL context cache before each test for isolation
+    from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache
+    clear_ssl_context_cache()
+
     with patch("mcpgateway.services.tool_service.audit_trail") as mock_audit, patch("mcpgateway.services.tool_service.structured_logger") as mock_logger:
         mock_audit.log_action = MagicMock(return_value=None)
         mock_logger.log = MagicMock(return_value=None)
@@ -110,6 +120,171 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_query_result = Mock()
     mock_query_result.first.return_value = mock_global_config
     test_db.query = Mock(return_value=mock_query_result)
+
+
+class TestToolServiceHelpers:
+    """Tests for helper utilities in tool_service."""
+
+    def test_get_validator_class_and_check_fallback_success(self, monkeypatch):
+        """Fallback validators should be used when primary schema check fails."""
+        schema_json = orjson.dumps({"type": "object"}).decode()
+
+        class BaseValidator:
+            @staticmethod
+            def check_schema(_schema):
+                raise jsonschema.exceptions.SchemaError("boom")
+
+        class FallbackFail:
+            @staticmethod
+            def check_schema(_schema):
+                raise jsonschema.exceptions.SchemaError("boom")
+
+        class FallbackPass:
+            @staticmethod
+            def check_schema(_schema):
+                return None
+
+        _get_validator_class_and_check.cache_clear()
+        monkeypatch.setattr("mcpgateway.services.tool_service.validators.validator_for", lambda _schema: BaseValidator)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft7Validator", FallbackFail)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft6Validator", FallbackPass)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft4Validator", FallbackPass)
+
+        validator_cls, _schema = _get_validator_class_and_check(schema_json)
+        assert validator_cls is FallbackPass
+
+    def test_get_validator_class_and_check_all_fallbacks_fail(self, monkeypatch):
+        """When all fallbacks fail, the primary validator is used."""
+        schema_json = orjson.dumps({"type": "object"}).decode()
+        calls = {"count": 0}
+
+        class BaseValidator:
+            @staticmethod
+            def check_schema(_schema):
+                calls["count"] += 1
+                if calls["count"] == 1:
+                    raise jsonschema.exceptions.SchemaError("boom")
+
+        class FallbackFail:
+            @staticmethod
+            def check_schema(_schema):
+                raise jsonschema.exceptions.SchemaError("boom")
+
+        _get_validator_class_and_check.cache_clear()
+        monkeypatch.setattr("mcpgateway.services.tool_service.validators.validator_for", lambda _schema: BaseValidator)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft7Validator", FallbackFail)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft6Validator", FallbackFail)
+        monkeypatch.setattr("mcpgateway.services.tool_service.Draft4Validator", FallbackFail)
+
+        validator_cls, _schema = _get_validator_class_and_check(schema_json)
+        assert validator_cls is BaseValidator
+        assert calls["count"] == 2
+
+    def test_extract_using_jq_handles_none_result(self, monkeypatch):
+        """[None] result should map to error message."""
+        class DummyProgram:
+            def input(self, _data):
+                return self
+
+            def all(self):
+                return [None]
+
+        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: DummyProgram())
+
+        result = extract_using_jq({"a": 1}, ".a")
+        assert result == "Error applying jsonpath filter"
+
+    def test_extract_using_jq_returns_exception_message(self, monkeypatch):
+        """Exceptions during jq execution should return message string."""
+        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        result = extract_using_jq({"a": 1}, ".a")
+        assert result == "Error applying jsonpath filter: boom"
+
+    def test_tool_service_plugin_env_override(self, monkeypatch):
+        """PLUGINS_ENABLED env flag should override settings."""
+        monkeypatch.setenv("PLUGINS_ENABLED", "yes")
+        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+            service = ToolService()
+        assert service._plugin_manager is not None
+        mock_pm.assert_called_once()
+
+        monkeypatch.setenv("PLUGINS_ENABLED", "no")
+        with patch("mcpgateway.services.tool_service.PluginManager") as mock_pm:
+            service = ToolService()
+        assert service._plugin_manager is None
+        mock_pm.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_top_tools_returns_cached(self, monkeypatch):
+        """get_top_tools should return cached results when available."""
+        # First-Party
+        from mcpgateway.cache import metrics_cache as cache_module
+
+        service = ToolService()
+        cached = [SimpleNamespace(id="tool-1")]
+
+        monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
+        cache_module.metrics_cache.get = MagicMock(return_value=cached)
+
+        mock_combined = MagicMock()
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", mock_combined)
+
+        result = await service.get_top_tools(MagicMock())
+
+        assert result == cached
+        mock_combined.assert_not_called()
+
+    def test_pydantic_tool_from_payload_invalid(self, monkeypatch):
+        """Invalid cache payload should return None."""
+        service = ToolService()
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.PydanticTool.model_validate", MagicMock(side_effect=ValueError("boom")))
+
+        assert service._pydantic_tool_from_payload({"bad": "payload"}) is None
+
+    def test_record_tool_metric_by_id_records(self):
+        """_record_tool_metric_by_id should add and commit metric."""
+        service = ToolService()
+        db = MagicMock()
+
+        service._record_tool_metric_by_id(db, "tool-1", time.monotonic(), True, None)
+
+        db.add.assert_called_once()
+        db.commit.assert_called_once()
+
+    def test_record_tool_metric_sync_uses_fresh_session(self, monkeypatch):
+        """_record_tool_metric_sync should call record helper with fresh session."""
+        service = ToolService()
+        dummy_db = MagicMock()
+
+        class DummySession:
+            def __enter__(self):
+                return dummy_db
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.fresh_db_session", lambda: DummySession())
+
+        with patch.object(service, "_record_tool_metric_by_id") as mock_record:
+            service._record_tool_metric_sync("tool-1", 1.23, True, None)
+
+        mock_record.assert_called_once_with(
+            dummy_db,
+            tool_id="tool-1",
+            start_time=1.23,
+            success=True,
+            error_message=None,
+        )
+
+    def test_extract_and_validate_structured_content_skips_invalid_json(self):
+        """Invalid JSON content should be skipped and treated as valid."""
+        service = ToolService()
+        tool = SimpleNamespace(output_schema={"type": "object"})
+        tool_result = ToolResult(content=[{"type": "text", "text": "not-json"}])
+
+        assert service._extract_and_validate_structured_content(tool, tool_result) is True
 
 
 @pytest.fixture
@@ -182,7 +357,7 @@ def mock_tool(mock_gateway):
     tool.import_batch_id = "2"
     tool.federation_source = "federation_source"
     tool.team_id = "5"
-    tool.visibility = "private"
+    tool.visibility = "public"  # Use public for tests that don't test authorization
     tool.owner_email = "admin@admin.org"
     tool.enabled = True
     tool.reachable = True
@@ -268,7 +443,7 @@ class TestToolService:
 
         assert tool_read.auth.auth_type == "basic"
         assert tool_read.auth.username == "test_user"
-        assert tool_read.auth.password == "********"
+        assert tool_read.auth.password == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_bearer_auth(self, tool_service, mock_tool):
@@ -281,7 +456,7 @@ class TestToolService:
         tool_read = tool_service.convert_tool_to_read(mock_tool)
 
         assert tool_read.auth.auth_type == "bearer"
-        assert tool_read.auth.token == "********"
+        assert tool_read.auth.token == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_authheaders_auth(self, tool_service, mock_tool):
@@ -296,7 +471,7 @@ class TestToolService:
 
         assert tool_read.auth.auth_type == "authheaders"
         assert tool_read.auth.auth_header_key == "test-api-key"
-        assert tool_read.auth.auth_header_value == "********"
+        assert tool_read.auth.auth_header_value == settings.masked_auth_value
 
     @pytest.mark.asyncio
     async def test_convert_tool_to_read_include_auth_false_skips_decode(self, tool_service, mock_tool):
@@ -362,6 +537,23 @@ class TestToolService:
         # Test with include_auth=False
         tool_read = tool_service.convert_tool_to_read(mock_tool, include_auth=False)
         assert tool_read.auth is None
+
+    @pytest.mark.asyncio
+    async def test_convert_tool_to_read_includes_metrics(self, tool_service, mock_tool):
+        """Verify include_metrics populates metrics and execution_count."""
+        mock_tool.metrics_summary = {
+            "total_executions": 3,
+            "successful_executions": 2,
+            "failed_executions": 1,
+            "failure_rate": 0.333,
+            "min_response_time": 0.1,
+            "max_response_time": 1.0,
+            "avg_response_time": 0.5,
+            "last_execution_time": datetime.now(timezone.utc),
+        }
+        tool_read = tool_service.convert_tool_to_read(mock_tool, include_metrics=True, include_auth=False)
+        assert tool_read.metrics.total_executions == 3
+        assert tool_read.execution_count == 3
 
     @pytest.mark.asyncio
     async def test_register_tool(self, tool_service, mock_tool, test_db):
@@ -793,6 +985,57 @@ class TestToolService:
         assert next_cursor is None  # No pagination when limit=0
 
     @pytest.mark.asyncio
+    async def test_list_tools_cache_hit(self, tool_service, test_db, monkeypatch):
+        """Cache hit should return cached tools without DB query."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="hash"),
+            get=AsyncMock(return_value={"tools": [{"name": "cached"}], "next_cursor": "next"}),
+            set=AsyncMock(),
+        )
+
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_registry_cache", lambda: cache)
+        monkeypatch.setattr("mcpgateway.services.tool_service.ToolRead.model_validate", lambda data: SimpleNamespace(name=data["name"]))
+
+        test_db.execute = Mock()
+        result, next_cursor = await tool_service.list_tools(test_db)
+
+        assert next_cursor == "next"
+        assert len(result) == 1
+        assert result[0].name == "cached"
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_list_tools_gateway_id_null_filter(self, tool_service, test_db):
+        """gateway_id='null' should be accepted and return results."""
+        test_db.commit = Mock()
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
+
+        with patch("mcpgateway.services.tool_service.unified_paginate", new=AsyncMock(return_value=([], None))):
+            result, next_cursor = await tool_service.list_tools(test_db, gateway_id="null")
+
+        assert result == []
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_tools_cache_skips_attribute_error(self, tool_service, test_db, monkeypatch):
+        """Cache set should be skipped when results lack model_dump."""
+        cache = SimpleNamespace(
+            hash_filters=MagicMock(return_value="hash"),
+            get=AsyncMock(return_value=None),
+            set=AsyncMock(),
+        )
+        monkeypatch.setattr("mcpgateway.services.tool_service._get_registry_cache", lambda: cache)
+
+        test_db.commit = Mock()
+        tool_service.convert_tool_to_read = Mock(return_value=SimpleNamespace())
+
+        with patch("mcpgateway.services.tool_service.unified_paginate", new=AsyncMock(return_value=([MagicMock()], None))):
+            result, _ = await tool_service.list_tools(test_db)
+
+        assert len(result) == 1
+        cache.set.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_list_inactive_tools(self, tool_service, mock_tool, test_db):
         """Test listing tools."""
         # Mock DB to return a tuple of (tool, team_name) from LEFT JOIN
@@ -1047,8 +1290,8 @@ class TestToolService:
         assert "Tool not found: 999" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status(self, tool_service, mock_tool, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_state(self, tool_service, mock_tool, test_db):
+        """Test setting tool active state."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()
@@ -1095,7 +1338,7 @@ class TestToolService:
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=False, reachable=True)
+        result = await tool_service.set_tool_state(test_db, 1, activate=False, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -1113,15 +1356,15 @@ class TestToolService:
         assert result == tool_read
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_not_found(self, tool_service, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_state_not_found(self, tool_service, test_db):
+        """Test setting tool state when not found."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=None)
         test_db.commit = Mock()
         test_db.refresh = Mock()
 
         with pytest.raises(ToolError) as exc:
-            await tool_service.toggle_tool_status(test_db, "1", activate=False, reachable=True)
+            await tool_service.set_tool_state(test_db, "1", activate=False, reachable=True)
 
         assert "Tool not found: 1" in str(exc.value)
 
@@ -1129,8 +1372,8 @@ class TestToolService:
         test_db.get.assert_called_once_with(DbTool, "1")
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
-        """Test toggling tool active status."""
+    async def test_set_tool_state_activate_tool(self, tool_service, test_db, mock_tool, monkeypatch):
+        """Test activating tool state."""
         # Mock DB get to return tool
         mock_tool.enabled = False
         test_db.get = Mock(return_value=mock_tool)
@@ -1139,7 +1382,7 @@ class TestToolService:
 
         tool_service._notify_tool_activated = AsyncMock()
 
-        result = await tool_service.toggle_tool_status(test_db, "1", activate=True, reachable=True)
+        result = await tool_service.set_tool_state(test_db, "1", activate=True, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, "1")
@@ -1203,8 +1446,8 @@ class TestToolService:
         assert q.empty()
 
     @pytest.mark.asyncio
-    async def test_toggle_tool_status_no_change(self, tool_service, mock_tool, test_db):
-        """Test toggling tool active status."""
+    async def test_set_tool_state_no_change(self, tool_service, mock_tool, test_db):
+        """Test setting tool state with no change."""
         # Mock DB get to return tool
         test_db.get = Mock(return_value=mock_tool)
         test_db.commit = Mock()
@@ -1251,7 +1494,7 @@ class TestToolService:
         tool_service.convert_tool_to_read = Mock(return_value=tool_read)
 
         # Deactivate the tool (it's active by default)
-        result = await tool_service.toggle_tool_status(test_db, 1, activate=True, reachable=True)
+        result = await tool_service.set_tool_state(test_db, 1, activate=True, reachable=True)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -1457,7 +1700,7 @@ class TestToolService:
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.auth == AuthenticationValues(auth_type="basic", username="test_user", password="********")
+        assert result.auth == AuthenticationValues(auth_type="basic", username="test_user", password=settings.masked_auth_value)
 
     @pytest.mark.asyncio
     async def test_update_tool_bearer_auth(self, tool_service, mock_tool, test_db):
@@ -1478,7 +1721,7 @@ class TestToolService:
         # The service wraps the exception in ToolError
         result = await tool_service.update_tool(test_db, "999", tool_update)
 
-        assert result.auth == AuthenticationValues(auth_type="bearer", token="********")
+        assert result.auth == AuthenticationValues(auth_type="bearer", token=settings.masked_auth_value)
 
     @pytest.mark.asyncio
     async def test_update_tool_empty_auth(self, tool_service, mock_tool, test_db):
@@ -1771,7 +2014,7 @@ class TestToolService:
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"})
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None)
 
         # Our ToolResult bubbled back out
         assert result.content[0].text == "MCP response"
@@ -1988,6 +2231,8 @@ class TestToolService:
             patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
             patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+            patch("mcpgateway.services.tool_service.settings.mcp_session_pool_enabled", False),
+            patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
             # ------------------------------------------------------------------
             # 4.  Act
@@ -1995,15 +2240,15 @@ class TestToolService:
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_awaited_once()
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"})
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
 
         sse_ctx.__aenter__.assert_awaited_once()
 
-        sse_client_mock.assert_called_once_with(
-            url=mock_gateway.url,
-            headers={"Authorization": "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="},
-            httpx_client_factory=ANY,
-        )
+        sse_client_mock.assert_called_once()
+        sse_call_kwargs = sse_client_mock.call_args.kwargs
+        assert sse_call_kwargs["url"] == mock_gateway.url
+        assert sse_call_kwargs["headers"]["Authorization"] == "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="
+        assert sse_call_kwargs["httpx_client_factory"] is not None
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -2037,6 +2282,46 @@ class TestToolService:
             assert call_kwargs["tool_id"] == str(mock_tool.id)
             assert call_kwargs["success"] is False
             assert call_kwargs["error_message"] == "HTTP error"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_with_metadata(self, tool_service, mock_tool, test_db):
+        """Test invoking a tool with metadata."""
+        # Configure tool as MCP/SSE
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "SSE"
+        mock_tool.url = "http://example.com/sse"
+        mock_tool.auth_value = None
+
+        # Mock DB
+        mock_scalar = Mock()
+        mock_scalar.scalar_one_or_none.return_value = mock_tool
+        test_db.execute = Mock(return_value=mock_scalar)
+
+        # Mock SSE client and session
+        sse_ctx = AsyncMock()
+        sse_ctx.__aenter__.return_value = ["read", "write"]
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="MCP response")]))
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+
+        meta_data = {"trace_id": "123", "user": "test"}
+
+        # Mock metrics buffer service
+        mock_metrics_buffer = Mock()
+
+        with (
+            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None, meta_data=meta_data)
+
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {}, meta=meta_data)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error_exception_group_unwrapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -2403,7 +2688,7 @@ class TestToolService:
         tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
 
         with patch("mcpgateway.services.tool_service.select", return_value=mock_query):
-            with patch("mcpgateway.services.tool_service.json_contains_expr") as mock_json_contains:
+            with patch("mcpgateway.services.tool_service.json_contains_tag_expr") as mock_json_contains:
                 # return a fake condition object that query.where will accept
                 fake_condition = MagicMock()
                 mock_json_contains.return_value = fake_condition
@@ -3188,3 +3473,1775 @@ class TestToolServiceTokenTeamsFiltering:
         result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
 
         assert test_db.execute.called
+
+
+class TestToolAccessAuthorization:
+    """Tests for _check_tool_access authorization logic."""
+
+    @pytest.fixture
+    def tool_service(self):
+        """Create a tool service instance."""
+        return ToolService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        db = MagicMock()
+        db.commit = Mock()
+        return db
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_public_always_allowed(self, tool_service, mock_db):
+        """Public tools should be accessible to anyone."""
+        tool_payload = {"id": "1", "visibility": "public", "owner_email": None, "team_id": None}
+
+        # Unauthenticated
+        assert await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=[]) is True
+        # Authenticated
+        assert await tool_service._check_tool_access(mock_db, tool_payload, user_email="user@test.com", token_teams=["team-1"]) is True
+        # Admin
+        assert await tool_service._check_tool_access(mock_db, tool_payload, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_admin_bypass(self, tool_service, mock_db):
+        """Admin (user_email=None, token_teams=None) should have full access."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "secret@test.com", "team_id": "secret-team"}
+
+        # Admin bypass: both None = unrestricted access
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_private_denied_to_unauthenticated(self, tool_service, mock_db):
+        """Private tools should be denied to unauthenticated users."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
+
+        # Unauthenticated (public-only token)
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email=None, token_teams=[]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_private_allowed_to_owner(self, tool_service, mock_db):
+        """Private tools should be accessible to the owner."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
+
+        # Owner with non-empty token_teams
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=["some-team"]) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_team_tool_allowed_to_member(self, tool_service, mock_db):
+        """Team tools should be accessible to team members."""
+        team_tool = {"id": "1", "visibility": "team", "owner_email": "owner@test.com", "team_id": "team-abc"}
+
+        # Team member via token_teams
+        assert await tool_service._check_tool_access(mock_db, team_tool, user_email="member@test.com", token_teams=["team-abc"]) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_team_tool_denied_to_non_member(self, tool_service, mock_db):
+        """Team tools should be denied to non-members."""
+        team_tool = {"id": "1", "visibility": "team", "owner_email": "owner@test.com", "team_id": "team-abc"}
+
+        # Non-member
+        assert await tool_service._check_tool_access(mock_db, team_tool, user_email="outsider@test.com", token_teams=["other-team"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_public_only_token_denied_private(self, tool_service, mock_db):
+        """Public-only tokens (token_teams=[]) should only access public tools."""
+        private_tool = {"id": "1", "visibility": "private", "owner_email": "owner@test.com", "team_id": None}
+
+        # Even owner with public-only token is denied
+        assert await tool_service._check_tool_access(mock_db, private_tool, user_email="owner@test.com", token_teams=[]) is False
+
+
+class TestToolListingGracefulErrorHandling:
+    """Tests for graceful error handling when convert_tool_to_read fails.
+
+    These tests verify that when one tool fails to convert (e.g., due to corrupted data),
+    the listing operation continues with remaining tools instead of failing completely.
+    This prevents a single corrupted entity from breaking the entire listing.
+    """
+
+    @pytest.mark.asyncio
+    async def test_list_tools_continues_on_conversion_error(self, caplog):
+        """Test that list_tools returns valid tools even when one fails conversion."""
+        import logging
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
+
+        mock_db = Mock()
+
+        # Create mock tools - tool2 will fail conversion
+        tool1 = Mock(id="1", original_name="good_tool_1", team_id=None)
+        tool1.name = "good-tool-1"
+        tool2 = Mock(id="2", original_name="bad_tool", team_id=None)
+        tool2.name = "bad-tool"
+        tool3 = Mock(id="3", original_name="good_tool_2", team_id=None)
+        tool3.name = "good-tool-2"
+
+        # Mock DB to return all three tools
+        mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool1, tool2, tool3])))))
+        mock_db.commit = Mock()
+
+        # Create valid ToolRead objects for good tools
+        tool_read_1 = MagicMock()
+        tool_read_1.name = "good_tool_1"
+        tool_read_3 = MagicMock()
+        tool_read_3.name = "good_tool_2"
+
+        # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        def mock_convert(tool, include_metrics=False, include_auth=False):
+            if tool.id == "2":
+                raise ValueError("Simulated conversion error: corrupted auth_value")
+            elif tool.id == "1":
+                return tool_read_1
+            else:
+                return tool_read_3
+
+        service = ToolService()
+
+        # Use patch.object to properly mock the instance method
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            # Call list_tools - should NOT raise an exception
+            result, next_cursor = await service.list_tools(mock_db)
+
+            # Verify we got the two valid tools
+            assert len(result) == 2
+            assert tool_read_1 in result
+            assert tool_read_3 in result
+
+            # Verify convert_tool_to_read was called for all three tools
+            assert service.convert_tool_to_read.call_count == 3
+
+            # Verify the error was logged (format: "Failed to convert tool {id} ({name}): {error}")
+            assert "Failed to convert tool 2" in caplog.text
+            assert "bad-tool" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_server_tools_continues_on_conversion_error(self, caplog):
+        """Test that list_server_tools returns valid tools even when one fails conversion."""
+        import logging
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
+
+        mock_db = Mock()
+
+        # Create mock tools - tool2 will fail conversion
+        tool1 = Mock(enabled=True, team_id=None, team=None, id="1", original_name="good_tool_1")
+        tool1.name = "good-tool-1"
+        tool2 = Mock(enabled=True, team_id=None, team=None, id="2", original_name="bad_tool")
+        tool2.name = "bad-tool"
+        tool3 = Mock(enabled=True, team_id=None, team=None, id="3", original_name="good_tool_2")
+        tool3.name = "good-tool-2"
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [tool1, tool2, tool3]
+
+        service = ToolService()
+
+        # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        def mock_convert(tool, include_metrics=False, include_auth=False):
+            if tool.id == "2":
+                raise ValueError("Simulated conversion error")
+            return f"converted_{tool.original_name}"
+
+        # Use patch.object to properly mock the instance method
+        with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+            # Call list_server_tools - should NOT raise an exception
+            tools = await service.list_server_tools(mock_db, server_id="server123", include_inactive=False)
+
+            # Verify we got the two valid tools
+            assert len(tools) == 2
+            assert "converted_good_tool_1" in tools
+            assert "converted_good_tool_2" in tools
+
+            # Verify the error was logged
+            assert "Failed to convert tool 2" in caplog.text
+            assert "bad-tool" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_continues_on_conversion_error(self, caplog):
+        """Test that list_tools_for_user returns valid tools even when one fails conversion."""
+        import logging
+
+        caplog.set_level(logging.ERROR, logger="mcpgateway.services.tool_service")
+
+        mock_db = Mock()
+
+        # Create mock tools - tool2 will fail conversion
+        tool1 = Mock(id="1", original_name="good_tool_1", team_id=None)
+        tool1.name = "good-tool-1"
+        tool2 = Mock(id="2", original_name="bad_tool", team_id=None)
+        tool2.name = "bad-tool"
+        tool3 = Mock(id="3", original_name="good_tool_2", team_id=None)
+        tool3.name = "good-tool-2"
+
+        # Mock DB to return all three tools
+        mock_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool1, tool2, tool3])))))
+        mock_db.commit = Mock()
+
+        # Create valid ToolRead objects for good tools
+        tool_read_1 = MagicMock()
+        tool_read_1.name = "good_tool_1"
+        tool_read_3 = MagicMock()
+        tool_read_3.name = "good_tool_2"
+
+        # Make convert_tool_to_read succeed for tool1 and tool3, but fail for tool2
+        def mock_convert(tool, include_metrics=False, include_auth=False):
+            if tool.id == "2":
+                raise ValueError("Simulated conversion error: corrupted data")
+            elif tool.id == "1":
+                return tool_read_1
+            else:
+                return tool_read_3
+
+        service = ToolService()
+
+        # Mock TeamManagementService for user context
+        mock_team = MagicMock(id="team-1", is_personal=True)
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+
+            # Use patch.object to properly mock the instance method
+            with patch.object(service, 'convert_tool_to_read', side_effect=mock_convert):
+                # Call list_tools_for_user - should NOT raise an exception
+                # Returns tuple[List[ToolRead], Optional[str]]
+                result, next_cursor = await service.list_tools_for_user(mock_db, user_email="user@example.com")
+
+        # Verify we got the two valid tools
+        assert len(result) == 2
+        assert tool_read_1 in result
+        assert tool_read_3 in result
+
+        # Verify the error was logged
+        assert "Failed to convert tool 2" in caplog.text
+        assert "bad-tool" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_invalid_cursor(self, tool_service, test_db):
+        """Invalid cursor should be ignored and still return results."""
+        tool = MagicMock(id="1", original_name="tool-1", team_id=None)
+        tool.name = "tool-1"
+
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[tool])))))
+        test_db.commit = Mock()
+        tool_service.convert_tool_to_read = Mock(return_value=MagicMock())
+
+        mock_team = MagicMock(id="team-1", is_personal=True)
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            with patch("mcpgateway.services.tool_service.decode_cursor", side_effect=ValueError("bad")):
+                result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", cursor="bad")
+
+        assert len(result) == 1
+        assert next_cursor is None
+
+    @pytest.mark.asyncio
+    async def test_list_tools_for_user_team_no_access(self, tool_service, test_db):
+        """Team filter should return empty when user lacks access."""
+        test_db.execute = Mock()
+        mock_team = MagicMock(id="team-1", is_personal=True)
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_team_service.return_value.get_user_teams = AsyncMock(return_value=[mock_team])
+            result, next_cursor = await tool_service.list_tools_for_user(test_db, user_email="user@example.com", team_id="team-2")
+
+        assert result == []
+        assert next_cursor is None
+        test_db.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# AnyUrl Serialization Tests (PR #2517 - Issue #2512)
+# ---------------------------------------------------------------------------
+
+
+class TestAnyUrlSerialization:
+    """Tests for AnyUrl serialization fix (mode='json' in model_dump).
+
+    The root cause of Issue #2512 was that AnyUrl fields were not being
+    serialized to strings when dumping tool results. This caused validation
+    errors when the content was passed to MCP SDK types.
+
+    The fix adds mode='json' to model_dump() calls, which ensures AnyUrl
+    objects are serialized to strings.
+    """
+
+    def test_anyurl_serialization_without_mode_json(self):
+        """Demonstrate that AnyUrl stays as object without mode='json'."""
+        # Third-Party
+        from pydantic import AnyUrl, BaseModel
+
+        class TestModel(BaseModel):
+            uri: AnyUrl
+            name: str
+
+        model = TestModel(uri="https://example.com/file.txt", name="test")
+
+        # Without mode="json", AnyUrl remains as AnyUrl object
+        dump = model.model_dump(by_alias=True)
+        assert not isinstance(dump["uri"], str)
+        assert isinstance(dump["uri"], AnyUrl)
+
+    def test_anyurl_serialization_with_mode_json(self):
+        """Verify that AnyUrl is serialized to string with mode='json'."""
+        # Third-Party
+        from pydantic import AnyUrl, BaseModel
+
+        class TestModel(BaseModel):
+            uri: AnyUrl
+            name: str
+
+        model = TestModel(uri="https://example.com/file.txt", name="test")
+
+        # With mode="json", AnyUrl is serialized to string (the fix)
+        dump = model.model_dump(by_alias=True, mode="json")
+        assert isinstance(dump["uri"], str)
+        assert dump["uri"] == "https://example.com/file.txt"
+
+    def test_resource_link_anyurl_serialization(self):
+        """Verify ResourceLink uri field is serialized correctly with mode='json'."""
+        # First-Party
+        from mcpgateway.common.models import ResourceLink
+
+        resource_link = ResourceLink(
+            type="resource_link",
+            uri="s3://bucket/path/to/file.bin",
+            name="file.bin",
+            description="A binary file",
+            mime_type="application/octet-stream",
+            size=1024,
+        )
+
+        # This is what the tool_service fix does (line 3192)
+        dump = resource_link.model_dump(by_alias=True, mode="json")
+
+        # uri should be a string, not an AnyUrl object
+        assert isinstance(dump["uri"], str)
+        assert dump["uri"] == "s3://bucket/path/to/file.bin"
+        assert dump["type"] == "resource_link"
+        assert dump["name"] == "file.bin"
+        assert dump["size"] == 1024
+
+    def test_tool_result_with_resource_link_serialization(self):
+        """Verify ToolResult containing ResourceLink serializes AnyUrl correctly."""
+        # First-Party
+        from mcpgateway.common.models import ResourceLink
+
+        resource_link = ResourceLink(
+            type="resource_link",
+            uri="https://cdn.example.com/assets/image.png",
+            name="image.png",
+            mime_type="image/png",
+            size=2048,
+        )
+
+        tool_result = ToolResult(content=[resource_link], is_error=False)
+
+        # This is what the tool_service fix does (line 3192)
+        dump = tool_result.model_dump(by_alias=True, mode="json")
+
+        # Verify the uri in content is a string
+        assert len(dump["content"]) == 1
+        assert isinstance(dump["content"][0]["uri"], str)
+        assert dump["content"][0]["uri"] == "https://cdn.example.com/assets/image.png"
+        assert dump["content"][0]["type"] == "resource_link"
+
+    def test_mixed_content_with_anyurl_serialization(self):
+        """Verify mixed content types with AnyUrl fields serialize correctly."""
+        # First-Party
+        from mcpgateway.common.models import ResourceLink
+
+        resource_link = ResourceLink(
+            type="resource_link",
+            uri="file:///path/to/document.pdf",
+            name="document.pdf",
+            mime_type="application/pdf",
+        )
+
+        text_content = TextContent(type="text", text="Hello world")
+        tool_result = ToolResult(content=[text_content, resource_link], is_error=False)
+
+        # This is what the tool_service fix does (line 3192)
+        dump = tool_result.model_dump(by_alias=True, mode="json")
+
+        # Verify both content items
+        assert len(dump["content"]) == 2
+        assert dump["content"][0]["type"] == "text"
+        assert dump["content"][0]["text"] == "Hello world"
+        assert dump["content"][1]["type"] == "resource_link"
+        assert isinstance(dump["content"][1]["uri"], str)
+        assert dump["content"][1]["uri"] == "file:///path/to/document.pdf"
+
+
+# =============================================================================
+# Tool Invocation Timeouts and Circuit Breaker Tests
+# =============================================================================
+
+class TestToolTimeoutsAndRetries:
+    """Comprehensive tests for Tool Invocation Timeouts and Circuit Breaker."""
+
+    def setup_method(self):
+        """Clear circuit breaker state before each test."""
+        from plugins.circuit_breaker.circuit_breaker import _STATE
+        _STATE.clear()
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_ms_takes_priority(self):
+        """Verify per-tool timeout_ms takes priority over global setting."""
+        tool_timeout_ms = 5000  # 5 seconds
+        global_timeout = 60    # 60 seconds
+
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
+
+        assert effective_timeout == 5.0, "Per-tool timeout should take priority"
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_zero_uses_global(self):
+        """Verify that timeout_ms=0 falls back to global timeout."""
+        tool_timeout_ms = 0
+        global_timeout = 60
+
+        # 0 is falsy, so should fall back to global
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
+
+        assert effective_timeout == 60, "Zero timeout should fall back to global"
+
+    @pytest.mark.asyncio
+    async def test_per_tool_timeout_none_uses_global(self):
+        """Verify that timeout_ms=None falls back to global timeout."""
+        tool_timeout_ms = None
+        global_timeout = 60
+
+        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else global_timeout
+
+        assert effective_timeout == 60, "None timeout should fall back to global"
+
+    @pytest.mark.asyncio
+    async def test_timeout_conversion_from_ms_to_seconds(self):
+        """Verify correct conversion from milliseconds to seconds."""
+        test_cases = [
+            (1000, 1.0),
+            (5000, 5.0),
+            (30000, 30.0),
+            (100, 0.1),
+            (60000, 60.0),
+        ]
+
+        for timeout_ms, expected_seconds in test_cases:
+            effective_timeout = timeout_ms / 1000
+            assert effective_timeout == expected_seconds, f"Failed for {timeout_ms}ms"
+
+    @pytest.mark.asyncio
+    async def test_timeout_error_message_includes_duration(self):
+        """Verify timeout error message includes the timeout duration."""
+        for timeout in [5.0, 10.0, 30.0, 60.0]:
+            error = ToolInvocationError(f"Tool invocation timed out after {timeout}s")
+            assert str(timeout) in str(error)
+            assert "timed out" in str(error)
+
+    @pytest.mark.asyncio
+    async def test_asyncio_timeout_error_behavior(self):
+        """Test asyncio.TimeoutError is raised correctly after timeout."""
+        async def slow_operation():
+            await asyncio.sleep(10)
+            return "completed"
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(slow_operation(), timeout=0.01)
+
+    def test_initial_state_is_closed(self):
+        """Verify circuit breaker starts in closed state."""
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+
+        assert state.open_until == 0.0
+        assert state.half_open is False
+        assert state.consecutive_failures == 0
+
+    def test_state_tracks_calls_in_window(self):
+        """Verify state tracks call timestamps."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.calls.append(time.time())
+        state.calls.append(time.time())
+
+        assert len(state.calls) == 2
+
+    def test_state_tracks_failures_in_window(self):
+        """Verify state tracks failure timestamps."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.failures.append(time.time())
+        state.failures.append(time.time())
+
+        assert len(state.failures) == 2
+
+    def test_consecutive_failures_increment(self):
+        """Verify consecutive failures counter increments."""
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.consecutive_failures += 1
+        state.consecutive_failures += 1
+        state.consecutive_failures += 1
+
+        assert state.consecutive_failures == 3
+
+    def test_consecutive_failures_reset_on_success(self):
+        """Verify consecutive failures reset to 0 on success."""
+        from plugins.circuit_breaker.circuit_breaker import _get_state
+
+        state = _get_state("test_tool")
+        state.consecutive_failures = 5
+        # Simulate success
+        state.consecutive_failures = 0
+
+        assert state.consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_half_open_transition_after_cooldown(self):
+        """Verify transition to half-open state after cooldown expires."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"cooldown_seconds": 1}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Open the circuit
+        state = _get_state("test_tool")
+        state.open_until = time.time() - 1  # Cooldown expired
+        state.half_open = False
+
+        # Create payload
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+        # Create mock context
+        context = MagicMock()
+        context.set_state = MagicMock()
+
+        # Process pre_invoke
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        # Should allow request through (transition to half-open)
+        assert result.continue_processing is True
+        # Verify half-open state was set in context
+        context.set_state.assert_any_call("cb_half_open_test", True)
+
+    @pytest.mark.asyncio
+    async def test_half_open_failure_reopens_circuit(self):
+        """Verify that failure during half-open immediately reopens circuit."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with short cooldown
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"cooldown_seconds": 60}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Set up half-open state
+        state = _get_state("test_tool")
+        state.half_open = True
+
+        # Create mock error result
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create mock context indicating half-open test
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": True,
+            "cb_timeout_failure": False,
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be reopened
+        assert state.open_until > time.time()
+        assert state.half_open is False
+
+    @pytest.mark.asyncio
+    async def test_half_open_success_closes_circuit(self):
+        """Verify that success during half-open fully closes circuit."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Set up half-open state
+        state = _get_state("test_tool")
+        state.half_open = True
+        state.consecutive_failures = 4
+
+        # Create mock success result
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create mock context indicating half-open test
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": True,
+            "cb_timeout_failure": False,
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be fully closed
+        assert state.half_open is False
+        assert state.consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    async def test_consecutive_failure_threshold_trips_breaker(self):
+        """Verify consecutive failures trip the circuit breaker."""
+        import time
+        from collections import deque
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with low consecutive failure threshold
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Pre-set consecutive failures to threshold - 1
+        state = _get_state("test_tool")
+        state.consecutive_failures = 2
+        state.calls = deque([time.time()])
+        state.failures = deque([time.time()])
+
+        # Create mock error result
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(return_value=None)
+
+        # Process post_invoke - should trip breaker
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be open
+        assert state.open_until > time.time()
+
+    @pytest.mark.asyncio
+    async def test_error_rate_threshold_trips_breaker(self):
+        """Verify error rate threshold trips the circuit breaker."""
+        import time
+        from collections import deque
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with specific error rate settings
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={
+                "error_rate_threshold": 0.5,  # 50% error rate trips
+                "min_calls": 2,               # After 2 calls
+                "cooldown_seconds": 60,
+            }
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Pre-set calls and failures for 50% error rate
+        now = time.time()
+        state = _get_state("test_tool")
+        state.calls = deque([now - 1])  # 1 previous call
+        state.failures = deque([now - 1])  # 1 failure (this will be the 2nd)
+        state.consecutive_failures = 1
+
+        # Create mock error result
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: now if k == "cb_call_time" else d)
+
+        # Process post_invoke - should trip breaker (2/2 = 100% > 50%)
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Circuit should be open
+        assert state.open_until > time.time()
+
+    @pytest.mark.asyncio
+    async def test_retry_after_seconds_in_violation(self):
+        """Verify retry_after_seconds is included in violation details."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Open the circuit with future close time
+        state = _get_state("test_tool")
+        state.open_until = time.time() + 30  # 30 seconds from now
+
+        # Create payload
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+
+        # Create mock context
+        context = MagicMock()
+
+        # Process pre_invoke - should block
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        # Should block with retry_after_seconds
+        assert result.continue_processing is False
+        assert result.violation is not None
+        assert "retry_after_seconds" in result.violation.details
+        assert 25 <= result.violation.details["retry_after_seconds"] <= 35
+
+    @pytest.mark.asyncio
+    async def test_metadata_includes_all_fields(self):
+        """Verify post_invoke metadata includes all required fields."""
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Create mock success result
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(return_value=None)
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Verify all metadata fields are present
+        required_fields = [
+            "circuit_calls_in_window",
+            "circuit_failures_in_window",
+            "circuit_failure_rate",
+            "circuit_consecutive_failures",
+            "circuit_open_until",
+            "circuit_half_open",
+            "circuit_retry_after_seconds",
+        ]
+
+        for field in required_fields:
+            assert field in result.metadata, f"Missing field: {field}"
+
+    @pytest.mark.asyncio
+    async def test_timeout_flag_counts_as_failure(self):
+        """Verify cb_timeout_failure flag counts as circuit breaker failure."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Create mock result that looks successful
+        mock_result = MagicMock()
+        mock_result.is_error = False  # Result doesn't show error
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create context with timeout flag set
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": False,
+            "cb_timeout_failure": True,  # TIMEOUT OCCURRED!
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Should count as failure
+        assert result.metadata["circuit_failures_in_window"] == 1
+        assert result.metadata["circuit_consecutive_failures"] == 1
+
+    @pytest.mark.asyncio
+    async def test_timeout_flag_can_trip_breaker(self):
+        """Verify enough timeout failures can trip the circuit breaker."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with low threshold
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"consecutive_failure_threshold": 3, "cooldown_seconds": 60}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        state = _get_state("test_tool")
+        state.consecutive_failures = 2  # Already at threshold - 1
+
+        # Create mock result that looks successful
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        # Create context with timeout flag set
+        context = MagicMock()
+        context.get_state = MagicMock(side_effect=lambda k, d=None: {
+            "cb_call_time": time.time(),
+            "cb_half_open_test": False,
+            "cb_timeout_failure": True,  # 3rd consecutive failure via timeout
+        }.get(k, d))
+
+        # Process post_invoke
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Should trip the breaker
+        assert state.open_until > time.time()
+
+    def test_tool_overrides_apply_correctly(self):
+        """Verify per-tool overrides are applied."""
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerConfig, _cfg_for
+        )
+
+        # Create base config with tool overrides
+        base_config = CircuitBreakerConfig(
+            error_rate_threshold=0.5,
+            window_seconds=60,
+            consecutive_failure_threshold=5,
+            cooldown_seconds=60,
+            tool_overrides={
+                "critical_tool": {
+                    "consecutive_failure_threshold": 2,  # More sensitive
+                    "cooldown_seconds": 120,             # Longer cooldown
+                }
+            }
+        )
+
+        # Get effective config for regular tool
+        regular_config = _cfg_for(base_config, "regular_tool")
+        assert regular_config.consecutive_failure_threshold == 5
+        assert regular_config.cooldown_seconds == 60
+
+        # Get effective config for critical tool
+        critical_config = _cfg_for(base_config, "critical_tool")
+        assert critical_config.consecutive_failure_threshold == 2
+        assert critical_config.cooldown_seconds == 120
+
+    @pytest.mark.asyncio
+    async def test_old_entries_evicted_from_window(self):
+        """Verify old call/failure entries are evicted from sliding window."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state, _STATE
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPostInvokePayload
+
+        # Create plugin with 1-second window
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1,
+            config={"window_seconds": 1}
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Add old entries
+        state = _get_state("test_tool")
+        old_time = time.time() - 10  # 10 seconds ago
+        state.calls.append(old_time)
+        state.failures.append(old_time)
+
+        # Create mock result
+        mock_result = MagicMock()
+        mock_result.is_error = False
+
+        payload = ToolPostInvokePayload(
+            name="test_tool",
+            arguments={},
+            result=mock_result
+        )
+
+        context = MagicMock()
+        context.get_state = MagicMock(return_value=None)
+
+        # Process post_invoke - should evict old entries
+        result = await plugin.tool_post_invoke(payload, context)
+
+        # Old entries should be evicted, new call should be recorded
+        assert result.metadata["circuit_calls_in_window"] == 1
+        assert result.metadata["circuit_failures_in_window"] == 0
+
+    def test_is_error_with_tool_result_attribute(self):
+        """Verify is_error detection using ToolResult.is_error attribute."""
+        from plugins.circuit_breaker.circuit_breaker import _is_error
+
+        mock_result = MagicMock()
+        mock_result.is_error = True
+
+        assert _is_error(mock_result) is True
+
+        mock_result.is_error = False
+        assert _is_error(mock_result) is False
+
+    def test_is_error_with_dict(self):
+        """Verify is_error detection using dict key."""
+        from plugins.circuit_breaker.circuit_breaker import _is_error
+
+        error_dict = {"is_error": True, "content": "error message"}
+        assert _is_error(error_dict) is True
+
+        success_dict = {"is_error": False, "content": "success"}
+        assert _is_error(success_dict) is False
+
+    def test_is_error_with_missing_field_returns_false(self):
+        """Verify is_error returns False when field is missing."""
+        from plugins.circuit_breaker.circuit_breaker import _is_error
+
+        # Object without is_error
+        mock_result = MagicMock(spec=[])  # No attributes
+        del mock_result.is_error  # Remove any auto-mock
+
+        # Dict without is_error key
+        no_error_dict = {"content": "some content"}
+        assert _is_error(no_error_dict) is False
+
+    @pytest.mark.asyncio
+    async def test_plugin_initialization(self):
+        """Verify plugin initializes correctly with config."""
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
+        from mcpgateway.plugins.framework import PluginConfig
+
+        config = PluginConfig(
+            name="CircuitBreaker",
+            kind="plugins.circuit_breaker.circuit_breaker.CircuitBreakerPlugin",
+            hooks=["tool_pre_invoke", "tool_post_invoke"],
+            mode="enforce_ignore_error",
+            priority=70,
+            config={
+                "error_rate_threshold": 0.3,
+                "window_seconds": 120,
+                "min_calls": 5,
+                "consecutive_failure_threshold": 3,
+                "cooldown_seconds": 30,
+            }
+        )
+
+        plugin = CircuitBreakerPlugin(config)
+
+        assert plugin._cfg.error_rate_threshold == 0.3
+        assert plugin._cfg.window_seconds == 120
+        assert plugin._cfg.min_calls == 5
+        assert plugin._cfg.consecutive_failure_threshold == 3
+        assert plugin._cfg.cooldown_seconds == 30
+
+    @pytest.mark.asyncio
+    async def test_plugin_allows_requests_when_closed(self):
+        """Verify plugin allows requests when circuit is closed."""
+        from plugins.circuit_breaker.circuit_breaker import CircuitBreakerPlugin
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+        context = MagicMock()
+        context.set_state = MagicMock()
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        assert result.continue_processing is True
+        assert result.violation is None
+
+    @pytest.mark.asyncio
+    async def test_plugin_blocks_requests_when_open(self):
+        """Verify plugin blocks requests when circuit is open."""
+        import time
+        from plugins.circuit_breaker.circuit_breaker import (
+            CircuitBreakerPlugin, _get_state
+        )
+        from mcpgateway.plugins.framework import PluginConfig, ToolPreInvokePayload
+
+        config = PluginConfig(
+            name="test", kind="test", hooks=[], mode="enforce", priority=1
+        )
+        plugin = CircuitBreakerPlugin(config)
+
+        # Open the circuit
+        state = _get_state("test_tool")
+        state.open_until = time.time() + 60  # Open for next 60 seconds
+
+        payload = ToolPreInvokePayload(name="test_tool", arguments={})
+        context = MagicMock()
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        assert result.continue_processing is False
+        assert result.violation is not None
+
+
+class TestToolServiceHelpers:
+    def test_get_validator_class_and_check_fallback_draft7(self, monkeypatch):
+        """Ensure schema fallback uses Draft7 when auto-detect fails."""
+        from mcpgateway.services import tool_service
+
+        tool_service._get_validator_class_and_check.cache_clear()
+
+        class DummyValidator:
+            @staticmethod
+            def check_schema(schema):
+                raise jsonschema.exceptions.SchemaError("invalid")
+
+        class Draft7Ok:
+            @staticmethod
+            def check_schema(schema):
+                return None
+
+        class DraftFail:
+            @staticmethod
+            def check_schema(schema):
+                raise jsonschema.exceptions.SchemaError("invalid")
+
+        monkeypatch.setattr(tool_service.validators, "validator_for", lambda schema: DummyValidator)
+        monkeypatch.setattr(tool_service, "Draft7Validator", Draft7Ok)
+        monkeypatch.setattr(tool_service, "Draft6Validator", DraftFail)
+        monkeypatch.setattr(tool_service, "Draft4Validator", DraftFail)
+
+        schema = {"type": "object"}
+        schema_json = orjson.dumps(schema).decode()
+
+        validator_cls, checked_schema = tool_service._get_validator_class_and_check(schema_json)
+
+        assert validator_cls is Draft7Ok
+        assert checked_schema == schema
+
+    def test_validate_with_cached_schema_raises_on_invalid_instance(self):
+        """Ensure validation raises when instance does not match schema."""
+        from mcpgateway.services import tool_service
+
+        tool_service._get_validator_class_and_check.cache_clear()
+
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}
+        with pytest.raises(jsonschema.exceptions.ValidationError):
+            tool_service._validate_with_cached_schema({}, schema)
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_public_and_admin(self):
+        """Verify public access and admin bypass paths."""
+        service = ToolService()
+
+        public_payload = {"visibility": "public"}
+        assert await service._check_tool_access(MagicMock(), public_payload, None, []) is True
+
+        private_payload = {"visibility": "private"}
+        assert await service._check_tool_access(MagicMock(), private_payload, None, None) is True
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_denies_without_user_or_public_only_token(self):
+        """Verify deny paths for missing user and public-only tokens."""
+        service = ToolService()
+
+        private_payload = {"visibility": "private"}
+        assert await service._check_tool_access(MagicMock(), private_payload, None, ["team-1"]) is False
+
+        team_payload = {"visibility": "team", "team_id": "team-1"}
+        assert await service._check_tool_access(MagicMock(), team_payload, "user@example.com", []) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_owner_and_team_token(self):
+        """Verify owner access and team token membership access."""
+        service = ToolService()
+
+        owner_payload = {"visibility": "private", "owner_email": "owner@example.com"}
+        assert await service._check_tool_access(MagicMock(), owner_payload, "owner@example.com", ["team-2"]) is True
+
+        team_payload = {"visibility": "team", "team_id": "team-1"}
+        assert await service._check_tool_access(MagicMock(), team_payload, "user@example.com", ["team-1"]) is True
+
+        assert await service._check_tool_access(MagicMock(), team_payload, "user@example.com", ["team-2"]) is False
+
+    @pytest.mark.asyncio
+    async def test_check_tool_access_team_lookup_from_db(self):
+        """Verify team membership lookup when token lacks teams."""
+        service = ToolService()
+        tool_payload = {"visibility": "team", "team_id": "team-9"}
+
+        with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
+            mock_instance = mock_team_service.return_value
+            mock_instance.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-9")])
+
+            assert await service._check_tool_access(MagicMock(), tool_payload, "user@example.com", None) is True
+
+    def test_build_tool_cache_payload_and_pydantic_helpers(self):
+        """Verify cache payload assembly and Pydantic helper behavior."""
+        service = ToolService()
+
+        tool = SimpleNamespace(
+            id="tool-1",
+            name="tool-name",
+            original_name="tool-name",
+            url="https://example.com/tool",
+            description="desc",
+            integration_type="http",
+            request_type="http",
+            headers=None,
+            input_schema=None,
+            output_schema={"type": "object"},
+            annotations=None,
+            auth_type="bearer",
+            auth_value="secret",
+            oauth_config=None,
+            jsonpath_filter="",
+            custom_name="custom",
+            custom_name_slug="custom",
+            display_name="Custom Tool",
+            gateway_id=None,
+            enabled=True,
+            reachable=True,
+            tags=None,
+            team_id="team-1",
+            owner_email="owner@example.com",
+            visibility="team",
+        )
+        gateway = SimpleNamespace(
+            id="gw-1",
+            name="gw",
+            url="https://example.com/gw",
+            description="gw-desc",
+            slug="gw",
+            transport="http",
+            capabilities=None,
+            passthrough_headers=None,
+            auth_type="basic",
+            auth_value="secret",
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            enabled=True,
+            reachable=True,
+            team_id="team-1",
+            owner_email="owner@example.com",
+            visibility="team",
+            tags=None,
+        )
+
+        payload = service._build_tool_cache_payload(tool, gateway)
+
+        assert payload["status"] == "active"
+        assert payload["tool"]["headers"] == {}
+        assert payload["tool"]["input_schema"]["type"] == "object"
+        assert payload["gateway"]["passthrough_headers"] == []
+
+        sentinel = object()
+        with patch("mcpgateway.services.tool_service.PydanticTool.model_validate", return_value=sentinel):
+            assert service._pydantic_tool_from_payload(payload["tool"]) is sentinel
+
+        with patch("mcpgateway.services.tool_service.PydanticGateway.model_validate", side_effect=ValueError("bad")):
+            assert service._pydantic_gateway_from_payload(payload["gateway"]) is None
+
+    def test_convert_tool_to_read_auth_variants(self):
+        """Verify auth decoding and masking behaviors in conversion."""
+        service = ToolService()
+
+        def make_tool(auth_type, auth_value):
+            return SimpleNamespace(
+                id="tool-1",
+                name="tool",
+                original_name="orig",
+                description="desc",
+                url="https://example.com",
+                integration_type="http",
+                request_type="http",
+                headers={},
+                input_schema={"type": "object"},
+                output_schema={"type": "object"},
+                annotations={},
+                auth_type=auth_type,
+                auth_value=auth_value,
+                jsonpath_filter=None,
+                custom_name="custom",
+                custom_name_slug="custom",
+                display_name=None,
+                gateway_id=None,
+                enabled=True,
+                reachable=True,
+                tags=[],
+                team_id=None,
+                owner_email="owner@example.com",
+                visibility="private",
+                metrics_summary={"total_executions": 2},
+                gateway_slug="",
+                team=None,
+            )
+
+        with patch("mcpgateway.services.tool_service.ToolRead.model_validate", side_effect=lambda data: data):
+            encoded = base64.b64encode(b"user:pass").decode()
+            basic_tool = make_tool("basic", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": f"Basic {encoded}"}):
+                result = service.convert_tool_to_read(basic_tool, include_metrics=True, include_auth=True)
+                assert result["auth"]["auth_type"] == "basic"
+                assert result["auth"]["username"] == "user"
+                assert result["auth"]["password"] == settings.masked_auth_value
+
+            bearer_tool = make_tool("bearer", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer token"}):
+                result = service.convert_tool_to_read(bearer_tool, include_metrics=False, include_auth=True)
+                assert result["auth"]["auth_type"] == "bearer"
+                assert result["auth"]["token"] == settings.masked_auth_value
+
+            headers_tool = make_tool("authheaders", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"X-Api-Key": "token"}):
+                result = service.convert_tool_to_read(headers_tool, include_metrics=False, include_auth=True)
+                assert result["auth"]["auth_type"] == "authheaders"
+                assert result["auth"]["auth_header_key"] == "X-Api-Key"
+                assert result["auth"]["auth_header_value"] == settings.masked_auth_value
+
+            no_decode_tool = make_tool("bearer", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth") as mock_decode:
+                result = service.convert_tool_to_read(no_decode_tool, include_metrics=False, include_auth=False)
+                assert result["auth"]["auth_type"] == "bearer"
+                mock_decode.assert_not_called()
+
+            unknown_tool = make_tool("custom", "secret")
+            with patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Basic value"}):
+                result = service.convert_tool_to_read(unknown_tool, include_metrics=False, include_auth=True)
+                assert result["auth"] is None
+
+
+def _make_bulk_tool_create(name: str, integration_type: str = "REST", **overrides) -> ToolCreate:
+    request_type = "POST" if integration_type == "REST" else "SSE"
+    payload = {
+        "name": name,
+        "url": "https://example.com/api",
+        "description": "Bulk tool",
+        "integration_type": integration_type,
+        "request_type": request_type,
+        "headers": {"X-Test": "1"},
+        "input_schema": {"type": "object", "properties": {"q": {"type": "string"}}},
+        "output_schema": {"type": "object"},
+        "tags": ["alpha"],
+    }
+    payload.update(overrides)
+    return ToolCreate(**payload)
+
+
+class TestToolServiceBulkImport:
+    def test_create_tool_object_rest_and_mcp_fields(self):
+        service = ToolService()
+
+        tool_rest = _make_bulk_tool_create(
+            name="bulk_tool_rest",
+            base_url="https://api.example.com",
+            path_template="/items/{id}",
+            query_mapping={"q": "query"},
+            header_mapping={"X-Request-Id": "header"},
+            timeout_ms=5000,
+            expose_passthrough=None,
+            allowlist=["example.com"],
+            plugin_chain_pre=["rate_limit"],
+            plugin_chain_post=["response_shape"],
+        )
+
+        db_tool = service._create_tool_object(
+            tool_rest,
+            name=tool_rest.name,
+            auth_type=None,
+            auth_value=None,
+            tool_team_id=None,
+            tool_owner_email="owner@example.com",
+            tool_visibility="public",
+            created_by="creator@example.com",
+            created_from_ip="127.0.0.1",
+            created_via="api",
+            created_user_agent="pytest",
+            import_batch_id="batch-1",
+            federation_source="fed-1",
+        )
+
+        assert db_tool.base_url == "https://api.example.com"
+        assert db_tool.path_template == "/items/{id}"
+        assert db_tool.query_mapping == {"q": "query"}
+        assert db_tool.header_mapping == {"X-Request-Id": "header"}
+        assert db_tool.timeout_ms == 5000
+        assert db_tool.expose_passthrough is True
+        assert db_tool.allowlist == ["example.com"]
+        assert db_tool.plugin_chain_pre == ["rate_limit"]
+        assert db_tool.plugin_chain_post == ["response_shape"]
+        assert db_tool.custom_name_slug == "bulk-tool-rest"
+
+        tool_mcp = ToolCreate.model_construct(
+            name="bulk_tool_mcp",
+            displayName=None,
+            url="https://example.com/api",
+            description="Bulk tool",
+            integration_type="MCP",
+            request_type="SSE",
+            headers={"X-Test": "1"},
+            input_schema={"type": "object", "properties": {"q": {"type": "string"}}},
+            output_schema={"type": "object"},
+            annotations={},
+            jsonpath_filter="",
+            auth=None,
+            gateway_id=None,
+            tags=["alpha"],
+        )
+        db_tool_mcp = service._create_tool_object(
+            tool_mcp,
+            name=tool_mcp.name,
+            auth_type="bearer",
+            auth_value="token",
+            tool_team_id="team-1",
+            tool_owner_email="owner@example.com",
+            tool_visibility="team",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+
+        assert db_tool_mcp.base_url is None
+        assert db_tool_mcp.header_mapping is None
+        assert db_tool_mcp.timeout_ms is None
+        assert db_tool_mcp.expose_passthrough is None
+        assert db_tool_mcp.team_id == "team-1"
+
+    def test_process_single_tool_for_bulk_update_rest_fields(self):
+        service = ToolService()
+
+        tool = _make_bulk_tool_create(
+            name="bulk_tool_update",
+            displayName="Bulk Update",
+            annotations={"title": "Bulk"},
+            jsonpath_filter="$.data",
+            base_url="https://api.new",
+            path_template="/new/{id}",
+            query_mapping={"new": "query"},
+            header_mapping={"X-New": "header"},
+            timeout_ms=9000,
+            expose_passthrough=False,
+            allowlist=["example.com"],
+            plugin_chain_pre=["rate_limit"],
+            plugin_chain_post=["response_shape"],
+            auth=AuthenticationValues(auth_type="bearer", auth_value="token"),
+            tags=["updated"],
+        )
+
+        existing_tool = SimpleNamespace(
+            name=tool.name,
+            display_name="Old",
+            url="https://old",
+            description="old",
+            integration_type="REST",
+            request_type="GET",
+            headers={"Old": "1"},
+            input_schema={"type": "object"},
+            output_schema=None,
+            annotations={"old": True},
+            jsonpath_filter="",
+            auth_type=None,
+            auth_value=None,
+            tags=["old"],
+            modified_by=None,
+            modified_from_ip=None,
+            modified_via=None,
+            modified_user_agent=None,
+            updated_at=None,
+            version=2,
+            base_url="https://old",
+            path_template="/old",
+            query_mapping={"old": "query"},
+            header_mapping={"X-Old": "header"},
+            timeout_ms=1000,
+            expose_passthrough=True,
+            allowlist=["https://old"],
+            plugin_chain_pre=["old-pre"],
+            plugin_chain_post=["old-post"],
+        )
+
+        result = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="update",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip="127.0.0.1",
+            created_via="api",
+            created_user_agent="pytest",
+            import_batch_id="batch-1",
+            federation_source="fed-1",
+        )
+
+        assert result["status"] == "update"
+        assert existing_tool.display_name == "Bulk Update"
+        assert existing_tool.url == "https://example.com/api"
+        assert existing_tool.description == "Bulk tool"
+        assert existing_tool.integration_type == "REST"
+        assert existing_tool.request_type == "POST"
+        assert existing_tool.headers == {"X-Test": "1"}
+        assert existing_tool.input_schema["properties"]["q"]["type"] == "string"
+        assert existing_tool.annotations == {"title": "Bulk"}
+        assert existing_tool.jsonpath_filter == "$.data"
+        assert existing_tool.auth_type == "bearer"
+        assert existing_tool.auth_value == "token"
+        assert existing_tool.tags == [{"id": "updated", "label": "updated"}]
+        assert existing_tool.base_url == "https://api.new"
+        assert existing_tool.path_template == "/new/{id}"
+        assert existing_tool.query_mapping == {"new": "query"}
+        assert existing_tool.header_mapping == {"X-New": "header"}
+        assert existing_tool.timeout_ms == 9000
+        assert existing_tool.expose_passthrough is False
+        assert existing_tool.allowlist == ["example.com"]
+        assert existing_tool.plugin_chain_pre == ["rate_limit"]
+        assert existing_tool.plugin_chain_post == ["response_shape"]
+        assert existing_tool.version == 3
+
+    def test_process_single_tool_for_bulk_conflict_variants(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_conflict")
+        existing_tool = SimpleNamespace(name=tool.name)
+
+        result_skip = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="skip",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+        assert result_skip == {"status": "skip"}
+
+        with patch("mcpgateway.services.tool_service.datetime") as mock_datetime, patch.object(service, "_create_tool_object") as mock_create:
+            mock_datetime.now.return_value = datetime(2024, 1, 1, tzinfo=timezone.utc)
+            sentinel_tool = object()
+            mock_create.return_value = sentinel_tool
+
+            result_rename = service._process_single_tool_for_bulk(
+                tool=tool,
+                existing_tools_map={tool.name: existing_tool},
+                conflict_strategy="rename",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id="batch-1",
+                federation_source=None,
+            )
+
+        assert result_rename["status"] == "add"
+        assert result_rename["tool"] is sentinel_tool
+        mock_create.assert_called_once()
+        assert mock_create.call_args[0][1] == "bulk_tool_conflict_imported_1704067200"
+
+        result_fail = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={tool.name: existing_tool},
+            conflict_strategy="fail",
+            visibility="public",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+        assert result_fail["status"] == "fail"
+        assert "Tool name conflict" in result_fail["error"]
+
+    def test_process_single_tool_for_bulk_add_and_fail(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_add", integration_type="REST")
+
+        result_add = service._process_single_tool_for_bulk(
+            tool=tool,
+            existing_tools_map={},
+            conflict_strategy="skip",
+            visibility="private",
+            team_id="team-1",
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+        assert result_add["status"] == "add"
+        assert result_add["tool"].original_name == tool.name
+
+        with patch.object(service, "_create_tool_object", side_effect=ValueError("boom")):
+            result_fail = service._process_single_tool_for_bulk(
+                tool=tool,
+                existing_tools_map={},
+                conflict_strategy="skip",
+                visibility="public",
+                team_id=None,
+                owner_email=None,
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id=None,
+                federation_source=None,
+            )
+        assert result_fail["status"] == "fail"
+        assert "Failed to process tool" in result_fail["error"]
+
+    def test_process_tool_chunk_public_adds_and_audits(self, mock_logging_services):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_chunk")
+        db_tool = SimpleNamespace(id="tool-1")
+
+        db = MagicMock()
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = []
+        mock_result = Mock()
+        mock_result.scalars.return_value = mock_scalars
+        db.execute.return_value = mock_result
+
+        with patch.object(service, "_process_single_tool_for_bulk") as mock_process:
+            mock_process.side_effect = [
+                {"status": "add", "tool": db_tool},
+                {"status": "skip"},
+            ]
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[tool, tool],
+                conflict_strategy="skip",
+                visibility="public",
+                team_id=None,
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip="127.0.0.1",
+                created_via="api",
+                created_user_agent="pytest",
+                import_batch_id="batch-1",
+                federation_source=None,
+            )
+
+        assert stats["created"] == 1
+        assert stats["skipped"] == 1
+        db.add_all.assert_called_once_with([db_tool])
+        db.commit.assert_called_once()
+        db.refresh.assert_called_once_with(db_tool)
+        mock_logging_services["audit_trail"].log_action.assert_called_once()
+
+    def test_process_tool_chunk_team_updates_only(self, mock_logging_services):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_update_only")
+        db_tool = SimpleNamespace(id="tool-2")
+
+        db = MagicMock()
+        mock_scalars = Mock()
+        mock_scalars.all.return_value = []
+        mock_result = Mock()
+        mock_result.scalars.return_value = mock_scalars
+        db.execute.return_value = mock_result
+
+        with patch.object(service, "_process_single_tool_for_bulk", return_value={"status": "update", "tool": db_tool}):
+            stats = service._process_tool_chunk(
+                db=db,
+                chunk=[tool],
+                conflict_strategy="update",
+                visibility="team",
+                team_id="team-1",
+                owner_email="owner@example.com",
+                created_by="creator@example.com",
+                created_from_ip=None,
+                created_via=None,
+                created_user_agent=None,
+                import_batch_id=None,
+                federation_source=None,
+            )
+
+        assert stats["updated"] == 1
+        db.add_all.assert_not_called()
+        db.commit.assert_called_once()
+        mock_logging_services["audit_trail"].log_action.assert_called_once()
+        assert mock_logging_services["audit_trail"].log_action.call_args.kwargs["action"] == "bulk_update_tools"
+
+    def test_process_tool_chunk_private_exception_rolls_back(self):
+        service = ToolService()
+        tool = _make_bulk_tool_create(name="bulk_tool_fail")
+
+        db = MagicMock()
+        db.execute.side_effect = RuntimeError("boom")
+
+        stats = service._process_tool_chunk(
+            db=db,
+            chunk=[tool],
+            conflict_strategy="skip",
+            visibility="private",
+            team_id=None,
+            owner_email="owner@example.com",
+            created_by="creator@example.com",
+            created_from_ip=None,
+            created_via=None,
+            created_user_agent=None,
+            import_batch_id=None,
+            federation_source=None,
+        )
+
+        assert stats["failed"] == 1
+        assert "Chunk processing failed" in stats["errors"][0]
+        db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_invalidate_caches(self):
+        service = ToolService()
+        tools = [
+            _make_bulk_tool_create(name="bulk_tool_a", gateway_id="gw-1"),
+            _make_bulk_tool_create(name="bulk_tool_b", gateway_id=None),
+        ]
+
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with patch.object(service, "_process_tool_chunk", return_value={"created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []}), \
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache), \
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache), \
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_admin_cache.invalidate_tags = AsyncMock()
+
+            result = await service.register_tools_bulk(
+                db=MagicMock(),
+                tools=tools,
+                created_by="creator@example.com",
+                visibility="public",
+            )
+
+        assert result["created"] == 1
+        registry_cache.invalidate_tools.assert_awaited_once()
+        lookup_cache.invalidate.assert_has_awaits(
+            [
+                call("bulk_tool_a", gateway_id="gw-1"),
+                call("bulk_tool_b", gateway_id=None),
+            ]
+        )
+        mock_admin_cache.invalidate_tags.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_no_changes_skips_invalidation(self):
+        service = ToolService()
+        tools = [_make_bulk_tool_create(name="bulk_tool_none")]
+
+        registry_cache = SimpleNamespace(invalidate_tools=AsyncMock())
+        lookup_cache = SimpleNamespace(invalidate=AsyncMock())
+
+        with patch.object(service, "_process_tool_chunk", return_value={"created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []}), \
+            patch("mcpgateway.services.tool_service._get_registry_cache", return_value=registry_cache), \
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache), \
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache") as mock_admin_cache:
+            mock_admin_cache.invalidate_tags = AsyncMock()
+
+            result = await service.register_tools_bulk(
+                db=MagicMock(),
+                tools=tools,
+                created_by="creator@example.com",
+                visibility="public",
+            )
+
+        assert result["skipped"] == 1
+        registry_cache.invalidate_tools.assert_not_called()
+        lookup_cache.invalidate.assert_not_called()
+        mock_admin_cache.invalidate_tags.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_register_tools_bulk_empty_list(self):
+        service = ToolService()
+        result = await service.register_tools_bulk(db=MagicMock(), tools=[])
+
+        assert result == {"created": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}

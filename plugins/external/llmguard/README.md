@@ -304,8 +304,8 @@ The LLMGuardPlugin could be configured in the following ways:
         mode: "enforce"  # enforce | permissive | disabled
         priority: 20
         conditions:
-          # Apply to specific tools/servers
-          - prompts: ["test_prompt"]
+          # Apply to specific tools/servers/prompts
+          - prompts: [] # Apply to all prompts when empty, specify the prompt's prompt_id e.g. ["398f568dc10b4fcc9a7f1e7123a28b1b"]
             server_ids: []  # Apply to all servers
             tenant_ids: []  # Apply to all tenants
         config:

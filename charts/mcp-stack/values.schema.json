@@ -409,6 +409,11 @@
               "type": "object",
               "description": "Redis connection configuration",
               "properties": {
+                "host": {
+                  "type": "string",
+                  "description": "Redis host override",
+                  "default": ""
+                },
                 "port": {
                   "type": "integer",
                   "minimum": 1,
@@ -502,6 +507,11 @@
               "type": "string",
               "description": "Database pool recycle time",
               "default": "3600"
+            },
+            "DB_SQLITE_BUSY_TIMEOUT": {
+              "type": "string",
+              "description": "SQLite lock wait timeout in milliseconds",
+              "default": "5000"
             },
             "CACHE_TYPE": {
               "type": "string",
@@ -747,6 +757,28 @@
               "description": "Maximum request body size to log in detailed mode (bytes)",
               "default": "16384"
             },
+            "LOG_DETAILED_SKIP_ENDPOINTS": {
+              "type": "string",
+              "description": "Path prefixes to skip from detailed request logging (comma-separated)",
+              "default": ""
+            },
+            "LOG_DETAILED_SAMPLE_RATE": {
+              "type": "string",
+              "description": "Sampling rate for detailed request logging (0.0-1.0)",
+              "default": "1.0"
+            },
+            "LOG_RESOLVE_USER_IDENTITY": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable DB lookup for user identity during request logging",
+              "default": "false"
+            },
+            "PERMISSION_AUDIT_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable permission audit logging for RBAC checks",
+              "default": "false"
+            },
             "TRANSPORT_TYPE": {
               "type": "string",
               "description": "Transport types (comma-separated)",
@@ -898,8 +930,14 @@
             },
             "BASIC_AUTH_PASSWORD": {
               "type": "string",
-              "description": "Basic auth password",
+              "description": "Basic auth password (when Basic auth is enabled)",
               "default": "changeme"
+            },
+            "API_ALLOW_BASIC_AUTH": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable Basic auth for API endpoints (disabled by default for security)",
+              "default": "false"
             },
             "AUTH_REQUIRED": {
               "type": "string",
@@ -965,31 +1003,6 @@
             }
           },
           "additionalProperties": true
-        },
-        "envFrom": {
-          "type": "array",
-          "description": "Environment variable sources",
-          "items": {
-            "type": "object",
-            "properties": {
-              "secretRef": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              },
-              "configMapRef": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
         }
       },
       "additionalProperties": false
@@ -1460,6 +1473,51 @@
           },
           "additionalProperties": false
         },
+        "external": {
+          "type": "object",
+          "description": "External Redis configuration",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable external Redis",
+              "default": false
+            },
+            "existingSecret": {
+              "type": "string",
+              "description": "Secret containing REDIS_URL",
+              "default": ""
+            },
+            "urlKey": {
+              "type": "string",
+              "description": "Secret key for REDIS_URL",
+              "default": "REDIS_URL"
+            },
+            "url": {
+              "type": "string",
+              "description": "Direct Redis URL override",
+              "default": ""
+            },
+            "host": {
+              "type": "string",
+              "description": "Redis host",
+              "default": ""
+            },
+            "port": {
+              "type": "integer",
+              "description": "Redis port",
+              "minimum": 1,
+              "maximum": 65535,
+              "default": 6379
+            },
+            "db": {
+              "type": "integer",
+              "description": "Redis database index",
+              "minimum": 0,
+              "default": 0
+            }
+          },
+          "additionalProperties": false
+        },
         "resources": {
           "$ref": "#/$defs/resources",
           "description": "Resource limits and requests"
@@ -1579,6 +1637,16 @@
             }
           },
           "additionalProperties": false
+        },
+        "existingSecret": {
+          "type": "string",
+          "description": "Existing Secret name for PgAdmin credentials",
+          "default": ""
+        },
+        "passwordKey": {
+          "type": "string",
+          "description": "Secret key for PGADMIN_DEFAULT_PASSWORD",
+          "default": "PGADMIN_DEFAULT_PASSWORD"
         },
         "env": {
           "type": "object",
@@ -1800,6 +1868,16 @@
               "description": "Enable ingress",
               "default": true
             },
+            "className": {
+              "type": "string",
+              "description": "Ingress class name",
+              "default": "nginx"
+            },
+            "host": {
+              "type": "string",
+              "description": "Ingress host",
+              "default": "gateway.local"
+            },
             "path": {
               "type": "string",
               "description": "Ingress path",
@@ -1817,6 +1895,29 @@
               "minimum": 1,
               "maximum": 65535,
               "default": 80
+            },
+            "annotations": {
+              "type": "object",
+              "description": "Ingress annotations",
+              "additionalProperties": { "type": "string" },
+              "default": {}
+            },
+            "tls": {
+              "type": "object",
+              "description": "TLS configuration for ingress",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Enable TLS for ingress",
+                  "default": false
+                },
+                "secretName": {
+                  "type": "string",
+                  "description": "Name of the TLS secret (optional, auto-generated if empty)",
+                  "default": ""
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false

@@ -12,6 +12,10 @@ With Copilot → MCP you can:
 Copilot supports **SSE** streams out-of-the-box; for environments that forbid long-lived
 HTTP or require local stdio, you can insert the bundled **`mcpgateway.wrapper`** bridge.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🛠 Prerequisites
@@ -113,7 +117,7 @@ That's it - VS Code spawns the stdio process, pipes JSON-RPC, and you're ready t
     "run", "--rm", "--network=host", "-i",
     "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
     "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
-    "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1",
+    "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2",
     "python3", "-m", "mcpgateway.wrapper"
   ]
 }

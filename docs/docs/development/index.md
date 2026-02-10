@@ -30,10 +30,17 @@ Development tools:
 * Testing: `pytest`, `httpx`
 * Serving: `uvicorn`, `gunicorn`
 
+Frontend tools (Admin UI):
+
+* Linters: ESLint, Stylelint, HTMLHint, Biome
+* Formatting: Prettier
+* Security: Retire.js (vulnerability scanning)
+
 Code style and consistency is enforced via:
 
 ```bash
 make lint          # runs ruff, mypy, black, isort
+make lint-web      # runs ESLint, HTMLHint, Stylelint
 make pre-commit    # runs pre-commit hooks on staged files
 ```
 
@@ -48,15 +55,21 @@ Test coverage includes:
 * Unit tests under `tests/unit/`
 * Integration tests under `tests/integration/`
 * End-to-end tests under `tests/e2e/`
+* UI automation under `tests/playwright/` (Playwright)
+* Load testing under `tests/locust/` (Locust)
 * Example payload performance testing under `tests/hey/`
 
 Use:
 
 ```bash
-make test                  # run full suite
-python3 -m pytest tests/unit     # run only unit tests
-python3 -m pytest tests/e2e      # run end-to-end scenarios
+make test                        # run full suite
+pytest tests/unit/               # run only unit tests
+pytest tests/e2e/                # run end-to-end scenarios
+pytest tests/playwright/         # run UI automation tests
+locust -f tests/locust/locustfile.py --host=http://localhost:4444  # load testing
 ```
+
+Note: JavaScript unit tests are not yet implemented; frontend testing relies on Playwright for UI automation.
 
 ### Database Performance Testing
 
@@ -103,12 +116,12 @@ make podman-run-ssl    # run with self-signed TLS at https://localhost:4444
 
 ## 🔐 Authentication
 
-Admin UI and API are protected by Basic Auth or JWT.
+Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). API endpoints require JWT tokens (Basic Auth is disabled by default).
 
 To generate a JWT token:
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
 echo $MCPGATEWAY_BEARER_TOKEN
 ```
 
@@ -124,7 +137,7 @@ curl -sX GET \
 
 ## 📦 Configuration
 
-Edit `.env` or set environment variables. A complete list is documented in the [README](https://github.com/IBM/mcp-context-forge#configuration-env-or-env-vars).
+Edit `.env` or set environment variables. A complete list is documented in the [Configuration Reference](../manage/configuration.md).
 
 Use:
 

@@ -777,7 +777,17 @@ async def unified_paginate(
     next_cursor = None
     if has_more and items:
         last_item = items[-1]
-        cursor_data = {"created_at": getattr(last_item, "created_at", None), "id": getattr(last_item, "id", None)}
+        item_created_at = getattr(last_item, "created_at", None)
+        item_id = getattr(last_item, "id", None)
+
+        # Warn if cursor fields are missing - keyset pagination won't work correctly
+        if item_id is None:
+            logger.warning(
+                f"Cursor pagination may not work correctly: model {type(last_item).__name__} has no 'id' field. "
+                "Subsequent pages may return duplicate results. Consider using page-based pagination instead."
+            )
+
+        cursor_data = {"created_at": item_created_at, "id": item_id}
         # Handle datetime serialization
         if cursor_data["created_at"]:
             cursor_data["created_at"] = cursor_data["created_at"].isoformat()

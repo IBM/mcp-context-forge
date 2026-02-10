@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "mcpgateway-rust"
-version = "1.0.0-BETA-1"
+version = "1.0.0-BETA-2"
 description = "Rust-accelerated plugins for MCP Gateway"
 authors = [{name = "MCP Gateway Contributors"}]
 license = {text = "Apache-2.0"}

@@ -2,16 +2,16 @@ plugins:
     # Self-contained Search Replace Plugin
   - name: "LLMGuardPlugin"
     kind: "llmguardplugin.plugin.LLMGuardPlugin"
-    description: "A plugin for running input through llmguard scanners "
+    description: "A plugin for running input and output through llmguard scanners "
     version: "0.1.0"
     author: "Shriti Priya"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch"]
-    tags: ["plugin", "guardrails", "llmguard", "pre-post"]
+    tags: ["plugin", "guardrails", "llmguard", "pre-post", "filters", "sanitizers"]
     mode: "enforce"  # enforce | permissive | disabled
     priority: 10
     conditions:
-      # Apply to specific tools/servers
-      - prompts: ["test_prompt"]
+      # Apply to specific tools/servers/prompts
+      - prompts: [] # Apply to all prompts when empty, specify the prompt's prompt_id e.g. ["398f568dc10b4fcc9a7f1e7123a28b1b"]
         server_ids: []  # Apply to all servers
         tenant_ids: []  # Apply to all tenants
     config:
@@ -26,6 +26,11 @@ plugins:
           TokenLimit:
             limit: 4096
           policy: (PromptInjection and Toxicity) and TokenLimit
+        sanitizers:
+          Anonymize:
+            language: "en"
+            vault_ttl: 120 #defined in seconds
+            vault_leak_detection: True
       output:
         filters:
           Toxicity:
@@ -36,6 +41,9 @@ plugins:
             is_blocked: True
             redact: False
           policy: Toxicity and Regex
+        sanitizers:
+          Deanonymize:
+            matching_strategy: exact
 
 # Plugin directories to scan
 plugin_dirs:

@@ -203,6 +203,27 @@ class TestCreateToken:
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Token name already exists" in str(exc_info.value.detail)
 
+    @pytest.mark.asyncio
+    async def test_create_token_with_is_active_false(self, mock_db, mock_current_user, mock_token_record):
+        """Test creating token with is_active=False persists the value."""
+        request = TokenCreateRequest(
+            name="Inactive Token",
+            description="Token created as inactive",
+            is_active=False,
+        )
+        mock_token_record.is_active = False
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "inactive-token"))
+
+            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            assert response.token.is_active is False
+            # Verify is_active=False was passed to service
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["is_active"] is False
+
 
 class TestListTokens:
     """Test cases for list_tokens endpoint."""
@@ -370,6 +391,40 @@ class TestUpdateToken:
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Invalid token name" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_update_token_toggle_is_active(self, mock_db, mock_current_user, mock_token_record):
+        """Test updating token to toggle is_active status."""
+        # Deactivate an active token
+        request = TokenUpdateRequest(is_active=False)
+        mock_token_record.is_active = False
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.update_token = AsyncMock(return_value=mock_token_record)
+
+            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+
+            assert response.is_active is False
+            # Verify is_active=False was passed to service
+            call_args = mock_service.update_token.call_args
+            assert call_args[1]["is_active"] is False
+
+    @pytest.mark.asyncio
+    async def test_update_token_reactivate(self, mock_db, mock_current_user, mock_token_record):
+        """Test updating token to reactivate it."""
+        request = TokenUpdateRequest(is_active=True)
+        mock_token_record.is_active = True
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.update_token = AsyncMock(return_value=mock_token_record)
+
+            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+
+            assert response.is_active is True
+            call_args = mock_service.update_token.call_args
+            assert call_args[1]["is_active"] is True
 
 
 class TestRevokeToken:
@@ -617,6 +672,7 @@ class TestEdgeCases:
         request.expires_in_days = 30
         request.tags = []
         request.team_id = "team-789"  # Add team_id attribute
+        request.is_active = True  # Add is_active attribute
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value

@@ -53,20 +53,24 @@ MCP Gateway's database schema is fully compatible with MariaDB/MySQL:
 ### MariaDB/MySQL Specific Limitations
 
 1. **No Partial JSONPath Index Support**
+
    - MariaDB/MySQL do not support partial indexes on JSON paths
    - Full table scans may occur for complex JSON queries
    - **Workaround**: Use additional indexed columns for frequently queried JSON fields
 
 2. **Foreign Key Length Constraints**
+
    - Foreign key column names are limited to 64 characters
    - Some composite foreign keys may require shorter naming
    - **Impact**: Minimal - affects only internal schema design
 
 3. **Case Sensitivity**
+
    - Table and column names are case-sensitive on Linux, case-insensitive on Windows/macOS
    - **Recommendation**: Use consistent lowercase naming for portability
 
 4. **JSON Data Type Differences**
+
    - MariaDB JSON is stored as LONGTEXT with validation
    - MySQL has native JSON data type with better performance
    - **Impact**: Functional compatibility maintained, performance may vary
@@ -74,10 +78,12 @@ MCP Gateway's database schema is fully compatible with MariaDB/MySQL:
 ### General Database Limitations
 
 1. **SQLite Connection Limits**
+
    - SQLite is limited to 50 connections in pool (vs 200 for other databases)
    - **Recommendation**: Use PostgreSQL or MariaDB for high-concurrency deployments
 
 2. **MongoDB Schema Flexibility**
+
    - MongoDB's schemaless nature may allow invalid data structures
    - **Mitigation**: Application-level validation enforced regardless of backend
 

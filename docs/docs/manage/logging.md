@@ -264,6 +264,7 @@ LOG_BUFFER_SIZE_MB=2  # Increase for more log history
 - **Automatic updates** as new logs are generated
 - **Visual indicators** with pulse animation for new entries
 - **Color-coded severity levels**:
+
   - Debug: Gray
   - Info: Blue
   - Warning: Yellow
@@ -287,6 +288,7 @@ LOG_BUFFER_SIZE_MB=2  # Increase for more log history
 1. Navigate to the Admin UI: `http://localhost:4444/admin`
 2. Click the **"Logs"** tab in the navigation
 3. Use the filter controls to refine your view:
+
    - Select entity type from dropdown
    - Choose minimum log level
    - Enter search terms
@@ -333,18 +335,22 @@ The log viewer uses an in-memory circular buffer with configurable size:
 ### Best Practices
 
 1. **Adjust buffer size** based on your monitoring needs:
+
    - Development: 1-2MB is usually sufficient
    - Production: Consider 5-10MB for longer history
 
 2. **Use filters** to focus on relevant logs:
+
    - Filter by error level during troubleshooting
    - Filter by entity when debugging specific components
 
 3. **Export regularly** if you need to preserve logs:
+
    - The buffer is in-memory only and clears on restart
    - Export important logs to JSON/CSV for archival
 
 4. **Combine with file logging** for persistence:
+
    - UI viewer for real-time monitoring
    - File logs for long-term storage and analysis
 

@@ -23,27 +23,47 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    # Add Passthrough REST fields to tools table
-    op.add_column("tools", sa.Column("base_url", sa.String(), nullable=True))
-    op.add_column("tools", sa.Column("path_template", sa.String(), nullable=True))
-    op.add_column("tools", sa.Column("query_mapping", sa.JSON(), nullable=True))
-    op.add_column("tools", sa.Column("header_mapping", sa.JSON(), nullable=True))
-    op.add_column("tools", sa.Column("timeout_ms", sa.Integer(), nullable=True))
-    op.add_column("tools", sa.Column("expose_passthrough", sa.Boolean(), nullable=False, server_default="1"))
-    op.add_column("tools", sa.Column("allowlist", sa.JSON(), nullable=True))
-    op.add_column("tools", sa.Column("plugin_chain_pre", sa.JSON(), nullable=True))
-    op.add_column("tools", sa.Column("plugin_chain_post", sa.JSON(), nullable=True))
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    # Skip if fresh database (tables created via create_all + stamp)
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Add Passthrough REST fields to tools table if it exists
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        new_columns = [
+            ("base_url", sa.Column("base_url", sa.String(), nullable=True)),
+            ("path_template", sa.Column("path_template", sa.String(), nullable=True)),
+            ("query_mapping", sa.Column("query_mapping", sa.JSON(), nullable=True)),
+            ("header_mapping", sa.Column("header_mapping", sa.JSON(), nullable=True)),
+            ("timeout_ms", sa.Column("timeout_ms", sa.Integer(), nullable=True)),
+            ("expose_passthrough", sa.Column("expose_passthrough", sa.Boolean(), nullable=False, server_default="1")),
+            ("allowlist", sa.Column("allowlist", sa.JSON(), nullable=True)),
+            ("plugin_chain_pre", sa.Column("plugin_chain_pre", sa.JSON(), nullable=True)),
+            ("plugin_chain_post", sa.Column("plugin_chain_post", sa.JSON(), nullable=True)),
+        ]
+        for col_name, col_def in new_columns:
+            if col_name not in columns:
+                op.add_column("tools", col_def)
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    # Remove Passthrough REST fields from tools table
-    op.drop_column("tools", "plugin_chain_post")
-    op.drop_column("tools", "plugin_chain_pre")
-    op.drop_column("tools", "allowlist")
-    op.drop_column("tools", "expose_passthrough")
-    op.drop_column("tools", "timeout_ms")
-    op.drop_column("tools", "header_mapping")
-    op.drop_column("tools", "query_mapping")
-    op.drop_column("tools", "path_template")
-    op.drop_column("tools", "base_url")
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    # Skip if fresh database
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Remove Passthrough REST fields from tools table if it exists
+    if inspector.has_table("tools"):
+        columns = [col["name"] for col in inspector.get_columns("tools")]
+        drop_columns = ["plugin_chain_post", "plugin_chain_pre", "allowlist", "expose_passthrough", "timeout_ms", "header_mapping", "query_mapping", "path_template", "base_url"]
+        for col_name in drop_columns:
+            if col_name in columns:
+                op.drop_column("tools", col_name)

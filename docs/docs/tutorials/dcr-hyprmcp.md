@@ -57,7 +57,7 @@ sequenceDiagram
 
     User->>+HyprMCP: Init MCP connection<br>(With Access Token in Authorization Header)
     HyprMCP->>+ContextForge: Init MCP connection
-    note right of ContextForge: ContextForge verifies<br>Access Token
+    note right of ContextForge: ContextForge trusts proxy auth<br/>(MCP client auth disabled or proxy header)
     ContextForge-->>-HyprMCP: Init Response
     HyprMCP-->>-User: Init Response
     Note right of User: MCP connection initialized
@@ -185,7 +185,7 @@ Add the ContextForge service to your compose file (put it in the `services` sect
 
 ```yaml
 context-forge:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
     ports:
 
         - 4444:4444
@@ -205,14 +205,15 @@ context-forge:
         JWT_PUBLIC_KEY_PATH: /opt/public.pem
         JWT_PRIVATE_KEY_PATH: /opt/private.pem
         JWT_AUDIENCE_VERIFICATION: false
+        JWT_ISSUER_VERIFICATION: false
         JWT_ISSUER: http://localhost:5556
         DATABASE_URL: sqlite:////data/context-forge.db
         HOST: 0.0.0.0
         PORT: "4444"
         MCPGATEWAY_UI_ENABLED: true
         MCPGATEWAY_ADMIN_API_ENABLED: true
-        BASIC_AUTH_USER: admin
-        BASIC_AUTH_PASSWORD: changeme
+        PLATFORM_ADMIN_EMAIL: admin@example.com
+        PLATFORM_ADMIN_PASSWORD: changeme
         AUTH_REQUIRED: false
         MCP_CLIENT_AUTH_ENABLED: false
         TRUST_PROXY_AUTH: true
@@ -226,7 +227,7 @@ For this tutorial we will use the Context7 MCP server as an example, but you can
 To get started, go to https://context7.com/ and create an account. Note down your API key, as you will need it shortly.
 
 Next, open ContextForge by navigating to http://localhost:4444.
-Log in with the credentials provided in the compose file and configure the Context7 MCP server.
+Log in with the email/password credentials (admin@example.com / changeme) and configure the Context7 MCP server.
 To do so, go to "MCP Servers" and at the bottom of the page:
 
 - Enter `https://mcp.context7.com/mcp` as the MCP Server URL
@@ -347,7 +348,7 @@ services:
         network_mode: host
 
     context-forge:
-        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
         ports:
 
             - 4444:4444
@@ -367,14 +368,15 @@ services:
             JWT_PUBLIC_KEY_PATH: /opt/public.pem
             JWT_PRIVATE_KEY_PATH: /opt/private.pem
             JWT_AUDIENCE_VERIFICATION: false
+            JWT_ISSUER_VERIFICATION: false
             JWT_ISSUER: http://localhost:5556
             DATABASE_URL: sqlite:////data/context-forge.db
             HOST: 0.0.0.0
             PORT: "4444"
             MCPGATEWAY_UI_ENABLED: true
             MCPGATEWAY_ADMIN_API_ENABLED: true
-            BASIC_AUTH_USER: admin
-            BASIC_AUTH_PASSWORD: changeme
+            PLATFORM_ADMIN_EMAIL: admin@example.com
+            PLATFORM_ADMIN_PASSWORD: changeme
             AUTH_REQUIRED: false
             MCP_CLIENT_AUTH_ENABLED: false
             TRUST_PROXY_AUTH: true

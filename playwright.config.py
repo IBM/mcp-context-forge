@@ -14,7 +14,7 @@ def pytest_configure(config):
 def pytest_playwright_setup(playwright: Playwright):
     """Setup Playwright browsers and configuration for pytest runs."""
     return {
-        "base_url": os.getenv("TEST_BASE_URL", "http://localhost:8000"),
+        "base_url": os.getenv("TEST_BASE_URL", "http://localhost:8080"),
         "screenshot": "only-on-failure",
         "video": "retain-on-failure",
         "trace": "retain-on-failure",

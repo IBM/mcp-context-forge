@@ -115,6 +115,9 @@
   {% set hx_target = '#users-list-container' %}
   {% set hx_indicator = '#users-loading' %}
   {% set hx_swap = 'outerHTML' %}
+  {% set table_name = 'users' %}
   {% set query_params = {} %}
+  {% autoescape false %}
   {% include 'pagination_controls.html' %}
+  {% endautoescape %}
 </div>

@@ -4,7 +4,54 @@
 
 ---
 
-## 🛠 Environment Setup
+## 🐳 VS Code Dev Container (Recommended)
+
+The fastest way to get started is using the VS Code Dev Container, which provides a fully-configured development environment.
+
+???+ check "Prerequisites"
+
+    - [ ] **VS Code** with the [Dev Containers extension](https://code.visualstudio.com/docs/devcontainers/containers)
+    - [ ] **Docker** or **Podman** installed and running locally
+
+???+ check "Setup"
+
+    1. Clone and open the repository:
+        ```bash
+        git clone https://github.com/ibm/mcp-context-forge.git
+        cd mcp-context-forge
+        code .
+        ```
+
+    2. VS Code will detect `.devcontainer` and prompt: **"Reopen in Container"**
+       (or manually: ++ctrl+shift+p++ → **Dev Containers: Reopen in Container**)
+
+    3. First-time build automatically:
+
+        - Installs system packages & Python 3.11
+        - Runs `make install-dev` to pull all dependencies
+        - Executes tests to verify the toolchain
+
+???+ check "Daily workflow inside container"
+
+    ```bash
+    make dev            # Dev server with hot reload (http://localhost:4444)
+    make test           # Run test suite
+    make lint           # Run all linters
+    ```
+
+???+ check "GitHub Codespaces (1-click cloud IDE)"
+
+    No local Docker? Use Codespaces:
+
+    1. Go to the repo → **Code ▸ Codespaces ▸ Create codespace on main**
+    2. Wait for the container image to build in the cloud
+    3. Develop using the same workflow above
+
+---
+
+## 🛠 Manual Environment Setup
+
+If not using Dev Containers, set up manually:
 
 ???+ check "System prerequisites"
 
@@ -12,7 +59,7 @@
     - [ ] Node.js and npm, npx (used for testing with `supergateway` and the HTML/JS Admin UI)
     - [ ] Docker, Docker Compose, and Podman
     - [ ] Make, GitHub CLI (`gh`), `curl`, `jq`, `openssl`
-    - [ ] Optional: Visual Studio Code + Dev Containers extension (or WSL2 if on Windows) + Pyrefly
+    - [ ] Optional: Visual Studio Code + Pyrefly extension
     - [ ] Optional: On Windows, install the WSL and Remote Development extensions
 
 ???+ check "Python tooling"
@@ -41,6 +88,7 @@
 
     - [ ] Copy `.env.example` to `.env`
     - [ ] Set various env variables, such as:
+
         - `JWT_SECRET_KEY`
         - `BASIC_AUTH_PASSWORD`
 ---
@@ -79,9 +127,29 @@
     - [ ] `make shell-linters-install`, `make shell-lint`
     - [ ] `make hadolint` (Dockerfile linting)
 
-???+ check "Unit tests"
+???+ check "Python unit tests"
 
     - [ ] `make test` passes all cases
+    - [ ] `make coverage` generates coverage report
+
+???+ check "UI automation (Playwright)"
+
+    - [ ] `playwright install` (one-time browser setup)
+    - [ ] `pytest tests/playwright/` passes
+    - [ ] `pytest tests/playwright/ -k admin` validates Admin UI flows
+
+???+ check "Load testing (Locust)"
+
+    - [ ] `locust -f tests/locust/locustfile.py --host=http://localhost:4444`
+    - [ ] Access dashboard at http://localhost:8089
+    - [ ] Verify no errors under moderate load (50-100 users)
+
+???+ check "Frontend linting"
+
+    - [ ] `make eslint` - JavaScript linting
+    - [ ] `make lint-web` - ESLint + HTMLHint + Stylelint
+    - [ ] `make format-web` - Prettier formatting
+    - [ ] Note: JS unit tests not yet implemented
 
 ---
 
@@ -107,7 +175,7 @@
 
     - [ ] Export a token with:
         ```bash
-        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret my-test-key)
+        export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key)
         ```
 
     - [ ] Verify authenticated API access:
@@ -123,8 +191,10 @@
 
     - [ ] Run: `python3 -m mcpgateway.wrapper` (stdio support)
     - [ ] Test transports:
+
         - Streamable HTTP
         - Server-Sent Events (SSE)
+
     - [ ] Optional: Integrate with Claude, Copilot, Continue ([usage guide](../using/index.md))
 
 ---
@@ -146,6 +216,7 @@
 ???+ check "Endpoint coverage"
 
     - [ ] Confirm key routes:
+
         - `/version`
         - `/health`
         - `/tools`
@@ -153,6 +224,7 @@
         - `/resources`
         - `/prompts`
         - `/gateways`
+
     - [ ] Browse [Redoc docs](http://localhost:4444/redoc)
 
 ---
@@ -168,11 +240,13 @@
 ???+ check "CRUD verification"
 
     - [ ] Create / edit / delete:
+
         - Servers
         - Tools
         - Resources
         - Prompts
         - Gateways
+
     - [ ] Toggle active/inactive switches
     - [ ] JWT stored in `HttpOnly` cookie, no errors in DevTools Console
 
@@ -189,6 +263,7 @@
     - [ ] `cd docs && make venv serve`
     - [ ] Open http://localhost:8000
     - [ ] Confirm:
+
         - `.pages` ordering
         - nav structure
         - working images

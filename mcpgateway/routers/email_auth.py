@@ -19,7 +19,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import Optional
+from typing import List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, SessionLocal
+from mcpgateway.db import EmailUser, SessionLocal, utc_now
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import (
     AuthenticationResponse,
@@ -136,8 +136,31 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Get user's teams for namespace information
-    teams = user.get_teams()
+    # Get user's teams for namespace information (ensure safe access)
+    try:
+        teams = user.get_teams() if callable(getattr(user, "get_teams", None)) else []
+    except Exception:
+        teams = []
+
+    # Normalize teams into JSON-serializable primitives
+    safe_teams = []
+    for team in teams or []:
+        try:
+            safe_teams.append(
+                {
+                    "id": str(getattr(team, "id", None)) if getattr(team, "id", None) is not None else None,
+                    "name": str(getattr(team, "name", "")),
+                    "slug": str(getattr(team, "slug", "")),
+                    "is_personal": bool(getattr(team, "is_personal", False)),
+                    "role": str(next((m.role for m in getattr(user, "team_memberships", []) if getattr(m, "team_id", None) == getattr(team, "id", None)), "member")),
+                }
+            )
+        except Exception:
+            # Fallback to a string representation if anything goes wrong
+            try:
+                safe_teams.append({"id": None, "name": str(team), "slug": str(team), "is_personal": False, "role": "member"})
+            except Exception:
+                safe_teams.append({"id": None, "name": "", "slug": "", "is_personal": False, "role": "member"})
 
     # Create enhanced JWT payload with team and namespace information
     payload = {
@@ -150,24 +173,22 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         "jti": jti or str(__import__("uuid").uuid4()),
         # User profile information
         "user": {
-            "email": user.email,
-            "full_name": user.full_name,
-            "is_admin": user.is_admin,
-            "auth_provider": user.auth_provider,
+            "email": str(getattr(user, "email", "")),
+            "full_name": str(getattr(user, "full_name", "")),
+            "is_admin": bool(getattr(user, "is_admin", False)),
+            "auth_provider": str(getattr(user, "auth_provider", "local")),
         },
         # Namespace access (backwards compatible)
-        "namespaces": [f"user:{user.email}", *[f"team:{team.slug}" for team in teams], "public"],
+        "namespaces": [f"user:{getattr(user, 'email', '')}", *[f"team:{t.get('slug', '')}" for t in safe_teams], "public"],
         # Token scoping (if provided)
-        "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},  # Full access for regular user tokens
+        "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
     }
 
     # For admin users: omit "teams" key entirely to enable unrestricted access bypass
     # For regular users: include teams for proper team-based scoping
-    if not user.is_admin:
-        payload["teams"] = [
-            {"id": team.id, "name": team.name, "slug": team.slug, "is_personal": team.is_personal, "role": next((m.role for m in user.team_memberships if m.team_id == team.id), "member")}
-            for team in teams
-        ]
+    if not bool(getattr(user, "is_admin", False)):
+        # Use only team IDs for the "teams" claim to match /tokens behavior
+        payload["teams"] = [t["id"] for t in safe_teams if t.get("id")]
 
     # Generate token using centralized token creation
     token = await create_jwt_token(payload)
@@ -188,13 +209,13 @@ async def create_legacy_access_token(user: EmailUser) -> tuple[str, int]:
     expires_delta = timedelta(minutes=settings.token_expiry)
     expire = now + expires_delta
 
-    # Create simple JWT payload (original format)
+    # Create simple JWT payload (original format) with primitives only
     payload = {
-        "sub": user.email,
-        "email": user.email,
-        "full_name": user.full_name,
-        "is_admin": user.is_admin,
-        "auth_provider": user.auth_provider,
+        "sub": str(getattr(user, "email", "")),
+        "email": str(getattr(user, "email", "")),
+        "full_name": str(getattr(user, "full_name", "")),
+        "is_admin": bool(getattr(user, "is_admin", False)),
+        "auth_provider": str(getattr(user, "auth_provider", "local")),
         "iat": int(now.timestamp()),
         "exp": int(expire.timestamp()),
         "iss": settings.jwt_issuer,
@@ -245,26 +266,48 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
         if not user:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
 
-        # Check if password change is required OR if user is using default password
-        needs_password_change = user.password_change_required
+        # Password change enforcement respects master switch and individual toggles
+        needs_password_change = False
 
-        # Also check if user is using the default password
-        if not needs_password_change:
-            # First-Party
-            from mcpgateway.services.argon2_service import Argon2PasswordService
-
-            password_service = Argon2PasswordService()
-            is_using_default_password = password_service.verify_password(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
-            if is_using_default_password:
+        if settings.password_change_enforcement_enabled:
+            # If flag is set on the user, always honor it (flag is cleared when password is changed)
+            if getattr(user, "password_change_required", False):
                 needs_password_change = True
-                # Set the flag in database for future reference
-                user.password_change_required = True
-                db.commit()
+                logger.debug("User %s has password_change_required flag set", login_request.email)
+
+            # Enforce expiry-based password change if configured and not already required
+            if not needs_password_change:
+                try:
+                    pwd_changed = getattr(user, "password_changed_at", None)
+                    if isinstance(pwd_changed, datetime):
+                        age_days = (utc_now() - pwd_changed).days
+                        max_age = getattr(settings, "password_max_age_days", 90)
+                        if age_days >= max_age:
+                            needs_password_change = True
+                            logger.debug("User %s password expired (%s days >= %s)", login_request.email, age_days, max_age)
+                except Exception as exc:
+                    logger.debug("Failed to evaluate password age for %s: %s", login_request.email, exc)
+
+            # Detect default password on login if enabled
+            if getattr(settings, "detect_default_password_on_login", True):
+                # First-Party
+                from mcpgateway.services.argon2_service import Argon2PasswordService
+
+                password_service = Argon2PasswordService()
+                is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                if is_using_default_password:
+                    # Mark user for password change depending on configuration
+                    if getattr(settings, "require_password_change_for_default_password", True):
+                        user.password_change_required = True
+                        needs_password_change = True
+                        try:
+                            db.commit()
+                        except Exception as exc:  # log commit failures
+                            logger.warning("Failed to commit password_change_required flag for %s: %s", login_request.email, exc)
+                    else:
+                        logger.info("User %s is using default password but enforcement is disabled", login_request.email)
 
         if needs_password_change:
-            # For API login, return a specific error indicating password change is required.
-            # Return a response directly to avoid any exception handling layers converting
-            # the HTTPException into a 500 in some middleware paths.
             logger.info(f"Login blocked for {login_request.email}: password change required")
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -291,6 +334,10 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
 async def register(registration_request: EmailRegistrationRequest, request: Request, db: Session = Depends(get_db)):
     """Register a new user account.
 
+    This endpoint is controlled by the PUBLIC_REGISTRATION_ENABLED setting.
+    When disabled (default), returns 403 Forbidden and users can only be
+    created by administrators via the admin API.
+
     Args:
         registration_request: Registration information
         request: FastAPI request object
@@ -300,7 +347,7 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
         AuthenticationResponse: Access token and user info
 
     Raises:
-        HTTPException: If registration fails
+        HTTPException: If registration fails or is disabled
 
     Examples:
         Request JSON:
@@ -310,6 +357,14 @@ async def register(registration_request: EmailRegistrationRequest, request: Requ
               "full_name": "New User"
             }
     """
+    # Check if public registration is allowed
+    if not settings.public_registration_enabled:
+        logger.warning(f"Registration attempt rejected - public registration disabled: {registration_request.email}")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Public registration is disabled. Please contact an administrator to create an account.",
+        )
+
     auth_service = EmailAuthService(db)
     get_client_ip(request)
     get_user_agent(request)
@@ -444,7 +499,7 @@ async def get_auth_events(limit: int = 50, offset: int = 0, current_user: EmailU
 
 
 # Admin-only endpoints
-@email_auth_router.get("/admin/users", response_model=CursorPaginatedUsersResponse)
+@email_auth_router.get("/admin/users", response_model=Union[CursorPaginatedUsersResponse, List[EmailUserResponse]])
 @require_permission("admin.user_management")
 async def list_users(
     cursor: Optional[str] = Query(None, description="Pagination cursor for fetching the next set of results"),
@@ -454,38 +509,42 @@ async def list_users(
         le=settings.pagination_max_page_size,
         description="Maximum number of users to return. 0 means all (no limit). Default uses pagination_default_page_size.",
     ),
-    offset: int = Query(0, ge=0, description="Number of users to skip (deprecated; use cursor pagination)."),
+    include_pagination: bool = Query(False, description="Include cursor pagination metadata in response"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
-):
+    db: Session = Depends(get_db),
+) -> Union[CursorPaginatedUsersResponse, List[EmailUserResponse]]:
     """List all users (admin only) with cursor-based pagination support.
 
     Args:
         cursor: Pagination cursor for fetching the next set of results
         limit: Maximum number of users to return. Use 0 for all users (no limit).
             If not specified, uses pagination_default_page_size (default: 50).
-        offset: Number of users to skip (deprecated; use cursor pagination)
+        include_pagination: Whether to include cursor pagination metadata in the response (default: false)
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
-        CursorPaginatedUsersResponse: List of users with pagination metadata
+        CursorPaginatedUsersResponse with users and nextCursor if include_pagination=true, or
+        List of users if include_pagination=false
 
     Raises:
         HTTPException: If user is not admin
 
     Examples:
-        >>> # Cursor-based: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ
+        >>> # Cursor-based with pagination: GET /auth/email/admin/users?cursor=eyJlbWFpbCI6Li4ufQ&include_pagination=true
+        >>> # Simple list: GET /auth/email/admin/users
         >>> # Headers: Authorization: Bearer <admin_token>
     """
-
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
-        result = await auth_service.list_users(cursor=cursor, limit=limit, offset=offset)
-        return CursorPaginatedUsersResponse(
-            users=[EmailUserResponse.from_email_user(user) for user in result.data],
-            next_cursor=result.next_cursor,
-        )
+        result = await auth_service.list_users(cursor=cursor, limit=limit)
+        user_responses = [EmailUserResponse.from_email_user(user) for user in result.data]
+
+        if include_pagination:
+            return CursorPaginatedUsersResponse(users=user_responses, next_cursor=result.next_cursor)
+
+        return user_responses
 
     except Exception as e:
         logger.error(f"Error listing users: {e}")
@@ -494,7 +553,7 @@ async def list_users(
 
 @email_auth_router.get("/admin/events", response_model=list[AuthEventResponse])
 @require_permission("admin.user_management")
-async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Optional[str] = None, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Optional[str] = None, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """List authentication events for all users (admin only).
 
     Args:
@@ -502,6 +561,7 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
         offset: Number of events to skip
         user_email: Filter events by specific user email
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         List[AuthEventResponse]: Authentication events
@@ -513,8 +573,6 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
         >>> # GET /auth/email/admin/events?limit=50&user_email=user@example.com
         >>> # Headers: Authorization: Bearer <admin_token>
     """
-
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -529,12 +587,13 @@ async def list_all_auth_events(limit: int = 100, offset: int = 0, user_email: Op
 
 @email_auth_router.post("/admin/users", response_model=EmailUserResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("admin.user_management")
-async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Create a new user account (admin only).
 
     Args:
         user_request: User creation information
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         EmailUserResponse: Created user information
@@ -551,7 +610,6 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
               "is_admin": false
             }
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -564,13 +622,19 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
             auth_provider="local",
         )
 
-        # If the user was created with the default password, force password change
-        if user_request.password == settings.default_user_password.get_secret_value():  # nosec B105
+        # If the user was created with the default password, optionally force password change
+        if (
+            settings.password_change_enforcement_enabled
+            and getattr(settings, "require_password_change_for_default_password", True)
+            and user_request.password == settings.default_user_password.get_secret_value()
+        ):  # nosec B105
             user.password_change_required = True
             db.commit()
 
         logger.info(f"Admin {current_user_ctx['email']} created user: {user.email}")
 
+        db.commit()
+        db.close()
         return EmailUserResponse.from_email_user(user)
 
     except EmailValidationError as e:
@@ -586,12 +650,13 @@ async def create_user(user_request: EmailRegistrationRequest, current_user_ctx: 
 
 @email_auth_router.get("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Get user by email (admin only).
 
     Args:
         user_email: Email of user to retrieve
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         EmailUserResponse: User information
@@ -599,7 +664,6 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
     Raises:
         HTTPException: If user not found
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -618,13 +682,14 @@ async def get_user(user_email: str, current_user_ctx: dict = Depends(get_current
 
 @email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse)
 @require_permission("admin.user_management")
-async def update_user(user_email: str, user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def update_user(user_email: str, user_request: EmailRegistrationRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Update user information (admin only).
 
     Args:
         user_email: Email of user to update
         user_request: Updated user information
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         EmailUserResponse: Updated user information
@@ -632,7 +697,6 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
     Raises:
         HTTPException: If user not found or update fails
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -658,15 +722,18 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
             auth_service.validate_password(user_request.password)
 
             # Update password hash directly
-            user.password_hash = password_service.hash_password(user_request.password)
+            user.password_hash = await password_service.hash_password_async(user_request.password)
             user.password_change_required = False  # Clear password change requirement
+            user.password_changed_at = utc_now()  # Update password change timestamp
 
         db.commit()
         db.refresh(user)
 
         logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")
 
-        return EmailUserResponse.from_email_user(user)
+        result = EmailUserResponse.from_email_user(user)
+        db.close()
+        return result
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
@@ -677,12 +744,13 @@ async def update_user(user_email: str, user_request: EmailRegistrationRequest, c
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)
 @require_permission("admin.user_management")
-async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions)):
+async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Delete/deactivate user (admin only).
 
     Args:
         user_email: Email of user to delete
         current_user_ctx: Currently authenticated user context with permissions
+        db: Database session
 
     Returns:
         SuccessResponse: Success confirmation
@@ -690,7 +758,6 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
     Raises:
         HTTPException: If user not found or deletion fails
     """
-    db = current_user_ctx["db"]
     auth_service = EmailAuthService(db)
 
     try:
@@ -707,6 +774,8 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
         logger.info(f"Admin {current_user_ctx['email']} deleted user: {user_email}")
 
+        db.commit()
+        db.close()
         return SuccessResponse(success=True, message=f"User {user_email} has been deleted")
 
     except HTTPException:

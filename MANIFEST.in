@@ -87,6 +87,7 @@ recursive-include tests/manual *.py *.md
 # recursive-include deployment *
 # recursive-include mcp-servers *
 recursive-include plugins *.py
+recursive-include plugins *.json
 recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md

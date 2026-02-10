@@ -147,6 +147,7 @@ sysctl net.core.somaxconn \
 #### File Descriptor Limits
 
 Check your current limits with `ulimit -n`. For load testing, ensure:
+
 - Soft limit: 65535+
 - Hard limit: 65535+
 
@@ -370,7 +371,7 @@ For testing with 4000+ concurrent users:
 - **Monitor errors**: High error rates indicate server saturation
 - **Check p95/p99**: Tail latency matters more than average
 - **Use `constant_throughput`**: For predictable RPS instead of random waits
-- **Nginx caching**: Admin pages use 5s TTL caching by default (see [Nginx Tuning](../manage/tuning.md#7---nginx-reverse-proxy-tuning))
+- **Nginx caching**: Admin pages use 5s TTL caching by default (see [Nginx Tuning](../manage/tuning.md#7-nginx-reverse-proxy-tuning))
 
 ---
 
@@ -424,11 +425,13 @@ BENCHMARK_SERVER_COUNT=100 BENCHMARK_START_PORT=9000 make benchmark-up
 The benchmark stack consists of:
 
 1. **benchmark_server** - A single Go binary that spawns multiple HTTP servers
+
    - Each server exposes MCP endpoints on a unique port (9000-9099)
    - Default: 50 tools, 20 resources, 10 prompts per server
    - Supports graceful shutdown via SIGINT/SIGTERM
 
 2. **register_benchmark** - Auto-registration service
+
    - Registers all benchmark servers as gateways at compose startup
    - No manual registration required
 
@@ -559,10 +562,12 @@ app = FastAPI(
 ```
 
 **Options enabled:**
+
 - `OPT_NON_STR_KEYS`: Allow non-string dict keys (integers, UUIDs)
 - `OPT_SERIALIZE_NUMPY`: Support numpy arrays if numpy is installed
 
 **Datetime serialization:**
+
 - Uses RFC 3339 format (ISO 8601 with timezone)
 - Naive datetimes treated as UTC
 - Example: `2025-01-19T12:00:00+00:00`
@@ -608,11 +613,175 @@ Based on benchmark results, orjson provides:
 | Response latency (p95)  | 20-40% faster         |
 
 **Production benefits:**
+
 - Higher requests/second capacity
 - Lower CPU utilization per request
 - Faster page loads for Admin UI
 - Reduced bandwidth usage (smaller JSON)
 - Better tail latency (p95, p99)
+
+---
+
+## 📈 JMeter Performance Testing
+
+MCP Gateway includes [Apache JMeter](https://jmeter.apache.org/) test plans for industry-standard performance baseline measurements and CI/CD integration.
+
+### Prerequisites
+
+**Recommended: Use the Makefile target** (installs JMeter 5.6.3 locally):
+```bash
+make jmeter-install
+make jmeter-check   # Verify installation (requires JMeter 5.x+)
+```
+
+**Alternative: Manual installation**
+```bash
+# macOS
+brew install jmeter
+
+# Linux
+wget https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-5.6.3.tgz
+tar -xzf apache-jmeter-5.6.3.tgz
+export PATH=$PATH:$(pwd)/apache-jmeter-5.6.3/bin
+```
+
+### Quick Start
+
+```bash
+# Set up authentication token
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
+
+# Launch JMeter GUI for interactive editing
+make jmeter-ui
+
+# Run REST API baseline
+make jmeter-rest-baseline
+
+# Run MCP JSON-RPC baseline (requires server ID)
+make jmeter-mcp-baseline JMETER_SERVER_ID=<your-server-id>
+
+# Run production load test
+make jmeter-load JMETER_SERVER_ID=<your-server-id>
+```
+
+### Available Test Plans
+
+| Test Plan | Description | Duration | Target |
+|-----------|-------------|----------|--------|
+| `rest_api_baseline.jmx` | REST API endpoints baseline | 10 min | 1,000 RPS |
+| `mcp_jsonrpc_baseline.jmx` | MCP JSON-RPC protocol baseline | 15 min | 1,000 RPS |
+| `mcp_test_servers_baseline.jmx` | Direct MCP server testing | 10 min | 2,000 RPS |
+| `load_test.jmx` | Production load simulation | 30 min | 4,000 RPS |
+| `stress_test.jmx` | Progressive stress to breaking point | 30 min | 10,000 RPS |
+| `spike_test.jmx` | Traffic spike recovery test | 10 min | 1K→10K→1K |
+| `soak_test.jmx` | Memory leak detection | 24 hrs | 2,000 RPS |
+| `sse_streaming_baseline.jmx` | SSE connection stability | 10 min | 1,000 conn |
+| `websocket_baseline.jmx` | WebSocket performance | 10 min | 500 conn |
+| `admin_ui_baseline.jmx` | Admin UI user simulation | 5 min | 50 users |
+
+### Makefile Targets
+
+```bash
+# Setup
+make jmeter-install                # Download and install JMeter 5.6.3 locally
+make jmeter-check                  # Verify JMeter 5.x+ is available
+make jmeter-ui                     # Launch JMeter GUI for test editing
+
+# Baseline Tests
+make jmeter-rest-baseline          # REST API baseline (1,000 RPS, 10min)
+make jmeter-mcp-baseline           # MCP JSON-RPC baseline (1,000 RPS, 15min)
+make jmeter-mcp-servers-baseline   # MCP test servers baseline
+make jmeter-sse                    # SSE streaming baseline
+make jmeter-websocket              # WebSocket baseline
+make jmeter-admin-ui               # Admin UI baseline
+
+# Load Tests
+make jmeter-load                   # Load test (4,000 RPS, 30min)
+make jmeter-stress                 # Stress test (ramp to 10,000 RPS)
+make jmeter-spike                  # Spike test (1K→10K→1K recovery)
+make jmeter-soak                   # 24-hour soak test (2,000 RPS)
+
+# Reporting
+make jmeter-report                 # Generate HTML report from latest JTL
+make jmeter-compare                # Compare current vs baseline results
+```
+
+### Command-Line Usage
+
+```bash
+# Run with default settings
+jmeter -n -t tests/jmeter/rest_api_baseline.jmx \
+  -JGATEWAY_URL=http://localhost:8080 \
+  -JTOKEN=$MCPGATEWAY_BEARER_TOKEN \
+  -l results/test.jtl \
+  -e -o results/report/
+
+# Run with properties file
+jmeter -p tests/jmeter/properties/production.properties \
+  -n -t tests/jmeter/load_test.jmx \
+  -l results/load.jtl
+```
+
+### HTTPS/TLS Testing
+
+All test plans support both HTTP and HTTPS by specifying the full URL:
+
+```bash
+# HTTP (port 8080)
+make jmeter-rest-baseline JMETER_GATEWAY_URL=http://localhost:8080
+
+# HTTPS/TLS (port 8443)
+make jmeter-rest-baseline JMETER_GATEWAY_URL=https://localhost:8443
+```
+
+For self-signed certificates, you may need to configure Java's truststore or use the SSL settings in `properties/production.properties`.
+
+### Performance SLAs
+
+| Metric | Baseline | Load | Stress |
+|--------|----------|------|--------|
+| P50 Latency | < 100ms | < 150ms | < 300ms |
+| P95 Latency | < 200ms | < 300ms | < 500ms |
+| P99 Latency | < 300ms | < 500ms | < 1000ms |
+| Error Rate | < 0.1% | < 0.5% | < 1% |
+| Throughput | 1,000 RPS | 4,000 RPS | 10,000 RPS |
+
+### CI/CD Integration
+
+```yaml
+- name: Run JMeter baseline
+  run: |
+    jmeter -n -t tests/jmeter/rest_api_baseline.jmx \
+      -p tests/jmeter/properties/ci.properties \
+      -JGATEWAY_URL=http://gateway:8080 \
+      -JTOKEN=${{ secrets.JWT_TOKEN }} \
+      -l results.jtl \
+      -e -o report/
+
+- name: Check performance thresholds
+  run: |
+    # Parse JTL and check P95 < 300ms
+    P95=$(awk -F',' 'NR>1 {print $2}' results.jtl | sort -n | awk 'NR==int(ENVIRON["NR"]*0.95)')
+    if [ "$P95" -gt 300 ]; then
+      echo "P95 latency ($P95 ms) exceeds threshold (300ms)"
+      exit 1
+    fi
+```
+
+### JMeter vs Locust
+
+| Feature | JMeter | Locust |
+|---------|--------|--------|
+| Protocol support | HTTP, WebSocket, JDBC, etc. | HTTP primarily |
+| Configuration | XML-based GUI | Python code |
+| CI/CD integration | CLI-based, JTL reports | HTML reports |
+| Scripting | BeanShell, Groovy | Python |
+| Best for | CI/CD baselines, detailed metrics | Interactive testing, realistic scenarios |
+
+Use **JMeter** for CI/CD baselines and reproducible performance metrics. Use **Locust** for interactive load testing with complex user behaviors.
+
+For full documentation, see `tests/jmeter/README.md`.
 
 ---
 

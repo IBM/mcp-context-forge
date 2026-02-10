@@ -5,16 +5,22 @@ MCP Gateway: Full Project Overview
 
 **Core Capabilities**
 - Unified gateway for MCP servers: tools, prompts, and resources via HTTP/SSE/WebSocket/STDIO/streamable HTTP.
-- Plugin framework: AI safety, content filtering, policy enforcement, and transformations with pre/post hooks.
+- Plugin framework: AI safety, content filtering, policy enforcement, and transformations with pre/post hooks (42 built-in plugins).
 - Federation and administration: register servers, list tools/prompts/resources, manage teams/tokens, admin UI.
+- Agent-to-Agent (A2A) communication between MCP agents.
+- LLM proxying and chat interface with integrated tools/resources.
+- Two-layer security: Token Scoping (data filtering) + RBAC (action authorization).
+- Comprehensive observability: OpenTelemetry, Prometheus metrics, structured logging.
 
 **Project Structure**
-- App: `mcpgateway/` (FastAPI entrypoints, services, transports, plugins framework, alembic migrations)
-- Plugins: `plugins/` (built‑in native plugins and external example)
+- App: `mcpgateway/` (FastAPI entrypoints, db.py ORM models, 50+ services, 19 routers, 15 middleware, transports, plugins framework, alembic migrations)
+- Plugins: `plugins/` (42 built-in native plugins and external plugin example)
+- MCP Servers: `mcp-servers/` (5 Go servers, 20 Python servers, scaffolding templates)
 - Docs: `docs/` (MkDocs site + docs Makefile)
 - Charts: `charts/` (Helm chart `mcp-stack`)
-- Tests: `tests/{unit,integration,e2e,playwright}`
-- Examples & deployment: `examples/`, `deployment/`
+- Tests: `tests/{unit,integration,e2e,performance,security,fuzz,playwright}`
+- Infrastructure: `infra/` (PostgreSQL, Redis, monitoring Docker Compose)
+- Deployment: `deployment/` (k8s, knative, terraform, ansible)
 
 **Environment & Setup**
 - Requirements: Python 3.11+, GNU Make
@@ -104,6 +110,21 @@ MCP Gateway: Full Project Overview
 - Auth: set `JWT_SECRET_KEY`; emit bearer tokens with the token utility for API calls.
 - TLS: generate with `make certs` and run `make serve-ssl`.
 - Plugins: external URLs validated; STDIO scripts must be `.py`. Timeouts and payload size guards in plugin executor.
+
+**Authentication & RBAC**
+
+- Two-layer security model:
+  - Layer 1 (Token Scoping): Controls what resources users CAN SEE via `teams` JWT claim
+  - Layer 2 (RBAC): Controls what actions users CAN DO via permission checks
+- Token scoping quick reference:
+  - Missing `teams` key → PUBLIC-ONLY (secure default)
+  - `teams: null` + `is_admin: true` → ADMIN BYPASS (unrestricted)
+  - `teams: []` → PUBLIC-ONLY (even for admins)
+  - `teams: ["team-id"]` → Team + Public resources
+- Built-in roles: `platform_admin` (global, all permissions), `team_admin`, `developer`, `viewer` (team-scoped)
+- Resource visibility: `public` (all users), `team` (team members), `private` (owner only)
+- Key implementation: `normalize_token_teams()` in `mcpgateway/auth.py` is single source of truth
+- Full documentation: `docs/docs/manage/rbac.md`, `docs/docs/architecture/multitenancy.md`
 
 **Makefile Reference (root)**
 - Dev/prod: `make dev`, `make serve`, `make serve-ssl`, `make certs`

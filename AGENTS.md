@@ -22,12 +22,12 @@ MCP Gateway (ContextForge) is a production-grade gateway, proxy, and registry fo
 mcpgateway/                 # Core FastAPI application
 ├── main.py                 # Application entry point
 ├── config.py               # Environment configuration
-├── models.py               # SQLAlchemy ORM models
+├── db.py                   # SQLAlchemy ORM models and session management
 ├── schemas.py              # Pydantic validation schemas
-├── services/               # Business logic layer
-├── routers/                # HTTP endpoint definitions
-├── middleware/             # Cross-cutting concerns
-├── transports/             # Protocol implementations (SSE, WebSocket, stdio)
+├── services/               # Business logic layer (50+ services)
+├── routers/                # HTTP endpoint definitions (19 routers)
+├── middleware/             # Cross-cutting concerns (15 middleware)
+├── transports/             # Protocol implementations (SSE, WebSocket, stdio, streamable HTTP)
 ├── plugins/                # Plugin framework infrastructure
 └── alembic/                # Database migrations
 
@@ -66,13 +66,52 @@ make autoflake isort black pre-commit
 make flake8 bandit interrogate pylint verify
 ```
 
+## Authentication & RBAC Overview
+
+MCP Gateway implements a **two-layer security model**:
+
+1. **Token Scoping (Layer 1)**: Controls what resources a user CAN SEE (data filtering)
+2. **RBAC (Layer 2)**: Controls what actions a user CAN DO (permission checks)
+
+### Token Scoping Quick Reference
+
+The `teams` claim in JWT tokens determines resource visibility:
+
+| JWT `teams` State | `is_admin: true` | `is_admin: false` |
+|-------------------|------------------|-------------------|
+| Key MISSING | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
+| `teams: null` | ADMIN BYPASS | PUBLIC-ONLY `[]` |
+| `teams: []` | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
+| `teams: ["t1"]` | Team + Public | Team + Public |
+
+**Key behaviors:**
+
+- Missing `teams` key = public-only access (secure default)
+- Admin bypass requires BOTH `teams: null` AND `is_admin: true`
+- `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
+
+### Built-in Roles
+
+| Role | Scope | Key Permissions |
+|------|-------|-----------------|
+| `platform_admin` | global | `*` (all) |
+| `team_admin` | team | teams.*, tools.read/execute, resources.read |
+| `developer` | team | tools.read/execute, resources.read |
+| `viewer` | team | tools.read, resources.read (read-only) |
+
+### Documentation
+
+- **Full RBAC guide**: `docs/docs/manage/rbac.md`
+- **Multi-tenancy architecture**: `docs/docs/architecture/multitenancy.md`
+- **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
+
 ## Key Environment Variables
 
 ```bash
 # Core
 HOST=0.0.0.0
 PORT=4444
-DATABASE_URL=sqlite:///./mcp.db   # or postgresql://...
+DATABASE_URL=sqlite:///./mcp.db   # or postgresql+psycopg://...
 REDIS_URL=redis://localhost:6379
 RELOAD=true
 
@@ -80,17 +119,24 @@ RELOAD=true
 JWT_SECRET_KEY=your-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
-AUTH_REQUIRED=true
+AUTH_REQUIRED=true                   # Set false ONLY for development
+AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
 
 # Features
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 MCPGATEWAY_A2A_ENABLED=true
+PLUGINS_ENABLED=true
+PLUGIN_CONFIG_FILE=plugins/config.yaml
 
 # Logging
 LOG_LEVEL=INFO
 LOG_TO_FILE=false
 STRUCTURED_LOGGING_DATABASE_ENABLED=false
+
+# Observability
+OBSERVABILITY_ENABLED=false
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
 ```
 
 ## MCP Helpers
@@ -118,6 +164,72 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 - **HTMX + Alpine.js** for admin UI
 - **SQLite** default, **PostgreSQL** support, **Redis** for caching/federation
 - **Alembic** for migrations
+
+## Alembic Database Migrations
+
+When adding new database columns or tables, create an Alembic migration.
+
+### Creating Migrations
+
+```bash
+# CRITICAL: Always check the current head FIRST
+cd mcpgateway && alembic heads
+
+# Generate a new migration (auto-generates from model changes)
+alembic revision --autogenerate -m "add_column_to_table"
+
+# Or create an empty migration for manual edits
+alembic revision -m "add_column_to_table"
+```
+
+### Migration File Requirements
+
+The `down_revision` MUST point to the current head. **Never guess or copy from older migrations.**
+
+```python
+# CORRECT: Points to actual current head (verified via `alembic heads`)
+revision: str = "abc123def456"
+down_revision: Union[str, Sequence[str], None] = "43c07ed25a24"  # Current head
+
+# WRONG: Creates multiple heads (breaks all tests)
+down_revision: Union[str, Sequence[str], None] = "some_old_revision"
+```
+
+### Idempotent Migrations Pattern
+
+Always write idempotent migrations that check before modifying:
+
+```python
+def upgrade() -> None:
+    inspector = sa.inspect(op.get_bind())
+
+    # Skip if table doesn't exist (fresh DB uses db.py models directly)
+    if "my_table" not in inspector.get_table_names():
+        return
+
+    # Skip if column already exists
+    columns = [col["name"] for col in inspector.get_columns("my_table")]
+    if "new_column" in columns:
+        return
+
+    op.add_column("my_table", sa.Column("new_column", sa.String(), nullable=True))
+```
+
+### Verification
+
+```bash
+# Verify single head after creating migration
+cd mcpgateway && alembic heads
+# Should show only ONE head
+
+# Run tests to confirm migrations work
+make test
+```
+
+### Common Errors
+
+- **"Multiple heads are present"**: Your `down_revision` points to wrong parent. Fix by updating to actual current head.
+- **"Target database is not up to date"**: Run `alembic upgrade head` first.
 
 ## Coding Standards
 
@@ -147,7 +259,7 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 
 - `mcpgateway/main.py` - Application entry point
 - `mcpgateway/config.py` - Environment configuration
-- `mcpgateway/models.py` - ORM models
+- `mcpgateway/db.py` - SQLAlchemy ORM models and session management
 - `mcpgateway/schemas.py` - Pydantic schemas
 - `pyproject.toml` - Project configuration
 - `Makefile` - Build automation

@@ -7,6 +7,21 @@ Tailwind CDN for styling. There are no environment-variable knobs for colors or
 layout—the way to customise it is to edit those files (or layer overrides during
 deployment).
 
+### Technology Stack
+
+| Library | Version | Purpose |
+|---------|---------|---------|
+| HTMX | 1.9.10 | AJAX interactions, HTML-over-HTTP |
+| Alpine.js | 3.x | Lightweight reactive components |
+| Tailwind CSS | CDN | Utility-first styling |
+| CodeMirror | 5.65.18 | Syntax-highlighted code editing |
+| Chart.js | - | Data visualization |
+| Marked.js | - | Markdown rendering |
+| DOMPurify | - | XSS sanitization |
+| Font Awesome | - | Icons |
+
+All vendor libraries are bundled locally in `mcpgateway/static/vendor/` for air-gapped deployments. Enable with `MCPGATEWAY_UI_AIRGAPPED=true`. See [Air-Gapped Mode](../overview/ui.md#air-gapped-mode).
+
 ---
 
 ## Feature Flags to Enable the UI
@@ -18,10 +33,10 @@ MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 ```
 
-The only other related tuning knob is:
+Other UI-related settings:
 
-- `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` (milliseconds) – timeout for the "Test Tool"
-  action triggered from the Tools catalog.
+- `MCPGATEWAY_UI_AIRGAPPED` (boolean, default: `false`) – Load CSS/JS from local vendor files instead of CDNs
+- `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` (milliseconds) – Timeout for the "Test Tool" action in the Tools catalog
 
 Every other visual/behaviour change is code-driven.
 
@@ -38,10 +53,12 @@ Every other visual/behaviour change is code-driven.
 
 2. Start the dev server: `make dev` (serves the UI at http://localhost:8000).
 3. Edit any of the following and refresh your browser:
+
    - `mcpgateway/templates/admin.html`
    - `mcpgateway/static/admin.css`
    - `mcpgateway/static/admin.js`
    - Additional assets under `mcpgateway/static/`
+
 4. Commit the customised files or prepare overrides for your deployment target
    (see [Deploying Overrides](#deploying-overrides)).
 
@@ -164,7 +181,7 @@ When packaging the gateway:
   docker run \
     -v $(pwd)/overrides/admin.html:/app/mcpgateway/templates/admin.html:ro \
     -v $(pwd)/overrides/static:/app/mcpgateway/static/custom:ro \
-    ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+    ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
   ```
   Then update template references to point at `static/custom/...`.
 
@@ -183,8 +200,10 @@ Roll the deployment after changes so the pod picks up the new files.
    altered interaction logic.
 
 3. Verify in a staging/production-like environment that:
+
    - Static assets resolve behind your proxy (`ROOT_PATH`/`APP_DOMAIN`).
    - Authentication flows still succeed (basic + JWT).
    - Any branding assets load quickly (serve them via CDN if heavy).
+
 4. Document your customisations internally so future upgrades know which sections
    were changed.

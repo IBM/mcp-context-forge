@@ -23,6 +23,7 @@ make query-log-clear
 ```
 
 This creates two log files:
+
 - `logs/db-queries.log` - Human-readable text with N+1 warnings
 - `logs/db-queries.jsonl` - JSON Lines for tooling/analysis
 
@@ -630,5 +631,5 @@ Priority files based on typical N+1 patterns:
 ## Related Documentation
 
 - [SQLAlchemy Eager Loading](https://docs.sqlalchemy.org/en/20/orm/queryguide/relationships.html#relationship-loading-techniques)
-- [Existing Instrumentation](../mcpgateway/instrumentation/sqlalchemy.py)
-- [Performance Strategy](../tests/performance/PERFORMANCE_STRATEGY.md)
+- Existing instrumentation: `mcpgateway/instrumentation/sqlalchemy.py`
+- Performance strategy: `tests/performance/PERFORMANCE_STRATEGY.md`

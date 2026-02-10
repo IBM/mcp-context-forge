@@ -8,10 +8,12 @@ Basic tests for Email Authentication Service functionality.
 """
 
 # Standard
+import base64
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import orjson
 import pytest
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -357,6 +359,9 @@ class TestEmailAuthServiceUserManagement:
         mock_service = MagicMock(spec=Argon2PasswordService)
         mock_service.hash_password.return_value = "hashed_password_123"
         mock_service.verify_password.return_value = True
+        # Add async versions for use with asyncio.to_thread
+        mock_service.hash_password_async = AsyncMock(return_value="hashed_password_123")
+        mock_service.verify_password_async = AsyncMock(return_value=True)
         return mock_service
 
     @pytest.fixture
@@ -412,8 +417,8 @@ class TestEmailAuthServiceUserManagement:
                 mock_db.commit.assert_called()
                 mock_db.refresh.assert_called()
 
-                # Verify password was hashed
-                mock_password_service.hash_password.assert_called_once_with("SecurePass123")
+                # Verify password was hashed (async version is called via asyncio.to_thread)
+                mock_password_service.hash_password_async.assert_called_once_with("SecurePass123")
 
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio
@@ -600,6 +605,7 @@ class TestEmailAuthServiceUserManagement:
         """Test authentication with wrong password."""
         service.password_service = mock_password_service
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
@@ -616,6 +622,7 @@ class TestEmailAuthServiceUserManagement:
         """Test account lockout after multiple failed attempts."""
         service.password_service = mock_password_service
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_user.increment_failed_attempts.return_value = True  # Account gets locked
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
@@ -640,7 +647,9 @@ class TestEmailAuthServiceUserManagement:
 
         # Make verify return True for old password, False for new (different)
         mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, False])
         mock_password_service.hash_password.return_value = "new_hashed_password"
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
         result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
 
@@ -659,7 +668,9 @@ class TestEmailAuthServiceUserManagement:
 
         # Make verify return True for old password, False for new (different)
         mock_password_service.verify_password.side_effect = [True, False]
+        mock_password_service.verify_password_async = AsyncMock(side_effect=[True, False])
         mock_password_service.hash_password.return_value = "new_hashed_password"
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
         result = await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass123!", ip_address="192.168.1.1")
 
@@ -673,6 +684,7 @@ class TestEmailAuthServiceUserManagement:
         """Test password change with incorrect old password."""
         service.password_service = mock_password_service
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
         with pytest.raises(AuthenticationError, match="Current password is incorrect"):
@@ -757,7 +769,9 @@ class TestEmailAuthServiceUserManagement:
 
         # Password has changed
         mock_password_service.verify_password.return_value = False
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_password_service.hash_password.return_value = "new_admin_hash"
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_admin_hash")
 
         result = await service.create_platform_admin(
             email="test@example.com",
@@ -846,104 +860,11 @@ class TestEmailAuthServiceUserListing:
         mock_result.scalars.return_value.all.return_value = mock_users[:3]  # Return first 3
         mock_db.execute.return_value = mock_result
 
-        result = await service.list_users(limit=3, offset=0)
+        result = await service.list_users(cursor=None, limit=3)
 
         assert len(result.data) == 3
         assert result.data[0].email == "user0@example.com"
         mock_db.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_next_cursor(self, service, mock_db):
-        """Test cursor pagination returns next_cursor when more results exist."""
-        query = MagicMock()
-        query.limit.return_value = query
-        query.where.return_value = query
-
-        users = []
-        for i in range(3):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=2)
-
-        assert len(result_users) == 2
-        assert next_cursor is not None
-        query.limit.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_last_page(self, service, mock_db):
-        """Test cursor pagination returns no next_cursor on final page."""
-        query = MagicMock()
-        query.limit.return_value = query
-        query.where.return_value = query
-
-        users = []
-        for i in range(2):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=2)
-
-        assert len(result_users) == 2
-        assert next_cursor is None
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_invalid_cursor(self, service, mock_db):
-        """Test cursor pagination ignores invalid cursor values."""
-        query = MagicMock()
-        query.limit.return_value = query
-        query.where.return_value = query
-
-        users = []
-        for i in range(3):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor="not-base64", limit=2)
-
-        assert len(result_users) == 2
-        assert next_cursor is not None
-
-    @pytest.mark.asyncio
-    async def test_cursor_paginate_users_no_limit(self, service, mock_db):
-        """Test cursor pagination returns all users when limit=0."""
-        query = MagicMock()
-        query.where.return_value = query
-
-        users = []
-        for i in range(3):
-            user = MagicMock(spec=EmailUser)
-            user.email = f"user{i}@example.com"
-            user.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-            users.append(user)
-
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = users
-        mock_db.execute.return_value = mock_result
-
-        result_users, next_cursor = await service._cursor_paginate_users(query, cursor=None, limit=0)
-
-        assert len(result_users) == 3
-        assert next_cursor is None
-        query.limit.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_users_database_error(self, service, mock_db):
@@ -955,15 +876,79 @@ class TestEmailAuthServiceUserListing:
         assert result.data == []
 
     @pytest.mark.asyncio
+    async def test_list_users_generates_cursor_using_email(self, service, mock_db, mock_users):
+        """Test that list_users generates cursor using (created_at, email) keyset."""
+        # Create mock users with created_at timestamps
+        users_with_timestamps = []
+        for i, user in enumerate(mock_users[:3]):
+            user.created_at = datetime(2024, 1, 15, 10, 0, i, tzinfo=timezone.utc)
+            users_with_timestamps.append(user)
+
+        # Return 4 items to trigger has_more (limit=3 + 1)
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = users_with_timestamps + [mock_users[3]]
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users(cursor=None, limit=3)
+
+        # Should return 3 items and a next_cursor
+        assert len(result.data) == 3
+        assert result.next_cursor is not None
+
+        # Decode and verify cursor uses (created_at, email)
+        cursor_json = base64.urlsafe_b64decode(result.next_cursor.encode()).decode()
+        cursor_data = orjson.loads(cursor_json)
+        assert "created_at" in cursor_data
+        assert "email" in cursor_data
+        assert cursor_data["email"] == mock_users[2].email  # Last item's email
+
+    @pytest.mark.asyncio
+    async def test_list_users_with_cursor_applies_keyset_filter(self, service, mock_db, mock_users):
+        """Test that list_users with cursor applies correct keyset filter."""
+        # Create a cursor for the second page
+        cursor_data = {
+            "created_at": "2024-01-15T10:00:02+00:00",
+            "email": "user2@example.com",
+        }
+        cursor = base64.urlsafe_b64encode(orjson.dumps(cursor_data)).decode()
+
+        # Mock the result
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_users[3:]  # Remaining users
+        mock_db.execute.return_value = mock_result
+
+        result = await service.list_users(cursor=cursor, limit=10)
+
+        # Verify that execute was called (the filter is applied internally)
+        mock_db.execute.assert_called_once()
+        # Result should contain remaining users
+        assert len(result.data) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_users_cursor_handles_invalid_cursor(self, service, mock_db, mock_users):
+        """Test that list_users handles invalid cursor gracefully."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = mock_users
+        mock_db.execute.return_value = mock_result
+
+        # Invalid base64 cursor should be ignored
+        result = await service.list_users(cursor="invalid-cursor", limit=10)
+
+        # Should still return results (cursor ignored)
+        assert len(result.data) == 5
+
+    @pytest.mark.asyncio
     async def test_get_all_users(self, service, mock_db, mock_users):
         """Test getting all users without explicit pagination."""
+        EmailAuthService.get_all_users_deprecated_warned = False
         mock_count_result = MagicMock()
         mock_count_result.scalar.return_value = len(mock_users)
         mock_list_result = MagicMock()
         mock_list_result.scalars.return_value.all.return_value = mock_users
         mock_db.execute.side_effect = [mock_count_result, mock_list_result]
 
-        result = await service.get_all_users()
+        with pytest.deprecated_call():
+            result = await service.get_all_users()
 
         assert len(result) == 5
         assert mock_db.execute.call_count == 2
@@ -971,11 +956,12 @@ class TestEmailAuthServiceUserListing:
     @pytest.mark.asyncio
     async def test_get_all_users_raises_when_exceeds_limit(self, service, mock_db):
         """Test get_all_users raises when total exceeds limit."""
+        EmailAuthService.get_all_users_deprecated_warned = False
         mock_count_result = MagicMock()
         mock_count_result.scalar.return_value = 10001
         mock_db.execute.return_value = mock_count_result
 
-        with pytest.raises(ValueError):
+        with pytest.deprecated_call(), pytest.raises(ValueError):
             await service.get_all_users()
 
     @pytest.mark.asyncio
@@ -1118,6 +1104,7 @@ class TestEmailAuthServiceUserUpdates:
     async def test_update_user_password(self, service, mock_db, mock_user, mock_password_service):
         """Test updating user's password."""
         service.password_service = mock_password_service
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user
         mock_db.execute.return_value = mock_result
@@ -1125,7 +1112,7 @@ class TestEmailAuthServiceUserUpdates:
         result = await service.update_user(email="test@example.com", password="NewSecurePass123!")
 
         assert mock_user.password_hash == "new_hashed_password"
-        mock_password_service.hash_password.assert_called_once_with("NewSecurePass123!")
+        mock_password_service.hash_password_async.assert_called_once_with("NewSecurePass123!")
         mock_db.commit.assert_called()
 
     @pytest.mark.asyncio

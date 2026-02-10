@@ -195,8 +195,8 @@ graph LR
 
     subgraph "Processing"
         Filter --> Transform[Data Transformation]
-        Transform --> Encrypt[Auth Encryption]
-        Encrypt --> Deps[Dependency Resolution]
+        Transform --> Preserve[Auth Preservation - encrypted at rest]
+        Preserve --> Deps[Dependency Resolution]
         Deps --> Validate[Validation]
     end
 
@@ -226,7 +226,7 @@ graph LR
 
     subgraph "Processing"
         Security --> Decrypt[Auth Decryption]
-        Decrypt --> Rekey[Key Rotation]
+        Decrypt --> Rekey[Key Rotation - optional]
         Rekey --> Order[Dependency Ordering]
         Order --> Process[Entity Processing]
     end

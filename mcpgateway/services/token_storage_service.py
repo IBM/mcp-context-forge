@@ -97,9 +97,9 @@ class TokenStorageService:
             encrypted_refresh = refresh_token
 
             if self.encryption:
-                encrypted_access = self.encryption.encrypt_secret(access_token)
+                encrypted_access = await self.encryption.encrypt_secret_async(access_token)
                 if refresh_token:
-                    encrypted_refresh = self.encryption.encrypt_secret(refresh_token)
+                    encrypted_refresh = await self.encryption.encrypt_secret_async(refresh_token)
 
             # Calculate expiration
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
@@ -161,7 +161,7 @@ class TokenStorageService:
 
             # Decrypt and return valid token
             if self.encryption:
-                return self.encryption.decrypt_secret(token_record.access_token)
+                return await self.encryption.decrypt_secret_async(token_record.access_token)
             return token_record.access_token
 
         except Exception as e:
@@ -199,7 +199,7 @@ class TokenStorageService:
             refresh_token = token_record.refresh_token
             if self.encryption:
                 try:
-                    refresh_token = self.encryption.decrypt_secret(refresh_token)
+                    refresh_token = await self.encryption.decrypt_secret_async(refresh_token)
                 except Exception as e:
                     logger.error(f"Failed to decrypt refresh token: {str(e)}")
                     return None
@@ -209,10 +209,56 @@ class TokenStorageService:
             if "client_secret" in oauth_config and oauth_config["client_secret"]:
                 if self.encryption:
                     try:
-                        oauth_config["client_secret"] = self.encryption.decrypt_secret(oauth_config["client_secret"])
+                        oauth_config["client_secret"] = await self.encryption.decrypt_secret_async(oauth_config["client_secret"])
                     except Exception:  # nosec B110
                         # If decryption fails, assume it's already plain text - intentional fallback
                         pass
+
+            # RFC 8707: Set resource parameter for JWT access tokens during refresh
+            # Standard
+            from urllib.parse import urlparse, urlunparse  # pylint: disable=import-outside-toplevel
+
+            def normalize_resource(url: str, *, preserve_query: bool = False) -> str | None:
+                """Normalize resource URL per RFC 8707.
+
+                Args:
+                    url: Resource URL to normalize
+                    preserve_query: If True, preserve query (for explicit config). If False, strip query.
+
+                Returns:
+                    Normalized URL string, or None if invalid.
+                """
+                if not url:
+                    return None
+                parsed = urlparse(url)
+                # RFC 8707: resource MUST be absolute URI (requires scheme)
+                # Support both hierarchical URIs and URNs
+                if not parsed.scheme:
+                    logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
+                    return None
+                # Remove fragment (MUST NOT); query: preserve for explicit, strip for auto-derived
+                query = parsed.query if preserve_query else ""
+                return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
+
+            existing_resource = oauth_config.get("resource")
+            if existing_resource:
+                # Normalize existing resource - preserve query for explicit config
+                if isinstance(existing_resource, list):
+                    original_count = len(existing_resource)
+                    normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
+                    oauth_config["resource"] = [r for r in normalized if r]
+                    if not oauth_config["resource"] and original_count > 0:
+                        logger.warning(f"All {original_count} configured resource values were invalid and removed during refresh")
+                else:
+                    normalized = normalize_resource(existing_resource, preserve_query=True)
+                    if not normalized and existing_resource:
+                        logger.warning(f"Configured resource was invalid and removed during refresh: {existing_resource}")
+                    oauth_config["resource"] = normalized
+            elif gateway.url:
+                # Derive from gateway.url if not explicitly configured (strip query)
+                oauth_config["resource"] = normalize_resource(gateway.url)
+                if not oauth_config.get("resource"):
+                    logger.warning(f"Gateway URL is not a valid absolute URI, skipping resource parameter: {gateway.url}")
 
             # Use OAuthManager to refresh the token
             # First-Party
@@ -232,8 +278,8 @@ class TokenStorageService:
             encrypted_access = new_access_token
             encrypted_refresh = new_refresh_token
             if self.encryption:
-                encrypted_access = self.encryption.encrypt_secret(new_access_token)
-                encrypted_refresh = self.encryption.encrypt_secret(new_refresh_token)
+                encrypted_access = await self.encryption.encrypt_secret_async(new_access_token)
+                encrypted_refresh = await self.encryption.encrypt_secret_async(new_refresh_token)
 
             # Update the token record
             token_record.access_token = encrypted_access

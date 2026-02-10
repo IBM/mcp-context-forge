@@ -120,6 +120,7 @@ plugins:
 - Per‑plugin call timeout (default 30s; configured by `plugin_settings.plugin_timeout`)
 - Payload size guardrails (~1MB for prompt args and rendered results)
 - Error isolation with configurable behavior:
+
   - Global: `plugin_settings.fail_on_plugin_error`
   - Per‑plugin mode: `enforce`, `enforce_ignore_error`, `permissive`, `disabled`
 
@@ -175,12 +176,14 @@ mcpgateway/plugins/framework/
 ### Plugin Types Implemented
 
 1. **Self-Contained Plugins**
+
    - `PIIFilterPlugin` - PII detection and masking
    - `SearchReplacePlugin` - Regex-based text transformation
    - `DenyListPlugin` - Keyword blocking with violation reporting
    - `ResourceFilterPlugin` - Content size and protocol validation
 
 2. **External Plugins via MCP**
+
    - MCP transport integration (STDIO, Streamable HTTP)
    - ExternalPlugin client handles session init and tool calls
    - Remote config sync (`get_plugin_config`) and local override merge
@@ -193,13 +196,13 @@ sequenceDiagram
     participant App as Gateway Application
     participant PM as PluginManager
     participant Plugin as Plugin Instance
-    participant Service as External Service
+    participant Service as External MCP Server
 
     App->>PM: initialize()
     PM->>Plugin: __init__(config)
     PM->>Plugin: initialize()
 
-    App->>PM: prompt_pre_fetch(payload, context)
+    App->>PM: invoke_hook(prompt_pre_fetch, payload, context)
     PM->>Plugin: prompt_pre_fetch(payload, context)
 
     alt Self-Contained Plugin

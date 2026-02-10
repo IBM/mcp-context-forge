@@ -12,7 +12,21 @@ Authors: Shriti Priya
 import ast
 from enum import Enum
 import re
+import time
 from typing import Union
+
+# Third-Party
+from prometheus_client import Histogram
+
+# Precompiled regex pattern for performance
+_POLICY_OPERATORS_RE = re.compile(r"\b(and|or|not)\b|[()]")
+
+# Prometheus metrics
+llm_guard_policy_compile_duration_seconds = Histogram(
+    "llm_guard_policy_compile_duration_seconds",
+    "Duration of policy compilation/evaluation in seconds",
+    buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
 
 
 class ResponseGuardrailPolicy(Enum):
@@ -43,25 +57,86 @@ class GuardrailPolicy:
         try:
             # Parse the policy expression into an abstract syntax tree
             tree = ast.parse(policy, mode="eval")
-            # Check if the tree only contains allowed operations
-            for node in ast.walk(tree):
-                if isinstance(node, (ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow)):
-                    continue
-                elif isinstance(node, (ast.Num, ast.UnaryOp)):
-                    continue
-                elif isinstance(node, (ast.Expression)):
-                    continue
-                elif isinstance(node, (ast.BoolOp, ast.Or, ast.And)):
-                    continue
-                elif isinstance(node, (ast.Name, ast.Eq, ast.Compare, ast.Load)):
-                    continue
-                else:
-                    raise ValueError("Invalid operation")
-
-            # Evaluate the expression
-            return eval(compile(tree, "<string>", "eval"), {}, policy_variables)
+            return self._safe_eval(tree.body, policy_variables)
         except (ValueError, SyntaxError, Exception):
             return "Invalid expression"
+
+    def _safe_eval(self, node, variables):
+        """Recursively evaluates an AST node safely."""
+        start_time = time.time()
+        try:
+            result = self._safe_eval_impl(node, variables)
+            return result
+        finally:
+            duration = time.time() - start_time
+            llm_guard_policy_compile_duration_seconds.observe(duration)
+
+    def _safe_eval_impl(self, node, variables):
+        """Internal implementation of safe evaluation."""
+        if isinstance(node, ast.Expression):
+            return self._safe_eval_impl(node.body, variables)
+        elif isinstance(node, ast.Constant):
+            return node.value
+        elif isinstance(node, ast.Name):
+            if node.id in variables:
+                return variables[node.id]
+            raise ValueError(f"Unknown variable: {node.id}")
+        elif isinstance(node, ast.BinOp):
+            left = self._safe_eval_impl(node.left, variables)
+            right = self._safe_eval_impl(node.right, variables)
+            operators = {
+                ast.Add: lambda a, b: a + b,
+                ast.Sub: lambda a, b: a - b,
+                ast.Mult: lambda a, b: a * b,
+                ast.Div: lambda a, b: a / b,
+                ast.FloorDiv: lambda a, b: a // b,
+                ast.Mod: lambda a, b: a % b,
+                ast.Pow: lambda a, b: a**b,
+            }
+            if type(node.op) in operators:
+                return operators[type(node.op)](left, right)
+        elif isinstance(node, ast.UnaryOp):
+            operand = self._safe_eval_impl(node.operand, variables)
+            operators = {
+                ast.UAdd: lambda a: +a,
+                ast.USub: lambda a: -a,
+                ast.Not: lambda a: not a,
+            }
+            if type(node.op) in operators:
+                return operators[type(node.op)](operand)
+        elif isinstance(node, ast.BoolOp):
+            # Use lazy evaluation to preserve short-circuit semantics
+            if isinstance(node.op, ast.And):
+                for v in node.values:
+                    if not self._safe_eval_impl(v, variables):
+                        return False
+                return True
+            elif isinstance(node.op, ast.Or):
+                for v in node.values:
+                    if self._safe_eval_impl(v, variables):
+                        return True
+                return False
+        elif isinstance(node, ast.Compare):
+            left = self._safe_eval_impl(node.left, variables)
+            for op, right_node in zip(node.ops, node.comparators):
+                right = self._safe_eval_impl(right_node, variables)
+                operators = {
+                    ast.Eq: lambda a, b: a == b,
+                    ast.NotEq: lambda a, b: a != b,
+                    ast.Lt: lambda a, b: a < b,
+                    ast.LtE: lambda a, b: a <= b,
+                    ast.Gt: lambda a, b: a > b,
+                    ast.GtE: lambda a, b: a >= b,
+                }
+                if type(op) in operators:
+                    if not operators[type(op)](left, right):
+                        return False
+                    left = right
+                else:
+                    raise ValueError("Unsupported comparison")
+            return True
+
+        raise ValueError("Unsupported operation")
 
 
 def word_wise_levenshtein_distance(sentence1, sentence2):
@@ -105,8 +180,7 @@ def get_policy_filters(policy_expression) -> Union[list, None]:
         Union[list, None]: None if no policy expression is defined, else a comma separated list of filters defined in the policy
     """
     if isinstance(policy_expression, str):
-        pattern = r"\b(and|or|not)\b|[()]"
-        filters = re.sub(pattern, "", policy_expression).strip()
+        filters = _POLICY_OPERATORS_RE.sub("", policy_expression).strip()
         return filters.split()
     elif isinstance(policy_expression, dict):
         filters = list(policy_expression.keys())

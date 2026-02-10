@@ -25,7 +25,9 @@ from mcpgateway.services.metrics_cleanup_service import (
     CleanupResult,
     CleanupSummary,
     MetricsCleanupService,
+    delete_metrics_in_batches,
     get_metrics_cleanup_service,
+    pause_rollup_during_purge,
 )
 
 
@@ -190,6 +192,101 @@ class TestCleanupTable:
         assert result.deleted_count == 0
         assert result.table_name == "tool_metrics"
         assert result.error is None
+
+
+def test_delete_metrics_in_batches_counts_rows():
+    """Test delete_metrics_in_batches aggregates row counts and stops."""
+    db = MagicMock()
+    # Simulate two batches then stop
+    first = MagicMock()
+    first.rowcount = 5
+    second = MagicMock()
+    second.rowcount = 2
+    db.execute.side_effect = [first, second]
+
+    deleted = delete_metrics_in_batches(db, ToolMetric, ToolMetric.id, "tool-1", batch_size=5)
+
+    assert deleted == 7
+    assert db.execute.call_count == 2
+
+
+def test_delete_metrics_in_batches_handles_non_int_rowcount():
+    """Test delete_metrics_in_batches handles non-int rowcount gracefully."""
+    db = MagicMock()
+    result = MagicMock()
+    result.rowcount = None
+    db.execute.return_value = result
+
+    deleted = delete_metrics_in_batches(db, ToolMetric, ToolMetric.id, "tool-1", batch_size=5)
+
+    assert deleted == 0
+
+
+def test_pause_rollup_during_purge_calls_pause_resume(monkeypatch: pytest.MonkeyPatch):
+    """Ensure rollup pause/resume is invoked when available."""
+    calls = []
+
+    class DummyRollup:
+        def pause(self, reason):
+            calls.append(("pause", reason))
+
+        def resume(self):
+            calls.append(("resume", None))
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.get_metrics_rollup_service_if_initialized", lambda: DummyRollup())
+
+    with pause_rollup_during_purge("testing"):
+        assert calls[0] == ("pause", "testing")
+
+    assert calls[-1][0] == "resume"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_all_retention_zero_includes_rollup(monkeypatch: pytest.MonkeyPatch):
+    """Test cleanup_all uses rollup tables and retention=0 branch."""
+    service = MetricsCleanupService()
+    monkeypatch.setattr(service, "METRIC_TABLES", [("tool_metrics", ToolMetric, ToolMetric, "tool_id")])
+
+    def fake_cleanup(model_class, table_name, cutoff, timestamp_column="timestamp"):
+        return CleanupResult(table_name=table_name, deleted_count=1, remaining_count=0, cutoff_date=cutoff, duration_seconds=0.01)
+
+    monkeypatch.setattr(service, "_cleanup_table", fake_cleanup)
+    async def fake_to_thread(fn, *args, **kwargs):
+        return fn(*args, **kwargs)
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.asyncio.to_thread", fake_to_thread)
+
+    summary = await service.cleanup_all(retention_days=0, include_rollup=True)
+
+    assert summary.total_deleted == 2
+    assert "tool_metrics" in summary.tables
+    assert "tool_metrics_hourly" in summary.tables
+
+
+@pytest.mark.asyncio
+async def test_cleanup_table_invalid_type(cleanup_service):
+    """Test cleanup_table raises for unknown table types."""
+    with pytest.raises(ValueError, match="Unknown table type"):
+        await cleanup_service.cleanup_table("unknown")
+
+
+@pytest.mark.asyncio
+async def test_get_table_sizes(monkeypatch: pytest.MonkeyPatch):
+    """Test get_table_sizes returns counts for raw and hourly tables."""
+    service = MetricsCleanupService()
+    monkeypatch.setattr(service, "METRIC_TABLES", [("tool_metrics", ToolMetric, ToolMetric, "tool_id")])
+
+    db = MagicMock()
+    db.execute.side_effect = [MagicMock(scalar=MagicMock(return_value=5)), MagicMock(scalar=MagicMock(return_value=2))]
+    db.__enter__ = MagicMock(return_value=db)
+    db.__exit__ = MagicMock(return_value=False)
+
+    monkeypatch.setattr("mcpgateway.services.metrics_cleanup_service.fresh_db_session", lambda: db)
+
+    sizes = await service.get_table_sizes()
+
+    assert sizes["tool_metrics"] == 5
+    assert sizes["tool_metrics_hourly"] == 2
 
 
 class TestStartShutdown:

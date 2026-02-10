@@ -13,6 +13,7 @@ plugin_settings:
   fail_on_plugin_error: false
   enable_plugin_api: true
   plugin_health_check_interval: 120
+  include_user_info: false
 
 plugins:
   # Argument Normalizer - stabilize inputs before anything else
@@ -63,7 +64,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["security", "pii", "compliance", "filter", "gdpr", "hipaa"]
-    mode: "permissive"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 50  # Lower number = higher priority (runs first)
     conditions:
       - prompts: []  # Empty list = apply to all prompts
@@ -98,7 +99,7 @@ plugins:
     author: "Mihai Criveti"
     hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
     tags: ["plugin", "transformer", "regex", "search-and-replace", "pre-post"]
-    mode: "permissive"  # enforce | permissive | disabled
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 150
     conditions:
       # Apply to specific tools/servers
@@ -247,7 +248,7 @@ plugins:
     author: "Osher Elhadad"
     hooks: ["tool_pre_invoke"]
     tags: ["validation", "sparc", "altk", "static", "schema", "type-checking"]
-    mode: "enforce"  # Enable with "enforce" or "permissive"
+    mode: "disabled"  # Enable with "enforce" or "permissive"
     priority: 65  # Run early, after argument normalizer (40) but before schema guard (110)
     conditions: []
     config:
@@ -513,16 +514,15 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["reliability", "sre"]
-    #mode: "enforce_ignore_error"
     mode: "disabled"
     priority: 70
     conditions: []
     config:
-      error_rate_threshold: 0.5
-      window_seconds: 60
-      min_calls: 10
-      consecutive_failure_threshold: 5
-      cooldown_seconds: 60
+      error_rate_threshold: 0.7      # 70% failure rate before tripping (more forgiving)
+      window_seconds: 120            # 2-minute sliding window
+      min_calls: 10                  # Need 10 calls before evaluating error rate
+      consecutive_failure_threshold: 8  # 8 consecutive failures to trip
+      cooldown_seconds: 15           # Quick 15s recovery for faster testing
       tool_overrides: {}
 
   # Watchdog - enforce per-tool execution SLOs
@@ -785,8 +785,7 @@ plugins:
     author: "Adrian Popa"
     hooks: ["tool_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
-    # mode: "permissive"
-    mode: "permissive"
+    mode: "disabled"  # enforce | permissive | disabled
     priority: 10
     conditions:
       - prompts: []
@@ -945,3 +944,75 @@ plugins:
     config:
       export_full_payload: true
       max_payload_bytes_size: 10000
+
+  # TOON Encoder - Convert JSON to TOON format for token efficiency
+  - name: "ToonEncoder"
+    kind: "plugins.toon_encoder.toon_encoder.ToonEncoderPlugin"
+    description: "Convert JSON tool results to TOON format for 30-70% token reduction"
+    version: "1.0.0"
+    author: "Joe Stein"
+    hooks: ["tool_post_invoke"]
+    tags: ["optimization", "tokens", "encoding", "toon", "llm"]
+    mode: "disabled"  # enforce | permissive | disabled
+    priority: 900  # Run very late, after all other post-processing
+    conditions: []  # Apply to all tools
+    config:
+      # Size thresholds
+      min_size_bytes: 100        # Only convert JSON larger than this
+      max_size_bytes: 1048576    # Skip very large payloads (1MB) to prevent OOM
+
+      # Tool filtering (leave empty to process all tools)
+      exclude_tools: []          # Tool names to skip (e.g., ["get_binary_file"])
+      include_tools: null        # Whitelist - if set, only these tools are converted
+
+      # Output options
+      add_format_marker: true    # Add annotations.format="toon" to converted content
+      skip_on_error: true        # Continue with original JSON if conversion fails
+
+  # Unified Policy Decision Point - single interface for Cedar, OPA, Native RBAC, MAC
+  - name: "UnifiedPDPPlugin"
+    kind: "plugins.unified_pdp.unified_pdp.UnifiedPDPPlugin"
+    description: "Unified Policy Decision Point for access control across multiple policy engines"
+    version: "0.1.0"
+    author: "yiannis2804"
+    hooks: ["tool_pre_invoke", "resource_pre_fetch"]
+    tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
+    mode: "disabled"  # set to "enforce" to activate
+    priority: 10  # Run early — access control before other plugins
+    conditions: []
+    config:
+      engines:
+        - name: native
+          enabled: true
+          priority: 1
+          settings:
+            rules_file: "plugins/unified_pdp/default_rules.json"
+        - name: mac
+          enabled: false
+          priority: 2
+          settings:
+            relaxed_star: false
+        - name: opa
+          enabled: false
+          priority: 3
+          settings:
+            opa_url: "http://localhost:8181"
+            policy_path: "mcpgateway"
+            timeout_ms: 5000
+            max_retries: 3
+        - name: cedar
+          enabled: false
+          priority: 4
+          settings:
+            cedar_url: "http://localhost:8700"
+            timeout_ms: 5000
+            max_retries: 3
+      combination_mode: "all_must_allow"
+      default_decision: "deny"
+      cache:
+        enabled: true
+        ttl_seconds: 60
+        max_entries: 10000
+      performance:
+        timeout_ms: 1000
+        parallel_evaluation: true

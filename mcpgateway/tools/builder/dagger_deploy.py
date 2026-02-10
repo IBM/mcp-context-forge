@@ -16,7 +16,9 @@ Features:
 """
 
 # Standard
+import asyncio
 from pathlib import Path
+import subprocess  # nosec B404
 from typing import List, Optional
 
 try:
@@ -407,17 +409,14 @@ class MCPStackDagger(CICDModule):
 
         # For Dagger, we still need local clone if copying env templates
         if copy_env_templates:
-            # Standard
-            import subprocess  # nosec B404
-
             clone_dir.mkdir(parents=True, exist_ok=True)
 
             if (clone_dir / ".git").exists():
-                subprocess.run(["git", "fetch", "origin", git_ref], cwd=clone_dir, check=True, capture_output=True)  # nosec B603, B607
+                await asyncio.to_thread(subprocess.run, ["git", "fetch", "origin", git_ref], cwd=clone_dir, check=True, capture_output=True)  # nosec B603, B607
                 # Checkout what we just fetched (FETCH_HEAD)
-                subprocess.run(["git", "checkout", "FETCH_HEAD"], cwd=clone_dir, check=True, capture_output=True)  # nosec B603, B607
+                await asyncio.to_thread(subprocess.run, ["git", "checkout", "FETCH_HEAD"], cwd=clone_dir, check=True, capture_output=True)  # nosec B603, B607
             else:
-                subprocess.run(["git", "clone", "--branch", git_ref, "--depth", "1", repo, str(clone_dir)], check=True, capture_output=True)  # nosec B603, B607
+                await asyncio.to_thread(subprocess.run, ["git", "clone", "--branch", git_ref, "--depth", "1", repo, str(clone_dir)], check=True, capture_output=True)  # nosec B603, B607
 
             # Determine build context
             build_context = component.context or "."

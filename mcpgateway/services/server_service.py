@@ -13,13 +13,15 @@ It also publishes event notifications for server changes.
 
 # Standard
 import asyncio
+import binascii
 from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 # Third-Party
 import httpx
+from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
@@ -42,7 +44,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
-from mcpgateway.utils.sqlalchemy_modifier import json_contains_expr
+from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
@@ -74,6 +76,10 @@ class ServerError(Exception):
 
 class ServerNotFoundError(ServerError):
     """Raised when a requested server is not found."""
+
+
+class ServerLockConflictError(ServerError):
+    """Raised when a server row is locked by another transaction."""
 
 
 class ServerNameConflictError(ServerError):
@@ -128,7 +134,7 @@ class ServerNameConflictError(ServerError):
 class ServerService:
     """Service for managing MCP Servers in the catalog.
 
-    Provides methods to create, list, retrieve, update, toggle status, and delete server records.
+    Provides methods to create, list, retrieve, update, set state, and delete server records.
     Also supports event notifications for changes in server data.
     """
 
@@ -290,6 +296,9 @@ class ServerService:
             "federation_source": getattr(server, "federation_source", None),
             "version": getattr(server, "version", None),
             "tags": server.tags or [],
+            # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+            "oauth_enabled": getattr(server, "oauth_enabled", False),
+            "oauth_config": getattr(server, "oauth_config", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -477,7 +486,12 @@ class ServerService:
                 # Team scoping fields - use schema values if provided, otherwise fallback to parameters
                 team_id=getattr(server_in, "team_id", None) or team_id,
                 owner_email=getattr(server_in, "owner_email", None) or owner_email or created_by,
-                visibility=getattr(server_in, "visibility", None) or visibility,
+                # IMPORTANT: Prefer function parameter over schema default
+                # The API has visibility as a separate Body param that should override schema default
+                visibility=visibility or getattr(server_in, "visibility", None) or "public",
+                # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
+                oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
+                oauth_config=getattr(server_in, "oauth_config", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -708,6 +722,7 @@ class ServerService:
         user_email: Optional[str] = None,
         team_id: Optional[str] = None,
         visibility: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> Union[tuple[List[ServerRead], Optional[str]], Dict[str, Any]]:
         """List all registered servers with cursor or page-based pagination and optional team filtering.
 
@@ -722,6 +737,7 @@ class ServerService:
             user_email: Email of user for team-based access control. None for no access control.
             team_id: Optional team ID to filter by specific team (requires user_email).
             visibility: Optional visibility filter (private, team, public) (requires user_email).
+            token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only).
 
         Returns:
             If page is provided: Dict with {"data": [...], "pagination": {...}, "links": {...}}
@@ -740,9 +756,16 @@ class ServerService:
             >>> isinstance(servers, list) and cursor is None
             True
         """
-        # Check cache for first page only - skip when user_email provided or page-based pagination
+        # Check cache for first page only
+        # SECURITY: Only cache public-only results (token_teams=[])
+        # - token_teams=None (admin bypass): Don't cache - admin sees all, should be fresh
+        # - token_teams=[] (public-only): Cache - same result for all public-only users
+        # - token_teams=[...] (team-scoped): Don't cache - results vary by team
+        # - user_email set: Don't cache - results vary by user ownership
         cache = _get_registry_cache()
-        if cursor is None and user_email is None and page is None:
+        is_public_only = token_teams is not None and len(token_teams) == 0
+        use_cache = cursor is None and user_email is None and page is None and is_public_only
+        if use_cache:
             filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None)
             cached = await cache.get("servers", filters_hash)
             if cached is not None:
@@ -767,8 +790,29 @@ class ServerService:
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
-        # Apply team-based access control if user_email is provided
-        if user_email:
+        # SECURITY: Apply token-based access control based on normalized token_teams
+        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
+        # - token_teams is []: public-only access (missing teams or explicit empty)
+        # - token_teams is [...]: access to specified teams + public + user's own
+        if token_teams is not None:
+            if len(token_teams) == 0:
+                # Public-only token: only access public servers
+                query = query.where(DbServer.visibility == "public")
+            else:
+                # Team-scoped token: public servers + servers in allowed teams + user's own
+                access_conditions = [
+                    DbServer.visibility == "public",
+                    and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])),
+                ]
+                if user_email:
+                    access_conditions.append(and_(DbServer.owner_email == user_email, DbServer.visibility == "private"))
+                query = query.where(or_(*access_conditions))
+
+            if visibility:
+                query = query.where(DbServer.visibility == visibility)
+
+        # Apply team-based access control if user_email is provided (and no token_teams filtering)
+        elif user_email:
             team_service = TeamManagementService(db)
             user_teams = await team_service.get_user_teams(user_email)
             team_ids = [team.id for team in user_teams]
@@ -802,9 +846,9 @@ class ServerService:
             if visibility:
                 query = query.where(DbServer.visibility == visibility)
 
-        # Add tag filtering if tags are provided
+        # Add tag filtering if tags are provided (supports both List[str] and List[Dict] formats)
         if tags:
-            query = query.where(json_contains_expr(db, DbServer.tags, tags, match_any=True))
+            query = query.where(json_contains_tag_expr(db, DbServer.tags, tags, match_any=True))
 
         # Use unified pagination helper - handles both page and cursor pagination
         pag_result = await unified_paginate(
@@ -833,7 +877,11 @@ class ServerService:
         # Team names are loaded via joinedload(DbServer.email_team)
         result = []
         for s in servers_db:
-            result.append(self.convert_server_to_read(s, include_metrics=False))
+            try:
+                result.append(self.convert_server_to_read(s, include_metrics=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining servers instead of failing completely
 
         # Return appropriate format based on pagination type
         if page is not None:
@@ -846,8 +894,9 @@ class ServerService:
 
         # Cursor-based format
 
-        # Cache first page results - only for non-user-specific queries
-        if cursor is None and user_email is None:
+        # Cache first page results - only for public-only queries (no user/team filtering)
+        # SECURITY: Only cache public-only results (token_teams=[]), never admin bypass or team-scoped
+        if cursor is None and user_email is None and is_public_only:
             try:
                 cache_data = {"servers": [s.model_dump(mode="json") for s in result], "next_cursor": next_cursor}
                 await cache.set("servers", cache_data, filters_hash)
@@ -940,7 +989,11 @@ class ServerService:
         # Team names are loaded via joinedload(DbServer.email_team)
         result = []
         for s in servers:
-            result.append(self.convert_server_to_read(s, include_metrics=False))
+            try:
+                result.append(self.convert_server_to_read(s, include_metrics=False))
+            except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+                logger.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+                # Continue with remaining servers instead of failing completely
         return result
 
     async def get_server(self, db: Session, server_id: str) -> ServerRead:
@@ -1105,7 +1158,7 @@ class ServerService:
                     selectinload(DbServer.resources),
                     selectinload(DbServer.prompts),
                     selectinload(DbServer.a2a_agents),
-                    joinedload(DbServer.email_team),
+                    selectinload(DbServer.email_team),
                 ],
             )
             if not server:
@@ -1221,6 +1274,24 @@ class ServerService:
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            # Update OAuth 2.0 configuration if provided
+            # Track if OAuth is being explicitly disabled to prevent config re-assignment
+            oauth_being_disabled = server_update.oauth_enabled is not None and not server_update.oauth_enabled
+
+            if server_update.oauth_enabled is not None:
+                server.oauth_enabled = server_update.oauth_enabled
+                # If OAuth is being disabled, clear the config
+                if oauth_being_disabled:
+                    server.oauth_config = None
+
+            # Only update oauth_config if OAuth is not being explicitly disabled
+            # This prevents the case where oauth_enabled=False and oauth_config are both provided
+            if not oauth_being_disabled:
+                if hasattr(server_update, "model_fields_set") and "oauth_config" in server_update.model_fields_set:
+                    server.oauth_config = server_update.oauth_config
+                elif server_update.oauth_config is not None:
+                    server.oauth_config = server_update.oauth_config
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
@@ -1358,8 +1429,8 @@ class ServerService:
             )
             raise ServerError(f"Failed to update server: {str(e)}")
 
-    async def toggle_server_status(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
-        """Toggle the activation status of a server.
+    async def set_server_state(self, db: Session, server_id: str, activate: bool, user_email: Optional[str] = None) -> ServerRead:
+        """Set the activation status of a server.
 
         Args:
             db: Database session.
@@ -1372,6 +1443,7 @@ class ServerService:
 
         Raises:
             ServerNotFoundError: If the server is not found.
+            ServerLockConflictError: If the server row is locked by another transaction.
             ServerError: For other errors.
             PermissionError: If user doesn't own the agent.
 
@@ -1392,22 +1464,29 @@ class ServerService:
             >>> service._audit_trail = MagicMock()  # Mock audit trail to prevent database writes
             >>> ServerRead.model_validate = MagicMock(return_value='server_read')
             >>> import asyncio
-            >>> asyncio.run(service.toggle_server_status(db, 'server_id', True))
+            >>> asyncio.run(service.set_server_state(db, 'server_id', True))
             'server_read'
         """
         try:
-            server = get_for_update(
-                db,
-                DbServer,
-                server_id,
-                options=[
-                    selectinload(DbServer.tools),
-                    selectinload(DbServer.resources),
-                    selectinload(DbServer.prompts),
-                    selectinload(DbServer.a2a_agents),
-                    joinedload(DbServer.email_team),
-                ],
-            )
+            # Use nowait=True to fail fast if row is locked, preventing lock contention under high load
+            try:
+                server = get_for_update(
+                    db,
+                    DbServer,
+                    server_id,
+                    nowait=True,
+                    options=[
+                        selectinload(DbServer.tools),
+                        selectinload(DbServer.resources),
+                        selectinload(DbServer.prompts),
+                        selectinload(DbServer.a2a_agents),
+                        selectinload(DbServer.email_team),
+                    ],
+                )
+            except OperationalError as lock_err:
+                # Row is locked by another transaction - fail fast with 409
+                db.rollback()
+                raise ServerLockConflictError(f"Server {server_id} is currently being modified by another request") from lock_err
             if not server:
                 raise ServerNotFoundError(f"Server not found: {server_id}")
 
@@ -1435,7 +1514,7 @@ class ServerService:
                     await self._notify_server_deactivated(server)
                 logger.info(f"Server {server.name} {'activated' if activate else 'deactivated'}")
 
-                # Structured logging: Audit trail for server status toggle
+                # Structured logging: Audit trail for server state change
                 self._audit_trail.log_action(
                     user_id=user_email or "system",
                     action="activate_server" if activate else "deactivate_server",
@@ -1480,28 +1559,34 @@ class ServerService:
             # Structured logging: Log permission error
             self._structured_logger.log(
                 level="WARNING",
-                message="Server status toggle failed due to insufficient permissions",
-                event_type="server_status_toggle_permission_denied",
+                message="Server state change failed due to insufficient permissions",
+                event_type="server_state_change_permission_denied",
                 component="server_service",
                 server_id=server_id,
                 user_email=user_email,
             )
             raise e
+        except ServerLockConflictError:
+            # Re-raise lock conflicts without wrapping - allows 409 response
+            raise
+        except ServerNotFoundError:
+            # Re-raise not found without wrapping - allows 404 response
+            raise
         except Exception as e:
             db.rollback()
 
-            # Structured logging: Log generic server status toggle failure
+            # Structured logging: Log generic server state change failure
             self._structured_logger.log(
                 level="ERROR",
-                message="Server status toggle failed",
-                event_type="server_status_toggle_failed",
+                message="Server state change failed",
+                event_type="server_state_change_failed",
                 component="server_service",
                 server_id=server_id,
                 error_type=type(e).__name__,
                 error_message=str(e),
                 user_email=user_email,
             )
-            raise ServerError(f"Failed to toggle server status: {str(e)}")
+            raise ServerError(f"Failed to set server state: {str(e)}")
 
     async def delete_server(self, db: Session, server_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
         """Permanently delete a server.
@@ -1831,3 +1916,105 @@ class ServerService:
 
         metrics_cache.invalidate("servers")
         metrics_cache.invalidate_prefix("top_servers:")
+
+    def get_oauth_protected_resource_metadata(self, db: Session, server_id: str, resource_base_url: str) -> Dict[str, Any]:
+        """
+        Get RFC 9728 OAuth 2.0 Protected Resource Metadata for a server.
+
+        This method retrieves the OAuth configuration for a server and formats it
+        according to RFC 9728 Protected Resource Metadata specification, enabling
+        MCP clients to discover OAuth authorization servers for browser-based SSO.
+
+        Args:
+            db: Database session.
+            server_id: The ID of the server.
+            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123").
+
+        Returns:
+            Dict containing RFC 9728 Protected Resource Metadata:
+            - resource: The protected resource identifier (URL)
+            - authorization_servers: List of authorization server issuer URIs
+            - bearer_methods_supported: Supported bearer token methods
+            - scopes_supported: Optional list of supported scopes
+
+        Raises:
+            ServerNotFoundError: If server doesn't exist, is disabled, or is non-public.
+            ServerError: If OAuth is not enabled or not properly configured.
+
+        Examples:
+            >>> from mcpgateway.services.server_service import ServerService
+            >>> service = ServerService()
+            >>> # Method exists and is callable
+            >>> callable(service.get_oauth_protected_resource_metadata)
+            True
+        """
+        server = db.get(DbServer, server_id)
+
+        # Return not found for non-existent, disabled, or non-public servers
+        # (avoids leaking information about private/team servers)
+        if not server:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if not server.enabled:
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        if getattr(server, "visibility", "public") != "public":
+            raise ServerNotFoundError(f"Server not found: {server_id}")
+
+        # Check OAuth configuration
+        if not getattr(server, "oauth_enabled", False):
+            raise ServerError(f"OAuth not enabled for server: {server_id}")
+
+        oauth_config = getattr(server, "oauth_config", None)
+        if not oauth_config:
+            raise ServerError(f"OAuth not configured for server: {server_id}")
+
+        # Extract authorization server(s) - support both list and single value
+        authorization_servers = oauth_config.get("authorization_servers", [])
+        if not authorization_servers:
+            auth_server = oauth_config.get("authorization_server")
+            if auth_server:
+                authorization_servers = [auth_server]
+
+        if not authorization_servers:
+            raise ServerError(f"OAuth authorization_server not configured for server: {server_id}")
+
+        # Build RFC 9728 Protected Resource Metadata response
+        response_data: Dict[str, Any] = {
+            "resource": resource_base_url,
+            "authorization_servers": authorization_servers,
+            "bearer_methods_supported": ["header"],
+        }
+
+        # Add optional scopes if configured (never include secrets from oauth_config)
+        scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
+        if scopes:
+            response_data["scopes_supported"] = scopes
+
+        logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
+        return response_data
+
+
+# Lazy singleton - created on first access, not at module import time.
+# This avoids instantiation when only exception classes are imported.
+_server_service_instance = None  # pylint: disable=invalid-name
+
+
+def __getattr__(name: str):
+    """Module-level __getattr__ for lazy singleton creation.
+
+    Args:
+        name: The attribute name being accessed.
+
+    Returns:
+        The server_service singleton instance if name is "server_service".
+
+    Raises:
+        AttributeError: If the attribute name is not "server_service".
+    """
+    global _server_service_instance  # pylint: disable=global-statement
+    if name == "server_service":
+        if _server_service_instance is None:
+            _server_service_instance = ServerService()
+        return _server_service_instance
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

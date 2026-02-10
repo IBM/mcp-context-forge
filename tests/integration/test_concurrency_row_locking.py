@@ -249,7 +249,7 @@ async def test_concurrent_tool_toggle(client: AsyncClient):
     tool_id = tool["id"]
 
     async def toggle():
-        return await client.post(f"/admin/tools/{tool_id}/toggle", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/tools/{tool_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -392,7 +392,7 @@ async def test_concurrent_mixed_operations(client: AsyncClient):
         return await client.post(f"/admin/tools/{tool_id}/edit", data=update_data, headers=TEST_AUTH_HEADER)
 
     async def toggle_tool():
-        return await client.post(f"/admin/tools/{tool_id}/toggle", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/tools/{tool_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     async def read_tool():
         return await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
@@ -601,7 +601,7 @@ async def test_concurrent_gateway_toggle(client: AsyncClient):
     gateway_id = gateway["id"]
 
     async def toggle():
-        return await client.post(f"/admin/gateways/{gateway_id}/toggle", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/gateways/{gateway_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -943,7 +943,7 @@ async def test_concurrent_prompt_toggle(client: AsyncClient):
     prompt_id = prompt["id"]
 
     async def toggle():
-        return await client.post(f"/admin/prompts/{prompt_id}/toggle", data={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/admin/prompts/{prompt_id}/state", data={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -1088,7 +1088,7 @@ async def test_concurrent_resource_toggle(client: AsyncClient):
     resource_id = resource["id"]
 
     async def toggle():
-        return await client.post(f"/resources/{resource_id}/toggle", json={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/resources/{resource_id}/state", json={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -1253,7 +1253,7 @@ async def test_concurrent_a2a_toggle(client: AsyncClient):
     agent_id = agent["id"]
 
     async def toggle():
-        return await client.post(f"/a2a/{agent_id}/toggle", json={"activate": True}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/a2a/{agent_id}/state", json={"activate": True}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)
@@ -1436,7 +1436,7 @@ async def test_concurrent_server_toggle(client: AsyncClient):
     server_id = server["id"]
 
     async def toggle():
-        return await client.post(f"/servers/{server_id}/toggle", json={}, headers=TEST_AUTH_HEADER)
+        return await client.post(f"/servers/{server_id}/state", json={}, headers=TEST_AUTH_HEADER)
 
     # Run 20 concurrent toggles
     results = await asyncio.gather(*[toggle() for _ in range(20)], return_exceptions=True)

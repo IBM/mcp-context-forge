@@ -20,7 +20,7 @@ services:
       retries: 3
 
   gateway:
-    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
     container_name: mcp-gateway
     depends_on:
       mariadb:

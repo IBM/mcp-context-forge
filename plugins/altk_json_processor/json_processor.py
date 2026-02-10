@@ -10,26 +10,38 @@ This module loads configurations for plugins.
 
 # Standard
 import os
-from typing import cast
+from typing import cast, TYPE_CHECKING
 
 # Third-Party
-from altk.core.llm import get_llm
 import orjson
 
-# Third-party
-from altk.core.toolkit import AgentPhase
-from altk.post_tool.code_generation.code_generation import CodeGenerationComponent, CodeGenerationComponentConfig
-from altk.post_tool.core.toolkit import CodeGenerationRunInput, CodeGenerationRunOutput
+# ALTK imports - optional dependency
+ALTK_AVAILABLE = False
+try:
+    # Third-Party
+    from altk.core.llm import get_llm
+    from altk.core.toolkit import AgentPhase
+    from altk.post_tool.code_generation.code_generation import CodeGenerationComponent, CodeGenerationComponentConfig
+    from altk.post_tool.core.toolkit import CodeGenerationRunInput, CodeGenerationRunOutput
+
+    ALTK_AVAILABLE = True
+except ImportError:
+    # ALTK is an optional dependency - will be handled gracefully at runtime
+    if TYPE_CHECKING:
+        from altk.core.llm import get_llm
+        from altk.core.toolkit import AgentPhase
+        from altk.post_tool.code_generation.code_generation import CodeGenerationComponent, CodeGenerationComponentConfig
+        from altk.post_tool.core.toolkit import CodeGenerationRunInput, CodeGenerationRunOutput
 
 # First-Party
-from mcpgateway.plugins.framework import (
+from mcpgateway.plugins.framework import (  # noqa: E402  # pylint: disable=wrong-import-position
     Plugin,
     PluginConfig,
     PluginContext,
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
-from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.logging_service import LoggingService  # noqa: E402  # pylint: disable=wrong-import-position
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -51,6 +63,9 @@ class ALTKJsonProcessor(Plugin):
         else:
             self._cfg = {}
 
+        if not ALTK_AVAILABLE:
+            logger.warning("ALTKJsonProcessor: ALTK is not installed. Plugin will skip JSON processing.")
+
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
         """Plugin hook run after a tool is invoked.
 
@@ -64,6 +79,10 @@ class ALTKJsonProcessor(Plugin):
         Returns:
             The result of the plugin's analysis, including whether the tool result should proceed.
         """
+        if not ALTK_AVAILABLE:
+            logger.debug("ALTKJsonProcessor: ALTK not available, skipping JSON processing.")
+            return ToolPostInvokeResult(continue_processing=True)
+
         provider = self._cfg["llm_provider"]
         llm_client = None
         if provider == "watsonx":

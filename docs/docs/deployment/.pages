@@ -3,6 +3,7 @@ nav:
   - local.md
   - container.md
   - compose.md
+  - tls-configuration.md
   - kubernetes.md
   - openshift.md
   - minikube.md

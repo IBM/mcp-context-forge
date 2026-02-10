@@ -51,7 +51,7 @@ FROM rust-builder-base AS rust-builder
 FROM registry.access.redhat.com/ubi10-minimal:10.1-1764604111
 LABEL maintainer="Mihai Criveti" \
       name="mcp/mcpgateway" \
-      version="1.0.0-BETA-1" \
+      version="1.0.0-BETA-2" \
       description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway"
 
 ARG PYTHON_VERSION=3.12
@@ -71,9 +71,10 @@ WORKDIR /app
 # ----------------------------------------------------------------------------
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
+# NOTE: ppc64le has the same OpenSSL requirement
 # ----------------------------------------------------------------------------
-RUN if [ `uname -m` = "s390x" ]; then \
-        echo "Building for s390x."; \
+RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
+        echo "Building for $(uname -m)."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \

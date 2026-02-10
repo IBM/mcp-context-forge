@@ -79,17 +79,29 @@ This design ensures secure credential transmission where credentials are only se
 
 ### Installation and Setup
 
+*TBD: Document server installation and setup steps.*
+
 ### Instana authentication configuration
 
+*TBD: Document Instana authentication configuration.*
+
 ### Monitoring scope setup
+
+*TBD: Document monitoring scope setup.*
 
 ## MCP Gateway Integration
 
 ### Registration with MCP Gateway
 
+*TBD: Document registration with MCP Gateway.*
+
 ### Server configuration examples
 
+*TBD: Provide server configuration examples.*
+
 ### Available monitoring and inspection tools
+
+*TBD: List available monitoring and inspection tools.*
 
 ## Usage Examples
 
@@ -146,16 +158,30 @@ You can directly create or update .vscode/mcp.json with the following configurat
 
 ### Application monitoring queries
 
+*TBD: Provide application monitoring query examples.*
+
 ### Infrastructure resource inspection
+
+*TBD: Document infrastructure resource inspection.*
 
 ### Performance analysis
 
+*TBD: Document performance analysis examples.*
+
 ### Alert and incident management
+
+*TBD: Document alert and incident management.*
 
 ## Troubleshooting
 
 ### Authentication issues
 
+*TBD: Document common authentication issues and solutions.*
+
 ### API connectivity problems
 
+*TBD: Document API connectivity troubleshooting.*
+
 ### Data access permissions
+
+*TBD: Document data access permission issues.*

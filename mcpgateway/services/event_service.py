@@ -218,11 +218,34 @@ class EventService:
 
                     await pubsub.subscribe(self.channel_name)
 
+                    # Use timeout-based polling instead of blocking listen()
+                    # This allows the generator to respond to cancellation properly
+                    # and prevents CPU spin loops when cancelled but stuck on async iterator
+                    poll_timeout = 1.0
+
                     try:
-                        async for message in pubsub.listen():
-                            if message["type"] == "message":
-                                # Yield the data portion
-                                yield orjson.loads(message["data"])
+                        while True:
+                            try:
+                                message = await asyncio.wait_for(
+                                    pubsub.get_message(ignore_subscribe_messages=True, timeout=poll_timeout),
+                                    timeout=poll_timeout + 0.5,
+                                )
+                            except asyncio.TimeoutError:
+                                # No message, continue loop to check for cancellation
+                                continue
+
+                            if message is None:
+                                # Prevent spin if get_message returns None immediately
+                                await asyncio.sleep(0.1)
+                                continue
+
+                            if message["type"] != "message":
+                                # Sleep on non-message types to prevent spin
+                                await asyncio.sleep(0.1)
+                                continue
+
+                            # Yield the data portion
+                            yield orjson.loads(message["data"])
                     except asyncio.CancelledError:
                         # Handle client disconnection
                         logger.debug(f"Client disconnected from Redis subscription: {self.channel_name}")

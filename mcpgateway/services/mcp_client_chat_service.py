@@ -92,6 +92,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.logging_service import LoggingService
 
 logging_service = LoggingService()
@@ -242,7 +243,7 @@ class MCPServerConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "examples": [
-                {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token-here"},
+                {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token-here"},  # nosec B105 - example placeholder
                 {"command": "python", "args": ["server.py"], "transport": "stdio"},
             ]
         }
@@ -707,7 +708,7 @@ class MCPClientConfig(BaseModel):
     model_config = {
         "json_schema_extra": {
             "example": {
-                "mcp_server": {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token"},
+                "mcp_server": {"url": "https://mcp-server.example.com/mcp", "transport": "streamable_http", "auth_token": "your-token"},  # nosec B105 - example placeholder
                 "llm": {
                     "provider": "azure_openai",
                     "config": {"api_key": "your-key", "azure_endpoint": "https://your-resource.openai.azure.com/", "azure_deployment": "gpt-4", "api_version": "2024-05-01-preview"},
@@ -2699,11 +2700,57 @@ class MCPChatService:
         full_response = ""
         start_ts = time.time()
         tool_runs: dict[str, dict[str, Any]] = {}
+        # Buffer for out-of-order on_tool_end events (end arrives before start)
+        pending_tool_ends: dict[str, dict[str, Any]] = {}
+        pending_ttl_seconds = 30.0  # Max time to hold pending end events
+        pending_max_size = 100  # Max number of pending end events to buffer
+        # Track dropped run_ids for aggregated error (TTL-expired or buffer-full)
+        dropped_tool_ends: set[str] = set()
+        dropped_max_size = 200  # Max dropped IDs to track (prevents unbounded growth)
+        dropped_overflow_count = 0  # Count of drops that couldn't be tracked due to full buffer
+
+        def _extract_output(raw_output: Any) -> Any:
+            """Extract output value from various LangChain output formats.
+
+            Args:
+                raw_output: The raw output from a tool execution.
+
+            Returns:
+                The extracted output value in a serializable format.
+            """
+            if hasattr(raw_output, "content"):
+                return raw_output.content
+            if hasattr(raw_output, "dict") and callable(raw_output.dict):
+                return raw_output.dict()
+            if not isinstance(raw_output, (str, int, float, bool, list, dict, type(None))):
+                return str(raw_output)
+            return raw_output
+
+        def _cleanup_expired_pending(current_ts: float) -> None:
+            """Remove expired entries from pending_tool_ends buffer and track them.
+
+            Args:
+                current_ts: Current timestamp in seconds since epoch.
+            """
+            nonlocal dropped_overflow_count
+            expired = [rid for rid, data in pending_tool_ends.items() if current_ts - data.get("buffered_at", 0) > pending_ttl_seconds]
+            for rid in expired:
+                logger.warning(f"Pending on_tool_end for run_id {rid} expired after {pending_ttl_seconds}s (orphan event)")
+                if len(dropped_tool_ends) < dropped_max_size:
+                    dropped_tool_ends.add(rid)
+                else:
+                    dropped_overflow_count += 1
+                    logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track expired run_id {rid} (overflow count: {dropped_overflow_count})")
+                del pending_tool_ends[rid]
 
         try:
             async for event in self._agent.astream_events({"messages": lc_messages}, version="v2"):
                 kind = event.get("event")
                 now_iso = datetime.now(timezone.utc).isoformat()
+                now_ts = time.time()
+
+                # Periodically cleanup expired pending ends
+                _cleanup_expired_pending(now_ts)
 
                 try:
                     if kind == "on_tool_start":
@@ -2717,33 +2764,101 @@ class MCPChatService:
 
                         tool_runs[run_id] = {"name": name, "start": now_iso, "input": input_data}
 
+                        # Register run for cancellation tracking with gateway-level Cancellation service
+                        async def _noop_cancel_cb(reason: Optional[str]) -> None:
+                            """
+                            No-op cancel callback used when a run is started.
+
+                            Args:
+                                reason: Optional textual reason for cancellation.
+
+                            Returns:
+                                None
+                            """
+                            # Default no-op; kept for potential future intra-process cancellation
+                            return None
+
+                        # Register with cancellation service only if feature is enabled
+                        if settings.mcpgateway_tool_cancellation_enabled:
+                            try:
+                                await cancellation_service.register_run(run_id, name=name, cancel_callback=_noop_cancel_cb)
+                            except Exception:
+                                logger.exception("Failed to register run %s with CancellationService", run_id)
+
                         yield {"type": "tool_start", "id": run_id, "tool": name, "input": input_data, "start": now_iso}
+
+                        # NOTE: Do NOT clear from dropped_tool_ends here. If an end was dropped (TTL/buffer-full)
+                        # before this start arrived, that end is permanently lost. Since tools only end once,
+                        # we won't receive another end event, so this should still be reported as an orphan.
+
+                        # Check if we have a buffered end event for this run_id (out-of-order reconciliation)
+                        if run_id in pending_tool_ends:
+                            buffered = pending_tool_ends.pop(run_id)
+                            tool_runs[run_id]["end"] = buffered["end_time"]
+                            tool_runs[run_id]["output"] = buffered["output"]
+                            logger.info(f"Reconciled out-of-order on_tool_end for run_id {run_id}")
+
+                            if tool_runs[run_id].get("output") == "":
+                                error = "Tool execution failed: Please check if the tool is accessible"
+                                yield {"type": "tool_error", "id": run_id, "tool": name, "error": error, "time": buffered["end_time"]}
+
+                            yield {"type": "tool_end", "id": run_id, "tool": name, "output": tool_runs[run_id].get("output"), "end": buffered["end_time"]}
 
                     elif kind == "on_tool_end":
                         run_id = str(event.get("run_id") or uuid4())
                         output = event.get("data", {}).get("output")
+                        extracted_output = _extract_output(output)
 
                         if run_id in tool_runs:
+                            # Normal case: start already received
                             tool_runs[run_id]["end"] = now_iso
+                            tool_runs[run_id]["output"] = extracted_output
 
-                            if hasattr(output, "content"):
-                                tool_runs[run_id]["output"] = output.content
-                            elif (hasattr(output, "__class__")) or (hasattr(output, "dict") and callable(output.dict)):
-                                tool_runs[run_id]["output"] = output.dict()
-                            elif not isinstance(output, (str, int, float, bool, list, dict, type(None))):
-                                tool_runs[run_id]["output"] = str(output)
+                            if tool_runs[run_id].get("output") == "":
+                                error = "Tool execution failed: Please check if the tool is accessible"
+                                yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
 
-                        if tool_runs[run_id]["output"] == "":
-                            error = "Tool execution failed: Please check if the tool is accessible"
-                            yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+                            yield {"type": "tool_end", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "output": tool_runs[run_id].get("output"), "end": now_iso}
+                        else:
+                            # Out-of-order: buffer the end event for later reconciliation
+                            if len(pending_tool_ends) < pending_max_size:
+                                pending_tool_ends[run_id] = {"output": extracted_output, "end_time": now_iso, "buffered_at": now_ts}
+                                logger.debug(f"Buffered out-of-order on_tool_end for run_id {run_id}, awaiting on_tool_start")
+                            else:
+                                logger.warning(f"Pending tool ends buffer full ({pending_max_size}), dropping on_tool_end for run_id {run_id}")
+                                if len(dropped_tool_ends) < dropped_max_size:
+                                    dropped_tool_ends.add(run_id)
+                                else:
+                                    dropped_overflow_count += 1
+                                    logger.warning(f"Dropped tool ends tracking full ({dropped_max_size}), cannot track run_id {run_id} (overflow count: {dropped_overflow_count})")
 
-                        yield {"type": "tool_end", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "output": tool_runs[run_id]["output"], "end": now_iso}
+                        # Unregister run from cancellation service when finished (only if feature is enabled)
+                        if settings.mcpgateway_tool_cancellation_enabled:
+                            try:
+                                await cancellation_service.unregister_run(run_id)
+                            except Exception:
+                                logger.exception("Failed to unregister run %s", run_id)
 
                     elif kind == "on_tool_error":
                         run_id = str(event.get("run_id") or uuid4())
                         error = str(event.get("data", {}).get("error", "Unknown error"))
 
+                        # Clear any buffered end for this run to avoid emitting both error and end
+                        if run_id in pending_tool_ends:
+                            del pending_tool_ends[run_id]
+                            logger.debug(f"Cleared buffered on_tool_end for run_id {run_id} due to tool error")
+
+                        # Clear from dropped set if this run was previously dropped (prevents false orphan)
+                        dropped_tool_ends.discard(run_id)
+
                         yield {"type": "tool_error", "id": run_id, "tool": tool_runs.get(run_id, {}).get("name"), "error": error, "time": now_iso}
+
+                        # Unregister run on error (only if feature is enabled)
+                        if settings.mcpgateway_tool_cancellation_enabled:
+                            try:
+                                await cancellation_service.unregister_run(run_id)
+                            except Exception:
+                                logger.exception("Failed to unregister run %s after error", run_id)
 
                     elif kind == "on_chat_model_stream":
                         chunk = event.get("data", {}).get("chunk")
@@ -2756,6 +2871,48 @@ class MCPChatService:
                 except Exception as event_error:
                     logger.warning(f"Error processing event {kind}: {event_error}")
                     continue
+
+            # Emit aggregated error for any orphan/dropped tool ends
+            # De-duplicate IDs (in case same ID was buffered and dropped in edge cases)
+            all_orphan_ids = sorted(set(pending_tool_ends.keys()) | dropped_tool_ends)
+            if all_orphan_ids or dropped_overflow_count > 0:
+                buffered_count = len(pending_tool_ends)
+                dropped_count = len(dropped_tool_ends)
+                total_unique = len(all_orphan_ids)
+                total_affected = total_unique + dropped_overflow_count
+                logger.warning(
+                    f"Stream completed with {total_affected} orphan tool end(s): {buffered_count} buffered, {dropped_count} dropped (tracked), {dropped_overflow_count} dropped (untracked overflow)"
+                )
+                # Log full list at debug level for observability
+                if all_orphan_ids:
+                    logger.debug(f"Full orphan run_id list: {', '.join(all_orphan_ids)}")
+                now_iso = datetime.now(timezone.utc).isoformat()
+                error_parts = []
+                if buffered_count > 0:
+                    error_parts.append(f"{buffered_count} buffered")
+                if dropped_count > 0:
+                    error_parts.append(f"{dropped_count} dropped (TTL expired or buffer full)")
+                if dropped_overflow_count > 0:
+                    error_parts.append(f"{dropped_overflow_count} additional dropped (tracking overflow)")
+                error_msg = f"Tool execution incomplete: {total_affected} tool end(s) received without matching start ({', '.join(error_parts)})"
+                # Truncate to first 10 IDs in error message to avoid excessive payload
+                if all_orphan_ids:
+                    max_display_ids = 10
+                    display_ids = all_orphan_ids[:max_display_ids]
+                    remaining = total_unique - len(display_ids)
+                    if remaining > 0:
+                        error_msg += f". Run IDs (first {max_display_ids} of {total_unique}): {', '.join(display_ids)} (+{remaining} more)"
+                    else:
+                        error_msg += f". Run IDs: {', '.join(display_ids)}"
+                yield {
+                    "type": "tool_error",
+                    "id": str(uuid4()),
+                    "tool": None,
+                    "error": error_msg,
+                    "time": now_iso,
+                }
+                pending_tool_ends.clear()
+                dropped_tool_ends.clear()
 
             # Calculate elapsed time
             elapsed_ms = int((time.time() - start_ts) * 1000)

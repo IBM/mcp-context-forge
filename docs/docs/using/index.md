@@ -32,6 +32,10 @@ All Gateway usage requires authentication unless `AUTH_REQUIRED=false`. Refer to
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/tools
 ```
 
-Or use Basic Auth for the Admin UI and `/admin` routes.
+The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`). Basic auth is only used if you explicitly enable `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`.
+
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
 
 ---

@@ -1,0 +1,9 @@
+tool_name,arguments
+get_system_time,{"timezone": "UTC"}
+get_system_time,{"timezone": "America/New_York"}
+get_system_time,{"timezone": "Europe/London"}
+get_system_time,{"timezone": "Asia/Tokyo"}
+convert_time,{"time": "2025-01-15T10:30:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"}
+convert_time,{"time": "2025-01-15T10:30:00Z", "source_timezone": "Europe/London", "target_timezone": "Asia/Tokyo"}
+echo,{"message": "Hello JMeter"}
+echo,{"message": "Performance Test"}

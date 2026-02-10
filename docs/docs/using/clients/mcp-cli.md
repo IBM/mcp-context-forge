@@ -13,6 +13,10 @@ With mcp-cli → MCP Context Forge Gateway you can:
 
 The mcp-cli supports **stdio** connections out-of-the-box through the bundled **`mcpgateway.wrapper`** bridge, with optional direct SSE access for production environments.
 
+!!! tip "Gateway URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
 ---
 
 ## 🛠 Prerequisites
@@ -22,6 +26,7 @@ The mcp-cli supports **stdio** connections out-of-the-box through the bundled **
 * **MCP Context Forge Gateway** running locally or remotely (default: http://localhost:4444)
 * **JWT or Basic Auth credentials** for Gateway access
 * **LLM Provider API keys** (optional, for chat mode):
+
   * OpenAI: `OPENAI_API_KEY` environment variable
   * Anthropic: `ANTHROPIC_API_KEY` environment variable
   * Ollama: Local Ollama installation with function-calling capable models
@@ -106,7 +111,7 @@ Create a `server_config.json` file to define your MCP Context Forge Gateway conn
         "MCP_AUTH=${MCPGATEWAY_BEARER_TOKEN}",
         "--entrypoint",
         "uv",
-        "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1",
+        "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2",
         "run",
         "--directory",
         "mcpgateway-wrapper",
@@ -489,7 +494,7 @@ docker run -d --name mcpgateway \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
   -e PLATFORM_ADMIN_PASSWORD=changeme \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
 
 # Generate token
 export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-secret-key)

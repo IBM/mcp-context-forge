@@ -277,6 +277,7 @@ pool_key = (url, identity_hash, transport_type)
 ```
 
 Where `identity_hash` is derived from authentication headers:
+
 - `Authorization`
 - `X-Tenant-ID`
 - `X-User-ID`
@@ -288,6 +289,7 @@ This ensures different users/tenants never share sessions, preventing data leaka
 #### 2. Transport Type Isolation
 
 Sessions are also isolated by transport type (SSE vs StreamableHTTP) because:
+
 - Different transports have different connection semantics
 - Mixing transports could cause protocol errors
 - Allows independent tuning per transport
@@ -313,6 +315,7 @@ Sessions are also isolated by transport type (SSE vs StreamableHTTP) because:
 #### 4. Health Checking Strategy
 
 Sessions are validated:
+
 - **On acquire**: If idle > `health_check_interval` (default 60s), call `list_tools()` to verify health
 - **On release**: If age > TTL, close instead of returning to pool
 - **Background**: Stale sessions are reaped during acquire operations
@@ -322,6 +325,7 @@ This balances freshness with performance overhead.
 #### 5. Circuit Breaker Pattern
 
 Failed endpoints are temporarily blocked:
+
 - After `threshold` consecutive failures (default 5), circuit opens
 - Requests fail fast for `reset_seconds` (default 60s)
 - Prevents cascade failures when an MCP server is down
@@ -337,6 +341,7 @@ The pool uses **separate timeouts** for different operations:
 | `mcp_session_pool_transport_timeout` | 30s | Transport timeout for all HTTP operations |
 
 **Configuration behavior:**
+
 - Pool health check interval uses `min(health_check_interval, mcp_session_pool_health_check_interval)`
 - Pool transport timeout uses `mcp_session_pool_transport_timeout` (default 30s to match MCP SDK)
 
@@ -354,6 +359,7 @@ MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0
 ```
 
 **Available methods:**
+
 - `ping` - MCP protocol ping (fastest, ~5ms, optional per spec)
 - `list_tools` - List tools RPC (30-100ms, requires tools capability)
 - `list_prompts` - List prompts RPC (30-100ms, requires prompts capability)
@@ -371,6 +377,7 @@ MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT=5.0
 | Strict (fail if no ping) | `["ping"]` |
 
 **How it works:**
+
 - If a method returns `METHOD_NOT_FOUND` error, the next method is tried
 - If a method times out, the next method is tried
 - If a method succeeds, the session is considered healthy
@@ -585,6 +592,7 @@ Pool keys do not include TLS/CA context. If the same URL is accessed with differ
 Sessions are isolated by a composite key: `(URL, identity_hash, transport_type)`. The identity hash is derived from authentication headers (`Authorization`, `X-Tenant-ID`, `X-User-ID`, `X-API-Key`, `Cookie`).
 
 **Key security properties:**
+
 - Different users with different credentials get different pool keys → different sessions
 - Different MCP server URLs always get different sessions
 - Identity is validated at the gateway level; upstream MCP servers validate only `mcp-session-id`

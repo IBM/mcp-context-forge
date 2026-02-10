@@ -11,6 +11,7 @@ using the AUTH_ENCRYPTION_SECRET from configuration.
 """
 
 # Standard
+import asyncio
 import base64
 import logging
 import os
@@ -125,6 +126,20 @@ class EncryptionService:
             logger.error(f"Failed to encrypt secret: {e}")
             raise
 
+    async def encrypt_secret_async(self, plaintext: str) -> str:
+        """Encrypt a plaintext secret asynchronously.
+
+        Args:
+            plaintext: The secret to encrypt
+
+        Returns:
+            Base64-encoded encrypted string
+
+        Raises:
+            Exception: If encryption fails
+        """
+        return await asyncio.to_thread(self.encrypt_secret, plaintext)
+
     def decrypt_secret(self, bundle_json: str) -> Optional[str]:
         """Decrypt an encrypted secret.
 
@@ -144,6 +159,17 @@ class EncryptionService:
         except Exception as e:
             logger.error(f"Failed to decrypt secret: {e}")
             return None
+
+    async def decrypt_secret_async(self, bundle_json: str) -> Optional[str]:
+        """Decrypt an encrypted secret asynchronously.
+
+        Args:
+            bundle_json: str: JSON string containing encryption metadata and token
+
+        Returns:
+            Decrypted secret string, or None if decryption fails
+        """
+        return await asyncio.to_thread(self.decrypt_secret, bundle_json)
 
     def is_encrypted(self, text: str) -> bool:
         """Check if a string appears to be encrypted.

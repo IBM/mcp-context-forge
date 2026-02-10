@@ -128,13 +128,13 @@ from urllib.parse import urlencode
 import uuid
 
 # Third-Party
+import anyio
 from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from mcp.server import Server as MCPServer
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import orjson
-from sse_starlette.sse import EventSourceResponse
 from starlette.applications import Starlette
 from starlette.routing import Route
 from starlette.types import Receive, Scope, Send
@@ -149,6 +149,9 @@ except ImportError:
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.translate_header_utils import extract_env_vars_from_headers, NormalizedMappings, parse_header_mappings
+
+# Use patched EventSourceResponse with CPU spin protection (anyio#695 fix)
+from mcpgateway.transports.sse_transport import EventSourceResponse
 from mcpgateway.utils.orjson_response import ORJSONResponse
 
 # Initialize logging service first
@@ -171,6 +174,11 @@ except ImportError:
     DEFAULT_SSL_VERIFY = True  # Verify SSL by default when config unavailable
 
 KEEP_ALIVE_INTERVAL = DEFAULT_KEEP_ALIVE_INTERVAL  # seconds - from config or fallback to 30
+
+# Buffer limit for subprocess stdout (default 64KB is too small for large tool responses)
+# Set to 16MB to handle tools that return large amounts of data (e.g., search results)
+STDIO_BUFFER_LIMIT = 16 * 1024 * 1024  # 16MB
+
 __all__ = ["main"]  # for console-script entry-point
 
 
@@ -412,6 +420,7 @@ class StdIOEndpoint:
             stdout=asyncio.subprocess.PIPE,
             stderr=sys.stderr,  # passthrough for visibility
             env=env,  # 🔑 Add environment variable support
+            limit=STDIO_BUFFER_LIMIT,  # Increase buffer limit for large tool responses
         )
 
         # Explicit error checking
@@ -1176,7 +1185,10 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
     # If no stdio command provided, use simple mode (just print to stdout)
     if not stdio_command:
         LOGGER.warning("No --stdioCommand provided, running in simple mode (SSE to stdout only)")
-        async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout=timeout, connect=10.0), verify=DEFAULT_SSL_VERIFY) as client:
+        # First-Party
+        from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+        async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
             await _simple_sse_pump(client, url, max_retries, initial_retry_delay)
         return
 
@@ -1333,7 +1345,10 @@ async def _run_sse_to_stdio(url: str, oauth2_bearer: Optional[str] = None, timeo
                     raise
 
     # Run both tasks concurrently
-    async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout=timeout, connect=10.0), verify=DEFAULT_SSL_VERIFY) as client:
+    # First-Party
+    from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+    async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
         try:
             await asyncio.gather(read_stdout(client), pump_sse_to_stdio(client))
         except Exception as e:
@@ -1584,7 +1599,10 @@ async def _run_streamable_http_to_stdio(
     # If no stdio command provided, use simple mode (just print to stdout)
     if not stdio_command:
         LOGGER.warning("No --stdioCommand provided, running in simple mode (streamable HTTP to stdout only)")
-        async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout=timeout, connect=10.0), verify=DEFAULT_SSL_VERIFY) as client:
+        # First-Party
+        from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+        async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
             await _simple_streamable_http_pump(client, url, max_retries, initial_retry_delay)
         return
 
@@ -1700,7 +1718,10 @@ async def _run_streamable_http_to_stdio(
                     raise
 
     # Run both tasks concurrently
-    async with httpx.AsyncClient(headers=headers, timeout=httpx.Timeout(timeout=timeout, connect=10.0), verify=DEFAULT_SSL_VERIFY) as client:
+    # First-Party
+    from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+    async with get_isolated_http_client(timeout=timeout, headers=headers, verify=DEFAULT_SSL_VERIFY, connect_timeout=10.0, write_timeout=timeout, pool_timeout=timeout) as client:
         try:
             await asyncio.gather(read_stdout(client), pump_streamable_http_to_stdio(client))
         except Exception as e:
@@ -2132,9 +2153,26 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
         await server.serve()
     finally:
         await _shutdown()
-        # Clean up streamable HTTP context
+        # Clean up streamable HTTP context with timeout to prevent spin loop
+        # if tasks don't respond to cancellation (anyio _deliver_cancellation issue)
         if streamable_context:
-            await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+            # Get cleanup timeout from config (with fallback for standalone usage)
+            try:
+                # First-Party
+                from mcpgateway.config import settings as cfg  # pylint: disable=import-outside-toplevel
+
+                cleanup_timeout = cfg.mcp_session_pool_cleanup_timeout
+            except Exception:
+                cleanup_timeout = 5.0
+            # Use anyio.move_on_after instead of asyncio.wait_for to properly propagate
+            # cancellation through anyio's cancel scope system (prevents orphaned spinning tasks)
+            with anyio.move_on_after(cleanup_timeout) as cleanup_scope:
+                try:
+                    await streamable_context.__aexit__(None, None, None)  # pylint: disable=unnecessary-dunder-call,no-member
+                except Exception as e:
+                    LOGGER.debug(f"Error cleaning up streamable HTTP context: {e}")
+            if cleanup_scope.cancelled_caught:
+                LOGGER.warning("Streamable HTTP context cleanup timed out - proceeding anyway")
 
 
 async def _simple_sse_pump(client: "Any", url: str, max_retries: int, initial_retry_delay: float) -> None:

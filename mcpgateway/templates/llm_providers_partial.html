@@ -97,7 +97,7 @@
             </td>
             <td class="px-6 py-4 whitespace-nowrap">
               <button onclick="toggleLLMProvider('{{ provider.id }}')" class="focus:outline-none"
-                hx-post="{{ root_path }}/admin/llm/providers/{{ provider.id }}/toggle"
+                hx-post="{{ root_path }}/admin/llm/providers/{{ provider.id }}/state"
                 hx-target="#provider-row-{{ provider.id }}" hx-swap="outerHTML">
                 {% if provider.enabled %}
                 <span

@@ -68,6 +68,7 @@ The PII Filter plugin is available in both Python and Rust implementations with 
 | Realistic Payload | 0.400ms | 0.055ms | **7.3x** |
 
 **Supported PII Types**:
+
 - Social Security Numbers (SSN)
 - Credit Cards (Visa, Mastercard, Amex, Discover)
 - Email Addresses
@@ -82,6 +83,7 @@ The PII Filter plugin is available in both Python and Rust implementations with 
 - API Keys
 
 **Masking Strategies**:
+
 - `partial` - Show last 4 digits (e.g., `***-**-6789`)
 - `redact` - Replace with `[REDACTED]`
 - `hash` - SHA256 hash prefix (e.g., `[HASH:abc123]`)
@@ -421,6 +423,7 @@ assert os.getenv("MCPGATEWAY_FORCE_PYTHON_PLUGINS") != "true"
 **Symptom**: `maturin develop` fails
 
 **Common Causes**:
+
 1. **Rust not installed**: Install from https://rustup.rs
 2. **Wrong Rust version**: Update with `rustup update`
 3. **Missing dependencies**: `cargo clean && cargo build`
@@ -652,6 +655,7 @@ For issues, questions, or contributions related to Rust plugins:
 1. Check existing GitHub issues
 2. Review build and test documentation
 3. Open a new issue with:
+
    - Rust/Python versions
    - Build logs
    - Error messages

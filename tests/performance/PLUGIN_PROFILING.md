@@ -77,7 +77,7 @@ Mon Jan 12 22:09:30 2026    tests/performance/plugins/prof/SecretsDetection_prom
 
    ncalls  tottime  percall  cumtime  percall filename:lineno(function)
      1000    0.001    0.000    0.049    0.000 manager.py:690(invoke_hook_for_plugin)
-     1000    0.002    0.000    0.048    0.000 manager.py:196(execute_plugin)     
+     1000    0.002    0.000    0.048    0.000 manager.py:196(execute_plugin)
      ... (top 20 functions)
 ```
 

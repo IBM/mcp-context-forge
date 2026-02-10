@@ -46,6 +46,99 @@ IBM_VERIFY_GROUP_MAPPING={"CN=Developers,OU=Groups": "dev-team-uuid", "CN=Admini
 
 ---
 
+## Team Name Validation
+
+Team names are validated against a strict character pattern to prevent XSS attacks and ensure consistent display across the UI.
+
+### Allowed Characters
+
+Team names may only contain:
+
+- Letters (a-z, A-Z)
+- Numbers (0-9)
+- Spaces
+- Underscores (`_`)
+- Periods (`.`)
+- Dashes (`-`)
+
+**Pattern:** `^[a-zA-Z0-9_.\-\s]+$`
+
+### Rejected Characters
+
+The following characters are **not allowed** in team names:
+
+- Ampersand (`&`)
+- Apostrophe (`'`)
+- Forward slash (`/`)
+- Angle brackets (`<`, `>`)
+- Quotation marks (`"`)
+- Any HTML or script content
+
+### Examples
+
+| Team Name | Valid? | Reason |
+|-----------|--------|--------|
+| `Engineering Team` | ✅ | Letters and space |
+| `Dev_Team-2024.v1` | ✅ | Allowed special chars |
+| `R&D Team` | ❌ | Ampersand not allowed |
+| `O'Connor's Team` | ❌ | Apostrophe not allowed |
+| `Team <Alpha>` | ❌ | Angle brackets not allowed |
+
+### Migrating Existing Teams
+
+If you have existing teams with names containing restricted characters, you'll need to update them before they can be modified via the API or Admin UI.
+
+#### Option 1: SQL Migration (Recommended)
+
+Find affected teams:
+
+```sql
+-- SQLite
+SELECT id, name FROM email_teams
+WHERE name GLOB '*[^a-zA-Z0-9_. -]*';
+
+-- PostgreSQL
+SELECT id, name FROM email_teams
+WHERE name !~ '^[a-zA-Z0-9_.\- ]+$';
+```
+
+Update team names manually or via script:
+
+```sql
+-- Example: Replace & with 'and'
+UPDATE email_teams SET name = REPLACE(name, '&', 'and')
+WHERE name LIKE '%&%';
+```
+
+#### Option 2: Python Migration Script
+
+```python
+import re
+from mcpgateway.db import get_db, EmailTeam
+
+VALID_PATTERN = re.compile(r'^[a-zA-Z0-9_.\-\s]+$')
+
+def sanitize_name(name: str) -> str:
+    """Replace invalid characters."""
+    name = name.replace('&', 'and')
+    return re.sub(r'[^a-zA-Z0-9_.\-\s]', '-', name)
+
+def migrate_team_names():
+    db = next(get_db())
+    teams = db.query(EmailTeam).all()
+    for team in teams:
+        if not VALID_PATTERN.match(team.name):
+            old_name = team.name
+            team.name = sanitize_name(team.name)
+            print(f"Migrated: '{old_name}' -> '{team.name}'")
+    db.commit()
+
+if __name__ == "__main__":
+    migrate_team_names()
+```
+
+---
+
 ## Operational Tips
 
 - Generate deterministic team UUIDs and manage them via export/import or admin APIs so they're stable across environments.

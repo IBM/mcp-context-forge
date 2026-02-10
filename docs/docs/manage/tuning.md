@@ -109,6 +109,7 @@ Combined improvements from uvloop and httptools:
 ## 2c - Granian (Alternative HTTP Server)
 
 MCP Gateway supports two HTTP servers:
+
 - **Gunicorn + Uvicorn** (default) - Battle-tested, mature, excellent stability
 - **Granian** (alternative) - Rust-based, native HTTP/2, lower memory
 
@@ -186,6 +187,7 @@ GRANIAN_HTTP=1 make serve
 ```
 
 **Notes:**
+
 - On Python 3.12+, the Rust task implementation is unavailable; asyncio is used automatically
 - `uvloop` provides best performance on Linux/macOS
 - Increase `GRANIAN_BACKLOG` and `GRANIAN_BACKPRESSURE` for high-concurrency workloads
@@ -441,9 +443,7 @@ Sessions are isolated by a composite key: `(URL, identity_hash, transport_type)`
 **Key security considerations:**
 
 1. **Anonymous Pooling**: When no identity headers are present, identity collapses to `"anonymous"` and all such requests share sessions. This is safe **only if** upstream MCP servers are stateless.
-
 2. **Shared Credentials**: With OAuth Client Credentials or static API keys, all users share the same identity hash. Only safe if the upstream MCP server has no per-user state.
-
 3. **Header Passthrough**: If gateway auth is disabled (`AUTH_REQUIRED=false`), enable header passthrough to preserve user identity:
    ```bash
    ENABLE_HEADER_PASSTHROUGH=true
@@ -497,6 +497,7 @@ curl -u admin:changeme http://localhost:4444/admin/mcp-pool/metrics
 ```
 
 Response includes:
+
 - `total_sessions_created` / `total_sessions_reused`: Pool hit ratio
 - `pool_hits` / `pool_misses`: Cache effectiveness
 - `active_sessions`: Current utilization

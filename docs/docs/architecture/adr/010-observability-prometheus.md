@@ -22,19 +22,23 @@ The gateway needs to surface this without requiring external instrumentation or 
 We will implement native observability features using:
 
 1. **Structured JSON logs** with optional plaintext fallback:
+
    - Controlled by `LOG_FORMAT=json|text` and `LOG_LEVEL`
    - Includes fields: timestamp, level, logger name, request ID, route, auth user, latency
 
 2. **Prometheus-compatible `/metrics` endpoint**:
+
    - Exposes key counters and histograms: tool invocations, failures, resource loads, peer syncs, etc.
    - Uses plain `text/plain; version=0.0.4` exposition format
 
 3. **Latency decorators** and in-code timing for critical paths:
+
    - Completion requests
    - Resource resolution
    - Federation sync/health probes
 
 4. **Per-request IDs and correlation**:
+
    - Middleware attaches `X-Request-ID` if present or generates a new one
    - Request ID propagates through logs and errors
 

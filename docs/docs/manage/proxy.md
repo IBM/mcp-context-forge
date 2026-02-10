@@ -75,11 +75,14 @@ TRUST_PROXY_AUTH=true
 # Header containing authenticated user
 PROXY_USER_HEADER=X-Authenticated-User
 
-# Keep admin UI protected
+# Keep admin UI protected (uses email/password authentication)
 AUTH_REQUIRED=true
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASSWORD=secure-password
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=secure-password
 ```
+
+!!! info "Admin UI Authentication"
+    The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PLATFORM_ADMIN_PASSWORD`), not Basic auth. Basic authentication for API endpoints is disabled by default for security.
 
 ## Deployment Patterns
 

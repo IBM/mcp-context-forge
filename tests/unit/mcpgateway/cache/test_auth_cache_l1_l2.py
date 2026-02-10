@@ -12,6 +12,7 @@ Tests verify that:
 """
 
 # Standard
+import builtins
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -321,6 +322,20 @@ class TestIsTokenRevokedL1L2:
             assert jti in auth_cache._revocation_cache
             assert auth_cache._revocation_cache[jti].value is True
 
+    @pytest.mark.asyncio
+    async def test_l2_hit_revocation_key_exists(self, auth_cache, mock_redis):
+        """Test Redis revocation key existence path."""
+        jti = "revoked-key"
+        mock_redis.sismember = AsyncMock(return_value=False)
+        mock_redis.exists = AsyncMock(return_value=True)
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            result = await auth_cache.is_token_revoked(jti)
+
+        assert result is True
+        assert jti in auth_cache._revoked_jtis
+        assert auth_cache._revocation_cache[jti].value is True
+
 
 class TestGetTeamMembershipValidL1L2:
     """Test get_team_membership_valid L1/L2 behavior."""
@@ -460,3 +475,208 @@ class TestPerformanceMetrics:
 
             assert result is None
             assert auth_cache._miss_count == initial_miss_count + 1
+
+
+class TestAuthCacheInvalidation:
+    """Cover invalidation paths for AuthCache."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_user_clears_caches_and_redis(self, auth_cache, mock_redis):
+        email = "user@example.com"
+        auth_cache._context_cache[f"{email}:jti"] = CacheEntry(value=CachedAuthContext(user={"email": email}), expiry=time.time() + 10)
+        auth_cache._user_cache[email] = CacheEntry(value={"email": email}, expiry=time.time() + 10)
+        auth_cache._team_cache[f"{email}:t1"] = CacheEntry(value=True, expiry=time.time() + 10)
+
+        async def _scan_iter(match=None):
+            for key in ["k1", "k2"]:
+                yield key
+
+        mock_redis.scan_iter = _scan_iter
+        mock_redis.publish = AsyncMock(return_value=None)
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.invalidate_user(email)
+
+        assert email not in auth_cache._user_cache
+        assert not any(k.startswith(f"{email}:") for k in auth_cache._context_cache)
+        mock_redis.delete.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_invalidate_revocation_updates_sets(self, auth_cache, mock_redis):
+        jti = "revoked-jti"
+        auth_cache._context_cache[f"user@example.com:{jti}"] = CacheEntry(value=CachedAuthContext(user={"email": "user@example.com"}), expiry=time.time() + 10)
+
+        with patch.object(auth_cache, "_get_redis_client", return_value=mock_redis):
+            await auth_cache.invalidate_revocation(jti)
+
+        assert jti in auth_cache._revoked_jtis
+        assert not any(k.endswith(f":{jti}") for k in auth_cache._context_cache)
+
+    def test_invalidate_all_clears_l1(self, auth_cache):
+        auth_cache._user_cache["u"] = CacheEntry(value={"email": "u"}, expiry=time.time() + 10)
+        auth_cache._team_cache["u:t"] = CacheEntry(value=True, expiry=time.time() + 10)
+        auth_cache.invalidate_all()
+        assert auth_cache._user_cache == {}
+        assert auth_cache._team_cache == {}
+
+
+def test_auth_cache_import_error_defaults(monkeypatch):
+    real_import = builtins.__import__
+
+    def _fake_import(name, *args, **kwargs):
+        if name == "mcpgateway.config":
+            raise ImportError("boom")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    cache = AuthCache()
+    assert cache._cache_prefix == "mcpgw:"
+    assert cache._enabled is True
+
+
+@pytest.mark.asyncio
+async def test_auth_cache_get_redis_client_flags(monkeypatch):
+    cache = AuthCache(enabled=True)
+    fake_redis = AsyncMock()
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake_redis))
+
+    client = await cache._get_redis_client()
+    assert client is fake_redis
+    assert cache._redis_available is True
+
+    cache = AuthCache(enabled=True)
+
+    async def _raise():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr("mcpgateway.utils.redis_client.get_redis_client", _raise)
+    client = await cache._get_redis_client()
+    assert client is None
+    assert cache._redis_checked is True
+
+
+@pytest.mark.asyncio
+async def test_auth_cache_disabled_short_circuits():
+    cache = AuthCache(enabled=False)
+    ctx = CachedAuthContext(user={"email": "user@example.com"}, personal_team_id="team-1", is_token_revoked=False)
+
+    assert await cache.get_auth_context("user@example.com", "jti") is None
+    await cache.set_auth_context("user@example.com", "jti", ctx)
+    assert await cache.get_user_role("user@example.com", "team-1") is None
+    await cache.set_user_role("user@example.com", "team-1", "admin")
+    assert await cache.get_user_teams("user@example.com:True") is None
+    await cache.set_user_teams("user@example.com:True", ["team-1"])
+    assert cache.get_team_membership_valid_sync("user@example.com", ["team-1"]) is None
+    cache.set_team_membership_valid_sync("user@example.com", [], True)
+    assert await cache.get_team_membership_valid("user@example.com", ["team-1"]) is None
+    await cache.set_team_membership_valid("user@example.com", [], True)
+    assert await cache.is_token_revoked("jti") is None
+
+
+@pytest.mark.asyncio
+async def test_auth_cache_revoked_jti_path():
+    cache = AuthCache(enabled=True)
+    cache._revoked_jtis.add("revoked-jti")
+    result = await cache.get_auth_context("user@example.com", "revoked-jti")
+    assert result.is_token_revoked is True
+
+
+@pytest.mark.asyncio
+async def test_auth_cache_redis_error_paths(monkeypatch):
+    cache = AuthCache(enabled=True)
+    cache._teams_list_enabled = True
+
+    redis = AsyncMock()
+    redis.get = AsyncMock(side_effect=RuntimeError("boom"))
+    redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
+    monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=redis))
+
+    assert await cache.get_auth_context("user@example.com", "jti") is None
+
+    ctx = CachedAuthContext(user={"email": "user@example.com"}, personal_team_id="team-1", is_token_revoked=False)
+    await cache.set_auth_context("user@example.com", "jti", ctx)
+
+    assert await cache.get_user_role("user@example.com", "team-1") is None
+    await cache.set_user_role("user@example.com", "team-1", "admin")
+
+    assert await cache.get_user_teams("user@example.com:True") is None
+    await cache.set_user_teams("user@example.com:True", ["team-1"])
+
+    assert await cache.get_team_membership_valid("user@example.com", ["team-1"]) is None
+    await cache.set_team_membership_valid("user@example.com", ["team-1"], True)
+
+
+def test_auth_cache_team_membership_sync_hit():
+    cache = AuthCache(enabled=True)
+    cache._team_cache["user@example.com:team-1"] = CacheEntry(value=True, expiry=time.time() + 10)
+    assert cache.get_team_membership_valid_sync("user@example.com", ["team-1"]) is True
+
+
+@pytest.mark.asyncio
+async def test_auth_cache_invalidation_redis_warning_paths(monkeypatch):
+    cache = AuthCache(enabled=True)
+    email = "user@example.com"
+    team_id = "team-1"
+    jti = "jti-123"
+
+    cache._context_cache[f"{email}:{jti}"] = CacheEntry(value=CachedAuthContext(user={"email": email}), expiry=time.time() + 10)
+    cache._user_cache[email] = CacheEntry(value={"email": email}, expiry=time.time() + 10)
+    cache._team_cache[f"{email}:{team_id}"] = CacheEntry(value=True, expiry=time.time() + 10)
+    cache._role_cache[f"{email}:{team_id}"] = CacheEntry(value="admin", expiry=time.time() + 10)
+    cache._teams_list_cache[f"{email}:True"] = CacheEntry(value=[team_id], expiry=time.time() + 10)
+
+    class FakeRedis:
+        async def delete(self, *_args, **_kwargs):
+            return 1
+
+        async def scan_iter(self, *_args, **_kwargs):
+            for key in [b"mcpgw:auth:key"]:
+                yield key
+
+        async def publish(self, *_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        async def setex(self, *_args, **_kwargs):
+            return 1
+
+        async def sadd(self, *_args, **_kwargs):
+            return 1
+
+    monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=FakeRedis()))
+
+    await cache.invalidate_user(email)
+    await cache.invalidate_revocation(jti)
+    await cache.invalidate_team(email)
+    await cache.invalidate_user_role(email, team_id)
+    await cache.invalidate_team_roles(team_id)
+    await cache.invalidate_user_teams(email)
+    await cache.invalidate_team_membership(email)
+
+
+@pytest.mark.asyncio
+async def test_auth_cache_sync_revoked_tokens_updates_redis(monkeypatch):
+    cache = AuthCache(enabled=True)
+    fake_redis = AsyncMock()
+
+    async def _to_thread(_func):
+        return {"jti-1", "jti-2"}
+
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.asyncio.to_thread", _to_thread)
+    monkeypatch.setattr(cache, "_get_redis_client", AsyncMock(return_value=fake_redis))
+
+    await cache.sync_revoked_tokens()
+
+    assert "jti-1" in cache._revoked_jtis
+    fake_redis.sadd.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_invalidate_team_clears_context_cache(auth_cache, mock_redis):
+    email = "user@example.com"
+    auth_cache._context_cache[f"{email}:jti"] = CacheEntry(value=CachedAuthContext(user={"email": email}), expiry=time.time() + 10)
+
+    with patch.object(auth_cache, "_get_redis_client", return_value=None):
+        await auth_cache.invalidate_team(email)
+
+    assert not any(k.startswith(f"{email}:") for k in auth_cache._context_cache)

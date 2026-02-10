@@ -257,7 +257,13 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"; \
 		echo "✅  TLS certificate written to ./certs"; \
 	fi
-	chmod 640 certs/key.pem
+	@echo "🔐  Setting file permissions for container access..."
+	@chmod 644 certs/cert.pem  # Public certificate - world-readable is OK
+	@chmod 640 certs/key.pem   # Private key - owner+group only, no world access
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key.pem certs/cert.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key.pem certs/cert.pem")
 
 certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
 	@if [ -f certs/cert.pem ] && [ -f certs/key-encrypted.pem ]; then \
@@ -271,20 +277,28 @@ certs-passphrase:                ## Generate self-signed cert with passphrase-pr
 			echo "❌  Passphrases do not match!"; \
 			exit 1; \
 		fi; \
-		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 \
-			-keyout certs/key-encrypted.pem -out certs/cert.pem \
+		openssl genrsa -aes256 -passout pass:"$$PASSPHRASE" -out certs/key-encrypted.pem 4096; \
+		openssl req -x509 -sha256 -days 365 \
+			-key certs/key-encrypted.pem \
+			-passin pass:"$$PASSPHRASE" \
+			-out certs/cert.pem \
 			-subj "/CN=localhost" \
-			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1" \
-			-passout pass:"$$PASSPHRASE"; \
-		echo "✅  Passphrase-protected certificate created"; \
-		echo "📁  Certificate: ./certs/cert.pem"; \
-		echo "📁  Encrypted Key: ./certs/key-encrypted.pem"; \
-		echo ""; \
-		echo "💡  To use this certificate:"; \
-		echo "   1. Set KEY_FILE_PASSWORD environment variable"; \
-		echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"; \
+			-addext "subjectAltName=DNS:localhost,IP:127.0.0.1"; \
+		echo "✅  Passphrase-protected certificate created (AES-256)"; \
 	fi
-	@chmod 600 certs/key-encrypted.pem
+	@echo "🔐  Setting file permissions for container access..."
+	@chmod 644 certs/cert.pem          # Public certificate - world-readable is OK
+	@chmod 640 certs/key-encrypted.pem # Private key - owner+group only, no world access
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key-encrypted.pem certs/cert.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key-encrypted.pem certs/cert.pem")
+	@echo "📁  Certificate: ./certs/cert.pem"
+	@echo "📁  Encrypted Key: ./certs/key-encrypted.pem"
+	@echo ""
+	@echo "💡  To use this certificate:"
+	@echo "   1. Set KEY_FILE_PASSWORD environment variable"
+	@echo "   2. Run: KEY_FILE_PASSWORD='your-passphrase' SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key-encrypted.pem make serve-ssl"
 
 certs-remove-passphrase:         ## Remove passphrase from encrypted key (creates key.pem from key-encrypted.pem)
 	@if [ ! -f certs/key-encrypted.pem ]; then \
@@ -294,7 +308,11 @@ certs-remove-passphrase:         ## Remove passphrase from encrypted key (create
 	fi
 	@echo "🔓  Removing passphrase from private key..."
 	@openssl rsa -in certs/key-encrypted.pem -out certs/key.pem
-	@chmod 600 certs/key.pem
+	@chmod 640 certs/key.pem
+	@echo "🔧  Setting group to 0 (root) for container access (requires sudo)..."
+	@sudo chgrp 0 certs/key.pem || \
+		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
+		 echo "   Run manually: sudo chgrp 0 certs/key.pem")
 	@echo "✅  Passphrase removed - unencrypted key saved to certs/key.pem"
 	@echo "⚠️   Keep this file secure! It contains your unencrypted private key."
 
@@ -557,15 +575,22 @@ coverage:
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
+			--cov=mcpgateway mcpgateway/ || true"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--md-report --md-report-output=$(DOCS_DIR)/docs/test/unittest.md \
-			--dist loadgroup -n 8 -rA --cov-append --capture=tee-sys -v \
-			--durations=120 --doctest-modules app/ --cov-report=term \
-			--cov=mcpgateway --ignore=test.py tests/ || true"
+			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
+			--durations=120 --cov-report=term --cov=mcpgateway \
+			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
 	@printf '\n## Coverage report\n\n' >> $(DOCS_DIR)/docs/test/unittest.md
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		coverage report --format=markdown -m --no-skip-covered \
 		>> $(DOCS_DIR)/docs/test/unittest.md"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=app/*"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@echo "🔍  Generating annotated coverage files..."
@@ -832,7 +857,7 @@ monitoring-up:                             ## Start monitoring stack (Prometheus
 
 monitoring-down:                           ## Stop monitoring stack
 	@echo "📊 Stopping monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down --remove-orphans
 	@echo "✅ Monitoring stack stopped."
 
 monitoring-status:                         ## Show status of monitoring services
@@ -846,7 +871,7 @@ monitoring-logs:                           ## Show monitoring stack logs
 
 monitoring-clean:                          ## Stop and remove all monitoring data (volumes)
 	@echo "📊 Stopping and cleaning monitoring stack..."
-	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v
+	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v --remove-orphans
 	@echo "✅ Monitoring stack stopped and volumes removed."
 
 # =============================================================================
@@ -874,7 +899,7 @@ testing-up:                                ## Start testing stack (fast_test_ser
 
 testing-down:                              ## Stop testing stack
 	@echo "🧪 Stopping testing stack..."
-	$(COMPOSE_CMD_MONITOR) --profile testing down
+	$(COMPOSE_CMD_MONITOR) --profile testing down --remove-orphans
 	@echo "✅ Testing stack stopped."
 
 testing-status:                            ## Show status of testing services
@@ -1016,12 +1041,12 @@ benchmark-up:                              ## Start benchmark stack (MCP servers
 
 benchmark-down:                            ## Stop benchmark stack
 	@echo "🎯 Stopping benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down --remove-orphans
 	@echo "✅ Benchmark stack stopped."
 
 benchmark-clean:                           ## Stop and remove all benchmark data (volumes)
 	@echo "🎯 Stopping and cleaning benchmark stack..."
-	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v
+	$(COMPOSE_CMD_MONITOR) --profile benchmark down -v --remove-orphans
 	@echo "✅ Benchmark stack stopped and volumes removed."
 
 benchmark-status:                          ## Show status of benchmark services
@@ -1090,7 +1115,7 @@ performance-up:                            ## Start performance stack (7 gateway
 
 performance-down:                          ## Stop performance stack
 	@echo "🚀 Stopping performance stack..."
-	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down
+	$(COMPOSE_CMD_PERF) --profile monitoring --profile replica down --remove-orphans
 	@echo "✅ Performance stack stopped."
 
 performance-logs:                          ## Show performance stack logs
@@ -1105,12 +1130,14 @@ performance-clean:                         ## Stop and remove all performance da
 # 🔥 HTTP LOAD TESTING - Locust-based traffic generation
 # =============================================================================
 # help: 🔥 HTTP LOAD TESTING (Locust)
-# help: load-test             - Run HTTP load test (4000 users, 5m, headless)
+# help: load-test             - Run HTTP load test (4000 users, 5m, headless, summary only)
+# help: load-test-cli         - Run HTTP load test with live stats (same as UI but headless)
 # help: load-test-ui          - Start Locust web UI (4000 users, 200 spawn/s)
 # help: load-test-light       - Light load test (10 users, 30s)
 # help: load-test-heavy       - Heavy load test (200 users, 120s)
 # help: load-test-sustained   - Sustained load test (25 users, 300s)
 # help: load-test-stress      - Stress test (500 users, 60s, minimal wait)
+# help: load-test-spin-detector - CPU spin loop detector (spike/drop pattern, issue #2360)
 # help: load-test-report      - Show last load test HTML report
 # help: load-test-compose     - Light load test for compose stack (port 4444)
 # help: load-test-timeserver  - Load test fast_time_server (5 users, 30s)
@@ -1211,6 +1238,36 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 			--processes=$(LOADTEST_PROCESSES) \
 			--class-picker"
 
+load-test-cli:                             ## Run HTTP load test with live stats (same as UI but headless)
+	@echo "🔥 Running HTTP load test with live stats (CLI mode)..."
+	@echo "   Host: $(LOADTEST_HOST)"
+	@echo "   Users: $(LOADTEST_USERS)"
+	@echo "   Spawn rate: $(LOADTEST_SPAWN_RATE)/s"
+	@echo "   Duration: $(LOADTEST_RUN_TIME)"
+	@echo "   Workers: $(LOADTEST_PROCESSES) (-1 = auto-detect CPUs)"
+	@echo ""
+	@echo "   💡 Tip: Start server first with 'make dev' in another terminal"
+	@echo "   💡 Tip: For best results, run: sudo scripts/tune-loadtest.sh"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		locust -f $(LOADTEST_LOCUSTFILE) \
+			--host=$(LOADTEST_HOST) \
+			--users=$(LOADTEST_USERS) \
+			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
+			--run-time=$(LOADTEST_RUN_TIME) \
+			--processes=$(LOADTEST_PROCESSES) \
+			--headless \
+			--html=$(LOADTEST_HTML_REPORT) \
+			--csv=$(LOADTEST_CSV_PREFIX)"
+	@echo ""
+	@echo "✅ Load test complete!"
+	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
+
 load-test-light:                           ## Light load test (10 users, 30s)
 	@echo "🔥 Running LIGHT load test..."
 	@$(MAKE) load-test LOADTEST_USERS=10 LOADTEST_SPAWN_RATE=2 LOADTEST_RUN_TIME=30s
@@ -1236,6 +1293,63 @@ load-test-stress:                          ## Stress test (500 users, 60s)
 	else \
 		echo "❌ Cancelled"; \
 	fi
+
+SPIN_DETECTOR_RUN_TIME ?= 300m
+SPIN_DETECTOR_WORKERS ?= $(LOADTEST_PROCESSES)
+
+load-test-spin-detector:                   ## CPU spin loop detector (spike/drop pattern, issue #2360)
+	@echo "🔄 CPU SPIN LOOP DETECTOR (Escalating load pattern)"
+	@echo "   Issue: https://github.com/IBM/mcp-context-forge/issues/2360"
+	@echo ""
+	@echo "   ESCALATING PATTERN (1000/s spawn rate):"
+	@echo "   ┌─────────┬─────────┬────────────┬────────────┐"
+	@echo "   │ Wave    │ Users   │ Duration   │ Pause      │"
+	@echo "   ├─────────┼─────────┼────────────┼────────────┤"
+	@echo "   │ 1       │  4,000  │ 30 seconds │ 10 seconds │"
+	@echo "   │ 2       │  6,000  │ 45 seconds │ 15 seconds │"
+	@echo "   │ 3       │  8,000  │ 60 seconds │ 20 seconds │"
+	@echo "   │ 4       │ 10,000  │ 75 seconds │ 30 seconds │"
+	@echo "   │ 5       │ 10,000  │ 90 seconds │ 30 seconds │"
+	@echo "   └─────────┴─────────┴────────────┴────────────┘"
+	@echo "   → Repeats until timeout (Ctrl+C to stop early)"
+	@echo ""
+	@echo "   🎯 Target: $(LOADTEST_HOST)"
+	@echo "   ⏱️  Runtime: $(SPIN_DETECTOR_RUN_TIME) (override: SPIN_DETECTOR_RUN_TIME=60m)"
+	@echo "   👷 Workers: $(SPIN_DETECTOR_WORKERS) (-1 = auto-detect CPUs)"
+	@echo "   📊 Shows RPS + Failure % during load phases"
+	@echo "   🔐 Authentication: JWT (auto-generated from .env settings)"
+	@echo "   🔇 Verbose logs off (set LOCUST_VERBOSE=1 to enable)"
+	@echo ""
+	@echo "   💡 Prerequisites:"
+	@echo "      docker compose up -d   # Gateway on port 8080 (via nginx)"
+	@echo ""
+	@echo "   📈 MONITORING (run in another terminal):"
+	@echo "      watch -n 2 'docker stats --no-stream | grep gateway'"
+	@echo ""
+	@echo "   ✅ PASS: CPU drops to <10% during pause phases"
+	@echo "   ❌ FAIL: CPU stays at 100%+ per worker during pauses"
+	@echo ""
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@echo "Starting in 3 seconds... (Ctrl+C to cancel)"
+	@sleep 3
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		cd tests/loadtest && \
+		ulimit -n 65536 2>/dev/null || true && \
+		$(if $(LOADTEST_GEVENT_RESOLVER),GEVENT_RESOLVER=$(LOADTEST_GEVENT_RESOLVER)) \
+		LOCUST_WORKERS=$(SPIN_DETECTOR_WORKERS) \
+		locust -f locustfile_spin_detector.py \
+			--host=$(LOADTEST_HOST) \
+			--headless \
+			--run-time=$(SPIN_DETECTOR_RUN_TIME) \
+			--processes=$(SPIN_DETECTOR_WORKERS) \
+			--html=../../reports/spin_detector_report.html \
+			--csv=../../reports/spin_detector \
+			--only-summary"
+	@echo ""
+	@echo "📄 HTML Report: reports/spin_detector_report.html"
+	@echo "📋 Log file: /tmp/spin_detector.log"
+	@echo "   Monitor: tail -f /tmp/spin_detector.log"
 
 load-test-report:                          ## Show last load test HTML report
 	@if [ -f "$(LOADTEST_HTML_REPORT)" ]; then \
@@ -1472,6 +1586,318 @@ load-test-agentgateway-mcp-server-time:    ## Load test external MCP server (loc
 			--class-picker'
 
 # =============================================================================
+# 📊 JMETER PERFORMANCE TESTING
+# =============================================================================
+# help: 📊 JMETER PERFORMANCE TESTING
+# help: jmeter-install                - Download and install JMeter 5.6.3 locally
+# help: jmeter-ui                     - Launch JMeter GUI for interactive test editing
+# help: jmeter-rest-baseline          - Run REST API baseline test (1,000 RPS, 10min)
+# help: jmeter-mcp-baseline           - Run MCP JSON-RPC baseline test (1,000 RPS, 15min)
+# help: jmeter-mcp-servers-baseline   - Run MCP test servers baseline (fast_time, fast_test)
+# help: jmeter-load                   - Run load test (4,000 RPS, 30min)
+# help: jmeter-stress                 - Run stress test (ramp to 10,000 RPS)
+# help: jmeter-spike                  - Run spike test (1K→10K→1K recovery)
+# help: jmeter-soak                   - Run 24-hour soak test (2,000 RPS)
+# help: jmeter-sse                    - Run SSE streaming baseline (1,000 connections)
+# help: jmeter-websocket              - Run WebSocket baseline (500 connections)
+# help: jmeter-admin-ui               - Run Admin UI baseline (50 users)
+# help: jmeter-report                 - Generate HTML report from last JTL file
+# help: jmeter-compare                - Compare current vs baseline results
+
+JMETER_VERSION := 5.6.3
+JMETER_HOME := $(CURDIR)/.jmeter/apache-jmeter-$(JMETER_VERSION)
+JMETER_BIN := $(if $(wildcard $(JMETER_HOME)/bin/jmeter),$(JMETER_HOME)/bin/jmeter,$(shell which jmeter 2>/dev/null))
+JMETER_DIR := tests/jmeter
+JMETER_FRAGMENT_DIR := $(CURDIR)/$(JMETER_DIR)/fragments
+JMETER_RESULTS_DIR := $(JMETER_DIR)/results
+JMETER_RENDERED_DIR := $(CURDIR)/.jmeter/rendered
+JMETER_RENDER := python3 $(JMETER_DIR)/render_fragments.py --out $(JMETER_RENDERED_DIR)
+JMETER_GATEWAY_URL ?= http://localhost:8080
+export JMETER_OPTS ?= -Djava.util.prefs.userRoot=/tmp/jmeter-prefs -Djava.util.prefs.systemRoot=/tmp/jmeter-prefs
+JMETER_JWT_SECRET ?= $(or $(JWT_SECRET_KEY),my-test-key)
+JMETER_TOKEN ?= $(shell python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $(JMETER_JWT_SECRET) 2>/dev/null || echo "")
+JMETER_SERVER_ID ?=
+JMETER_FAST_TIME_URL ?= http://localhost:8888
+JMETER_FAST_TEST_URL ?= http://localhost:8880
+
+.PHONY: jmeter-install jmeter-ui jmeter-check jmeter-quick jmeter-clean
+.PHONY: jmeter-rest-baseline jmeter-mcp-baseline jmeter-mcp-servers-baseline
+.PHONY: jmeter-load jmeter-stress jmeter-spike jmeter-soak
+.PHONY: jmeter-sse jmeter-websocket jmeter-admin-ui
+.PHONY: jmeter-report jmeter-compare
+
+jmeter-install:                            ## Download and install JMeter 5.6.3 locally
+	@echo "📦 Installing JMeter $(JMETER_VERSION)..."
+	@mkdir -p .jmeter
+	@if [ -d "$(JMETER_HOME)" ]; then \
+		echo "✅ JMeter $(JMETER_VERSION) already installed at $(JMETER_HOME)"; \
+	else \
+		echo "   Downloading apache-jmeter-$(JMETER_VERSION).tgz..."; \
+		curl -fsSL "https://dlcdn.apache.org/jmeter/binaries/apache-jmeter-$(JMETER_VERSION).tgz" -o .jmeter/jmeter.tgz; \
+		echo "   Extracting..."; \
+		tar -xzf .jmeter/jmeter.tgz -C .jmeter/; \
+		rm .jmeter/jmeter.tgz; \
+		echo "✅ JMeter $(JMETER_VERSION) installed to $(JMETER_HOME)"; \
+	fi
+	@echo ""
+	@echo "To use: export PATH=\$$PATH:$(JMETER_HOME)/bin"
+	@echo "Or run: make jmeter-ui"
+
+jmeter-ui: jmeter-check                    ## Launch JMeter GUI for interactive test editing
+	@echo "🖥️  Launching JMeter GUI..."
+	@echo "   Test plans: $(JMETER_DIR)/*.jmx"
+	@$(JMETER_BIN) -t $(JMETER_DIR)/rest_api_baseline.jmx &
+	@echo "✅ JMeter GUI started"
+
+jmeter-check:                              ## Check if JMeter 5.x is installed (required for HTML reports)
+	@if [ -x "$(JMETER_HOME)/bin/jmeter" ]; then \
+		JMETER_CMD="$(JMETER_HOME)/bin/jmeter"; \
+	elif which jmeter >/dev/null 2>&1; then \
+		JMETER_CMD="jmeter"; \
+	else \
+		echo "❌ JMeter not found. Install with:"; \
+		echo "   make jmeter-install     (recommended - installs $(JMETER_VERSION) locally)"; \
+		echo "   brew install jmeter     (macOS)"; \
+		exit 1; \
+	fi; \
+	VERSION=$$($$JMETER_CMD --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1); \
+	MAJOR=$$(echo "$$VERSION" | cut -d. -f1); \
+	if [ -z "$$MAJOR" ] || [ "$$MAJOR" -lt 5 ]; then \
+		echo "❌ JMeter 5.x+ required for HTML report generation (-e -o flags)"; \
+		echo "   Found: $$VERSION"; \
+		echo "   Run: make jmeter-install"; \
+		exit 1; \
+	fi; \
+	echo "✅ JMeter $$VERSION found"
+
+jmeter-quick: jmeter-check                 ## Quick 10-second test to verify setup and generate report
+	@echo "⚡ Running quick JMeter test (10 seconds)..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/rest_api_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JTHREADS=5 -JRAMP_UP=2 -JDURATION=10 \
+		-l $(JMETER_RESULTS_DIR)/quick_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/quick_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/quick_*/index.html"
+
+jmeter-rest-baseline: jmeter-check         ## Run REST API baseline test (1,000 RPS, 10min)
+	@echo "📊 Running REST API baseline test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 1,000 RPS for 10 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/rest_api_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JTHREADS=100 -JRAMP_UP=60 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/rest_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/rest_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/rest_baseline_*/index.html"
+
+jmeter-mcp-baseline: jmeter-check          ## Run MCP JSON-RPC baseline test (1,000 RPS, 15min)
+	@echo "📊 Running MCP JSON-RPC baseline test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Server ID: $(JMETER_SERVER_ID)"
+	@echo "   Target: 1,000 RPS for 15 minutes"
+	@if [ -z "$(JMETER_SERVER_ID)" ]; then \
+		echo "❌ JMETER_SERVER_ID required. Set with: make jmeter-mcp-baseline JMETER_SERVER_ID=<id>"; \
+		exit 1; \
+	fi
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/mcp_jsonrpc_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JTHREADS=200 -JRAMP_UP=60 -JDURATION=900 \
+		-l $(JMETER_RESULTS_DIR)/mcp_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/mcp_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/mcp_baseline_*/index.html"
+
+jmeter-mcp-servers-baseline: jmeter-check  ## Run MCP test servers baseline (fast_time, fast_test)
+	@echo "📊 Running MCP test servers baseline..."
+	@echo "   Fast Time Server: $(JMETER_FAST_TIME_URL)"
+	@echo "   Fast Test Server: $(JMETER_FAST_TEST_URL)"
+	@echo "   Target: 2,000 RPS per server for 10 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/mcp_test_servers_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JFAST_TIME_URL=$(JMETER_FAST_TIME_URL) \
+		-JFAST_TEST_URL=$(JMETER_FAST_TEST_URL) \
+		-JTHREADS=200 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/mcp_servers_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/mcp_servers_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/mcp_servers_*/index.html"
+
+jmeter-load: jmeter-check                  ## Run load test (4,000 RPS, 30min)
+	@echo "🔥 Running load test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 4,000 RPS for 30 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/load_test.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JTHREADS=400 -JRAMP_UP=120 -JDURATION=1800 \
+		-l $(JMETER_RESULTS_DIR)/load_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/load_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/load_test_*/index.html"
+
+jmeter-stress: jmeter-check                ## Run stress test (ramp to 10,000 RPS)
+	@echo "💥 Running stress test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: Ramp from 1K to 10K RPS over 30 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/stress_test.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JMAX_THREADS=2000 \
+		-l $(JMETER_RESULTS_DIR)/stress_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/stress_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/stress_test_*/index.html"
+
+jmeter-spike: jmeter-check                 ## Run spike test (1K→10K→1K recovery)
+	@echo "⚡ Running spike test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Pattern: 1K RPS → 10K RPS spike → recovery to 1K RPS"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/spike_test.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JBASE_THREADS=200 -JPEAK_THREADS=2000 \
+		-l $(JMETER_RESULTS_DIR)/spike_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/spike_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/spike_test_*/index.html"
+
+jmeter-soak: jmeter-check                  ## Run 24-hour soak test (2,000 RPS)
+	@echo "🔄 Running 24-hour soak test..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 2,000 RPS sustained for 24 hours"
+	@echo "   ⚠️  This test runs for 24 hours - use screen/tmux!"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@$(JMETER_RENDER)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_RENDERED_DIR)/soak_test.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JTHREADS=400 -JDURATION=86400 \
+		-l $(JMETER_RESULTS_DIR)/soak_test_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/soak_test_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/soak_test_*/index.html"
+
+jmeter-sse: jmeter-check                   ## Run SSE streaming baseline (1,000 connections)
+	@echo "📡 Running SSE streaming baseline..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 1,000 concurrent SSE connections for 10 minutes"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/sse_streaming_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JCONNECTIONS=1000 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/sse_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/sse_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/sse_baseline_*/index.html"
+
+jmeter-websocket: jmeter-check             ## Run WebSocket baseline (500 connections)
+	@echo "🔌 Running WebSocket baseline..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 500 concurrent WebSocket connections"
+	@echo "   Note: Requires JMeter WebSocket plugin for full support"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/websocket_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL="ws://$$(echo $(JMETER_GATEWAY_URL) | sed 's|http://||' | sed 's|https://||')" \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JSERVER_ID=$(JMETER_SERVER_ID) \
+		-JCONNECTIONS=500 -JDURATION=600 \
+		-l $(JMETER_RESULTS_DIR)/websocket_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/websocket_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/websocket_baseline_*/index.html"
+
+jmeter-admin-ui: jmeter-check              ## Run Admin UI baseline (50 users)
+	@echo "🖥️  Running Admin UI baseline..."
+	@echo "   Gateway: $(JMETER_GATEWAY_URL)"
+	@echo "   Target: 50 concurrent admin users with think time"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(JMETER_DIR)/admin_ui_baseline.jmx \
+		-JJMETER_FRAGMENT_DIR=$(JMETER_FRAGMENT_DIR) \
+		-JGATEWAY_URL=$(JMETER_GATEWAY_URL) \
+		-JTOKEN="$(JMETER_TOKEN)" \
+		-JUSERS=50 -JDURATION=300 \
+		-JTHINK_TIME_MIN=3000 -JTHINK_TIME_MAX=5000 \
+		-l $(JMETER_RESULTS_DIR)/admin_ui_baseline_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/admin_ui_baseline_$$TIMESTAMP/
+	@echo "📄 Report: $(JMETER_RESULTS_DIR)/admin_ui_baseline_*/index.html"
+
+jmeter-report: jmeter-check                ## Generate HTML report from last JTL file
+	@echo "📄 Generating HTML report from latest JTL file..."
+	@LATEST_JTL=$$(find $(JMETER_RESULTS_DIR) -maxdepth 1 -name "*.jtl" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | cut -d' ' -f2-); \
+	if [ -z "$$LATEST_JTL" ]; then \
+		echo "❌ No JTL files found in $(JMETER_RESULTS_DIR)"; \
+		echo "   Run a JMeter test first (e.g., make jmeter-rest-baseline)"; \
+		exit 1; \
+	fi; \
+	REPORT_DIR="$${LATEST_JTL%.jtl}_report"; \
+	echo "   Input: $$LATEST_JTL"; \
+	echo "   Output: $$REPORT_DIR/"; \
+	rm -rf "$$REPORT_DIR"; \
+	$(JMETER_BIN) -g "$$LATEST_JTL" -o "$$REPORT_DIR"; \
+	echo "✅ Report generated: $$REPORT_DIR/index.html"
+
+jmeter-clean:                              ## Clean JMeter results directory
+	@echo "🧹 Cleaning JMeter results..."
+	@rm -rf $(JMETER_RESULTS_DIR)/*
+	@echo "✅ Results directory cleaned: $(JMETER_RESULTS_DIR)"
+
+jmeter-compare:                            ## Compare current vs baseline results
+	@echo "📈 Comparing JMeter results..."
+	@echo "   Results directory: $(JMETER_RESULTS_DIR)"
+	@JTLS=$$(ls -t $(JMETER_RESULTS_DIR)/*.jtl 2>/dev/null | head -2); \
+	if [ $$(echo "$$JTLS" | wc -w) -lt 2 ]; then \
+		echo "❌ Need at least 2 JTL files to compare"; \
+		echo "   Found: $$(ls $(JMETER_RESULTS_DIR)/*.jtl 2>/dev/null | wc -l) file(s)"; \
+		exit 1; \
+	fi; \
+	CURRENT=$$(echo "$$JTLS" | head -1); \
+	BASELINE=$$(echo "$$JTLS" | tail -1); \
+	echo "   Current:  $$CURRENT"; \
+	echo "   Baseline: $$BASELINE"; \
+	echo ""; \
+	echo "=== Summary Comparison ==="; \
+	for JTL in $$CURRENT $$BASELINE; do \
+		echo ""; \
+		echo "File: $$(basename $$JTL)"; \
+		echo "  Samples: $$(tail -n +2 $$JTL | wc -l)"; \
+		echo "  Errors:  $$(tail -n +2 $$JTL | awk -F',' '{if($$8=="false")print}' | wc -l)"; \
+	done
+
+# =============================================================================
 # 🧬 MUTATION TESTING
 # =============================================================================
 # help: 🧬 MUTATION TESTING
@@ -1612,7 +2038,8 @@ docs: images sbom
 		         -o $(DOCS_DIR)/docs \
 		         -n app --name '$(PROJECT_NAME)' --cleanup"
 
-	@cp README.md $(DOCS_DIR)/docs/index.md
+	# FIXME - need some changes to index before just copying it from root
+	# @cp README.md $(DOCS_DIR)/docs/index.md
 	@echo "✅  Docs ready in $(DOCS_DIR)/docs"
 
 .PHONY: images
@@ -2971,7 +3398,7 @@ endef
 # =============================================================================
 # help: 🐳 UNIFIED CONTAINER OPERATIONS (Auto-detects Docker/Podman)
 # help: container-build      - Build image using detected runtime
-# help: container-build-multi - Build multiplatform image (amd64/arm64/s390x) locally
+# help: container-build-multi - Build multiplatform image (amd64/arm64/s390x,ppc64le) locally
 # help: container-inspect-manifest - Inspect multiplatform manifest in registry
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
@@ -3027,23 +3454,27 @@ PLATFORM ?= linux/$(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
 
 container-build:
 	@echo "🔨 Building with $(CONTAINER_RUNTIME) for platform $(PLATFORM)..."
-	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
+	@RUST_ARG=""; PROFILING_ARG=""; \
+	if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building container WITH Rust plugins..."; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=true \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
+		RUST_ARG="--build-arg ENABLE_RUST=true"; \
 	else \
 		echo "⏭️  Building container WITHOUT Rust plugins (set ENABLE_RUST_BUILD=1 to enable)"; \
-		$(CONTAINER_RUNTIME) build \
-			--platform=$(PLATFORM) \
-			-f $(CONTAINER_FILE) \
-			--build-arg ENABLE_RUST=false \
-			--tag $(IMAGE_BASE):$(IMAGE_TAG) \
-			.; \
-	fi
+		RUST_ARG="--build-arg ENABLE_RUST=false"; \
+	fi; \
+	if [ "$(ENABLE_PROFILING_BUILD)" = "1" ]; then \
+		echo "📊 Building container WITH profiling tools (memray)..."; \
+		PROFILING_ARG="--build-arg ENABLE_PROFILING=true"; \
+	else \
+		PROFILING_ARG="--build-arg ENABLE_PROFILING=false"; \
+	fi; \
+	$(CONTAINER_RUNTIME) build \
+		--platform=$(PLATFORM) \
+		-f $(CONTAINER_FILE) \
+		$$RUST_ARG \
+		$$PROFILING_ARG \
+		--tag $(IMAGE_BASE):$(IMAGE_TAG) \
+		.
 	@echo "✅ Built image: $(call get_image_name)"
 	$(CONTAINER_RUNTIME) images $(IMAGE_BASE):$(IMAGE_TAG)
 
@@ -3307,7 +3738,7 @@ container-health:
 	@$(CONTAINER_RUNTIME) inspect $(PROJECT_NAME) --format='{{range .State.Health.Log}}{{.Output}}{{end}}' 2>/dev/null || true
 
 container-build-multi:
-	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x)..."
+	@echo "🔨 Building multi-architecture image (amd64, arm64, s390x, ppc64le)..."
 	@echo "💡 Note: Multiplatform images require a registry. Use REGISTRY= to push, or omit to validate only."
 	@if [ "$(CONTAINER_RUNTIME)" = "docker" ]; then \
 		if ! docker buildx inspect $(PROJECT_NAME)-builder >/dev/null 2>&1; then \
@@ -3317,7 +3748,7 @@ container-build-multi:
 		docker buildx use $(PROJECT_NAME)-builder; \
 		if [ -n "$(REGISTRY)" ]; then \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x \
+				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
 				-f $(CONTAINER_FILE) \
 				--tag $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG) \
 				--push \
@@ -3325,7 +3756,7 @@ container-build-multi:
 			echo "✅ Multiplatform image pushed to $(REGISTRY)/$(IMAGE_BASE):$(IMAGE_TAG)"; \
 		else \
 			docker buildx build \
-				--platform=linux/amd64,linux/arm64,linux/s390x \
+				--platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
 				-f $(CONTAINER_FILE) \
 				--tag $(IMAGE_BASE):$(IMAGE_TAG) \
 				.; \
@@ -3333,7 +3764,7 @@ container-build-multi:
 		fi; \
 	elif [ "$(CONTAINER_RUNTIME)" = "podman" ]; then \
 		echo "📦 Building manifest with Podman..."; \
-		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x \
+		$(CONTAINER_RUNTIME) build --platform=linux/amd64,linux/arm64,linux/s390x,linux/ppc64le \
 			-f $(CONTAINER_FILE) \
 			--manifest $(IMAGE_BASE):$(IMAGE_TAG) \
 			.; \
@@ -3574,6 +4005,7 @@ podman-top:
 # help: docker-dev           - Build development Docker image
 # help: docker               - Build production Docker image
 # help: docker-prod          - Build production container image (using ubi-micro → scratch). Not supported on macOS.
+# help: docker-prod-profiling - Build production image WITH profiling tools (memray, py-spy) for debugging
 # help: docker-run           - Run the container on HTTP  (port 4444)
 # help: docker-run-host      - Run the container on HTTP  (port 4444) with --network-host
 # help: docker-run-ssl       - Run the container on HTTPS (port 4444, self-signed)
@@ -3582,7 +4014,7 @@ podman-top:
 # help: docker-test          - Quick curl smoke-test against the container
 # help: docker-logs          - Follow container logs (⌃C to quit)
 
-.PHONY: docker-dev docker docker-prod docker-build docker-run docker-run-host docker-run-ssl \
+.PHONY: docker-dev docker docker-prod docker-prod-profiling docker-build docker-run docker-run-host docker-run-ssl \
 	docker-run-ssl-host docker-stop docker-test docker-logs docker-stats \
 	docker-top docker-shell
 
@@ -3594,6 +4026,17 @@ docker:
 
 docker-prod:
 	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite
+
+# Build production image with profiling tools (memray) for performance debugging
+# Usage: make docker-prod-profiling
+# Then run with SYS_PTRACE capability:
+#   docker run --cap-add=SYS_PTRACE ...
+# Inside container:
+#   memray attach <PID> -o /tmp/profile.bin
+#   memray flamegraph /tmp/profile.bin -o flamegraph.html
+docker-prod-profiling:
+	@echo "📊 Building production image WITH profiling tools..."
+	@DOCKER_CONTENT_TRUST=1 $(MAKE) container-build CONTAINER_RUNTIME=docker CONTAINER_FILE=Containerfile.lite ENABLE_PROFILING_BUILD=1
 
 docker-build:
 	@$(MAKE) container-build CONTAINER_RUNTIME=docker
@@ -3656,6 +4099,11 @@ docker-shell:
 # help: compose-restart-service - Restart specific service (use SERVICE=name)
 # help: compose-scale         - Scale service to N instances (use SERVICE=name SCALE=N)
 # help: compose-up-safe       - Start stack with validation and health check
+# help: compose-tls           - 🔐 Start stack with TLS (HTTP:8080 + HTTPS:8443, auto-generates certs)
+# help: compose-tls-https     - 🔒 Start stack with TLS, force HTTPS redirect (HTTPS:8443 only)
+# help: compose-tls-down      - Stop TLS-enabled stack
+# help: compose-tls-logs      - Tail logs from TLS stack
+# help: compose-tls-ps        - Show TLS stack status
 
 # ─────────────────────────────────────────────────────────────────────────────
 # You may **force** a specific binary by exporting COMPOSE_CMD, e.g.:
@@ -3756,7 +4204,7 @@ compose-stop:
 	$(COMPOSE) stop
 
 compose-down:
-	$(COMPOSE) down
+	$(COMPOSE) down --remove-orphans
 
 compose-rm:
 	$(COMPOSE) rm -f
@@ -3794,6 +4242,52 @@ compose-up-safe: compose-validate compose-up
 	@sleep 5
 	@$(COMPOSE) ps
 	@echo "✅ Stack started safely"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TLS Profile - Zero-config HTTPS via Nginx
+# ─────────────────────────────────────────────────────────────────────────────
+.PHONY: compose-tls compose-tls-https compose-tls-down compose-tls-logs compose-tls-ps
+
+compose-tls: compose-validate
+	@echo "🔐 Starting stack with TLS enabled..."
+	@echo ""
+	@echo "   Endpoints:"
+	@echo "   ├─ HTTP:     http://localhost:8080"
+	@echo "   ├─ HTTPS:    https://localhost:8443"
+	@echo "   └─ Admin UI: https://localhost:8443/admin"
+	@echo ""
+	@echo "💡 Options:"
+	@echo "   Custom certs:        mkdir -p certs && cp cert.pem certs/ && cp key.pem certs/"
+	@echo "   Passphrase certs:    make certs-passphrase && echo KEY_FILE_PASSWORD=pass >> .env"
+	@echo "   Force HTTPS:         make compose-tls-https  (redirects HTTP → HTTPS)"
+	@echo "   Or set env:          NGINX_FORCE_HTTPS=true make compose-tls"
+	@echo ""
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls up -d --scale nginx=0
+	@echo ""
+	@echo "✅ TLS stack started! Both HTTP and HTTPS are available."
+
+compose-tls-https: compose-validate
+	@echo "🔒 Starting stack with HTTPS-only mode (HTTP redirects to HTTPS)..."
+	@echo ""
+	@echo "   Endpoints:"
+	@echo "   ├─ HTTP:     http://localhost:8080 → redirects to HTTPS"
+	@echo "   ├─ HTTPS:    https://localhost:8443"
+	@echo "   └─ Admin UI: https://localhost:8443/admin"
+	@echo ""
+	NGINX_FORCE_HTTPS=true IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls up -d --scale nginx=0
+	@echo ""
+	@echo "✅ TLS stack started! All HTTP requests redirect to HTTPS."
+
+compose-tls-down:
+	@echo "🛑 Stopping TLS stack..."
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls down --remove-orphans
+	@echo "✅ TLS stack stopped"
+
+compose-tls-logs:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
+
+compose-tls-ps:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls ps
 
 # =============================================================================
 # ☁️ IBM CLOUD CODE ENGINE
@@ -4878,21 +5372,24 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui              - Run Playwright UI tests with visible browser
 # help: test-ui-headless     - Run Playwright UI tests in headless mode
 # help: test-ui-debug        - Run Playwright UI tests with Playwright Inspector
-# help: test-ui-smoke        - Run UI smoke tests only (fast subset)
-# help: test-ui-parallel     - Run UI tests in parallel using pytest-xdist
-# help: test-ui-report       - Run UI tests and generate HTML report
-# help: test-ui-coverage     - Run UI tests with coverage for admin endpoints
-# help: test-ui-record       - Run UI tests and record videos (headless)
-# help: test-ui-update-snapshots - Update visual regression snapshots
+# help: test-ui-smoke        - Run Playwright UI smoke tests only (fast subset)
+# help: test-ui-parallel     - Run Playwright UI tests in parallel using pytest-xdist
+# help: test-ui-report       - Run Playwright UI tests and generate HTML report
+# help: test-ui-coverage     - Run Playwright UI tests with coverage for admin endpoints
+# help: test-ui-screenshots  - Run Playwright UI tests with always-on screenshots (headless)
+# help: test-ui-record       - Run Playwright UI tests and record videos + screenshots (headless)
+# help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
 
-.PHONY: playwright-install playwright-install-all test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
 PLAYWRIGHT_REPORTS := $(PLAYWRIGHT_DIR)/reports
 PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
+PLAYWRIGHT_SLOWMO ?= 750
+TEST_BASE_URL ?= http://localhost:8080
 
 ## --- Playwright Setup -------------------------------------------------------
 playwright-install:
@@ -4911,102 +5408,122 @@ playwright-install-all:
 		playwright install"
 	@echo "✅ All Playwright browsers installed!"
 
-## --- UI Test Execution ------------------------------------------------------
-test-ui: playwright-install
-	@echo "🎭 Running UI tests with visible browser..."
-	@echo "💡 Make sure the dev server is running: make dev"
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then \
-		echo "❌ Dev server not running on http://localhost:8000"; \
-		echo "💡 Start it with: make dev"; \
+playwright-preflight:
+	@echo "🌐 Playwright base URL: $(TEST_BASE_URL)"
+	@echo "💡 Default target is docker-compose.yml nginx on http://localhost:8080"
+	@echo "   Start it with: make testing-up"
+	@if ! curl -s "$(TEST_BASE_URL)/health" >/dev/null 2>&1; then \
+		echo "❌ Gateway not responding at $(TEST_BASE_URL)"; \
+		echo "💡 Start it with: make testing-up"; \
+		echo "💡 Or override with: TEST_BASE_URL=http://localhost:8000 make test-ui"; \
 		exit 1; \
 	fi
+
+## --- UI Test Execution ------------------------------------------------------
+test-ui: playwright-install
+	@echo "🎭 Running Playwright UI tests with visible browser..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL=http://localhost:8000 && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
 		python -m pytest tests/playwright/ -v --headed --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
 test-ui-headless: playwright-install
-	@echo "🎭 Running UI tests in headless mode..."
-	@echo "💡 Make sure the dev server is running: make dev"
+	@echo "🎭 Running Playwright UI tests in headless mode..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
-	@if ! curl -s http://localhost:8000/health >/dev/null 2>&1; then \
-		echo "❌ Dev server not running on http://localhost:8000"; \
-		echo "💡 Start it with: make dev"; \
-		exit 1; \
-	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		export TEST_BASE_URL=http://localhost:8000 && \
+		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
 		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
 test-ui-debug: playwright-install
-	@echo "🎭 Running UI tests with Playwright Inspector..."
+	@echo "🎭 Running Playwright UI tests with Playwright Inspector..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PWDEBUG=1 pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
+		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
 		--browser chromium"
 
 test-ui-smoke: playwright-install
-	@echo "🎭 Running UI smoke tests..."
+	@echo "🎭 Running Playwright UI smoke tests..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
 		--browser chromium || { echo '❌ UI smoke tests failed!'; exit 1; }"
 	@echo "✅ UI smoke tests passed!"
 
 test-ui-parallel: playwright-install
-	@echo "🎭 Running UI tests in parallel..."
+	@echo "🎭 Running Playwright UI tests in parallel..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q pytest-xdist && \
-		pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -n auto --dist loadscope \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI parallel tests completed!"
 
 ## --- UI Test Reporting ------------------------------------------------------
 test-ui-report: playwright-install
-	@echo "🎭 Running UI tests with HTML report..."
+	@echo "🎭 Running Playwright UI tests with HTML report..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q pytest-html && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
 		--html=$(PLAYWRIGHT_REPORTS)/report.html --self-contained-html \
 		--browser chromium || true"
 	@echo "✅ UI test report generated: $(PLAYWRIGHT_REPORTS)/report.html"
 	@echo "   Open with: open $(PLAYWRIGHT_REPORTS)/report.html"
 
 test-ui-coverage: playwright-install
-	@echo "🎭 Running UI tests with coverage..."
+	@echo "🎭 Running Playwright UI tests with coverage..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --cov=mcpgateway.admin \
 		--cov-report=html:$(PLAYWRIGHT_REPORTS)/coverage \
 		--cov-report=term --browser chromium || true"
 	@echo "✅ UI coverage report: $(PLAYWRIGHT_REPORTS)/coverage/index.html"
 
+test-ui-screenshots: playwright-install
+	@echo "🎭 Running Playwright UI tests with always-on screenshots..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=on \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ Playwright screenshots captured"
+	@echo "📁 Artifacts saved to: test-results/"
+
 test-ui-record: playwright-install
-	@echo "🎭 Running UI tests with video recording..."
+	@echo "🎭 Running Playwright UI tests with video recording + screenshots..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_VIDEOS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --video=on \
-		--browser chromium || true"
-	@echo "✅ Test videos saved in: $(PLAYWRIGHT_VIDEOS)/"
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --video=on --screenshot=on --slowmo $(PLAYWRIGHT_SLOWMO) \
+		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
+	@echo "✅ Playwright videos + screenshots saved"
+	@echo "📁 Artifacts saved to: test-results/"
 
 ## --- UI Test Utilities ------------------------------------------------------
 test-ui-update-snapshots: playwright-install
-	@echo "🎭 Updating visual regression snapshots..."
+	@echo "🎭 Updating Playwright visual regression snapshots..."
+	@$(MAKE) --no-print-directory playwright-preflight
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --update-snapshots \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v --update-snapshots \
 		--browser chromium"
 	@echo "✅ Snapshots updated!"
 

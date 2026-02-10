@@ -5,7 +5,7 @@
 #
 # This multi-stage Dockerfile produces a minimal runtime image using
 # ubi10-minimal as the base, supporting multiplatform builds (amd64, arm64,
-# s390x) including QEMU emulation for cross-platform builds.
+# s390x, ppc64le) including QEMU emulation for cross-platform builds.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -20,6 +20,14 @@
 # Python major.minor series to track
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
+# Enable profiling tools (memray, py-spy) - off by default for smaller images
+# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
+# Usage after enabling:
+#   memray: docker exec -it <container> memray attach <PID> -o /tmp/profile.bin
+#   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' <container>)
+# Note: Container must have SYS_PTRACE capability for attaching to processes
+# See docs/docs/development/profiling.md for detailed usage
+ARG ENABLE_PROFILING=false
 
 ###############################################################################
 # Rust builder stage - builds Rust plugins in manylinux2014 container
@@ -68,7 +76,7 @@ FROM rust-builder-base AS rust-builder
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1763341459 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1769090643 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -85,9 +93,9 @@ ARG GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'
 RUN set -euo pipefail \
     && dnf upgrade -y \
     && dnf install -y \
-         python${PYTHON_VERSION} \
-         python${PYTHON_VERSION}-devel \
-         binutils openssl-devel gcc postgresql-devel gcc-c++ curl \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        binutils openssl-devel gcc postgresql-devel gcc-c++ curl \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -96,9 +104,10 @@ WORKDIR /app
 # ----------------------------------------------------------------------------
 # s390x architecture does not support BoringSSL when building wheel grpcio.
 # Force Python whl to use OpenSSL.
+# NOTE: ppc64le has the same OpenSSL requirement
 # ----------------------------------------------------------------------------
-RUN if [ `uname -m` = "s390x" ]; then \
-        echo "Building for s390x."; \
+RUN if [ "$(uname -m)" = "s390x" ] || [ "$(uname -m)" = "ppc64le" ]; then \
+        echo "Building for $(uname -m)."; \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='True'" > /etc/profile.d/use-openssl.sh; \
     else \
         echo "export GRPC_PYTHON_BUILD_SYSTEM_OPENSSL='False'" > /etc/profile.d/use-openssl.sh; \
@@ -122,10 +131,12 @@ COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
 #  - Install Rust plugins from pre-built wheels (if built)
+#  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
 #  - Remove build tools but keep runtime dist-info
 #  - Remove build caches and build artifacts
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
+ARG ENABLE_PROFILING=false
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
@@ -139,6 +150,13 @@ RUN set -euo pipefail \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi \
     && rm -rf /tmp/rust-wheels \
+    && if [ "$ENABLE_PROFILING" = "true" ]; then \
+        echo "📊 Installing profiling tools (memray, py-spy)..."; \
+        /app/.venv/bin/pip install --no-cache-dir "memray>=1.17.0" && \
+        /app/.venv/bin/python3 -c "import memray; print('✓ memray installed successfully')"; \
+    else \
+        echo "⏭️  Profiling tools disabled (set --build-arg ENABLE_PROFILING=true to enable)"; \
+    fi \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel pdm \
     && rm -rf /root/.cache /var/cache/dnf \
     && find /app/.venv -name "*.dist-info" -type d \
@@ -195,32 +213,49 @@ RUN chown -R 1001:0 /app \
 ###########################
 # Using ubi10-minimal for cross-platform compatibility (works with QEMU emulation)
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1764604111 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1769090502 AS runtime
 
 ARG PYTHON_VERSION=3.12
+ARG ENABLE_PROFILING=false
 
 # ----------------------------------------------------------------------------
 # OCI image metadata
 # ----------------------------------------------------------------------------
 LABEL maintainer="Mihai Criveti" \
-      org.opencontainers.image.title="mcp/mcpgateway" \
-      org.opencontainers.image.description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
-      org.opencontainers.image.licenses="Apache-2.0" \
-      org.opencontainers.image.version="1.0.0-BETA-1"
+    org.opencontainers.image.title="mcp/mcpgateway" \
+    org.opencontainers.image.description="ContextForge MCP Gateway: An enterprise-ready Model Context Protocol Gateway" \
+    org.opencontainers.image.licenses="Apache-2.0" \
+    org.opencontainers.image.version="1.0.0-BETA-2"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
 # - Python runtime (no devel packages)
 # - ca-certificates for HTTPS
 # - procps-ng for process management (ps command)
+# - shadow-utils for useradd command
+# - gdb for memray attach (only when ENABLE_PROFILING=true)
 # ----------------------------------------------------------------------------
 # hadolint ignore=DL3041
 RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
-        python${PYTHON_VERSION} \
-        ca-certificates \
-        procps-ng \
+    python${PYTHON_VERSION} \
+    ca-certificates \
+    procps-ng \
+    shadow-utils \
     && microdnf clean all \
     && rm -rf /var/cache/yum
+
+# ----------------------------------------------------------------------------
+# Install profiling dependencies (only when ENABLE_PROFILING=true)
+# - gdb: Required for memray attach to running processes
+# ----------------------------------------------------------------------------
+# hadolint ignore=DL3041
+RUN if [ "$ENABLE_PROFILING" = "true" ]; then \
+        echo "📊 Installing profiling dependencies (gdb)..."; \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 gdb && \
+        microdnf clean all && \
+        rm -rf /var/cache/yum && \
+        echo "✓ gdb installed for memray attach support"; \
+    fi
 
 # ----------------------------------------------------------------------------
 # Create python3 symlink
@@ -230,7 +265,7 @@ RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
 # ----------------------------------------------------------------------------
 # Create non-root user
 # ----------------------------------------------------------------------------
-RUN echo 'app:x:1001:0:app:/app:/sbin/nologin' >> /etc/passwd
+RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
 
 # ----------------------------------------------------------------------------
 # Copy the application from the builder stage
@@ -271,7 +306,7 @@ USER 1001
 # Health check
 # ----------------------------------------------------------------------------
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-  CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
+    CMD ["python3", "-c", "import httpx,sys;sys.exit(0 if httpx.get('http://localhost:4444/health',timeout=5).status_code==200 else 1)"]
 
 # ----------------------------------------------------------------------------
 # Entrypoint

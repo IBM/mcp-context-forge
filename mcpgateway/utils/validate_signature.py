@@ -13,8 +13,11 @@ Given data, signature, and public key PEM, verifies authenticity.
 from __future__ import annotations
 
 # Standard
+import hashlib
+
 # Logging setup
 import logging
+from typing import Tuple
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -24,6 +27,14 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from mcpgateway.config import get_settings
 
 logger = logging.getLogger(__name__)
+
+# Cache for signature validation results
+# Key: (data_hash, signature_hex, public_key_hash), Value: bool
+_signature_validation_cache: dict[Tuple[str, str, str], bool] = {}
+
+# Cache for loaded public keys
+# Key: public_key_pem_hash, Value: public_key object
+_public_key_cache: dict[str, ed25519.Ed25519PublicKey] = {}
 
 # ---------------------------------------------------------------------------
 # Helper: sign data using Ed25519 private key
@@ -78,8 +89,38 @@ def sign_data(data: bytes, private_key_pem: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _load_public_key_cached(public_key_pem: str) -> ed25519.Ed25519PublicKey:
+    """Load and cache Ed25519 public key.
+
+    Args:
+        public_key_pem: PEM-formatted public key string
+
+    Returns:
+        ed25519.Ed25519PublicKey: The loaded public key
+
+    Raises:
+        ValueError: If the key cannot be loaded
+    """
+    key_hash = hashlib.sha256(public_key_pem.encode()).hexdigest()
+
+    if key_hash in _public_key_cache:
+        return _public_key_cache[key_hash]
+
+    public_key = serialization.load_pem_public_key(public_key_pem.encode())
+
+    # Limit cache size
+    if len(_public_key_cache) > 100:
+        _public_key_cache.clear()
+
+    _public_key_cache[key_hash] = public_key
+    return public_key
+
+
 def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str) -> bool:
-    """Validate an Ed25519 signature.
+    """Validate an Ed25519 signature with caching.
+
+    Caches validation results to avoid repeated cryptographic verification
+    for the same data/signature/key combination.
 
     Args:
         data: Original message bytes.
@@ -130,18 +171,52 @@ def validate_signature(data: bytes, signature: bytes | str, public_key_pem: str)
     # Accept hex-encoded signatures
     if isinstance(signature, str):
         try:
-            signature = bytes.fromhex(signature)
+            signature_bytes = bytes.fromhex(signature)
         except ValueError:
             logger.error("Invalid hex signature format.")
             return False
+    else:
+        signature_bytes = signature
 
+    # Create cache key
+    data_hash = hashlib.sha256(data).hexdigest()
+    signature_hex = signature_bytes.hex()
+    key_hash = hashlib.sha256(public_key_pem.encode()).hexdigest()
+    cache_key = (data_hash, signature_hex, key_hash)
+
+    # Check cache
+    if cache_key in _signature_validation_cache:
+        return _signature_validation_cache[cache_key]
+
+    # Validate signature
     try:
-        public_key = serialization.load_pem_public_key(public_key_pem.encode())
-        public_key.verify(signature, data)
-        return True
+        public_key = _load_public_key_cached(public_key_pem)
+        public_key.verify(signature_bytes, data)
+        result = True
     except Exception as e:
         logger.error(f"Signature validation failed: {e}")
-        return False
+        result = False
+
+    # Cache result (limit cache size)
+    if len(_signature_validation_cache) > 1000:
+        # Keep only the most recent 500 entries
+        items = list(_signature_validation_cache.items())
+        _signature_validation_cache.clear()
+        _signature_validation_cache.update(items[-500:])
+
+    _signature_validation_cache[cache_key] = result
+    return result
+
+
+def clear_signature_caches() -> None:
+    """Clear signature validation caches.
+
+    Call this function:
+    - In test fixtures to ensure test isolation
+    - After key rotation
+    """
+    _signature_validation_cache.clear()
+    _public_key_cache.clear()
 
 
 # ---------------------------------------------------------------------------

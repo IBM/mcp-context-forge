@@ -176,7 +176,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_all_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors"
           data-filter-type="category"
           data-filter-value=""
-          onclick="filterByCategory('')"
+          onclick="filterByCategory('')" onkeydown="handleKeydown(event, () => filterByCategory(''))" role="button" tabindex="0"
         >
           All Categories
           <span class="ml-1 text-xs {% if is_all_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
@@ -190,7 +190,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium {% if is_selected %}bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border border-blue-300 dark:border-blue-700{% else %}bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200{% endif %} cursor-pointer hover:bg-blue-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="category"
           data-filter-value="{{ category }}"
-          onclick="filterByCategory('{{ category }}')"
+          onclick="filterByCategory('{{ category }}')" onkeydown="handleKeydown(event, () => filterByCategory('{{ category }}'))" role="button" tabindex="0"
         >
           {{ category }}
           <span class="ml-1 text-xs {% if is_selected %}text-blue-600 dark:text-blue-300{% else %}text-gray-500 dark:text-gray-400{% endif %}"
@@ -226,7 +226,7 @@
           class="flex justify-between items-center p-2 {% if is_all_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-blue-900/30 transition-colors"
           data-filter-type="auth"
           data-filter-value=""
-          onclick="filterByAuthType('')"
+          onclick="filterByAuthType('')" onkeydown="handleKeydown(event, () => filterByAuthType(''))" role="button" tabindex="0"
         >
           <span
             class="text-sm font-medium {% if is_all_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
@@ -245,7 +245,7 @@
           class="flex justify-between items-center p-2 {% if is_auth_selected %}bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800{% else %}bg-gray-50 dark:bg-gray-700{% endif %} rounded cursor-pointer hover:bg-blue-100 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="auth"
           data-filter-value="{{ auth_type }}"
-          onclick="filterByAuthType('{{ auth_type }}')"
+          onclick="filterByAuthType('{{ auth_type }}')" onkeydown="handleKeydown(event, () => filterByAuthType('{{ auth_type }}'))" role="button" tabindex="0"
         >
           <span class="text-sm font-medium {% if is_auth_selected %}text-blue-700 dark:text-blue-300{% else %}text-gray-700 dark:text-gray-300{% endif %}"
             >{{ auth_type }}</span
@@ -284,7 +284,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 cursor-pointer hover:bg-blue-200 dark:hover:bg-blue-800 transition-colors border border-blue-300 dark:border-blue-700"
           data-filter-type="provider"
           data-filter-value=""
-          onclick="filterByProvider('')"
+          onclick="filterByProvider('')" onkeydown="handleKeydown(event, () => filterByProvider(''))" role="button" tabindex="0"
         >
           All Providers
           <span class="ml-1 text-xs text-blue-600 dark:text-blue-300"
@@ -297,7 +297,7 @@
           class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
           data-filter-type="provider"
           data-filter-value="{{ provider | lower }}"
-          onclick="filterByProvider('{{ provider | lower }}')"
+          onclick="filterByProvider('{{ provider | lower }}')" onkeydown="handleKeydown(event, () => filterByProvider('{{ provider | lower }}'))" role="button" tabindex="0"
         >
           {{ provider }}
           <span class="ml-1 text-xs text-gray-500 dark:text-gray-400"
@@ -489,12 +489,25 @@
 
       <!-- Action Button -->
       {% if server.is_registered %}
+      {% if server.requires_oauth_config %}
+      <button
+        class="w-full px-4 py-2 bg-yellow-600 text-white rounded-md cursor-default"
+        disabled
+        title="Server is registered but OAuth configuration is required before activation"
+      >
+        <svg class="inline-block h-4 w-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+        OAuth Config Required
+      </button>
+      {% else %}
       <button
         class="w-full px-4 py-2 bg-gray-300 text-gray-600 rounded-md cursor-not-allowed"
         disabled
       >
         Already Registered
       </button>
+      {% endif %}
       {% else %} {% if server.requires_api_key or server.auth_type in ["API
       Key", "OAuth2.1 & API Key"] %}
       <button
@@ -507,20 +520,15 @@
       <div id="{{ server.id }}-button-container">
         <button
           id="{{ server.id }}-register-btn"
-          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed text-left"
+          class="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors disabled:bg-gray-400 disabled:cursor-not-allowed"
           hx-post="{{ root_path }}/admin/mcp-registry/{{ server.id }}/register"
           hx-target="#{{ server.id }}-button-container"
           hx-swap="innerHTML"
-          hx-indicator="#{{ server.id }}-spinner"
-          hx-on::after-request="if(event.detail.successful) { setTimeout(() => { const rootPath = window.ROOT_PATH || ''; if(window.htmx) { window.htmx.ajax('GET', rootPath + '/admin/mcp-registry/partial', {target: '#mcp-registry-servers', swap: 'innerHTML'}); } }, 500); } else { const btn = document.getElementById('{{ server.id }}-register-btn'); if(btn) btn.disabled = false; alert('Registration failed: ' + (event.detail.xhr.response ? JSON.parse(event.detail.xhr.response).error || 'Unknown error' : 'Network error')); }"
+          hx-disabled-elt="this"
+          hx-on::before-request="this.innerHTML = '<span class=\'inline-flex items-center\'><span class=\'inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2\'></span>Registering...</span>'"
+          hx-on::response-error="this.className = 'w-full px-4 py-2 bg-orange-600 text-white rounded-md hover:bg-orange-700 transition-colors'; this.innerHTML = '<svg class=\'inline-block h-4 w-4 mr-2\' fill=\'none\' stroke=\'currentColor\' viewBox=\'0 0 24 24\'><path stroke-linecap=\'round\' stroke-linejoin=\'round\' stroke-width=\'2\' d=\'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z\'></path></svg>Request Failed - Click to Retry'; this.disabled = false;"
         >
-          <span class="htmx-not-indicator">Add Server</span>
-          <span id="{{ server.id }}-spinner" class="htmx-indicator inline-flex items-center">
-            <span
-              class="inline-block animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"
-            ></span>
-            Registering...
-          </span>
+          Add Server
         </button>
       </div>
       {% endif %} {% endif %}
@@ -708,5 +716,25 @@ function refreshCatalog() {
   } else {
     location.reload();
   }
+}
+
+// Listen for successful catalog registration to trigger delayed refresh
+// This is triggered by the HX-Trigger-After-Swap header from the server
+// Use a guard to prevent re-attaching on partial refresh
+if (!window._catalogRegistrationListenerAttached) {
+  window._catalogRegistrationListenerAttached = true;
+  // Store timeout ID for debouncing - prevents multiple refreshes when registering multiple servers
+  window._catalogRefreshTimeout = null;
+  document.body.addEventListener('catalogRegistrationSuccess', function(evt) {
+    const delayMs = evt.detail && evt.detail.delayMs ? evt.detail.delayMs : 1500;
+    // Clear any pending refresh to debounce rapid registrations
+    if (window._catalogRefreshTimeout) {
+      clearTimeout(window._catalogRefreshTimeout);
+    }
+    window._catalogRefreshTimeout = setTimeout(function() {
+      window._catalogRefreshTimeout = null;
+      refreshCatalog();
+    }, delayMs);
+  });
 }
 </script>

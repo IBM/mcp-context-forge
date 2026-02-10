@@ -28,8 +28,19 @@ def upgrade() -> None:
     For consistency and correctness, this migration changes the column type
     to Integer for all database backends (SQLite, PostgreSQL, MySQL).
     """
-    # Get the database bind to check if it's SQLite
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    # Skip if fresh database (tables created via create_all + stamp)
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Skip if token_usage_logs table doesn't exist
+    if not inspector.has_table("token_usage_logs"):
+        print("token_usage_logs table not found. Skipping migration.")
+        return
+
     if bind.dialect.name == "sqlite":
         # For SQLite: Recreate the table with INTEGER id
         # SQLite doesn't support ALTER COLUMN, so we need to recreate the table
@@ -85,6 +96,18 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Downgrade schema - revert INTEGER back to BigInteger."""
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
+
+    # Skip if fresh database
+    if not inspector.has_table("gateways"):
+        print("Fresh database detected. Skipping migration.")
+        return
+
+    # Skip if token_usage_logs table doesn't exist
+    if not inspector.has_table("token_usage_logs"):
+        print("token_usage_logs table not found. Skipping migration.")
+        return
+
     if bind.dialect.name == "sqlite":
         # For SQLite: Recreate with BigInteger (though it won't work properly)
         op.execute(

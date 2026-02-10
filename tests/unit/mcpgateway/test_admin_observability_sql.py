@@ -14,6 +14,9 @@ from unittest.mock import MagicMock, patch
 # Third-Party
 import pytest
 
+# Local
+from tests.utils.rbac_mocks import create_mock_user_context
+
 # First-Party
 from mcpgateway.admin import (
     _get_latency_heatmap_postgresql,
@@ -292,3 +295,289 @@ class TestLatencyHeatmapPython:
         # All should fall in one latency bucket
         total_count = sum(sum(row) for row in result["data"])
         assert total_count == 10
+
+
+
+
+class TestToolUsageStatistics:
+    """Tests for tool usage statistics with different databases."""
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_tool_usage_with_dialect(self, dialect):
+        """Test tool usage works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_row = MagicMock()
+        mock_row.tool_name = "test_tool"
+        mock_row.count = 10
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [mock_row]
+
+        mock_db.query.return_value = mock_query
+
+        # Import and call the function
+        from mcpgateway.admin import get_tool_usage
+        from fastapi import Request
+
+        # Mock request and dependencies
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        # This should not raise GroupingError
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_tool_usage(mock_request, hours=24, limit=20, _user=mock_user))
+
+        assert "tools" in result
+        assert result["tools"][0]["tool_name"] == "test_tool"
+
+
+class TestToolErrorStatistics:
+    """Tests for tool error statistics with different databases."""
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_tool_errors_with_dialect(self, dialect):
+        """Test tool errors works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_row = MagicMock()
+        mock_row.tool_name = "test_tool"
+        mock_row.total_count = 100
+        mock_row.error_count = 5
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [mock_row]
+
+        mock_db.query.return_value = mock_query
+
+        from mcpgateway.admin import get_tool_errors
+        from fastapi import Request
+
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_tool_errors(mock_request, hours=24, limit=20, _user=mock_user))
+
+        assert "tools" in result
+        assert result["tools"][0]["tool_name"] == "test_tool"
+        assert result["tools"][0]["error_rate"] == 5.0
+
+
+class TestToolChains:
+    """Tests for tool chain statistics."""
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_tool_chains_with_dialect(self, dialect):
+        """Test tool chains works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_span1 = MagicMock()
+        mock_span1.trace_id = "trace1"
+        mock_span1.tool_name = "tool_a"
+        mock_span1.start_time = datetime.now(timezone.utc)
+
+        mock_span2 = MagicMock()
+        mock_span2.trace_id = "trace1"
+        mock_span2.tool_name = "tool_b"
+        mock_span2.start_time = datetime.now(timezone.utc) + timedelta(seconds=1)
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.all.return_value = [mock_span1, mock_span2]
+
+        mock_db.query.return_value = mock_query
+
+        from mcpgateway.admin import get_tool_chains
+        from fastapi import Request
+
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_tool_chains(mock_request, hours=24, limit=20, _user=mock_user))
+
+        assert "chains" in result
+        assert len(result["chains"]) > 0
+
+
+class TestPromptStatistics:
+    """Tests for prompt statistics with different databases."""
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_prompt_usage_with_dialect(self, dialect):
+        """Test prompt usage works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_row = MagicMock()
+        mock_row.prompt_id = "test_prompt"
+        mock_row.count = 15
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [mock_row]
+
+        mock_db.query.return_value = mock_query
+
+        from mcpgateway.admin import get_prompt_usage
+        from fastapi import Request
+
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_prompt_usage(mock_request, hours=24, limit=20, _user=mock_user))
+
+        assert "prompts" in result
+        assert result["prompts"][0]["prompt_id"] == "test_prompt"
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_prompt_errors_with_dialect(self, dialect):
+        """Test prompt errors works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_row = MagicMock()
+        mock_row.prompt_id = "test_prompt"
+        mock_row.total_count = 50
+        mock_row.error_count = 3
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.all.return_value = [mock_row]
+
+        mock_db.query.return_value = mock_query
+
+        from mcpgateway.admin import get_prompts_errors
+        from fastapi import Request
+
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_prompts_errors(hours=24, limit=20, _user=mock_user))
+
+        assert "prompts" in result
+
+
+class TestResourceStatistics:
+    """Tests for resource statistics with different databases."""
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_resource_usage_with_dialect(self, dialect):
+        """Test resource usage works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_row = MagicMock()
+        mock_row.resource_uri = "file:///test.txt"
+        mock_row.count = 20
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.order_by.return_value = mock_query
+        mock_query.limit.return_value = mock_query
+        mock_query.all.return_value = [mock_row]
+
+        mock_db.query.return_value = mock_query
+
+        from mcpgateway.admin import get_resource_usage
+        from fastapi import Request
+
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_resource_usage(mock_request, hours=24, limit=20, _user=mock_user))
+
+        assert "resources" in result
+        assert result["resources"][0]["resource_uri"] == "file:///test.txt"
+
+    @pytest.mark.parametrize("dialect", ["postgresql", "sqlite"])
+    def test_resource_errors_with_dialect(self, dialect):
+        """Test resource errors works with PostgreSQL and SQLite."""
+        mock_db = MagicMock()
+        mock_bind = MagicMock()
+        mock_bind.dialect.name = dialect
+        mock_db.get_bind.return_value = mock_bind
+
+        # Mock query chain
+        mock_row = MagicMock()
+        mock_row.resource_uri = "file:///test.txt"
+        mock_row.total_count = 30
+        mock_row.error_count = 2
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value = mock_query
+        mock_query.group_by.return_value = mock_query
+        mock_query.all.return_value = [mock_row]
+
+        mock_db.query.return_value = mock_query
+
+        from mcpgateway.admin import get_resources_errors
+        from fastapi import Request
+
+        mock_request = MagicMock(spec=Request)
+        mock_user = create_mock_user_context()
+        mock_user["db"] = mock_db  # Use the same mock_db so dialect is consistent
+
+        with patch("mcpgateway.admin.get_db", return_value=iter([mock_db])):
+            with patch("mcpgateway.admin.get_current_user_with_permissions", return_value=mock_user):
+                import asyncio
+                result = asyncio.run(get_resources_errors(hours=24, limit=20, _user=mock_user))
+
+        assert "resources" in result

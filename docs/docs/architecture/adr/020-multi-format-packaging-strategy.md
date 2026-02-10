@@ -16,6 +16,7 @@ ContextForge supports diverse deployment scenarios with different packaging requ
 - **Enterprise users** need signed releases with SBOM and provenance
 
 Each deployment target has different constraints:
+
 - PyPI packages work for Python environments
 - Container images work for Kubernetes, serverless containers
 - Helm charts simplify Kubernetes deployments
@@ -29,6 +30,7 @@ We will package ContextForge in **multiple formats** to support all deployment s
 ### 1. PyPI Packages (Python Distribution)
 
 **Core packages:**
+
 - `mcp-contextforge-gateway` - Core gateway application
 - `mcp-contextforge-gateway-ui` - Admin UI (installs as plugin)
 - `mcp-contextforge-translate` - Protocol bridge utility
@@ -36,11 +38,13 @@ We will package ContextForge in **multiple formats** to support all deployment s
 - `mcp-contextforge-reverse-proxy` - NAT traversal proxy
 
 **Plugin packages:**
+
 - `mcp-contextforge-plugin-framework` - Plugin framework
 - Individual plugins: `mcp-contextforge-plugin-{name}` (40+ packages)
 - Meta package: `mcp-contextforge-plugins-all` (installs all plugins)
 
 **MCP Server packages:**
+
 - Individual servers: `mcp-server-{name}` (Python servers)
 - Rust plugin wheels with PyO3 (cross-compiled for amd64/arm64)
 
@@ -59,6 +63,7 @@ pip install mcp-contextforge-translate
 ### 2. Container Images (Docker/Podman)
 
 **Images hosted on GitHub Container Registry (ghcr.io):**
+
 - `ghcr.io/contextforge-org/mcp-gateway:latest` - Core gateway
 - `ghcr.io/contextforge-org/mcp-gateway-ui:latest` - Gateway + UI
 - `ghcr.io/contextforge-org/translate:latest` - Translate utility
@@ -67,10 +72,12 @@ pip install mcp-contextforge-translate
 - Per-server images: `ghcr.io/contextforge-org/mcp-server-{name}:latest`
 
 **Multi-arch support:**
+
 - `linux/amd64` (x86_64) - Standard Intel/AMD servers
 - `linux/arm64` (aarch64) - Apple Silicon, AWS Graviton, Raspberry Pi
 
 **Image features:**
+
 - Minimal base images (Alpine Linux where possible)
 - Non-root user for security
 - Health check endpoints configured
@@ -90,10 +97,12 @@ docker run --platform linux/arm64 ghcr.io/contextforge-org/mcp-gateway:latest
 ### 3. Helm Charts (Kubernetes Deployment)
 
 **Chart repository:**
+
 - OCI registry: `oci://ghcr.io/contextforge-org/helm-charts/mcp-stack`
 - Artifact Hub: Public listing for discoverability
 
 **Chart features:**
+
 - Configurable resource limits and requests
 - Horizontal Pod Autoscaler (HPA) support
 - PostgreSQL and Redis dependencies (optional)
@@ -122,11 +131,13 @@ helm install mcp-stack contextforge/mcp-stack \
 ### 4. Static Binaries (Go/Rust Servers)
 
 **Binary targets:**
+
 - Go servers: Cross-compiled Go executables (5-15 MB)
 - Rust servers: Static Rust binaries (3-10 MB)
 - Platforms: linux-amd64, linux-arm64, darwin-amd64, darwin-arm64, windows-amd64
 
 **Distribution:**
+
 - GitHub Releases with checksums
 - Signed with GPG and cosign
 - SLSA Build Level 3 provenance
@@ -202,6 +213,7 @@ GOOS=darwin GOARCH=arm64 go build -o mcp-server-time-darwin-arm64
 ## Supply Chain Security
 
 **All releases include:**
+
 1. **Digital signatures** - GPG signed tags and releases
 2. **Container signing** - cosign with keyless OIDC (Sigstore)
 3. **SBOM** - Software Bill of Materials (Syft, SPDX format)

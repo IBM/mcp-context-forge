@@ -96,7 +96,7 @@ services:
         network_mode: host
 
     context-forge:
-        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1
+        image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
         ports:
 
             - 4444:4444
@@ -116,6 +116,7 @@ services:
             JWT_PUBLIC_KEY_PATH: /opt/public.pem
             JWT_PRIVATE_KEY_PATH: /opt/private.pem
             JWT_AUDIENCE_VERIFICATION: false
+            JWT_ISSUER_VERIFICATION: false
             JWT_ISSUER: http://localhost:5556
             DATABASE_URL: sqlite:////data/context-forge.db
             HOST: 0.0.0.0
@@ -150,7 +151,7 @@ services:
       OAUTH2_PROXY_SET_XAUTHREQUEST: true
 
   mcp-gateway:
-    image: ghcr.io/contingentai/mcp-gateway:latest
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
     environment:
       MCP_CLIENT_AUTH_ENABLED: false
       TRUST_PROXY_AUTH: true
@@ -173,7 +174,7 @@ services:
       TZ: America/New_York
 
   mcp-gateway:
-    image: ghcr.io/contingentai/mcp-gateway:latest
+    image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
     environment:
       MCP_CLIENT_AUTH_ENABLED: false
       TRUST_PROXY_AUTH: true

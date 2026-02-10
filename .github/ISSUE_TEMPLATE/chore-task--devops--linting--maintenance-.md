@@ -3,7 +3,7 @@ name: Chore Task (devops, linting, maintenance)
 about: Internal devops, CI/CD, linting, formatting, dependency hygiene, or project
   maintenance
 title: "[CHORE]: "
-labels: chore, cicd, devops, triage
+labels: chore, triage
 assignees: ''
 
 ---
@@ -64,6 +64,6 @@ Define what "done" looks like for this task.
 
 ---
 
-### 🧩 Additional Notes
+### 🧩 Additional Context
 
 (Optional) Include any configs, environment quirks, or dependencies (e.g. Python, Node, Docker, CI secrets).

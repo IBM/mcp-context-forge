@@ -6,22 +6,34 @@ MCP server implementation guidance for AI coding assistants.
 
 ```
 mcp-servers/
-├── go/                         # Go MCP server template
-│   ├── main.go
-│   ├── go.mod
-│   ├── Makefile
-│   └── README.md
-├── python/                     # Python MCP server template
-│   ├── src/
-│   ├── tests/
-│   ├── pyproject.toml
-│   ├── Makefile
-│   └── README.md
-├── rust/                       # Rust MCP server template
-│   ├── src/
-│   ├── Cargo.toml
-│   └── README.md
-├── templates/                  # Scaffolding templates
+├── go/                         # Go MCP servers (5 implementations)
+│   ├── fast-time-server/       # Time/date operations
+│   ├── calculator-server/      # Math operations
+│   ├── system-monitor-server/  # System metrics
+│   ├── benchmark-server/       # Performance benchmarking
+│   └── pandoc-server/          # Document conversion
+├── python/                     # Python MCP servers (20 implementations)
+│   ├── chunker_server/         # Text chunking
+│   ├── code_splitter_server/   # Code analysis
+│   ├── csv_pandas_chat_server/ # CSV/pandas operations
+│   ├── data_analysis_server/   # Data analysis tools
+│   ├── docx_server/            # Word document handling
+│   ├── graphviz_server/        # Diagram generation
+│   ├── latex_server/           # LaTeX document tools
+│   ├── libreoffice_server/     # Office document conversion
+│   ├── mcp_eval_server/        # MCP server evaluation
+│   ├── mcp-rss-search/         # RSS feed search
+│   ├── mermaid_server/         # Diagram generation
+│   ├── output_schema_test_server/ # Output validation
+│   ├── plotly_server/          # Interactive plotting
+│   ├── pm_mcp_server/          # Project management
+│   ├── pptx_server/            # PowerPoint handling
+│   ├── python_sandbox_server/  # Sandboxed Python execution
+│   ├── qr_code_server/         # QR code generation
+│   ├── synthetic_data_server/  # Test data generation
+│   ├── url_to_markdown_server/ # URL to markdown conversion
+│   └── xlsx_server/            # Excel/spreadsheet handling
+├── templates/                  # Copier scaffolding templates
 ├── scaffold-go-server.sh       # Go server scaffolding script
 └── scaffold-python-server.sh   # Python server scaffolding script
 ```
@@ -90,23 +102,28 @@ make format           # Format code
 
 ### Key Files
 
-- `src/server.py` - Server implementation
+- `src/<server_name>/server_fastmcp.py` - FastMCP server implementation
 - `pyproject.toml` - Project configuration
 - `Makefile` - Build automation
 
-### Example Tool Implementation
+### Example Tool Implementation (FastMCP 2.x)
 
 ```python
-from mcp.server import Server
-from mcp.types import Tool, TextContent
+from fastmcp import FastMCP
 
-server = Server("my-server")
+mcp = FastMCP("my-server", version="0.1.0")
 
-@server.tool()
-async def my_tool(arg1: str, arg2: int) -> list[TextContent]:
+@mcp.tool
+def my_tool(arg1: str, arg2: int) -> str:
     """Tool description."""
     result = process(arg1, arg2)
-    return [TextContent(type="text", text=str(result))]
+    return str(result)
+
+def main() -> None:
+    mcp.run()
+
+if __name__ == "__main__":
+    main()
 ```
 
 ## Rust Server Development

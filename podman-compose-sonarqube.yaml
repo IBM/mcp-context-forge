@@ -1,14 +1,18 @@
-version: "2"
-
 services:
   sonarqube:
-    image: docker.io/library/sonarqube:latest
+    image: docker.io/library/sonarqube:community
     ports:
       - "9000:9000"
     networks:
       - sonarnet
+    depends_on:
+      db:
+        condition: service_healthy
     environment:
-      - SONARQUBE_JDBC_URL=jdbc:postgresql://db:5432/sonar
+      SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+      SONAR_FORCEAUTHENTICATION: "false"
     volumes:
       - sonarqube_conf:/opt/sonarqube/conf
       - sonarqube_data:/opt/sonarqube/data
@@ -20,8 +24,14 @@ services:
     networks:
       - sonarnet
     environment:
-      - POSTGRES_USER=sonar
-      - POSTGRES_PASSWORD=sonar
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar -d sonar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - postgresql:/var/lib/postgresql
       - postgresql_data:/var/lib/postgresql/data

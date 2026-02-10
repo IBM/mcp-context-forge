@@ -29,6 +29,7 @@ export DATABASE_URL="postgresql+psycopg://user:password@host:5432/dbname?options
 ### URL Encoding
 
 The `options` parameter must be URL-encoded:
+
 - Space (` `) → `%20`
 - Comma (`,`) → `%2C` (optional, usually works without encoding)
 
@@ -160,6 +161,7 @@ END $$;
 **Symptom**: Tables are still being created in `public` schema
 
 **Solution**:
+
 1. Verify the `DATABASE_URL` includes the `options` parameter
 2. Check URL encoding is correct (space = `%20`)
 3. Restart the application to pick up the new configuration
@@ -193,6 +195,7 @@ CREATE SCHEMA mcp_gateway;
 **Symptom**: Connection fails when `options` parameter is added
 
 **Solution**:
+
 1. Verify PostgreSQL version supports the `options` parameter (PostgreSQL 9.0+)
 2. Check that the psycopg3 driver is being used (not asyncpg)
 3. Verify URL encoding is correct
@@ -216,6 +219,7 @@ CREATE SCHEMA mcp_gateway;
 ### Alembic Migrations
 
 Alembic migrations automatically respect the `search_path` setting:
+
 - Tables are created in the first schema in `search_path`
 - Migrations work seamlessly with custom schemas
 - No special configuration needed
@@ -259,6 +263,7 @@ DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db?options=-c%20search_pat
 ## Support
 
 For issues or questions:
+
 1. Check the troubleshooting section above
 2. Review the [GitHub issue](https://github.com/IBM/mcp-context-forge/issues/1535)
 3. Open a new issue with details about your setup

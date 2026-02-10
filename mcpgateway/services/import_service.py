@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+# pylint: disable=import-outside-toplevel,no-name-in-module
 """Location: ./mcpgateway/services/import_service.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
@@ -31,12 +32,11 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent, EmailUser, Gateway, Prompt, Resource, Server, Tool
 from mcpgateway.schemas import AuthenticationValues, GatewayCreate, GatewayUpdate, PromptCreate, PromptUpdate, ResourceCreate, ResourceUpdate, ServerCreate, ServerUpdate, ToolCreate, ToolUpdate
-from mcpgateway.services.gateway_service import GatewayNameConflictError, GatewayService
-from mcpgateway.services.prompt_service import PromptNameConflictError, PromptService
-from mcpgateway.services.resource_service import ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
-from mcpgateway.services.server_service import ServerNameConflictError, ServerService
-from mcpgateway.services.tool_service import ToolNameConflictError, ToolService
+from mcpgateway.services.gateway_service import GatewayNameConflictError
+from mcpgateway.services.prompt_service import PromptNameConflictError
+from mcpgateway.services.resource_service import ResourceURIConflictError
+from mcpgateway.services.server_service import ServerNameConflictError
+from mcpgateway.services.tool_service import ToolNameConflictError
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 
 logger = logging.getLogger(__name__)
@@ -182,12 +182,26 @@ class ImportService:
             >>> hasattr(service, 'gateway_service')
             True
         """
-        self.gateway_service = GatewayService()
-        self.tool_service = ToolService()
-        self.resource_service = ResourceService()
-        self.prompt_service = PromptService()
-        self.server_service = ServerService()
-        self.root_service = RootService()
+        # Prefer globally-initialized singletons from mcpgateway.main to ensure
+        # services share initialized EventService/Redis clients. Import lazily
+        # to avoid circular import at module load time. Fall back to local
+        # instances if singletons are not available (tests, isolated usage).
+        # Use globally-exported singletons from service modules so they
+        # share initialized EventService/Redis clients created at app startup.
+        # First-Party
+        from mcpgateway.services.gateway_service import gateway_service
+        from mcpgateway.services.prompt_service import prompt_service
+        from mcpgateway.services.resource_service import resource_service
+        from mcpgateway.services.root_service import root_service
+        from mcpgateway.services.server_service import server_service
+        from mcpgateway.services.tool_service import tool_service
+
+        self.gateway_service = gateway_service
+        self.tool_service = tool_service
+        self.resource_service = resource_service
+        self.prompt_service = prompt_service
+        self.server_service = server_service
+        self.root_service = root_service
         self.active_imports: Dict[str, ImportStatus] = {}
 
     async def initialize(self) -> None:
@@ -726,7 +740,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.UPDATE:
                     try:
                         # Find existing gateway by name
-                        gateways = await self.gateway_service.list_gateways(db, include_inactive=True)
+                        gateways, _ = await self.gateway_service.list_gateways(db, include_inactive=True)
                         existing_gateway = next((g for g in gateways if g.name == gateway_name), None)
                         if existing_gateway:
                             update_data = self._convert_to_gateway_update(gateway_data)
@@ -1195,8 +1209,25 @@ class ImportService:
         if gateway_data.get("auth_type"):
             auth_kwargs["auth_type"] = gateway_data["auth_type"]
 
+            # Handle query_param auth type (new in this version)
+            if gateway_data["auth_type"] == "query_param" and gateway_data.get("auth_query_params"):
+                try:
+                    auth_query_params = gateway_data["auth_query_params"]
+                    if auth_query_params:
+                        # Get the first key-value pair (schema supports single param)
+                        param_key = next(iter(auth_query_params.keys()))
+                        encrypted_value = auth_query_params[param_key]
+                        # Decode the encrypted value - returns dict like {param_key: value}
+                        decrypted_dict = decode_auth(encrypted_value)
+                        # Extract the actual value from the dict
+                        decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
+                        auth_kwargs["auth_query_param_key"] = param_key
+                        auth_kwargs["auth_query_param_value"] = decrypted_value
+                        logger.debug(f"Importing gateway with query_param auth, key: {param_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to decode query param auth for gateway: {str(e)}")
             # Decode auth_value to get original credentials
-            if gateway_data.get("auth_value"):
+            elif gateway_data.get("auth_value"):
                 try:
                     decoded_auth = decode_auth(gateway_data["auth_value"])
                     if gateway_data["auth_type"] == "basic":
@@ -1247,7 +1278,24 @@ class ImportService:
         if gateway_data.get("auth_type"):
             auth_kwargs["auth_type"] = gateway_data["auth_type"]
 
-            if gateway_data.get("auth_value"):
+            # Handle query_param auth type (new in this version)
+            if gateway_data["auth_type"] == "query_param" and gateway_data.get("auth_query_params"):
+                try:
+                    auth_query_params = gateway_data["auth_query_params"]
+                    if auth_query_params:
+                        # Get the first key-value pair (schema supports single param)
+                        param_key = next(iter(auth_query_params.keys()))
+                        encrypted_value = auth_query_params[param_key]
+                        # Decode the encrypted value - returns dict like {param_key: value}
+                        decrypted_dict = decode_auth(encrypted_value)
+                        # Extract the actual value from the dict
+                        decrypted_value = decrypted_dict.get(param_key, "") if isinstance(decrypted_dict, dict) else str(decrypted_dict)
+                        auth_kwargs["auth_query_param_key"] = param_key
+                        auth_kwargs["auth_query_param_value"] = decrypted_value
+                        logger.debug(f"Importing gateway update with query_param auth, key: {param_key}")
+                except Exception as e:
+                    logger.warning(f"Failed to decode query param auth for gateway update: {str(e)}")
+            elif gateway_data.get("auth_value"):
                 try:
                     decoded_auth = decode_auth(gateway_data["auth_value"])
                     if gateway_data["auth_type"] == "basic":
@@ -1559,7 +1607,7 @@ class ImportService:
                 existing, _ = await self.tool_service.list_tools(db)
                 item_info["conflicts_with"] = any(t.original_name == item_name for t in existing)
             elif entity_type == "gateways":
-                existing = await self.gateway_service.list_gateways(db)
+                existing, _ = await self.gateway_service.list_gateways(db)
                 item_info["conflicts_with"] = any(g.name == item_name for g in existing)
             elif entity_type == "servers":
                 existing = await self.server_service.list_servers(db)
@@ -1673,7 +1721,7 @@ class ImportService:
 
             # Check gateway conflicts
             if "gateways" in entities:
-                existing_gateways = await self.gateway_service.list_gateways(db)
+                existing_gateways, _ = await self.gateway_service.list_gateways(db)
                 existing_names = {g.name for g in existing_gateways}
 
                 gateway_conflicts = []

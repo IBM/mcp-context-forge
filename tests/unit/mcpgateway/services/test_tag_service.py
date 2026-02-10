@@ -236,6 +236,9 @@ async def test_get_all_tags_sorted(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag(tag_service, mock_db):
     """Test getting entities by a specific tag."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     # Create mock entities
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
@@ -294,6 +297,9 @@ async def test_get_entities_by_tag(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_no_entity_types(tag_service, mock_db):
     """Test getting entities by tag with no entity type filter."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -315,6 +321,9 @@ async def test_get_entities_by_tag_no_entity_types(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_invalid_entity_type(tag_service, mock_db):
     """Test getting entities by tag with invalid entity types."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_db.execute.return_value.scalars.return_value = []
 
     entities = await tag_service.get_entities_by_tag(mock_db, "api", ["invalid_type"])
@@ -327,6 +336,9 @@ async def test_get_entities_by_tag_invalid_entity_type(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_empty_tags(tag_service, mock_db):
     """Test entity lookup when entity has empty tags."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -346,6 +358,9 @@ async def test_get_entities_by_tag_empty_tags(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_null_tags(tag_service, mock_db):
     """Test entity lookup when entity has None tags."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
     mock_tool.name = "Test Tool"
@@ -365,6 +380,9 @@ async def test_get_entities_by_tag_null_tags(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_name_fallback_simplified(tag_service, mock_db):
     """Test entity name resolution fallback logic."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     # Test entity with original_name but no name
     mock_tool = MagicMock()
     mock_tool.id = "tool1"
@@ -555,6 +573,9 @@ async def test_get_all_tags_default_entity_types(tag_service, mock_db):
 @pytest.mark.asyncio
 async def test_get_entities_by_tag_default_entity_types(tag_service, mock_db):
     """Test that get_entities_by_tag uses all entity types by default."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
     mock_result = MagicMock()
     mock_result.scalars.return_value = []
     mock_db.execute.return_value = mock_result
@@ -564,3 +585,115 @@ async def test_get_entities_by_tag_default_entity_types(tag_service, mock_db):
 
     # Should have been called for all 5 entity types
     assert mock_db.execute.call_count == 5
+
+
+# --- Tests for dict-format tags ---
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_with_dict_format_tags(tag_service, mock_db):
+    """Test getting tags when tags are stored in dict format [{id, label}]."""
+    # Create mock entity with dict-format tags
+    mock_tool = MagicMock()
+    mock_tool.id = "tool1"
+    mock_tool.name = "Test Tool"
+    mock_tool.description = "A test tool"
+    mock_tool.tags = [{"id": "api", "label": "API"}, {"id": "data", "label": "Data Processing"}]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = [mock_tool]
+    mock_db.execute.return_value = mock_result
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"], include_entities=True)
+
+    assert len(tags) == 2
+    tag_names = [tag.name for tag in tags]
+    assert "api" in tag_names
+    assert "data" in tag_names
+
+    # Check the entity is associated with correct tags
+    api_tag = next(tag for tag in tags if tag.name == "api")
+    assert len(api_tag.entities) == 1
+    assert api_tag.entities[0].name == "Test Tool"
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_with_mixed_format_tags(tag_service, mock_db):
+    """Test getting tags when some entities have string tags and some have dict tags."""
+    # Create mock entities with mixed tag formats
+    mock_tool1 = MagicMock()
+    mock_tool1.id = "tool1"
+    mock_tool1.name = "Legacy Tool"
+    mock_tool1.description = "Uses string tags"
+    mock_tool1.tags = ["legacy", "api"]  # String format
+
+    mock_tool2 = MagicMock()
+    mock_tool2.id = "tool2"
+    mock_tool2.name = "New Tool"
+    mock_tool2.description = "Uses dict tags"
+    mock_tool2.tags = [{"id": "api", "label": "API"}, {"id": "modern", "label": "Modern"}]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = [mock_tool1, mock_tool2]
+    mock_db.execute.return_value = mock_result
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"], include_entities=True)
+
+    assert len(tags) == 3  # legacy, api, modern (api is deduplicated)
+    tag_names = [tag.name for tag in tags]
+    assert "legacy" in tag_names
+    assert "api" in tag_names
+    assert "modern" in tag_names
+
+    # API tag should have 2 entities (from both string and dict formats)
+    api_tag = next(tag for tag in tags if tag.name == "api")
+    assert len(api_tag.entities) == 2
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_with_dict_format(tag_service, mock_db):
+    """Test getting entities when tags are in dict format."""
+    # Mock database dialect for json_contains_tag_expr
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
+    mock_tool = MagicMock()
+    mock_tool.id = "tool1"
+    mock_tool.name = "Test Tool"
+    mock_tool.description = "A test tool"
+    mock_tool.tags = [{"id": "api", "label": "API"}, {"id": "testing", "label": "Testing"}]
+
+    mock_result = MagicMock()
+    mock_result.scalars.return_value = [mock_tool]
+    mock_db.execute.return_value = mock_result
+
+    entities = await tag_service.get_entities_by_tag(mock_db, "api", ["tools"])
+
+    assert len(entities) == 1
+    assert entities[0].name == "Test Tool"
+
+
+def test_get_tag_id_with_string():
+    """Test _get_tag_id with string tag."""
+    service = TagService()
+    assert service._get_tag_id("simple-tag") == "simple-tag"
+
+
+def test_get_tag_id_with_dict_id():
+    """Test _get_tag_id with dict tag containing id."""
+    service = TagService()
+    assert service._get_tag_id({"id": "api", "label": "API"}) == "api"
+
+
+def test_get_tag_id_with_dict_label_only():
+    """Test _get_tag_id with dict tag containing only label (edge case)."""
+    service = TagService()
+    # Falls back to label when id is missing
+    assert service._get_tag_id({"label": "API"}) == "API"
+
+
+def test_get_tag_id_with_empty_dict():
+    """Test _get_tag_id with empty dict."""
+    service = TagService()
+    # Returns string representation of dict when neither id nor label present
+    result = service._get_tag_id({})
+    assert result == "{}"
