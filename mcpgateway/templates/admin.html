@@ -14154,8 +14154,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <form
               id="create-team-form"
               hx-post="{{ root_path }}/admin/teams"
-              hx-target="#unified-teams-list"
-              hx-swap="afterbegin"
+              hx-target="#create-team-error"
+              hx-swap="innerHTML"
               data-team-validation="true"
             >
               <div id="create-team-error" class="mb-4"></div>
