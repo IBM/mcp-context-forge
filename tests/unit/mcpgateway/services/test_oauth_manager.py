@@ -658,3 +658,118 @@ async def test_get_redis_client_no_redis():
     finally:
         om._REDIS_INITIALIZED = original_init
         om._redis_client = original_client
+
+@pytest.mark.asyncio
+class TestClientCredentialsFlow:
+    """Test OAuth2 client credentials flow."""
+
+    async def test_client_credentials_flow_location_header(self, oauth_manager):
+        """Test client credentials flow with credentials in header."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"access_token": "header-tok"}
+    
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+    
+        client_id = "cid"
+        client_secret = "secret"
+        
+        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await oauth_manager._client_credentials_flow(
+                {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "token_url": "https://auth/token",
+                    "credentials_location": "header"
+                }
+            )
+        
+        assert result == "header-tok"
+        
+        # Verify Authorization header was sent
+        call_args = mock_client.post.call_args
+        assert call_args is not None
+        _, kwargs = call_args
+        headers = kwargs.get("headers")
+        assert headers is not None
+        assert "Authorization" in headers
+        assert headers["Authorization"].startswith("Basic ")
+        
+        # Verify body does NOT contain credentials
+        data = kwargs.get("data")
+        assert "client_id" not in data
+        assert "client_secret" not in data
+    
+    
+    async def test_client_credentials_flow_location_body(self, oauth_manager):
+        """Test client credentials flow with credentials in body."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"access_token": "body-tok"}
+    
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+    
+        client_id = "cid"
+        client_secret = "secret"
+        
+        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await oauth_manager._client_credentials_flow(
+                {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "token_url": "https://auth/token",
+                    "credentials_location": "body"
+                }
+            )
+        
+        assert result == "body-tok"
+        
+        # Verify credentials in body
+        call_args = mock_client.post.call_args
+        assert call_args is not None
+        _, kwargs = call_args
+        data = kwargs.get("data")
+        assert data["client_id"] == client_id
+        assert data["client_secret"] == client_secret
+        
+        # Verify Authorization header NOT set
+        headers = kwargs.get("headers")
+        if headers:
+            assert "Authorization" not in headers
+    
+    
+    async def test_client_credentials_flow_location_default(self, oauth_manager):
+        """Test client credentials flow defaults to body when location is unset."""
+        mock_response = MagicMock()
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "application/json"}
+        mock_response.json.return_value = {"access_token": "default-tok"}
+    
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+    
+        client_id = "cid"
+        client_secret = "secret"
+        
+        with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+            result = await oauth_manager._client_credentials_flow(
+                {
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                    "token_url": "https://auth/token"
+                    # No credentials_location specified
+                }
+            )
+        
+        assert result == "default-tok"
+        
+        # Verify credentials in body (default behavior)
+        call_args = mock_client.post.call_args
+        _, kwargs = call_args
+        data = kwargs.get("data")
+        assert data["client_id"] == client_id
+        assert data["client_secret"] == client_secret
