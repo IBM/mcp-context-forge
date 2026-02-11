@@ -46,6 +46,74 @@ This Rust backend will initially support only Streamable HTTP. Expansion to othe
 
 Lessons learned from this implementation will be documented and used to guide future transport rewrites.
 
+## Lessons Learned
+
+### 1. Rust-Python Integration Requires Proper Build Workflow
+
+Using `cargo build` alone is insufficient for Python integration.
+
+Correct workflow:
+
+``` bash
+maturin develop --release
+```
+
+This ensures the compiled `.so` module is installed into the active
+virtual environment and exports required symbols correctly.
+
+------------------------------------------------------------------------
+
+### 2. Explicit Fallback Logging Is Essential
+
+Early integration attempts silently fell back to Python when bridge
+symbols were missing.
+
+Clear startup logging is necessary to: - Detect whether Rust transport
+is actually active - Prevent false performance conclusions - Aid
+debugging in CI and production environments
+
+------------------------------------------------------------------------
+
+### 3. Transport Layer May Not Be the Primary Bottleneck
+
+Under moderate concurrency testing:
+
+-   Rust and Python transport performance were statistically similar.
+-   Application logic and database interactions likely dominate latency.
+
+Transport optimization alone does not guarantee system-level performance
+gains.
+
+------------------------------------------------------------------------
+
+### 4. Functional Parity Must Include Edge Cases
+
+Basic JSON-RPC and streaming paths were validated.
+
+However, deeper semantic validation should include:
+
+-   Partial reads
+-   Slow clients / backpressure
+-   Disconnect handling
+-   Invalid JSON input
+-   Full SSE/session lifecycle validation
+
+Parity validation must extend beyond happy-path testing.
+
+------------------------------------------------------------------------
+
+### 5. Architectural Value Beyond Immediate Performance
+
+Even without immediate throughput improvements, this implementation
+establishes:
+
+-   A clean Rust integration boundary
+-   Safe feature-flag rollout mechanism
+-   Foundation for future transport migration
+-   Reduced risk for incremental Rust adoption
+
+This lowers long-term architectural risk while preserving stability.
+
 ## Alternatives Considered
 
 | Option | Why Not |
@@ -54,6 +122,9 @@ Lessons learned from this implementation will be documented and used to guide fu
 | Full gateway rewrite in Rust | Out of scope and higher risk; significant operational complexity |
 | Using Cython for hot paths | Moderate gains but still bound by Python runtime |
 | Go-based transport layer | Different async model; less ecosystem alignment with MCP tooling |
+
+**Status:** Experimental, safe, feature-flagged, and ready for iterative
+refinement.
 
 ## References
 
