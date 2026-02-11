@@ -111,19 +111,67 @@ services:
     profiles: ["monitoring", "monitoring-lite"]
 
   cadvisor:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     profiles: ["monitoring", "monitoring-lite"]
 
   prometheus:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     profiles: ["monitoring", "monitoring-lite"]
 
   loki:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     profiles: ["monitoring", "monitoring-lite"]
 
   tempo:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     profiles: ["monitoring", "monitoring-lite"]
 
   promtail:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
     profiles: ["monitoring", "monitoring-lite"]
 
   grafana:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
     profiles: ["monitoring", "monitoring-lite"]
