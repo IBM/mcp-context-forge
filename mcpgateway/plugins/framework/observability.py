@@ -38,11 +38,8 @@ class ObservabilityProvider(Protocol):
             resource_type: Optional resource type being traced.
             resource_name: Optional resource name being traced.
             attributes: Optional key-value attributes for the span.
-
-        Returns:
-            The span identifier, or None if tracing is not available.
         """
-        ...
+        ...  # pylint: disable=unnecessary-ellipsis
 
     def end_span(
         self,
@@ -57,13 +54,13 @@ class ObservabilityProvider(Protocol):
             status: The span status (e.g. "ok", "error").
             attributes: Optional additional attributes to attach.
         """
-        ...
+        ...  # pylint: disable=unnecessary-ellipsis
 
 
 class NullObservability:
     """Default no-op implementation for standalone operation."""
 
-    def start_span(
+    def start_span(  # pylint: disable=unused-argument
         self,
         trace_id: str,
         name: str,
@@ -72,13 +69,31 @@ class NullObservability:
         resource_name: Optional[str] = None,
         attributes: Optional[Dict[str, Any]] = None,
     ) -> Optional[str]:
-        """No-op: returns None."""
+        """No-op span start for standalone operation.
+
+        Args:
+            trace_id: The trace identifier.
+            name: The span name.
+            kind: The span kind.
+            resource_type: Optional resource type.
+            resource_name: Optional resource name.
+            attributes: Optional span attributes.
+
+        Returns:
+            Always None (no-op implementation).
+        """
         return None
 
-    def end_span(
+    def end_span(  # pylint: disable=unused-argument
         self,
         span_id: Optional[str],
         status: str = "ok",
         attributes: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """No-op: does nothing."""
+        """No-op span end for standalone operation.
+
+        Args:
+            span_id: The span identifier.
+            status: The span status.
+            attributes: Optional span attributes.
+        """
