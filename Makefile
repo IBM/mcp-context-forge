@@ -40,7 +40,7 @@ METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
 
 DIRS_TO_CLEAN := __pycache__ .pytest_cache .tox .ruff_cache .pyre .mypy_cache .pytype \
 	dist build site .eggs *.egg-info .cache htmlcov certs \
-	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) htmlcov-doctest \
+	$(VENV_DIR) $(VENV_DIR).sbom $(COVERAGE_DIR) htmlcov-doctest htmlcov_ai_normalizer \
 	node_modules .mutmut-cache html
 
 FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-* \

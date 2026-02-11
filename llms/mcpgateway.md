@@ -45,7 +45,7 @@ MCP Gateway: Full Project Overview
 
 **Configuration**
 - Copy `.env.example` → `.env`; verify with `make check-env`.
-- Plugin config path via `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
+- Plugin config path via `PLUGINS_CONFIG_FILE=plugins/config.yaml`.
 - Enable plugin framework: `PLUGINS_ENABLED=true` in `.env`.
 - Prefer environment variables for security-sensitive settings.
 

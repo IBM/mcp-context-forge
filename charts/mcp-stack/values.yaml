@@ -566,7 +566,8 @@ mcpContextForge:
 
     # ─ Plugin Configuration ─
     PLUGINS_ENABLED: "false"         # enable the plugin framework
-    PLUGINS_CONFIG_FILE: "plugins/config.yaml" # path to main plugin configuration file (PLUGIN_CONFIG_FILE also accepted)
+    PLUGINS_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (PLUGIN_CONFIG_FILE also accepted)
+    PLUGIN_CONFIG_FILE: "plugins/config.yaml" # path to main plugins configuration file (deprecated, use PLUGINS_CONFIG_FILE)
     PLUGINS_CLIENT_MTLS_CA_BUNDLE: ""        # default CA bundle for external plugins (optional)
     PLUGINS_CLIENT_MTLS_CERTFILE: ""         # gateway client certificate for plugin mTLS
     PLUGINS_CLIENT_MTLS_KEYFILE: ""          # gateway client key for plugin mTLS (optional)
@@ -581,13 +582,6 @@ mcpContextForge:
     PLUGINS_SERVER_SSL_KEYFILE_PASSWORD: ""  # password for plugin server key (optional)
     PLUGINS_CLI_COMPLETION: "false"  # enable auto-completion for plugins CLI
     PLUGINS_CLI_MARKUP_MODE: "rich"  # set markup mode for plugins CLI (rich, markdown, or disabled)
-
-    # Plugin Framework (Standalone) Settings
-    # These PLUGINS_-prefixed vars configure the plugin framework independently
-    # of the gateway. PLUGINS_ENABLED and PLUGINS_CLI_* are shared with the
-    # gateway settings above. The HTTPX/SSL settings below scope HTTP client
-    # behavior specifically to plugin requests.
-    PLUGINS_CONFIG_FILE: "plugins/config.yaml"  # plugin framework config file path
     PLUGINS_PLUGIN_TIMEOUT: "30"               # plugin execution timeout (seconds)
     PLUGINS_LOG_LEVEL: "INFO"                  # plugin framework log level
     PLUGINS_SKIP_SSL_VERIFY: "false"           # skip TLS verification for plugin HTTP requests
