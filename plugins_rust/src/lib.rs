@@ -9,7 +9,8 @@
 
 use pyo3::prelude::*;
 
-pub mod pii_filter;
+// Re-export the pii_filter library (note: lib name is pii_filter_rust in Cargo.toml)
+pub use pii_filter_rust as pii_filter;
 
 /// Python module: plugins_rust
 ///
@@ -41,7 +42,7 @@ pub mod pii_filter;
 #[pymodule]
 fn plugins_rust(m: &Bound<'_, pyo3::types::PyModule>) -> PyResult<()> {
     // Export PII Filter Rust implementation
-    m.add_class::<pii_filter::PIIDetectorRust>()?;
+    m.add_class::<pii_filter_rust::PIIDetectorRust>()?;
 
     // Module metadata
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
