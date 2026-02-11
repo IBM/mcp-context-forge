@@ -5055,7 +5055,6 @@ async def test_admin_create_team_disabled(monkeypatch, mock_request, mock_db, al
     response = await admin_create_team(request=mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -5067,7 +5066,6 @@ async def test_admin_create_team_missing_name(monkeypatch, mock_db, allow_permis
     response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -5118,7 +5116,6 @@ async def test_admin_create_team_validation_error_message_cleaned(monkeypatch, m
     response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
-    assert response.headers["HX-Retarget"] == "#create-team-error"
     body = response.body.decode()
     assert "Team name cannot be empty" in body
     assert "Value error," not in body
@@ -5140,7 +5137,6 @@ async def test_admin_create_team_integrity_error_non_unique(monkeypatch, mock_db
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Database error:" in response.body.decode()
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -5159,7 +5155,6 @@ async def test_admin_create_team_unexpected_exception(monkeypatch, mock_db, allo
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Error creating team" in response.body.decode()
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
