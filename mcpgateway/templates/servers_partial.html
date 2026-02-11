@@ -57,7 +57,7 @@
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
     <td class="px-6 py-4 whitespace-normal break-all text-sm font-medium text-gray-900 dark:text-gray-300 max-w-32">{{ server.id }}</td>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ server.name }}</td>
-    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description }}</td>
+    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description | decode_html }}</td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
       {% if server.associatedTools %}
       <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{{ server.associatedTools | length }} tool{{ 's' if server.associatedTools | length != 1 else '' }}</span>
