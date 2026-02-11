@@ -37,7 +37,7 @@ import typer
 from typing_extensions import Annotated
 
 # First-Party
-from mcpgateway.config import settings
+from mcpgateway.plugins.framework.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +60,10 @@ DEFAULT_INSTALLER = "uv pip install"
 # CLI (overridable via environment variables)
 # ---------------------------------------------------------------------------
 
-markup_mode = settings.plugins_cli_markup_mode or typer.core.DEFAULT_MARKUP_MODE
+markup_mode = settings.cli_markup_mode or typer.core.DEFAULT_MARKUP_MODE
 app = typer.Typer(
     help="Command line tools for authoring and packaging plugins.",
-    add_completion=settings.plugins_cli_completion,
+    add_completion=settings.cli_completion,
     rich_markup_mode=None if markup_mode == "disabled" else markup_mode,
 )
 

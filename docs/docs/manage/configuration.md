@@ -984,6 +984,36 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `PLUGINS_CLI_COMPLETION`      | Enable auto-completion for plugins CLI          | `false`               | bool    |
 | `PLUGINS_CLI_MARKUP_MODE`     | Set markup mode for plugins CLI                 | (none)                | `rich`, `markdown`, `disabled` |
 
+#### Plugin Framework (Standalone) Settings
+
+The plugin framework has its own configuration via `pydantic-settings` with the `PLUGINS_` env var prefix. These settings allow the plugin framework to operate independently of the gateway configuration. When the plugin framework is used standalone (e.g., via the `mcpplugins` CLI or as a library), only these `PLUGINS_`-prefixed variables are needed. When running inside the gateway, **both** the gateway settings (above) and these framework settings are in effect.
+
+`PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are shared — the same env var is read by both the gateway and the plugin framework. The HTTP client and SSL settings below are scoped specifically to plugin requests.
+
+| Setting                                  | Description                                              | Default               | Options |
+| ---------------------------------------- | -------------------------------------------------------- | --------------------- | ------- |
+| `PLUGINS_ENABLED`                       | Enable the plugin framework (shared with gateway)        | `false`               | bool    |
+| `PLUGINS_CONFIG_FILE`                   | Path to plugin configuration file                        | `plugins/config.yaml` | string  |
+| `PLUGINS_PLUGIN_TIMEOUT`               | Plugin execution timeout (seconds)                       | `30`                  | int     |
+| `PLUGINS_LOG_LEVEL`                     | Plugin framework log level                               | `INFO`                | string  |
+| `PLUGINS_SKIP_SSL_VERIFY`              | Skip TLS verification for plugin HTTP requests           | `false`               | bool    |
+| `PLUGINS_HTTPX_MAX_CONNECTIONS`         | Plugin HTTP client max total connections                 | `200`                 | int     |
+| `PLUGINS_HTTPX_MAX_KEEPALIVE_CONNECTIONS` | Plugin HTTP client max keepalive connections            | `100`                 | int     |
+| `PLUGINS_HTTPX_KEEPALIVE_EXPIRY`        | Plugin HTTP client keepalive expiry (seconds)            | `30.0`                | float   |
+| `PLUGINS_HTTPX_CONNECT_TIMEOUT`         | Plugin HTTP client TCP connect timeout (seconds)         | `5.0`                 | float   |
+| `PLUGINS_HTTPX_READ_TIMEOUT`            | Plugin HTTP client read timeout (seconds)                | `120.0`               | float   |
+| `PLUGINS_HTTPX_WRITE_TIMEOUT`           | Plugin HTTP client write timeout (seconds)               | `30.0`                | float   |
+| `PLUGINS_HTTPX_POOL_TIMEOUT`            | Plugin HTTP client pool timeout (seconds)                | `10.0`                | float   |
+| `PLUGINS_CLI_COMPLETION`               | Enable CLI auto-completion (shared with gateway)          | `false`               | bool    |
+| `PLUGINS_CLI_MARKUP_MODE`              | CLI markup mode (shared with gateway)                     | (none)                | `rich`, `markdown`, `disabled` |
+
+!!! note "Gateway ↔ Plugin Framework Shared Settings"
+    `PLUGINS_ENABLED`, `PLUGINS_CLI_COMPLETION`, and `PLUGINS_CLI_MARKUP_MODE` are read by both the gateway
+    and the plugin framework from the same env var. The gateway also reads `PLUGIN_CONFIG_FILE` for backwards
+    compatibility, while the plugin framework reads `PLUGINS_CONFIG_FILE`. The gateway's `HTTPX_CONNECT_TIMEOUT` /
+    `HTTPX_READ_TIMEOUT` / `SKIP_SSL_VERIFY` are independent of the plugin framework's `PLUGINS_HTTPX_CONNECT_TIMEOUT` /
+    `PLUGINS_HTTPX_READ_TIMEOUT` / `PLUGINS_SKIP_SSL_VERIFY`.
+
 ### HTTP Retry Configuration
 
 | Setting                        | Description                                      | Default               | Options |

@@ -260,7 +260,7 @@ Examples:
         "--config",
         "-c",
         type=str,
-        default=os.environ.get("PLUGINS_CONFIG_PATH"),
+        default=None,
         help="Path to plugins configuration file",
     )
     parser.add_argument(
@@ -295,10 +295,14 @@ Examples:
     )
 
     # Run the server
+    # First-Party
+    from mcpgateway.plugins.framework.settings import PluginsSettings
+
+    config_path = args.config or PluginsSettings().config_path
     try:
         asyncio.run(
             run_server(
-                config_path=args.config,
+                config_path=config_path,
                 host=args.host,
                 port=args.port,
             )

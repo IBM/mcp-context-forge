@@ -229,7 +229,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.config.PLUGINS_MTLS_CLIENT_KEY | string | `""` |  |
 | mcpContextForge.config.PLUGINS_MTLS_CLIENT_KEY_PASSWORD | string | `""` |  |
 | mcpContextForge.config.PLUGINS_MTLS_VERIFY | string | `"true"` |  |
-| mcpContextForge.config.PLUGIN_CONFIG_FILE | string | `"plugins/config.yaml"` |  |
+| mcpContextForge.config.PLUGINS_CONFIG_FILE | string | `"plugins/config.yaml"` | `PLUGIN_CONFIG_FILE` also accepted for backwards compatibility |
 | mcpContextForge.config.PORT | string | `"4444"` |  |
 | mcpContextForge.config.PROMPT_CACHE_SIZE | string | `"100"` |  |
 | mcpContextForge.config.PROMPT_RENDER_TIMEOUT | string | `"10"` |  |

@@ -1401,7 +1401,7 @@ async def get_configuration_settings(
             "mcpgateway_bulk_import_enabled": settings.mcpgateway_bulk_import_enabled,
             "mcpgateway_a2a_enabled": settings.mcpgateway_a2a_enabled,
             "mcpgateway_catalog_enabled": settings.mcpgateway_catalog_enabled,
-            "plugins_enabled": settings.plugins_enabled,
+            "plugins_enabled": settings.plugins.enabled,
             "well_known_enabled": settings.well_known_enabled,
             "mcpgateway_direct_proxy_enabled": settings.mcpgateway_direct_proxy_enabled,
         },
