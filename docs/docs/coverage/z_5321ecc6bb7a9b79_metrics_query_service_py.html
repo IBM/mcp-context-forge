@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_metrics_rollup_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 12:30 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -644,7 +644,7 @@
     <p class="run"><span class="n"><a id="t560" href="#t560">560</a></span><span class="t">    <span class="key">if</span> <span class="nam">include_deleted</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t561" href="#t561">561</a></span><span class="t">        <span class="com"># Query for deleted entities (exist in rollup but not in entity table)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t562" href="#t562">562</a></span><span class="t">        <span class="com"># Handle NULL properly: entity_id IS NULL (deleted via SET NULL) OR entity_id not in existing entities</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t563" href="#t563">563</a></span><span class="t">        <span class="nam">existing_ids_subq</span> <span class="op">=</span> <span class="nam">select</span><span class="op">(</span><span class="nam">entity_model</span><span class="op">.</span><span class="nam">id</span><span class="op">)</span><span class="op">.</span><span class="nam">subquery</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t563" href="#t563">563</a></span><span class="t">        <span class="nam">existing_ids_select</span> <span class="op">=</span> <span class="nam">select</span><span class="op">(</span><span class="nam">entity_model</span><span class="op">.</span><span class="nam">id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t564" href="#t564">564</a></span><span class="t">        <span class="nam">deleted_entities_query</span> <span class="op">=</span> <span class="nam">select</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t565" href="#t565">565</a></span><span class="t">            <span class="nam">rollup_subq</span><span class="op">.</span><span class="nam">c</span><span class="op">.</span><span class="nam">entity_id</span><span class="op">.</span><span class="nam">label</span><span class="op">(</span><span class="str">"id"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t566" href="#t566">566</a></span><span class="t">            <span class="nam">rollup_subq</span><span class="op">.</span><span class="nam">c</span><span class="op">.</span><span class="nam">preserved_name</span><span class="op">.</span><span class="nam">label</span><span class="op">(</span><span class="str">"name"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -657,7 +657,7 @@
     <p class="run run2"><span class="n"><a id="t573" href="#t573">573</a></span><span class="t">        <span class="op">)</span><span class="op">.</span><span class="nam">where</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t574" href="#t574">574</a></span><span class="t">            <span class="com"># Include entities with NULL id (deleted via SET NULL) OR entities not in entity table</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t575" href="#t575">575</a></span><span class="t">            <span class="op">(</span><span class="nam">rollup_subq</span><span class="op">.</span><span class="nam">c</span><span class="op">.</span><span class="nam">entity_id</span><span class="op">.</span><span class="nam">is_</span><span class="op">(</span><span class="key">None</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t576" href="#t576">576</a></span><span class="t">            <span class="op">|</span> <span class="op">(</span><span class="nam">rollup_subq</span><span class="op">.</span><span class="nam">c</span><span class="op">.</span><span class="nam">entity_id</span><span class="op">.</span><span class="nam">notin_</span><span class="op">(</span><span class="nam">existing_ids_subq</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t576" href="#t576">576</a></span><span class="t">            <span class="op">|</span> <span class="op">(</span><span class="nam">rollup_subq</span><span class="op">.</span><span class="nam">c</span><span class="op">.</span><span class="nam">entity_id</span><span class="op">.</span><span class="nam">notin_</span><span class="op">(</span><span class="nam">existing_ids_select</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t577" href="#t577">577</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t578" href="#t578">578</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t579" href="#t579">579</a></span><span class="t">        <span class="com"># Combine existing and deleted entities</span>&nbsp;</span><span class="r"></span></p>
@@ -755,7 +755,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_metrics_rollup_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 12:30 +0000
         </p>
     </div>
 </footer>

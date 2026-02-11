@@ -82,6 +82,25 @@ class TeamManagementService:
         """
         self.db = db
 
+    @staticmethod
+    def _fire_and_forget(coro: Any) -> None:
+        """Schedule a background coroutine and close it if scheduling fails."""
+        try:
+            task = asyncio.create_task(coro)
+            # Some tests patch create_task with a plain Mock return value. In that
+            # case the coroutine is never actually scheduled and must be closed.
+            if asyncio.iscoroutine(coro) and not isinstance(task, asyncio.Task):
+                close = getattr(coro, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            # If create_task() fails (e.g. no running loop), the coroutine has
+            # already been created and must be closed to avoid runtime warnings.
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            raise
+
     def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
         """
         Log a team member action to EmailTeamMemberHistory.
@@ -413,13 +432,13 @@ class TeamManagementService:
 
             # Invalidate all role caches for this team
             try:
-                asyncio.create_task(auth_cache.invalidate_team_roles(team_id))
-                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                self._fire_and_forget(auth_cache.invalidate_team_roles(team_id))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
                 # Also invalidate team cache, teams list cache, and team membership cache for each member
                 for membership in memberships:
-                    asyncio.create_task(auth_cache.invalidate_team(membership.user_email))
-                    asyncio.create_task(auth_cache.invalidate_user_teams(membership.user_email))
-                    asyncio.create_task(auth_cache.invalidate_team_membership(membership.user_email))
+                    self._fire_and_forget(auth_cache.invalidate_team(membership.user_email))
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+                    self._fire_and_forget(auth_cache.invalidate_team_membership(membership.user_email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate caches on team delete: {cache_error}")
 
@@ -504,11 +523,11 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                asyncio.create_task(auth_cache.invalidate_team(user_email))
-                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
-                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                self._fire_and_forget(auth_cache.invalidate_team(user_email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team add: {cache_error}")
 
@@ -574,10 +593,10 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                asyncio.create_task(auth_cache.invalidate_team(user_email))
-                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
+                self._fire_and_forget(auth_cache.invalidate_team(user_email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team remove: {cache_error}")
 
@@ -649,7 +668,7 @@ class TeamManagementService:
 
             # Invalidate role cache
             try:
-                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on role update: {cache_error}")
 
@@ -1331,11 +1350,11 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                asyncio.create_task(auth_cache.invalidate_team(join_request.user_email))
-                asyncio.create_task(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(join_request.user_email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(join_request.user_email))
-                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                self._fire_and_forget(auth_cache.invalidate_team(join_request.user_email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(join_request.user_email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(join_request.user_email))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate caches on join approval: {cache_error}")
 

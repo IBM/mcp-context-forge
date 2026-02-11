@@ -17,9 +17,10 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import timedelta
 import secrets
-from typing import List, Optional
+from typing import Any, List, Optional
 
 # Third-Party
 from sqlalchemy.orm import Session
@@ -74,6 +75,21 @@ class TeamInvitationService:
             'TeamInvitationService'
         """
         self.db = db
+
+    @staticmethod
+    def _fire_and_forget(coro: Any) -> None:
+        """Schedule a background coroutine and close it if scheduling fails."""
+        try:
+            task = asyncio.create_task(coro)
+            if asyncio.iscoroutine(coro) and not isinstance(task, asyncio.Task):
+                close = getattr(coro, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            raise
 
     def _generate_invitation_token(self) -> str:
         """Generate a secure invitation token.
@@ -317,16 +333,13 @@ class TeamInvitationService:
 
             # Invalidate auth cache for user's team membership
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-                asyncio.create_task(auth_cache.invalidate_team(invitation.email))
-                asyncio.create_task(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(invitation.email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(invitation.email))
+                self._fire_and_forget(auth_cache.invalidate_team(invitation.email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(invitation.email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(invitation.email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on invitation acceptance: {cache_error}")
 

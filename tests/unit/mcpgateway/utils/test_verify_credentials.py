@@ -50,7 +50,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # Shared constants / helpers
 # ---------------------------------------------------------------------------
-SECRET = "unit-secret"
+SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 ALGO = "HS256"
 
 
@@ -111,7 +111,7 @@ async def test_verify_jwt_token_invalid_signature(monkeypatch):
     monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
     monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
 
-    bad_token = _token({"x": 1}, secret="other-secret")
+    bad_token = _token({"x": 1}, secret="other-secret-key-with-minimum-32-bytes")
     with pytest.raises(HTTPException) as exc:
         await vc.verify_jwt_token(bad_token)
 
@@ -558,7 +558,7 @@ async def test_verify_jwt_token_invalid_signature_before_missing_exp(monkeypatch
     # Create token with wrong secret AND no exp claim
     bad_token = jwt.encode(
         {"sub": "test", "aud": "mcpgateway-api", "iss": "mcpgateway"},  # No exp claim
-        "wrong-secret",
+        "wrong-secret-key-with-minimum-32-bytes",
         algorithm=ALGO,
     )
 
