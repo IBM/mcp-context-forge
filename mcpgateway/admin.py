@@ -4049,8 +4049,6 @@ async def admin_create_team(
     if not getattr(settings, "email_auth_enabled", False):
         error_content = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Email authentication is disabled</div>'
         response = HTMLResponse(content=error_content, status_code=403)
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
 
     try:
@@ -4065,8 +4063,6 @@ async def admin_create_team(
                 content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team name is required</div>',
                 status_code=400,
             )
-            response.headers["HX-Retarget"] = "#create-team-error"
-            response.headers["HX-Reswap"] = "innerHTML"
             return response
 
         # Create team
@@ -4100,9 +4096,6 @@ async def admin_create_team(
             content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(error_text)}</div>',
             status_code=400,
         )
-        # Retarget to error container instead of teams list
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
@@ -4111,8 +4104,6 @@ async def admin_create_team(
         else:
             error_content = f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Database error: {html.escape(str(e))}</div>'
         response = HTMLResponse(content=error_content, status_code=400)
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
     except Exception as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
@@ -4120,8 +4111,6 @@ async def admin_create_team(
             content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Error creating team: {html.escape(str(e))}</div>',
             status_code=400,
         )
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
 
 
