@@ -84,7 +84,14 @@ class TeamManagementService:
 
     @staticmethod
     def _fire_and_forget(coro: Any) -> None:
-        """Schedule a background coroutine and close it if scheduling fails."""
+        """Schedule a background coroutine and close it if scheduling fails.
+
+        Args:
+            coro: The coroutine to schedule as a background task.
+
+        Raises:
+            Exception: If asyncio.create_task fails (e.g. no running loop).
+        """
         try:
             task = asyncio.create_task(coro)
             # Some tests patch create_task with a plain Mock return value. In that

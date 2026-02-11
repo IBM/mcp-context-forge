@@ -78,7 +78,14 @@ class TeamInvitationService:
 
     @staticmethod
     def _fire_and_forget(coro: Any) -> None:
-        """Schedule a background coroutine and close it if scheduling fails."""
+        """Schedule a background coroutine and close it if scheduling fails.
+
+        Args:
+            coro: The coroutine to schedule as a background task.
+
+        Raises:
+            Exception: If asyncio.create_task fails (e.g. no running loop).
+        """
         try:
             task = asyncio.create_task(coro)
             if asyncio.iscoroutine(coro) and not isinstance(task, asyncio.Task):
