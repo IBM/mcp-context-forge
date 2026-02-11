@@ -39,6 +39,7 @@ from unittest.mock import patch as mock_patch
 import jwt
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -54,6 +55,13 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
 
 # Test Configuration
 TEST_USER = "testuser"
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"
+
+# Ensure test tokens use a strong signing key to avoid weak-key warnings.
+if hasattr(settings.jwt_secret_key, "get_secret_value") and callable(getattr(settings.jwt_secret_key, "get_secret_value", None)):
+    settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
+else:
+    settings.jwt_secret_key = TEST_JWT_SECRET
 
 
 def generate_test_jwt():
@@ -63,7 +71,9 @@ def generate_test_jwt():
         "exp": int(time.time()) + 3600,
         "teams": [],
     }
-    secret = settings.jwt_secret_key.get_secret_value()
+    secret = settings.jwt_secret_key
+    if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
+        secret = secret.get_secret_value()
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -141,7 +151,8 @@ async def oauth_test_db():
         return generate_test_jwt()
 
     test_user_context = create_mock_user_context(email="testuser@example.com", full_name="Test User", is_admin=True)
-    test_user_context["db"] = TestSessionLocal()
+    test_user_context_db = TestSessionLocal()
+    test_user_context["db"] = test_user_context_db
 
     async def simple_mock_user_with_permissions():
         return test_user_context
@@ -172,7 +183,9 @@ async def oauth_test_db():
 
     # Cleanup
     sec_patcher.stop()
+    test_user_context_db.close()
     app.dependency_overrides.clear()
+    engine.dispose()
     os.close(db_fd)
     os.unlink(db_path)
 

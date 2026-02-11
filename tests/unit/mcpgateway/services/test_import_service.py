@@ -1620,6 +1620,24 @@ async def test_gateway_update_auth_conversion_basic_and_headers(import_service):
 # Bulk Registration Tests (from test_bulk_registration.py)
 # ============================================================================
 
+_SQLITE_TEST_SESSIONS = []
+
+
+@pytest.fixture(autouse=True)
+def cleanup_make_session_resources():
+    """Close sessions/engines created by make_session() to avoid ResourceWarning leaks."""
+    yield
+    while _SQLITE_TEST_SESSIONS:
+        session, engine = _SQLITE_TEST_SESSIONS.pop()
+        try:
+            session.close()
+        except Exception:
+            pass
+        try:
+            engine.dispose()
+        except Exception:
+            pass
+
 
 def make_session():
     """Create an in-memory SQLite session for isolated tests."""
@@ -1633,7 +1651,9 @@ def make_session():
     engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    return Session()
+    session = Session()
+    _SQLITE_TEST_SESSIONS.append((session, engine))
+    return session
 
 
 @pytest.mark.asyncio

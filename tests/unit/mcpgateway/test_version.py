@@ -16,6 +16,7 @@ import builtins
 from importlib import util as importlib_util
 import re
 import runpy
+import sys
 import types
 from typing import Any, Dict
 
@@ -619,7 +620,12 @@ def test_version_module_import_error_branches_runpy(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(builtins, "__import__", _fake_import)
     monkeypatch.setattr(importlib_util, "find_spec", _fake_find_spec)
 
-    ns = runpy.run_module("mcpgateway.version", run_name="mcpgateway._version_import_error_test")
+    original_module = sys.modules.pop("mcpgateway.version", None)
+    try:
+        ns = runpy.run_module("mcpgateway.version", run_name="mcpgateway._version_import_error_test")
+    finally:
+        if original_module is not None:
+            sys.modules["mcpgateway.version"] = original_module
     assert ns["psutil"] is None
     assert ns["REDIS_AVAILABLE"] is False
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/auth.py: 100%</title>
+    <title>Coverage for mcpgateway/auth.py: 99%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;auth.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">99%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -56,10 +56,10 @@
         </aside>
         <h2>
             <span class="text">448 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">448<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">446<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">2<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">2<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_580dae60cda9039c_admin_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +67,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_bootstrap_db_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 12:00 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -751,8 +751,8 @@
     <p class="pln"><span class="n"><a id="t667" href="#t667">667</a></span><span class="t"><span class="str">        Args:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t668" href="#t668">668</a></span><span class="t"><span class="str">            payload: Decoded JWT payload</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t669" href="#t669">669</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t670" href="#t670">670</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">request</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t671" href="#t671">671</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t670" href="#t670">670</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">request</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">670&#x202F;&#x219B;&#x202F;671</span><span class="annotate long">line 670 didn't jump to line 671 because the condition on line 670 was never true</span></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t671" href="#t671">671</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t672" href="#t672">672</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t673" href="#t673">673</a></span><span class="t">        <span class="com"># NOTE: Cannot use structural check (scopes dict) because email login JWTs</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t674" href="#t674">674</a></span><span class="t">        <span class="com"># also have scopes dict (see email_auth.py:160)</span>&nbsp;</span><span class="r"></span></p>
@@ -1172,8 +1172,8 @@
     <p class="run"><span class="n"><a id="t1088" href="#t1088">1088</a></span><span class="t">            <span class="nam">normalized_teams</span> <span class="op">=</span> <span class="nam">normalize_token_teams</span><span class="op">(</span><span class="nam">payload</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1089" href="#t1089">1089</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1090" href="#t1090">1090</a></span><span class="t">        <span class="com"># Set team_id: only for single-team API tokens</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1091" href="#t1091">1091</a></span><span class="t">        <span class="key">if</span> <span class="nam">normalized_teams</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t1092" href="#t1092">1092</a></span><span class="t">            <span class="nam">team_id</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
+    <p class="par run show_par"><span class="n"><a id="t1091" href="#t1091">1091</a></span><span class="t">        <span class="key">if</span> <span class="nam">normalized_teams</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">1091&#x202F;&#x219B;&#x202F;1092</span><span class="annotate long">line 1091 didn't jump to line 1092 because the condition on line 1091 was never true</span></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t1092" href="#t1092">1092</a></span><span class="t">            <span class="nam">team_id</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1093" href="#t1093">1093</a></span><span class="t">        <span class="key">elif</span> <span class="nam">len</span><span class="op">(</span><span class="nam">normalized_teams</span><span class="op">)</span> <span class="op">==</span> <span class="num">1</span> <span class="key">and</span> <span class="nam">token_use</span> <span class="op">!=</span> <span class="str">"session"</span><span class="op">:</span>  <span class="com"># nosec B105</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1094" href="#t1094">1094</a></span><span class="t">            <span class="nam">team_id</span> <span class="op">=</span> <span class="nam">normalized_teams</span><span class="op">[</span><span class="num">0</span><span class="op">]</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">normalized_teams</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span> <span class="key">else</span> <span class="nam">normalized_teams</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"id"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1095" href="#t1095">1095</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -1349,7 +1349,7 @@
             <a class="nav" href="z_580dae60cda9039c_bootstrap_db_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 12:00 +0000
         </p>
     </div>
 </footer>

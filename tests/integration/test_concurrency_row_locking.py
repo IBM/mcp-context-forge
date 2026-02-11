@@ -59,6 +59,7 @@ def create_test_jwt_token():
     import datetime
     import jwt
 
+    test_secret = "integration-test-jwt-secret-key-with-minimum-32-bytes"
     expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=60)
     payload = {
         "sub": "admin@example.com",
@@ -69,7 +70,7 @@ def create_test_jwt_token():
         "aud": "mcpgateway-api",
         "teams": [],
     }
-    return jwt.encode(payload, "my-test-key", algorithm="HS256")
+    return jwt.encode(payload, test_secret, algorithm="HS256")
 
 
 TEST_JWT_TOKEN = create_test_jwt_token()

@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import IntegrityError
 import jwt
 import pytest
@@ -26,6 +26,8 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
 )
+
+TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 
 
 # --------------------------------------------------------------------------- #
@@ -50,6 +52,13 @@ def test_client(app_with_temp_db):
     )
 
     app_with_temp_db.dependency_overrides[require_auth] = lambda: "test_user"
+
+    # Use a strong JWT secret during tests to avoid short-key warnings.
+    original_jwt_secret = settings.jwt_secret_key
+    if hasattr(original_jwt_secret, "get_secret_value") and callable(getattr(original_jwt_secret, "get_secret_value", None)):
+        settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
+    else:
+        settings.jwt_secret_key = TEST_JWT_SECRET
 
     # First-Party
     from mcpgateway.auth import get_current_user
@@ -82,6 +91,7 @@ def test_client(app_with_temp_db):
     client = TestClient(app_with_temp_db)
     yield client
 
+    settings.jwt_secret_key = original_jwt_secret
     app_with_temp_db.dependency_overrides.pop(require_auth, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)

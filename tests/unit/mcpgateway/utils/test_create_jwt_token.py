@@ -39,7 +39,7 @@ from mcpgateway.utils import create_jwt_token as jwt_util  # noqa: E402
 # --------------------------------------------------------------------------- #
 # Patch module-level constants **before** we start calling helpers            #
 # --------------------------------------------------------------------------- #
-TEST_SECRET = "unit-test-secret"
+TEST_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 TEST_ALGO = "HS256"
 
 jwt_util.DEFAULT_SECRET = TEST_SECRET
