@@ -726,6 +726,111 @@ class TestUpdateApiTokenLastUsed:
             # Should not commit if token not found
             mock_db.commit.assert_not_called()
 
+    def test_update_api_token_last_used_sync_rate_limits_with_redis(self):
+        """Test that _update_api_token_last_used_sync rate-limits updates using Redis."""
+        # Third-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+
+        mock_redis_client = MagicMock()
+        mock_redis_client.get.return_value = "1234567890.0"  # Last update timestamp
+
+        with patch("mcpgateway.auth.settings") as mock_settings, \
+             patch("redis.from_url", return_value=mock_redis_client), \
+             patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
+             patch("time.time", return_value=1234567890.0):  # Same time (no elapsed time)
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.cache_type = "redis"
+            mock_settings.token_last_used_update_interval_minutes = 5
+
+            _update_api_token_last_used_sync("jti-123")
+
+            # Should skip DB update due to rate limiting
+            mock_fresh_session.assert_not_called()
+            mock_redis_client.get.assert_called_once_with("api_token_last_used:jti-123")
+
+    def test_update_api_token_last_used_sync_updates_after_interval(self):
+        """Test that _update_api_token_last_used_sync updates after rate-limit interval."""
+        # Third-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        mock_redis_client = MagicMock()
+        # Last update was 400 seconds ago (> 5 minutes)
+        mock_redis_client.get.return_value = "1234567490.0"
+
+        with patch("mcpgateway.auth.settings") as mock_settings, \
+             patch("redis.from_url", return_value=mock_redis_client), \
+             patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
+             patch("time.time", return_value=1234567890.0), \
+             patch("mcpgateway.db.utc_now") as mock_utc_now:
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.cache_type = "redis"
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+            mock_utc_now.return_value = mock_time
+
+            _update_api_token_last_used_sync("jti-123")
+
+            # Should update DB after rate-limit interval
+            mock_fresh_session.assert_called_once()
+            mock_db.commit.assert_called_once()
+            assert mock_api_token.last_used == mock_time
+            # Should update Redis cache
+            mock_redis_client.setex.assert_called_once()
+
+    def test_update_api_token_last_used_sync_falls_back_to_memory_cache(self):
+        """Test that _update_api_token_last_used_sync falls back to in-memory cache when Redis unavailable."""
+        # Third-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        # Clear the in-memory cache if it exists
+        if hasattr(_update_api_token_last_used_sync, "_cache"):
+            _update_api_token_last_used_sync._cache.clear()
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-fallback-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.settings") as mock_settings, \
+             patch("redis.from_url", side_effect=Exception("Redis unavailable")), \
+             patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
+             patch("time.time", return_value=1234567890.0), \
+             patch("mcpgateway.db.utc_now") as mock_utc_now:
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.cache_type = "redis"
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+            mock_utc_now.return_value = mock_time
+
+            # First call should update
+            _update_api_token_last_used_sync("jti-fallback-123")
+            mock_db.commit.assert_called_once()
+            assert mock_api_token.last_used == mock_time
+
+            # Second call immediately after should be rate-limited
+            mock_db.reset_mock()
+            _update_api_token_last_used_sync("jti-fallback-123")
+            mock_db.commit.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_api_token_last_used_updated_on_jwt_auth(self, monkeypatch):
         """Test that last_used is updated when API token is authenticated via JWT."""

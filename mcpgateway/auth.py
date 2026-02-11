@@ -15,6 +15,7 @@ import asyncio
 from datetime import datetime, timezone
 import hashlib
 import logging
+import threading
 from typing import Any, Dict, Generator, List, Never, Optional
 import uuid
 
@@ -32,6 +33,10 @@ from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Security scheme
 security = HTTPBearer(auto_error=False)
+
+# Module-level sync Redis client for rate-limiting (lazy-initialized)
+_sync_redis_client = None
+_sync_redis_lock = threading.Lock()
 
 
 def _log_auth_event(
@@ -466,11 +471,54 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_sync_redis_client():
+    """Get or create module-level synchronous Redis client for rate-limiting.
+
+    Returns:
+        Redis client or None if Redis is unavailable/disabled.
+    """
+    global _sync_redis_client
+
+    # Standard
+    import logging as log  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel
+
+    # Quick check without lock
+    if _sync_redis_client is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
+        return _sync_redis_client
+
+    # Lazy initialization with lock
+    with _sync_redis_lock:
+        # Double-check after acquiring lock
+        if _sync_redis_client is not None:
+            return _sync_redis_client
+
+        try:
+            # Third-Party
+            import redis  # pylint: disable=import-outside-toplevel
+
+            _sync_redis_client = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            # Test connection
+            _sync_redis_client.ping()
+            log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
+        except Exception as e:
+            log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
+            _sync_redis_client = None
+
+    return _sync_redis_client
+
+
 def _update_api_token_last_used_sync(jti: str) -> None:
-    """Update last_used timestamp for an API token.
+    """Update last_used timestamp for an API token with rate-limiting.
 
     This function is called when an API token is successfully validated via JWT,
     ensuring the last_used field stays current for monitoring and security audits.
+
+    Rate-limiting: Uses Redis cache (or in-memory fallback) to track the last
+    update time and only writes to the database if the configured interval has
+    elapsed. This prevents excessive DB writes on high-traffic tokens.
 
     Args:
         jti: JWT ID of the API token
@@ -479,6 +527,62 @@ def _update_api_token_last_used_sync(jti: str) -> None:
         Called via asyncio.to_thread() to avoid blocking the event loop.
         Uses fresh_db_session() for thread-safe database access.
     """
+    # Standard
+    import time  # pylint: disable=import-outside-toplevel,redefined-outer-name
+
+    # First-Party
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel
+
+    # Rate-limiting cache key
+    cache_key = f"api_token_last_used:{jti}"
+    update_interval_seconds = config_settings.token_last_used_update_interval_minutes * 60
+
+    # Try Redis rate-limiting first (if available)
+    redis_client = _get_sync_redis_client()
+    if redis_client:
+        try:
+            last_update = redis_client.get(cache_key)
+            if last_update:
+                # Check if enough time has elapsed
+                time_since_update = time.time() - float(last_update)
+                if time_since_update < update_interval_seconds:
+                    return  # Skip update - too soon
+
+            # Update DB and cache
+            with fresh_db_session() as db:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
+
+                result = db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti))
+                api_token = result.scalar_one_or_none()
+                if api_token:
+                    api_token.last_used = utc_now()
+                    db.commit()
+                    # Update Redis cache with current timestamp
+                    redis_client.setex(cache_key, update_interval_seconds * 2, str(time.time()))
+            return
+        except Exception:
+            # Redis failed, fall through to in-memory cache
+            pass
+
+    # Fallback: In-memory cache (simple dict with threading.Lock for thread-safety)
+    # Note: This is per-process and won't work in multi-worker deployments
+    # but provides basic rate-limiting when Redis is unavailable
+    if not hasattr(_update_api_token_last_used_sync, "_cache"):
+        _update_api_token_last_used_sync._cache = {}  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        _update_api_token_last_used_sync._cache_lock = threading.Lock()  # type: ignore[attr-defined]  # pylint: disable=protected-access
+
+    with _update_api_token_last_used_sync._cache_lock:  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        last_update = _update_api_token_last_used_sync._cache.get(jti)  # type: ignore[attr-defined]  # pylint: disable=protected-access
+        if last_update:
+            time_since_update = time.time() - last_update
+            if time_since_update < update_interval_seconds:
+                return  # Skip update - too soon
+
+    # Update DB and cache
     with fresh_db_session() as db:
         # Third-Party
         from sqlalchemy import select  # pylint: disable=import-outside-toplevel
@@ -491,6 +595,9 @@ def _update_api_token_last_used_sync(jti: str) -> None:
         if api_token:
             api_token.last_used = utc_now()
             db.commit()
+            # Update in-memory cache (with lock for thread-safety)
+            with _update_api_token_last_used_sync._cache_lock:  # type: ignore[attr-defined]  # pylint: disable=protected-access
+                _update_api_token_last_used_sync._cache[jti] = time.time()  # type: ignore[attr-defined]  # pylint: disable=protected-access
 
 
 def _is_api_token_jti_sync(jti: str) -> bool:
