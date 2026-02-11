@@ -2,8 +2,7 @@
 # This .gitignore is for tests/playwright/ directory
 
 # Authentication state (saved browser sessions)
-.auth/
-*.json
+.auth/*.json
 
 # Screenshots from failed tests
 screenshots/
