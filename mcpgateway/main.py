@@ -1019,6 +1019,13 @@ def validate_security_configuration():
         if settings.jwt_audience == "mcpgateway-api":
             logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
 
+    # Audit logging for explicit security overrides in production
+    if settings.environment == "production" and not settings.require_strong_secrets:
+        logger.warning(
+            "SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. "
+            "This override is being logged for audit purposes as per US-1 requirements."
+        )
+
     log_security_recommendations(security_status)
 
 
