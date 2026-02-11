@@ -2024,3 +2024,212 @@ class TestGetUserTeamRoles:
 
         assert len(result) == 3
         assert result == {"team-a": "owner", "team-b": "member", "team-c": "viewer"}
+
+
+class TestResolveTeamsFromDbHelpers:
+    """Targeted tests for small cache/DB helper branches in auth.py."""
+
+    def test_resolve_teams_from_db_sync_cache_read_exception(self, monkeypatch):
+        """Cache read errors are non-fatal and fall back to DB (lines 224-225)."""
+        # First-Party
+        from mcpgateway.auth import _resolve_teams_from_db_sync
+        from mcpgateway.cache.auth_cache import auth_cache
+
+        class BadGetDict(dict):
+            def get(self, *args, **kwargs):  # noqa: ANN002, ANN003 - test helper
+                raise RuntimeError("cache read fail")
+
+        monkeypatch.setattr(auth_cache, "_teams_list_cache", BadGetDict())
+
+        with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
+            assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
+
+    def test_resolve_teams_from_db_sync_cache_write_exception(self, monkeypatch):
+        """Cache write errors are non-fatal and still return DB result (lines 243-244)."""
+        # First-Party
+        from mcpgateway.auth import _resolve_teams_from_db_sync
+        from mcpgateway.cache.auth_cache import auth_cache
+
+        class ExplodingLock:
+            def __enter__(self):  # noqa: ANN001 - test helper
+                raise RuntimeError("lock fail")
+
+            def __exit__(self, exc_type, exc, tb):  # noqa: ANN001 - test helper
+                return False
+
+        monkeypatch.setattr(auth_cache, "_lock", ExplodingLock())
+
+        with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
+            assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_teams_from_db_cache_get_exception(self):
+        """Async cache read errors are non-fatal and fall back to DB (lines 274-275)."""
+        # First-Party
+        from mcpgateway.auth import _resolve_teams_from_db
+        from mcpgateway.cache.auth_cache import auth_cache
+
+        with (
+            patch.object(auth_cache, "get_user_teams", AsyncMock(side_effect=RuntimeError("cache down"))),
+            patch.object(auth_cache, "set_user_teams", AsyncMock()),
+            patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]),
+        ):
+            teams = await _resolve_teams_from_db("user@example.com", {"is_admin": False})
+
+        assert teams == ["t1"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_teams_from_db_cache_set_exception(self):
+        """Async cache write errors are non-fatal and still return DB result (lines 286-287)."""
+        # First-Party
+        from mcpgateway.auth import _resolve_teams_from_db
+        from mcpgateway.cache.auth_cache import auth_cache
+
+        with (
+            patch.object(auth_cache, "get_user_teams", AsyncMock(return_value=None)),
+            patch.object(auth_cache, "set_user_teams", AsyncMock(side_effect=RuntimeError("cache write fail"))),
+            patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]),
+        ):
+            teams = await _resolve_teams_from_db("user@example.com", {"is_admin": False})
+
+        assert teams == ["t1"]
+
+
+class TestSessionTokenBranches:
+    """Hit token_use='session' branches that weren't exercised by existing tests."""
+
+    @pytest.mark.asyncio
+    async def test_plugin_auth_success_without_request(self):
+        """Plugin auth branch where request is None (branch 795->798)."""
+        # First-Party
+        from mcpgateway.plugins.framework import PluginResult
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="plugin_token")
+
+        mock_pm = MagicMock()
+        mock_pm.has_hooks_for = MagicMock(return_value=True)
+        mock_pm.config = SimpleNamespace(plugin_settings=SimpleNamespace(include_user_info=False))
+        mock_pm.invoke_hook = AsyncMock(
+            return_value=(
+                PluginResult(
+                    modified_payload={"email": "plugin@example.com", "full_name": "Plugin User"},
+                    continue_processing=False,
+                    metadata={"auth_method": "plugin"},
+                ),
+                None,
+            )
+        )
+
+        with patch("mcpgateway.auth.get_plugin_manager", return_value=mock_pm), patch("mcpgateway.auth.get_correlation_id", return_value="req-1"):
+            user = await get_current_user(credentials=credentials, request=None)
+
+        assert user.email == "plugin@example.com"
+
+    @pytest.mark.asyncio
+    async def test_cache_session_token_falls_through_and_resolves_teams(self, monkeypatch):
+        """Cache-hit session token with missing cached user falls through to DB path (line 889, 1084)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        payload = {
+            "sub": "user@example.com",
+            "token_use": "session",
+            "user": {"auth_provider": "local"},
+        }
+        cached_ctx = SimpleNamespace(is_token_revoked=False, user=None, personal_team_id=None)
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        mock_user = EmailUser(
+            email="user@example.com",
+            password_hash="h",
+            full_name="U",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        mock_teams = ["team-a", "team-b"]
+        mock_resolve = AsyncMock(return_value=mock_teams)
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._resolve_teams_from_db", mock_resolve),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
+            user = await get_current_user(credentials=credentials, request=request)
+
+        assert user.email == "user@example.com"
+        assert request.state.token_use == "session"
+        assert request.state.token_teams == mock_teams
+        assert mock_resolve.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_batched_session_token_admin_teams_none(self, monkeypatch):
+        """Batched path session token where user is admin sets teams=None (lines 952-957)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        payload = {
+            "sub": "admin@example.com",
+            "jti": "jti-1",
+            "token_use": "session",
+            "user": {"auth_provider": "local"},
+        }
+        auth_ctx = {
+            "user": {"email": "admin@example.com", "is_active": True, "is_admin": True},
+            "team_ids": ["t1"],
+            "personal_team_id": None,
+            "is_token_revoked": False,
+        }
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+        ):
+            user = await get_current_user(credentials=credentials)
+
+        assert user.email == "admin@example.com"
+
+    @pytest.mark.asyncio
+    async def test_batched_session_token_caches_team_list(self, monkeypatch):
+        """Batched session token populates teams-list cache (line 996)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt")
+        payload = {
+            "sub": "user@example.com",
+            "jti": "jti-1",
+            "token_use": "session",
+            "user": {"auth_provider": "local"},
+        }
+        auth_ctx = {
+            "user": {"email": "user@example.com", "is_active": True, "is_admin": False},
+            "team_ids": ["t1", "t2"],
+            "personal_team_id": None,
+            "is_token_revoked": False,
+        }
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
+
+        mock_cache = MagicMock()
+        mock_cache.get_auth_context = AsyncMock(return_value=None)  # cache miss
+        mock_cache.set_auth_context = AsyncMock()
+        mock_cache.set_user_teams = AsyncMock()
+
+        with (
+            patch("mcpgateway.auth.get_plugin_manager", return_value=None),
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache),
+        ):
+            user = await get_current_user(credentials=credentials)
+
+        assert user.email == "user@example.com"
+        mock_cache.set_user_teams.assert_called_once()

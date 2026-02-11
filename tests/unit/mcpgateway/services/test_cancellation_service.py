@@ -36,6 +36,28 @@ async def test_initialize_with_redis(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_initialize_is_idempotent(monkeypatch):
+    service = CancellationService()
+    mock_get = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.services.cancellation_service.get_redis_client", mock_get)
+
+    await service.initialize()
+    await service.initialize()
+
+    # Second call should return early without re-fetching.
+    assert mock_get.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_initialize_logs_warning_on_exception(monkeypatch):
+    service = CancellationService()
+    monkeypatch.setattr("mcpgateway.services.cancellation_service.get_redis_client", AsyncMock(side_effect=RuntimeError("boom")))
+
+    await service.initialize()
+    assert service._initialized is True
+
+
+@pytest.mark.asyncio
 async def test_shutdown_cancels_task():
     service = CancellationService()
     class DummyTask:
@@ -59,6 +81,27 @@ async def test_shutdown_cancels_task():
 
     await service.shutdown()
     assert task.cancel_called is True
+
+
+@pytest.mark.asyncio
+async def test_shutdown_handles_cancelled_error_from_task():
+    service = CancellationService()
+
+    class DummyTask:
+        def done(self):
+            return False
+
+        def cancel(self):
+            return None
+
+        def __await__(self):
+            async def _raise():
+                raise asyncio.CancelledError()
+
+            return _raise().__await__()
+
+    service._pubsub_task = DummyTask()
+    await service.shutdown()
 
 
 @pytest.mark.asyncio
@@ -97,6 +140,29 @@ async def test_cancel_run_local_handles_callback_error():
 
 
 @pytest.mark.asyncio
+async def test_cancel_run_local_run_not_found():
+    service = CancellationService()
+    assert await service._cancel_run_local("missing") is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_local_already_cancelled():
+    service = CancellationService()
+    await service.register_run("run-1")
+    service._runs["run-1"]["cancelled"] = True
+    assert await service._cancel_run_local("run-1") is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_run_local_callback_success():
+    service = CancellationService()
+    callback = AsyncMock()
+    await service.register_run("run-1", cancel_callback=callback)
+    assert await service._cancel_run_local("run-1", reason="ok") is True
+    callback.assert_awaited_once_with("ok")
+
+
+@pytest.mark.asyncio
 async def test_publish_cancellation_no_redis():
     service = CancellationService()
     service._redis = None
@@ -110,6 +176,16 @@ async def test_publish_cancellation_redis_error():
     redis.publish.side_effect = RuntimeError("fail")
     service._redis = redis
     await service._publish_cancellation("run-1", reason="boom")
+
+
+@pytest.mark.asyncio
+async def test_publish_cancellation_success_logs_debug(monkeypatch):
+    service = CancellationService()
+    redis = AsyncMock()
+    service._redis = redis
+
+    await service._publish_cancellation("run-1", reason="ok")
+    redis.publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -133,6 +209,186 @@ async def test_cancel_run_already_cancelled(monkeypatch):
     result = await service.cancel_run("run-1", reason="again")
     assert result is True
     service._publish_cancellation.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_returns_when_not_initialized():
+    service = CancellationService()
+    assert await service._listen_for_cancellations() is None
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_timeout_continues(monkeypatch):
+    service = CancellationService()
+
+    class DummyPubSub:
+        async def subscribe(self, _channel):
+            return None
+
+        async def unsubscribe(self, _channel):
+            return None
+
+        async def aclose(self):
+            return None
+
+        async def get_message(self, **_kwargs):
+            return None
+
+    class DummyRedis:
+        def pubsub(self):
+            return DummyPubSub()
+
+    service._redis = DummyRedis()
+
+    calls = {"n": 0}
+
+    async def _fake_wait_for(*_args, **_kwargs):
+        # Ensure we don't leak an un-awaited coroutine created by pubsub.get_message(...).
+        if _args:
+            aw = _args[0]
+            close = getattr(aw, "close", None)
+            if callable(close):
+                close()
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise asyncio.TimeoutError()
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr("mcpgateway.services.cancellation_service.asyncio.wait_for", _fake_wait_for)
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._listen_for_cancellations()
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_skips_null_run_id(monkeypatch):
+    service = CancellationService()
+
+    messages = [
+        {"type": "message", "data": json.dumps({"run_id": None, "reason": "stop"}).encode()},
+    ]
+
+    class DummyPubSub:
+        def __init__(self, items):
+            self._items = list(items)
+            self.unsubscribe_called = False
+
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            if self._items:
+                return self._items.pop(0)
+            raise asyncio.CancelledError()
+
+        async def unsubscribe(self, _channel):
+            self.unsubscribe_called = True
+
+        async def aclose(self):
+            return None
+
+    class DummyRedis:
+        def __init__(self, pubsub):
+            self._pubsub = pubsub
+
+        def pubsub(self):
+            return self._pubsub
+
+    pubsub = DummyPubSub(messages)
+    service._redis = DummyRedis(pubsub)
+    monkeypatch.setattr(service, "_cancel_run_local", AsyncMock())
+
+    task = asyncio.create_task(service._listen_for_cancellations())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    service._cancel_run_local.assert_not_awaited()
+    assert pubsub.unsubscribe_called is True
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_pubsub_error_is_caught():
+    service = CancellationService()
+
+    class DummyRedis:
+        def pubsub(self):
+            raise RuntimeError("boom")
+
+    service._redis = DummyRedis()
+    # Should not raise.
+    assert await service._listen_for_cancellations() is None
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_cleanup_uses_close_when_aclose_missing():
+    service = CancellationService()
+
+    class DummyPubSub:
+        def __init__(self):
+            self.closed = False
+
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            raise asyncio.CancelledError()
+
+        async def unsubscribe(self, _channel):
+            return None
+
+        async def close(self):
+            self.closed = True
+
+    class DummyRedis:
+        def __init__(self, pubsub):
+            self._pubsub = pubsub
+
+        def pubsub(self):
+            return self._pubsub
+
+    pubsub = DummyPubSub()
+    service._redis = DummyRedis(pubsub)
+
+    task = asyncio.create_task(service._listen_for_cancellations())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_listen_for_cancellations_cleanup_exception_is_swallowed(monkeypatch):
+    service = CancellationService()
+
+    class DummyPubSub:
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            raise asyncio.CancelledError()
+
+        async def unsubscribe(self, _channel):
+            raise RuntimeError("boom")
+
+        async def aclose(self):
+            return None
+
+    class DummyRedis:
+        def __init__(self, pubsub):
+            self._pubsub = pubsub
+
+        def pubsub(self):
+            return self._pubsub
+
+    service._redis = DummyRedis(DummyPubSub())
+    debug = MagicMock()
+    monkeypatch.setattr("mcpgateway.services.cancellation_service.logger.debug", debug)
+
+    task = asyncio.create_task(service._listen_for_cancellations())
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert debug.called
 
 
 @pytest.mark.asyncio

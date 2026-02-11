@@ -120,7 +120,8 @@ class PluginLoader:
                 plugin = ExternalPlugin(config)
                 logger.info("Loading external plugin '%s' with MCP transport", config.name)
             else:
-                raise ValueError(f"External plugin '{config.name}' must have 'mcp', 'grpc', or 'unix_socket' configuration")
+                # Defensive fallback: PluginConfig validation should prevent this path.
+                raise ValueError(f"External plugin '{config.name}' must have 'mcp', 'grpc', or 'unix_socket' configuration")  # pragma: no cover
 
             await plugin.initialize()
             return plugin

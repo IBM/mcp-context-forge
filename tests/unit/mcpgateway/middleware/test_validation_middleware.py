@@ -155,6 +155,115 @@ class TestValidationMiddleware:
             response = await middleware.dispatch(request, call_next)
             assert response.body == b"ok"
 
+    @pytest.mark.asyncio
+    async def test_dispatch_warn_only_logs_and_continues_on_http_exception(self):
+        """Test dispatch handles HTTPException in warn-only mode (log + continue)."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = False
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "development"
+
+            middleware = ValidationMiddleware(app=None)
+
+            middleware._validate_request = AsyncMock(side_effect=HTTPException(status_code=422, detail="bad"))  # type: ignore[method-assign]
+
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": "/test",
+                "query_string": b"",
+                "headers": [],
+            }
+            request = Request(scope)
+
+            async def call_next(req):
+                return Response("ok")
+
+            response = await middleware.dispatch(request, call_next)
+            assert response.body == b"ok"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_strict_logs_and_raises_on_http_exception(self):
+        """Test dispatch re-raises HTTPException outside warn-only mode."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            middleware._validate_request = AsyncMock(side_effect=HTTPException(status_code=422, detail="bad"))  # type: ignore[method-assign]
+
+            scope = {
+                "type": "http",
+                "method": "GET",
+                "path": "/test",
+                "query_string": b"",
+                "headers": [],
+            }
+            request = Request(scope)
+
+            async def call_next(req):
+                return Response("ok")
+
+            with pytest.raises(HTTPException):
+                await middleware.dispatch(request, call_next)
+
+    @pytest.mark.asyncio
+    async def test_validate_request_path_params_and_empty_json_body(self):
+        """Test _validate_request validates path params and handles empty JSON body."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            class DummyRequest:
+                path_params = {"id": 123}
+                query_params = {"q": "ok"}
+                headers = {"content-type": "application/json"}
+
+                async def body(self):
+                    return b""
+
+            await middleware._validate_request(DummyRequest())
+
+    @pytest.mark.asyncio
+    async def test_validate_request_without_path_params_attribute(self):
+        """Test _validate_request handles objects without a path_params attribute."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_param_length = 1000
+            mock_settings.environment = "production"
+
+            middleware = ValidationMiddleware(app=None)
+
+            class DummyRequest:
+                query_params = {"q": "ok"}
+                headers = {}
+
+                async def body(self):
+                    return b""
+
+            await middleware._validate_request(DummyRequest())
+
     def test_validate_parameter_exceeds_length(self):
         """Test parameter length validation."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
@@ -275,8 +384,8 @@ class TestValidationMiddleware:
             assert exc_info.value.status_code == 400
             assert "Path traversal" in exc_info.value.detail
 
-    def test_validate_resource_path_uri_scheme_blocked(self):
-        """Test resource path validation blocks URIs with // (path traversal check first)."""
+    def test_validate_resource_path_uri_scheme_allowed(self):
+        """Test resource path validation skips checks for URI schemes."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
             mock_settings.experimental_validate_io = True
             mock_settings.validation_strict = True
@@ -286,12 +395,7 @@ class TestValidationMiddleware:
 
             middleware = ValidationMiddleware(app=None)
 
-            # URIs with :// are blocked because // is checked first
-            with pytest.raises(HTTPException) as exc_info:
-                middleware.validate_resource_path("http://example.com/resource")
-
-            assert exc_info.value.status_code == 400
-            assert "Path traversal" in exc_info.value.detail
+            assert middleware.validate_resource_path("http://example.com/resource") == "http://example.com/resource"
 
     def test_validate_resource_path_too_deep(self):
         """Test resource path validation for depth limit."""
@@ -328,6 +432,56 @@ class TestValidationMiddleware:
 
             assert exc_info.value.status_code == 400
             assert "Path outside allowed roots" in exc_info.value.detail
+
+    def test_validate_resource_path_allowed_root_returns_resolved_path(self, tmp_path):
+        """Test valid paths under allowed roots return resolved path."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = [str(tmp_path)]
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 100
+
+            middleware = ValidationMiddleware(app=None)
+
+            candidate = tmp_path / "subdir" / "file.txt"
+            resolved = middleware.validate_resource_path(str(candidate))
+            assert resolved.startswith(str(tmp_path.resolve()))
+
+    def test_validate_resource_path_no_allowed_roots_returns_resolved_path(self, tmp_path):
+        """Test valid paths return resolved path when allowed roots are not configured."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 100
+
+            middleware = ValidationMiddleware(app=None)
+
+            candidate = tmp_path / "file.txt"
+            resolved = middleware.validate_resource_path(str(candidate))
+            assert resolved == str(candidate.resolve())
+
+    def test_validate_resource_path_invalid_path_raises(self):
+        """Test invalid paths raise HTTPException via the error handler."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 100
+
+            middleware = ValidationMiddleware(app=None)
+
+            with pytest.raises(HTTPException) as exc_info:
+                middleware.validate_resource_path("bad\x00path")
+
+            assert exc_info.value.status_code == 400
+            assert "Invalid path" in exc_info.value.detail
 
     @pytest.mark.asyncio
     async def test_sanitize_response(self):
@@ -369,6 +523,49 @@ class TestValidationMiddleware:
             result = await middleware._sanitize_response(response)
 
             assert result == response
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_str_body_skips_decode(self):
+        """Test sanitization works when response.body is already a string."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+
+            middleware = ValidationMiddleware(app=None)
+
+            class DummyResponse:
+                def __init__(self, body):
+                    self.body = body
+                    self.headers = {}
+
+            response = DummyResponse("Hello\x00World")
+            sanitized = await middleware._sanitize_response(response)
+            assert sanitized.body == b"HelloWorld"
+            assert sanitized.headers["content-length"] == str(len(sanitized.body))
+
+    @pytest.mark.asyncio
+    async def test_sanitize_response_exception_is_caught(self):
+        """Test sanitization catches unexpected exceptions."""
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = True
+            mock_settings.allowed_roots = []
+            mock_settings.dangerous_patterns = []
+
+            middleware = ValidationMiddleware(app=None)
+
+            class DummyResponse:
+                def __init__(self, body):
+                    self.body = body
+                    self.headers = {}
+
+            response = DummyResponse(object())
+            result = await middleware._sanitize_response(response)
+            assert result is response
 
     @pytest.mark.asyncio
     async def test_sanitize_output_enabled(self):

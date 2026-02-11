@@ -619,7 +619,7 @@ async def export_traces(
             output.seek(0)
             return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=traces.csv"})
 
-        elif format == "ndjson":
+        else:  # format == "ndjson" (validated above)
             # Newline-delimited JSON (streaming)
             def generate():
                 """Yield newline-delimited JSON strings for each trace.
@@ -816,9 +816,7 @@ def _get_query_performance_python(db: Session, cutoff_time: datetime, hours: int
         Returns:
             Interpolated percentile value.
         """
-        n = len(data)
-        if n == 0:
-            return 0
+        n = len(data)  # data is guaranteed non-empty by caller guard above
         k = (n - 1) * p
         f = int(k)
         c = k - f
