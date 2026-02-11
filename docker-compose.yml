@@ -552,9 +552,9 @@ services:
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
     # ──────────────────────────────────────────────────────────────────────
-    # Uncomment to mount catalog configuration and SSL certificates
-    # volumes:
-    #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+    # Mount catalog configuration and SSL certificates
+    volumes:
+      - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
       # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:

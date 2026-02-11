@@ -129,7 +129,7 @@ catalog_servers:
   - id: neon
     name: "Neon"
     category: "Software Development"
-    url: "https://mcp.neon.tech/sse"
+    url: "https://mcp.neon.tech/mcp"
     auth_type: "OAuth2.1"
     provider: "Neon"
     description: "Serverless Postgres database"
@@ -149,7 +149,7 @@ catalog_servers:
   - id: sentry
     name: "Sentry"
     category: "Software Development"
-    url: "https://mcp.sentry.dev/sse"
+    url: "https://mcp.sentry.dev/mcp"
     auth_type: "OAuth2.1"
     provider: "Sentry"
     description: "Application monitoring and error tracking"
@@ -185,6 +185,27 @@ catalog_servers:
     description: "Global network testing and monitoring"
     requires_api_key: false
     tags: ["networking", "monitoring", "testing"]
+
+  - id: supabase
+    name: "Supabase"
+    category: "Database"
+    url: "https://mcp.supabase.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Supabase"
+    description: "Open source Firebase alternative with Postgres"
+    requires_api_key: false
+    tags: ["database", "postgres", "backend", "auth"]
+
+  - id: cortex
+    name: "Cortex"
+    category: "Software Development"
+    url: "https://mcp.cortex.io/mcp"
+    auth_type: "API Key"
+    provider: "Cortex"
+    transport: "SSE"
+    description: "Internal developer portal and service catalog"
+    requires_api_key: true
+    tags: ["developer-portal", "service-catalog", "development"]
 
   # Payments
   - id: stripe
@@ -247,6 +268,16 @@ catalog_servers:
     description: "Payment solutions for Latin America"
     requires_api_key: true
     tags: ["payments", "latam", "e-commerce"]
+
+  - id: ramp
+    name: "Ramp"
+    category: "Payments"
+    url: "https://ramp-mcp-remote.ramp.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Ramp"
+    description: "Corporate card and spend management platform"
+    requires_api_key: false
+    tags: ["payments", "finance", "expense-management"]
 
   # CRM
   - id: close-crm
@@ -383,6 +414,16 @@ catalog_servers:
     requires_api_key: false
     tags: ["knowledge", "memory", "notes"]
 
+  - id: mypromind
+    name: "myProMind"
+    category: "Productivity"
+    url: "https://www.mypromind.com/interface/mcp"
+    auth_type: "OAuth2.1"
+    provider: "myProMind"
+    description: "AI-powered professional productivity tools"
+    requires_api_key: false
+    tags: ["ai", "productivity", "professional"]
+
   # Design & Content
   - id: canva
     name: "Canva"
@@ -403,6 +444,16 @@ catalog_servers:
     description: "Video creation and editing platform"
     requires_api_key: false
     tags: ["video", "editing", "content-creation"]
+
+  - id: vibemarketing
+    name: "VibeMarketing"
+    category: "Marketing"
+    url: "https://vibemarketing.ninja/mcp"
+    auth_type: "OAuth2.1"
+    provider: "VibeMarketing"
+    description: "AI-powered marketing content creation"
+    requires_api_key: false
+    tags: ["marketing", "content-creation", "ai"]
 
   # CMS
   - id: webflow
@@ -436,16 +487,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["phone", "calling", "communication"]
 
-  - id: telnyx
-    name: "Telnyx"
-    category: "Communication"
-    url: "https://api.telnyx.com/v2/mcp"
-    auth_type: "API Key"
-    provider: "Telnyx"
-    description: "Voice, messaging, and connectivity APIs"
-    requires_api_key: true
-    tags: ["telecom", "voice", "sms", "api"]
-
   # Analytics & Data
   - id: thoughtspot
     name: "ThoughtSpot"
@@ -467,15 +508,15 @@ catalog_servers:
     requires_api_key: false
     tags: ["ai", "evaluation", "testing", "ml"]
 
-  - id: llm-text
-    name: "LLM Text"
-    category: "Data Analysis"
-    url: "https://mcp.llmtxt.dev/sse"
-    auth_type: "Open"
-    provider: "LLM Text"
-    description: "Text analysis with large language models"
+  - id: morningstar
+    name: "MorningStar"
+    category: "Data Analytics"
+    url: "https://mcp.morningstar.com/mcp"
+    auth_type: "OAuth2.1"
+    provider: "MorningStar"
+    description: "Investment research and financial data analytics"
     requires_api_key: false
-    tags: ["ai", "nlm", "text-analysis"]
+    tags: ["finance", "analytics", "investment", "data"]
 
   # RAG & AI Services
   - id: onecontext
@@ -511,7 +552,7 @@ catalog_servers:
   - id: deepwiki
     name: "DeepWiki"
     category: "RAG-as-a-Service"
-    url: "https://mcp.deepwiki.com/sse"
+    url: "https://mcp.deepwiki.com/mcp"
     auth_type: "Open"
     provider: "Devin"
     description: "Knowledge base with deep learning integration"
@@ -528,17 +569,17 @@ catalog_servers:
     requires_api_key: true
     tags: ["rag", "chatbot", "ai", "custom"]
 
-  # Documentation
-  - id: kollektiv
-    name: "Kollektiv"
-    category: "Documentation"
-    url: "https://mcp.thekollektiv.ai/sse"
-    auth_type: "OAuth2.1"
-    provider: "Kollektiv"
-    description: "Collaborative documentation platform"
+  - id: exa-search
+    name: "Exa Search"
+    category: "RAG-as-a-Service"
+    url: "https://mcp.exa.ai/mcp"
+    auth_type: "Open"
+    provider: "Exa"
+    description: "AI-powered search engine for retrieving web content"
     requires_api_key: false
-    tags: ["documentation", "collaboration", "knowledge"]
+    tags: ["search", "rag", "ai", "web"]
 
+  # Documentation
   - id: cloudflare-docs
     name: "Cloudflare Docs"
     category: "Documentation"
@@ -568,16 +609,6 @@ catalog_servers:
     description: "Git integration for MCP"
     requires_api_key: false
     tags: ["git", "version-control", "development"]
-
-  - id: javadocs
-    name: "Javadocs"
-    category: "Software Development"
-    url: "https://www.javadocs.dev/mcp"
-    auth_type: "Open"
-    provider: "Javadocs.dev"
-    description: "Java API documentation browser"
-    requires_api_key: false
-    tags: ["java", "documentation", "api", "reference"]
 
   # Web Scraping & Automation
   - id: simplescraper
@@ -625,7 +656,7 @@ catalog_servers:
   - id: stytch
     name: "Stytch"
     category: "Authentication"
-    url: "http://mcp.stytch.dev/mcp"
+    url: "https://mcp.stytch.dev/mcp"
     auth_type: "OAuth2.1"
     provider: "Stytch"
     description: "User authentication and authorization platform"
@@ -635,7 +666,7 @@ catalog_servers:
   - id: zenable
     name: "Zenable"
     category: "Security"
-    url: "https://mcp.www.zenable.app/"
+    url: "https://mcp.zenable.app/"
     auth_type: "OAuth2.1"
     provider: "Zenable"
     description: "Security and compliance automation"
@@ -649,6 +680,7 @@ catalog_servers:
     url: "https://api.findadomain.dev/mcp"
     auth_type: "Open"
     provider: "Find-A-Domain"
+    transport: "SSE"
     description: "Domain name search and availability checker"
     requires_api_key: false
     tags: ["domains", "dns", "search"]
@@ -713,6 +745,47 @@ catalog_servers:
     requires_api_key: false
     tags: ["automation", "integration", "workflow"]
 
+  - id: indeed
+    name: "Indeed"
+    category: "Recruitment"
+    url: "https://mcp.indeed.com/claude/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Indeed"
+    description: "Job search and recruitment platform"
+    requires_api_key: false
+    tags: ["jobs", "recruitment", "hiring"]
+
+  - id: peek
+    name: "Peek"
+    category: "Travel"
+    url: "https://mcp.peek.com"
+    auth_type: "Open"
+    provider: "Peek"
+    transport: "SSE"
+    description: "Activities and experiences booking platform"
+    requires_api_key: false
+    tags: ["travel", "booking", "activities"]
+
+  - id: ferryhopper
+    name: "Ferryhopper"
+    category: "Travel"
+    url: "https://mcp.ferryhopper.com/mcp"
+    auth_type: "Open"
+    provider: "Ferryhopper"
+    description: "Ferry ticket booking and route planning"
+    requires_api_key: false
+    tags: ["travel", "ferries", "booking"]
+
+  - id: subwayinfo-nyc
+    name: "SubwayInfo NYC"
+    category: "Travel"
+    url: "https://subwayinfo.nyc/mcp"
+    auth_type: "Open"
+    provider: "SubwayInfo"
+    description: "New York City subway information and schedules"
+    requires_api_key: false
+    tags: ["transit", "nyc", "subway"]
+
   # OpenAI & AI Platforms
   - id: hugging-face
     name: "Hugging Face"
@@ -727,8 +800,8 @@ catalog_servers:
   - id: semgrep
     name: "Semgrep"
     category: "Software Development"
-    url: "https://mcp.semgrep.ai/sse"
-    auth_type: "Open"
+    url: "https://mcp.semgrep.ai/mcp"
+    auth_type: "OAuth2.1"
     provider: "Semgrep"
     description: "Static code analysis and security scanning"
     requires_api_key: false
@@ -755,16 +828,6 @@ catalog_servers:
     requires_api_key: false
     tags: ["directory", "discovery", "mcp"]
 
-  - id: openmesh
-    name: "OpenMesh"
-    category: "Service Discovery"
-    url: "https://api.openmesh.dev/mcp"
-    auth_type: "Open"
-    provider: "OpenMesh"
-    description: "Decentralized service mesh and discovery"
-    requires_api_key: false
-    tags: ["service-mesh", "discovery", "infrastructure"]
-
   - id: context-awesome
     name: "Context Awesome"
     category: "Specialised Dataset"
@@ -774,6 +837,16 @@ catalog_servers:
     description: "Curated datasets for context-aware applications"
     requires_api_key: false
     tags: ["datasets", "context", "ai", "data"]
+
+  - id: port-io
+    name: "Port"
+    category: "Software Development"
+    url: "https://mcp.port.io/v1"
+    auth_type: "OAuth2.1"
+    provider: "Port"
+    description: "Internal developer portal for microservices"
+    requires_api_key: false
+    tags: ["developer-portal", "infrastructure", "microservices"]
 
   # Smart Contracts & Blockchain
   - id: openzeppelin-cairo
@@ -816,16 +889,140 @@ catalog_servers:
     requires_api_key: false
     tags: ["blockchain", "smart-contracts", "stylus", "arbitrum"]
 
-  # Prediction Markets
-  - id: manifold
-    name: "Manifold"
-    category: "Forecasting"
-    url: "https://api.manifold.markets/v0/mcp"
+  # Cloud Platforms
+  - id: aws-knowledge
+    name: "AWS Knowledge"
+    category: "Cloud"
+    url: "https://knowledge-mcp.global.api.aws"
     auth_type: "Open"
-    provider: "Manifold"
-    description: "Prediction market platform"
+    provider: "AWS"
+    transport: "STREAMABLEHTTP"
+    description: "AWS documentation and knowledge base"
     requires_api_key: false
-    tags: ["prediction-markets", "forecasting", "betting"]
+    tags: ["cloud", "aws", "documentation", "knowledge"]
+
+  - id: google-maps
+    name: "Google Maps"
+    category: "Maps & Location"
+    url: "https://mapstools.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Maps, geocoding, and location services"
+    requires_api_key: true
+    tags: ["maps", "location", "geocoding", "google"]
+
+  - id: google-bigquery
+    name: "Google BigQuery"
+    category: "Data Analytics"
+    url: "https://bigquery.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Serverless data warehouse for analytics"
+    requires_api_key: true
+    tags: ["data", "analytics", "warehouse", "google"]
+
+  - id: google-gke
+    name: "Google GKE"
+    category: "Cloud"
+    url: "https://container.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Google Kubernetes Engine container management"
+    requires_api_key: true
+    tags: ["kubernetes", "containers", "cloud", "google"]
+
+  - id: google-compute-engine
+    name: "Google Compute Engine"
+    category: "Cloud"
+    url: "https://compute.googleapis.com/mcp"
+    auth_type: "API Key"
+    provider: "Google"
+    description: "Virtual machine instances on Google Cloud"
+    requires_api_key: true
+    tags: ["compute", "vm", "cloud", "google"]
+
+  # Search & Data Services
+  - id: searchapi
+    name: "SearchAPI"
+    category: "Search"
+    url: "https://www.searchapi.io/mcp"
+    auth_type: "API Key"
+    provider: "SearchAPI"
+    description: "Real-time search engine results API"
+    requires_api_key: true
+    tags: ["search", "api", "data"]
+
+  - id: ean-search
+    name: "EAN-Search"
+    category: "Product Data"
+    url: "https://www.ean-search.org/mcp"
+    auth_type: "OAuth2.1"
+    provider: "EAN-Search.org"
+    description: "Barcode and product information lookup"
+    requires_api_key: false
+    tags: ["barcode", "products", "ean", "data"]
+
+  - id: webzum
+    name: "WebZum"
+    category: "Search"
+    url: "https://webzum.com/api/mcp"
+    auth_type: "Open"
+    provider: "WebZum"
+    description: "Business search and local data platform"
+    requires_api_key: false
+    tags: ["search", "business", "local-data"]
+
+  - id: zip1
+    name: "zip1.io"
+    category: "Link Shortener"
+    url: "https://zip1.io/mcp"
+    auth_type: "Open"
+    provider: "zip1.io"
+    description: "URL shortener service"
+    requires_api_key: false
+    tags: ["urls", "links", "shortener"]
+
+  # Social Media
+  - id: tweetsave
+    name: "TweetSave"
+    category: "Social Media"
+    url: "https://mcp.tweetsave.org/sse"
+    auth_type: "Open"
+    provider: "TweetSave"
+    description: "Tweet archiving and saving service"
+    requires_api_key: false
+    tags: ["twitter", "social-media", "archive"]
+
+  # Parallel AI
+  - id: parallel-task
+    name: "Parallel Task"
+    category: "AI Services"
+    url: "https://task-mcp.parallel.ai/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Parallel"
+    description: "AI-powered task execution and automation"
+    requires_api_key: false
+    tags: ["ai", "tasks", "automation"]
+
+  - id: parallel-search
+    name: "Parallel Search"
+    category: "AI Services"
+    url: "https://search-mcp.parallel.ai/mcp"
+    auth_type: "OAuth2.1"
+    provider: "Parallel"
+    description: "AI-powered search and information retrieval"
+    requires_api_key: false
+    tags: ["ai", "search", "retrieval"]
+
+  - id: metro-mcp
+    name: "Metro MCP"
+    category: "Software Development"
+    url: "https://metro-mcp.anuragd.me/sse"
+    auth_type: "OAuth2.1"
+    provider: "Metro MCP"
+    description: "Metro bundler integration for React Native"
+    requires_api_key: false
+    tags: ["react-native", "metro", "bundler", "development"]
 
   # Local Development Servers
   - id: fast-time-server
@@ -855,7 +1052,6 @@ categories:
   - Communication
   - Data Analytics
   - AI Evaluation
-  - Data Analysis
   - RAG-as-a-Service
   - Memory
   - Documentation
@@ -872,12 +1068,19 @@ categories:
   - Airlines
   - Other
   - MCP Directory
-  - Service Discovery
   - Specialised Dataset
-  - Forecasting
   - Database
   - Observability
   - Time Services
+  - Recruitment
+  - Travel
+  - Cloud
+  - Maps & Location
+  - Search
+  - Product Data
+  - Social Media
+  - AI Services
+  - Marketing
 
 # Auth types for filtering
 auth_types:
