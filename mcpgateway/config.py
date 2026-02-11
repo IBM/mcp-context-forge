@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/config.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti, Manav Gupta
+Authors: Mihai Criveti, Manav Gupta, Eleni Kechrioti
 
 MCP Gateway Configuration.
 This module defines configuration settings for the MCP Gateway using Pydantic.
@@ -607,6 +607,10 @@ class Settings(BaseSettings):
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
 
+    # Values used to detect unconfigured or insecure deployment states
+    SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
+    WEAK_VALUES: ClassVar[list[str]] = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
     max_interval: float = Field(default=5.0, description="Maximum polling interval in seconds when the session is idle")
@@ -871,6 +875,10 @@ class Settings(BaseSettings):
     class SecurityStatus(TypedDict):
         """TypedDict for comprehensive security status."""
 
+        status: str  # SUCCESS, FAIL, or WARN
+        code: Optional[str]  # e.g., ERR_MISSING_CONFIG
+        message: str
+        remediation: Optional[str]  # Instructions to fix the issue
         secure_secrets: bool
         auth_enabled: bool
         ssl_verification: bool
@@ -881,17 +889,40 @@ class Settings(BaseSettings):
         security_score: int
 
     def get_security_status(self) -> SecurityStatus:
-        """Get comprehensive security status.
+        """Get comprehensive security status and enforces fail-closed logic in production.
 
         Returns:
             SecurityStatus: Dictionary containing security status information including score and warnings.
         """
 
+        is_prod = self.environment == "production"
+        remediation_cmd = "Run 'python3 -m mcpgateway.scripts.init_secrets' to generate secure keys."
+
+        # Evaluate specific critical secrets
+        critical_secrets = {"JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(), "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value()}
+
+        for name, value in critical_secrets.items():
+            # Check for empty or "UNCONFIGURED" values
+            if value in self.SENTINEL_VALUES:
+                error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
+                if is_prod:
+                    return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
+
+            # Check for known weak values
+            if self.require_strong_secrets and value in self.WEAK_VALUES:
+                error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
+                if is_prod:
+                    return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
+
         # Compute a security score: 100 minus 10 for each warning
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
 
         return {
-            "secure_secrets": self.jwt_secret_key != "my-test-key",  # nosec B105 - checking for default value
+            "status": "SUCCESS",
+            "code": None,
+            "message": "Security validation passed.",
+            "remediation": None,
+            "secure_secrets": self.jwt_secret_key.get_secret_value() not in self.WEAK_VALUES,
             "auth_enabled": self.auth_required,
             "ssl_verification": not self.skip_ssl_verify,
             "debug_disabled": not self.debug,
@@ -899,6 +930,39 @@ class Settings(BaseSettings):
             "ui_protected": not self.mcpgateway_ui_enabled or self.auth_required,
             "warnings": self.get_security_warnings(),
             "security_score": security_score,
+        }
+
+    def log_critical_issues(self, status: SecurityStatus) -> None:
+        """
+        Logs critical security issues and provides remediation steps.
+        """
+        if status["status"] == "FAIL":
+            # [Requirement]: Explain specific risk
+            logger.critical(f"[SECURITY FATAL] {status['message']}")
+
+            # [Requirement]: Include generation command
+            if status["remediation"]:
+                logger.info(f"REMEDIATION: {status['remediation']}")
+
+            # [Requirement]: Reference documentation
+            logger.info("REFERENCE: For full security configuration guide, see: https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/operations/config-validation.md")
+
+    def _build_security_response(self, status: str, code: str, msg: str, remediation: str) -> SecurityStatus:
+        """Helper to build a failure response for get_security_status."""
+        logger.error(f"[{code}] CRITICAL SECURITY ISSUE: {msg}")
+        return {
+            "status": status,
+            "code": code,
+            "message": f"{msg} (Code: {code})",
+            "remediation": remediation,
+            "secure_secrets": False,
+            "auth_enabled": self.auth_required,
+            "ssl_verification": not self.skip_ssl_verify,
+            "debug_disabled": not self.debug,
+            "cors_restricted": False,
+            "ui_protected": False,
+            "warnings": [msg],
+            "security_score": 0,
         }
 
     # Max retries for HTTP requests
@@ -2206,6 +2270,17 @@ def get_settings(**kwargs: Any) -> Settings:
     cfg.validate_transport()
     # Ensure sqlite DB directories exist if needed.
     cfg.validate_database()
+    # Get the status (SUCCESS/FAIL) based on sentinel and weak values
+    security_status = cfg.get_security_status()
+
+    if security_status["status"] == "FAIL":
+        # Log the critical issues (remediation, risk, documentation)
+        cfg.log_critical_issues(security_status)
+
+        # Fail-Closed ONLY in production
+        if cfg.environment == "production":
+            logger.error("FAIL-CLOSED: Gateway startup aborted due to critical security risks.")
+            sys.exit(1)
     # Return the one-and-only Settings instance (cached).
     return cfg
 
