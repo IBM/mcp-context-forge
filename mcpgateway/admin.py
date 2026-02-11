@@ -470,9 +470,14 @@ def rate_limit(requests_per_minute: Optional[int] = None):
 def sanitize_search_term(search_term: str | None, max_len: int = 200) -> str | None:
     """Sanitise user-provided search terms for safe logging.
 
-    - Replace newlines with spaces
-    - Truncate to `max_len` characters
-    - Return None if input is None
+    Replace newlines with spaces and truncate to a safe length for logging.
+
+    Args:
+        search_term: The raw user-provided search string, or None.
+        max_len: Maximum number of characters to keep.
+
+    Returns:
+        The sanitized string, or ``None`` if ``search_term`` was ``None``.
     """
     if search_term is None:
         return None
