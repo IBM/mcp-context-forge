@@ -245,8 +245,10 @@ class OAuthManager:
         request_headers = {}
 
         if credentials_location == "header":
+            from urllib.parse import quote  # pylint: disable=import-outside-toplevel
+
             # Send credentials via Authorization header (Basic Auth)
-            auth_string = f"{client_id}:{client_secret}"
+            auth_string = f"{quote(client_id, safe='')}:{quote(client_secret, '')}"
             auth_header = base64.b64encode(auth_string.encode()).decode()
             request_headers["Authorization"] = f"Basic {auth_header}"
             token_data = {
