@@ -530,6 +530,26 @@ def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
     return get_user_team_roles(db, user_email)
 
 
+def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int) -> None:
+    """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
+
+    When items on the current page fail to convert, the "Showing X of Y" display
+    would otherwise count items that aren't actually displayed. This adjusts
+    total_items and recomputes derived fields (total_pages, has_next, has_prev).
+
+    Args:
+        pagination: The PaginationMeta object to adjust (modified in-place).
+        failed_count: Number of items that failed conversion on the current page.
+    """
+    if failed_count > 0:
+        pagination.total_items = max(0, pagination.total_items - failed_count)
+        pagination.total_pages = math.ceil(pagination.total_items / pagination.per_page) if pagination.total_items > 0 else 0
+        # Do NOT clamp pagination.page — data was already fetched for this page,
+        # so the page number must match the displayed data.
+        pagination.has_next = pagination.page < pagination.total_pages
+        pagination.has_prev = pagination.page > 1
+
+
 def _get_span_entity_performance(
     db: Session,
     cutoff_time: datetime,
@@ -1592,13 +1612,15 @@ async def admin_servers_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/servers/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/servers/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -1613,13 +1635,15 @@ async def admin_servers_partial_html(
     # Batch convert to Pydantic models using server service
     # This eliminates the N+1 query problem from calling get_server_details() in a loop
     servers_pydantic = []
+    failed_count = 0
     for s in servers_db:
         try:
             servers_pydantic.append(server_service.convert_server_to_read(s, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(servers_pydantic)
-    base_url = f"{settings.app_root_path}/admin/servers/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -5698,7 +5722,7 @@ async def admin_users_partial_html(
             )
 
         if render == "controls":
-            base_url = f"{settings.app_root_path}/admin/users/partial"
+            base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
             return request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -6632,7 +6656,8 @@ async def admin_tools_partial_html(
     query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
 
     # Use unified pagination function (offset-based for UI compatibility)
-    base_url = f"{settings.app_root_path}/admin/tools/partial"
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/tools/partial"
     query_params_dict = {}
     if include_inactive:
         query_params_dict["include_inactive"] = "true"
@@ -6663,6 +6688,7 @@ async def admin_tools_partial_html(
     _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
     _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     tools_pydantic = []
+    failed_count = 0
     for t in tools_db:
         try:
             tools_pydantic.append(
@@ -6676,7 +6702,9 @@ async def admin_tools_partial_html(
                 )
             )
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -6814,7 +6842,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{settings.app_root_path}/admin/tool-ops/partial",
+        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
@@ -7170,13 +7198,15 @@ async def admin_prompts_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/prompts/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/prompts/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -7200,14 +7230,16 @@ async def admin_prompts_partial_html(
     # Batch convert to Pydantic models using prompt service
     # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
     prompts_pydantic = []
+    failed_count = 0
     for p in prompts_db:
         try:
             prompts_pydantic.append(prompt_service.convert_prompt_to_read(p, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
 
     data = jsonable_encoder(prompts_pydantic)
-    base_url = f"{settings.app_root_path}/admin/prompts/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -7350,13 +7382,15 @@ async def admin_gateways_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/gateways/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/gateways/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -7369,13 +7403,15 @@ async def admin_gateways_partial_html(
     # Batch convert to Pydantic models using gateway service
     # This eliminates the N+1 query problem from calling get_gateway_details() in a loop
     gateways_pydantic = []
+    failed_count = 0
     for g in gateways_db:
         try:
             gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(gateways_pydantic)
-    base_url = f"{settings.app_root_path}/admin/gateways/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -7860,13 +7896,15 @@ async def admin_resources_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/resources/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/resources/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -7889,11 +7927,14 @@ async def admin_resources_partial_html(
 
     # Batch convert to Pydantic models using resource service
     resources_pydantic = []
+    failed_count = 0
     for r in resources_db:
         try:
             resources_pydantic.append(resource_service.convert_resource_to_read(r, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -7907,7 +7948,7 @@ async def admin_resources_partial_html(
             {
                 "request": request,
                 "pagination": pagination.model_dump(),
-                "base_url": f"{settings.app_root_path}/admin/resources/partial",
+                "base_url": base_url,
                 "hx_target": "#resources-table-body",
                 "hx_indicator": "#resources-loading",
                 "query_params": query_params,
@@ -8436,13 +8477,15 @@ async def admin_a2a_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/a2a/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/a2a/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -8466,13 +8509,15 @@ async def admin_a2a_partial_html(
     # Batch convert to Pydantic models using a2a service
     # This eliminates the N+1 query problem from calling get_a2a_details() in a loop
     a2a_agents_pydantic = []
+    failed_count = 0
     for a in a2a_agents_db:
         try:
             a2a_agents_pydantic.append(a2a_service.convert_agent_to_read(a, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(a2a_agents_pydantic)
-    base_url = f"{settings.app_root_path}/admin/a2a/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()

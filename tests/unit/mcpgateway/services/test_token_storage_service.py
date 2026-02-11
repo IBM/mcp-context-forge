@@ -81,7 +81,7 @@ def test_is_token_expired_within_threshold(service):
 
 def test_is_token_expired_naive_datetime(service):
     """Test _is_token_expired with a naive datetime (no timezone)."""
-    naive_time = datetime.now() - timedelta(seconds=10)
+    naive_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
     record = _make_token_record(expires_at=naive_time)
     assert service._is_token_expired(record, threshold_seconds=0) is True
 
