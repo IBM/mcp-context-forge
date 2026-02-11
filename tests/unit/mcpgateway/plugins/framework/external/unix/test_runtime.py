@@ -76,18 +76,26 @@ class TestUnixRuntimeMain:
 
     def test_main_keyboard_interrupt(self):
         """Test main handles KeyboardInterrupt gracefully."""
+        def _raise_keyboard_interrupt(awaitable):
+            awaitable.close()
+            raise KeyboardInterrupt()
+
         with patch(
             "mcpgateway.plugins.framework.external.unix.server.runtime.asyncio.run",
-            side_effect=KeyboardInterrupt,
+            side_effect=_raise_keyboard_interrupt,
         ):
             # Should not raise
             main()
 
     def test_main_exception_exits(self):
         """Test main exits with code 1 on exception."""
+        def _raise_runtime_error(awaitable):
+            awaitable.close()
+            raise RuntimeError("Server error")
+
         with patch(
             "mcpgateway.plugins.framework.external.unix.server.runtime.asyncio.run",
-            side_effect=RuntimeError("Server error"),
+            side_effect=_raise_runtime_error,
         ):
             with pytest.raises(SystemExit) as exc_info:
                 main()
@@ -95,9 +103,17 @@ class TestUnixRuntimeMain:
 
     def test_main_calls_run(self):
         """Test main calls asyncio.run with run()."""
+        captured = {}
+
+        def _close_and_return(awaitable):
+            captured["awaitable"] = awaitable
+            awaitable.close()
+            return None
+
         with patch(
             "mcpgateway.plugins.framework.external.unix.server.runtime.asyncio.run",
         ) as mock_asyncio_run:
-            mock_asyncio_run.return_value = None
+            mock_asyncio_run.side_effect = _close_and_return
             main()
             mock_asyncio_run.assert_called_once()
+            assert asyncio.iscoroutine(captured["awaitable"])

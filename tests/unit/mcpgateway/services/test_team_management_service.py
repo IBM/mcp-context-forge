@@ -8,6 +8,7 @@ Comprehensive tests for Team Management Service functionality.
 """
 
 # Standard
+import asyncio
 import base64
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,6 +25,12 @@ from mcpgateway.services.team_management_service import TeamManagementService
 
 class TestTeamManagementService:
     """Comprehensive test suite for Team Management Service."""
+
+    @pytest.fixture(autouse=True)
+    async def drain_fire_and_forget_tasks(self):
+        """Give fire-and-forget cache invalidation tasks one loop turn to complete."""
+        yield
+        await asyncio.sleep(0)
 
     @pytest.fixture(autouse=True)
     def clear_caches(self):
@@ -1072,6 +1079,11 @@ class TestTeamManagementService:
             patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
             patch.object(service, "_log_team_member_action") as mock_log_action,
             patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()) as mock_invalidate,
+            patch.object(
+                service,
+                "_fire_and_forget",
+                side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
+            ),
             patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team", new=AsyncMock()),
             patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_role", new=AsyncMock()),
             patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", new=AsyncMock()),

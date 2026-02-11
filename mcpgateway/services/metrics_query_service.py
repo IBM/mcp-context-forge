@@ -560,7 +560,7 @@ def get_top_entities_combined(
     if include_deleted:
         # Query for deleted entities (exist in rollup but not in entity table)
         # Handle NULL properly: entity_id IS NULL (deleted via SET NULL) OR entity_id not in existing entities
-        existing_ids_subq = select(entity_model.id).subquery()
+        existing_ids_select = select(entity_model.id)
         deleted_entities_query = select(
             rollup_subq.c.entity_id.label("id"),
             rollup_subq.c.preserved_name.label("name"),
@@ -573,7 +573,7 @@ def get_top_entities_combined(
         ).where(
             # Include entities with NULL id (deleted via SET NULL) OR entities not in entity table
             (rollup_subq.c.entity_id.is_(None))
-            | (rollup_subq.c.entity_id.notin_(existing_ids_subq))
+            | (rollup_subq.c.entity_id.notin_(existing_ids_select))
         )
 
         # Combine existing and deleted entities

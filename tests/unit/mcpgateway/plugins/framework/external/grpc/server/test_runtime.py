@@ -366,10 +366,14 @@ class TestGrpcPluginRuntimeMain:
         """Test main handles KeyboardInterrupt gracefully."""
         from mcpgateway.plugins.framework.external.grpc.server.runtime import main
 
+        def _raise_keyboard_interrupt(awaitable):
+            awaitable.close()
+            raise KeyboardInterrupt()
+
         with patch("sys.argv", ["runtime"]):
             with patch(
                 "mcpgateway.plugins.framework.external.grpc.server.runtime.asyncio.run",
-                side_effect=KeyboardInterrupt,
+                side_effect=_raise_keyboard_interrupt,
             ):
                 with pytest.raises(SystemExit) as exc_info:
                     main()
@@ -379,10 +383,14 @@ class TestGrpcPluginRuntimeMain:
         """Test main exits with code 1 on unexpected exception."""
         from mcpgateway.plugins.framework.external.grpc.server.runtime import main
 
+        def _raise_runtime_error(awaitable):
+            awaitable.close()
+            raise RuntimeError("Server failed")
+
         with patch("sys.argv", ["runtime"]):
             with patch(
                 "mcpgateway.plugins.framework.external.grpc.server.runtime.asyncio.run",
-                side_effect=RuntimeError("Server failed"),
+                side_effect=_raise_runtime_error,
             ):
                 with pytest.raises(SystemExit) as exc_info:
                     main()
@@ -396,12 +404,20 @@ class TestGrpcPluginRuntimeMain:
             "sys.argv",
             ["runtime", "--config", "/custom/config.yaml", "--host", "127.0.0.1", "--port", "50052", "--log-level", "DEBUG"],
         ):
+            captured = {}
+
+            def _close_and_return(awaitable):
+                captured["awaitable"] = awaitable
+                awaitable.close()
+                return None
+
             with patch(
                 "mcpgateway.plugins.framework.external.grpc.server.runtime.asyncio.run",
             ) as mock_run:
-                mock_run.return_value = None
+                mock_run.side_effect = _close_and_return
                 main()
                 mock_run.assert_called_once()
+                assert asyncio.iscoroutine(captured["awaitable"])
 
 
 class TestGrpcPluginRuntimeUdsChmod:

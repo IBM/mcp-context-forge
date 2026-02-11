@@ -42,6 +42,7 @@ import uuid  # noqa: E402
 
 # Third-Party
 from httpx import AsyncClient  # noqa: E402
+from pydantic import SecretStr  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
 
@@ -54,6 +55,9 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %
 # -------------------------
 # Test Configuration
 # -------------------------
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"
+
+
 def create_test_jwt_token():
     """Create a proper JWT token for testing with required audience and issuer."""
     # Standard
@@ -74,7 +78,7 @@ def create_test_jwt_token():
     }
 
     # Use the test JWT secret key
-    return jwt.encode(payload, "my-test-key", algorithm="HS256")
+    return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
 
 TEST_JWT_TOKEN = create_test_jwt_token()
@@ -102,17 +106,27 @@ async def client(app_with_temp_db):
     # Local
     from tests.utils.rbac_mocks import create_mock_user_context
 
+    # Ensure tests use a strong JWT secret to avoid weak-key warnings.
+    from mcpgateway.config import settings
+
+    original_jwt_secret = settings.jwt_secret_key
+    if hasattr(original_jwt_secret, "get_secret_value") and callable(getattr(original_jwt_secret, "get_secret_value", None)):
+        settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
+    else:
+        settings.jwt_secret_key = TEST_JWT_SECRET
+
     # Get the actual test database session from the app
     test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
 
     def get_test_db_session():
         """Get the actual test database session."""
         if callable(test_db_dependency):
-            return next(test_db_dependency())
-        return test_db_dependency
+            test_db_gen = test_db_dependency()
+            return next(test_db_gen), test_db_gen
+        return test_db_dependency, None
 
     # Create mock user context with actual test database session
-    test_db_session = get_test_db_session()
+    test_db_session, test_db_generator = get_test_db_session()
 
     # Admin UI endpoints enforce granular RBAC (allow_admin_bypass=False).
     # Seed a platform_admin-style role grant so /admin/* endpoints return 200
@@ -206,6 +220,13 @@ async def client(app_with_temp_db):
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
     app_with_temp_db.dependency_overrides.pop(require_admin_auth, None)
     app_with_temp_db.dependency_overrides.pop(get_jwt_token, None)
+    settings.jwt_secret_key = original_jwt_secret
+    if test_db_generator is not None:
+        test_db_generator.close()
+    try:
+        test_db_session.close()
+    except Exception:
+        pass
 
 
 @pytest_asyncio.fixture

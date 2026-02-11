@@ -30,11 +30,13 @@ from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
-from mcpgateway.cache.auth_cache import auth_cache
+from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.redis_client import get_redis_client
 
 # Initialize logging
 logging_service = LoggingService()
@@ -81,6 +83,32 @@ class TeamManagementService:
             'TeamManagementService'
         """
         self.db = db
+
+    @staticmethod
+    def _fire_and_forget(coro: Any) -> None:
+        """Schedule a background coroutine and close it if scheduling fails.
+
+        Args:
+            coro: The coroutine to schedule as a background task.
+
+        Raises:
+            Exception: If asyncio.create_task fails (e.g. no running loop).
+        """
+        try:
+            task = asyncio.create_task(coro)
+            # Some tests patch create_task with a plain Mock return value. In that
+            # case the coroutine is never actually scheduled and must be closed.
+            if asyncio.iscoroutine(coro) and not isinstance(task, asyncio.Task):
+                close = getattr(coro, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            # If create_task() fails (e.g. no running loop), the coroutine has
+            # already been created and must be closed to avoid runtime warnings.
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            raise
 
     def _log_team_member_action(self, team_member_id: str, team_id: str, user_email: str, role: str, action: str, action_by: Optional[str]):
         """
@@ -179,8 +207,6 @@ class TeamManagementService:
                 max_members = getattr(settings, "max_members_per_team", 100)
 
             # Check for existing inactive team with same name
-            # First-Party
-            from mcpgateway.utils.create_slug import slugify  # pylint: disable=import-outside-toplevel
 
             potential_slug = slugify(name)
             existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()
@@ -413,13 +439,13 @@ class TeamManagementService:
 
             # Invalidate all role caches for this team
             try:
-                asyncio.create_task(auth_cache.invalidate_team_roles(team_id))
-                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                self._fire_and_forget(auth_cache.invalidate_team_roles(team_id))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
                 # Also invalidate team cache, teams list cache, and team membership cache for each member
                 for membership in memberships:
-                    asyncio.create_task(auth_cache.invalidate_team(membership.user_email))
-                    asyncio.create_task(auth_cache.invalidate_user_teams(membership.user_email))
-                    asyncio.create_task(auth_cache.invalidate_team_membership(membership.user_email))
+                    self._fire_and_forget(auth_cache.invalidate_team(membership.user_email))
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+                    self._fire_and_forget(auth_cache.invalidate_team_membership(membership.user_email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate caches on team delete: {cache_error}")
 
@@ -504,11 +530,11 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                asyncio.create_task(auth_cache.invalidate_team(user_email))
-                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
-                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                self._fire_and_forget(auth_cache.invalidate_team(user_email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team add: {cache_error}")
 
@@ -574,10 +600,10 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                asyncio.create_task(auth_cache.invalidate_team(user_email))
-                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(user_email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(user_email))
+                self._fire_and_forget(auth_cache.invalidate_team(user_email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(user_email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(user_email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on team remove: {cache_error}")
 
@@ -649,7 +675,7 @@ class TeamManagementService:
 
             # Invalidate role cache
             try:
-                asyncio.create_task(auth_cache.invalidate_user_role(user_email, team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_role(user_email, team_id))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on role update: {cache_error}")
 
@@ -949,9 +975,6 @@ class TeamManagementService:
             AuthCache instance or None if unavailable.
         """
         try:
-            # First-Party
-            from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-
             return get_auth_cache()
         except ImportError:
             return None
@@ -1331,11 +1354,11 @@ class TeamManagementService:
 
             # Invalidate auth cache for user's team membership and role
             try:
-                asyncio.create_task(auth_cache.invalidate_team(join_request.user_email))
-                asyncio.create_task(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(join_request.user_email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(join_request.user_email))
-                asyncio.create_task(admin_stats_cache.invalidate_teams())
+                self._fire_and_forget(auth_cache.invalidate_team(join_request.user_email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(join_request.user_email, join_request.team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(join_request.user_email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(join_request.user_email))
+                self._fire_and_forget(admin_stats_cache.invalidate_teams())
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate caches on join approval: {cache_error}")
 
@@ -1605,11 +1628,7 @@ class TeamManagementService:
         if not cache_enabled:
             return self.get_member_counts_batch(team_ids)
 
-        # Import Redis client lazily
         try:
-            # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
-
             redis_client = await get_redis_client()
         except Exception:
             redis_client = None
@@ -1682,9 +1701,6 @@ class TeamManagementService:
             return
 
         try:
-            # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
-
             redis_client = await get_redis_client()
             if redis_client:
                 await redis_client.delete(self._get_member_count_cache_key(team_id))

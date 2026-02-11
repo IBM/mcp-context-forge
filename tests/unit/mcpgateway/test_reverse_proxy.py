@@ -13,6 +13,7 @@ import builtins
 import json
 import runpy
 import signal
+import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -443,7 +444,12 @@ class TestReverseProxyClient:
             return real_import(name, globals, locals, fromlist, level)
 
         monkeypatch.setattr(builtins, "__import__", fake_import)
-        ns = runpy.run_module("mcpgateway.reverse_proxy", run_name="__reverse_proxy_import_test__")
+        original_module = sys.modules.pop("mcpgateway.reverse_proxy", None)
+        try:
+            ns = runpy.run_module("mcpgateway.reverse_proxy", run_name="__reverse_proxy_import_test__")
+        finally:
+            if original_module is not None:
+                sys.modules["mcpgateway.reverse_proxy"] = original_module
         assert ns["httpx"] is None
         assert ns["websockets"] is None
         assert ns["yaml"] is None
