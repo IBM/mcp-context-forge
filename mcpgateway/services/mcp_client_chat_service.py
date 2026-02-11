@@ -33,7 +33,7 @@ try:
     from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
     from langchain_core.tools import BaseTool
     from langchain_mcp_adapters.client import MultiServerMCPClient
-    from langchain_ollama import ChatOllama, OllamaLLM
+    from langchain_ollama import ChatOllama, OllamaEmbeddings, OllamaLLM
     from langchain_openai import AzureChatOpenAI, AzureOpenAI, ChatOpenAI, OpenAI, OpenAIEmbeddings
     from langgraph.prebuilt import create_react_agent
 
@@ -49,6 +49,7 @@ except ImportError:
     BaseTool = None  # type: ignore
     MultiServerMCPClient = None  # type: ignore
     ChatOllama = None  # type: ignore
+    OllamaEmbeddings = None  # type: ignore
     OllamaLLM = None
     AzureChatOpenAI = None  # type: ignore
     AzureOpenAI = None
@@ -87,6 +88,15 @@ except ImportError:
     _WATSONX_AVAILABLE = False
     WatsonxLLM = None  # type: ignore
     ChatWatsonx = None
+
+try:
+    # Third-Party
+    from langchain_mistralai import MistralAIEmbeddings
+
+    _MISTRAL_AVAILABLE = True
+except ImportError:
+    _MISTRAL_AVAILABLE = False
+    MistralAIEmbeddings = None  # type: ignore
 
 # Third-Party
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -611,16 +621,120 @@ class OpenAIEmbeddingConfig(BaseModel):
     }
 
 
+class OllamaEmbeddingConfig(BaseModel):
+    """
+    Configuration for Ollama Embeddings provider.
+
+    Defines parameters for connecting to a local or remote Ollama instance
+    for embedding generation.
+
+    Attributes:
+        base_url: Ollama server base URL.
+        model: Embedding model name (e.g., nomic-embed-text, mxbai-embed-large).
+        timeout: Request timeout duration in seconds.
+
+    Examples:
+        >>> config = OllamaEmbeddingConfig(model="nomic-embed-text")
+        >>> config.model
+        'nomic-embed-text'
+    """
+
+    base_url: str = Field(default="http://localhost:11434", description="Ollama base URL")
+    model: str = Field(default="nomic-embed-text", description="Embedding model name")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "base_url": "http://localhost:11434",
+                "model": "nomic-embed-text",
+            }
+        }
+    }
+
+
+class MistralEmbeddingConfig(BaseModel):
+    """
+    Configuration for Mistral AI Embeddings provider.
+
+    Defines parameters for connecting to the Mistral AI API for embedding generation.
+
+    Attributes:
+        api_key: Mistral AI API authentication key.
+        model: Embedding model identifier (e.g., mistral-embed).
+        timeout: Request timeout duration in seconds.
+        max_retries: Maximum number of retry attempts for failed requests.
+
+    Examples:
+        >>> config = MistralEmbeddingConfig(api_key="your-key")
+        >>> config.model
+        'mistral-embed'
+    """
+
+    api_key: str = Field(..., description="Mistral AI API key")
+    model: str = Field(default="mistral-embed", description="Embedding model name")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+    max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "api_key": "your-mistral-key",
+                "model": "mistral-embed",
+            }
+        }
+    }
+
+
+class LiteLLMEmbeddingConfig(BaseModel):
+    """
+    Configuration for LiteLLM proxy Embeddings.
+
+    Uses the OpenAI-compatible API exposed by a LiteLLM proxy instance.
+    LiteLLM acts as a gateway that can route embedding requests to many
+    different providers through a single endpoint.
+
+    Attributes:
+        base_url: LiteLLM proxy endpoint URL (required).
+        api_key: Optional API key for the proxy.
+        model: Embedding model name as routed by LiteLLM.
+        timeout: Request timeout duration in seconds.
+        max_retries: Maximum number of retry attempts for failed requests.
+
+    Examples:
+        >>> config = LiteLLMEmbeddingConfig(
+        ...     base_url="http://localhost:4000",
+        ...     model="text-embedding-3-small"
+        ... )
+        >>> config.base_url
+        'http://localhost:4000'
+    """
+
+    base_url: str = Field(..., description="LiteLLM proxy endpoint URL")
+    api_key: Optional[str] = Field(None, description="API key for the LiteLLM proxy")
+    model: str = Field(default="text-embedding-3-small", description="Embedding model name")
+    timeout: Optional[float] = Field(None, gt=0, description="Request timeout in seconds")
+    max_retries: int = Field(default=2, ge=0, description="Maximum number of retries")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "base_url": "http://localhost:4000",
+                "model": "text-embedding-3-small",
+            }
+        }
+    }
+
+
 class EmbeddingConfig(BaseModel):
     """
     Configuration for embedding provider.
 
     Unified configuration class that supports multiple embedding providers through
-    a discriminated union pattern. Currently supports OpenAI embeddings with
-    extensibility for additional providers.
+    a discriminated union pattern.
 
     Attributes:
-        provider: Type of embedding provider (currently 'openai').
+        provider: Type of embedding provider (openai, ollama, mistral, or litellm).
         config: Provider-specific configuration object.
 
     Examples:
@@ -633,14 +747,21 @@ class EmbeddingConfig(BaseModel):
         ... )
         >>> config.provider
         'openai'
+
+        >>> config = EmbeddingConfig(
+        ...     provider="ollama",
+        ...     config=OllamaEmbeddingConfig(model="nomic-embed-text")
+        ... )
+        >>> config.provider
+        'ollama'
     """
 
-    provider: Literal["openai"] = Field(..., description="Embedding provider type")
-    config: Union[OpenAIEmbeddingConfig] = Field(..., description="Provider-specific configuration")
+    provider: Literal["openai", "ollama", "mistral", "litellm"] = Field(..., description="Embedding provider type")
+    config: Union[OpenAIEmbeddingConfig, OllamaEmbeddingConfig, MistralEmbeddingConfig, LiteLLMEmbeddingConfig] = Field(..., description="Provider-specific configuration")
 
     @field_validator("config", mode="before")
     @classmethod
-    def validate_config_type(cls, v: Any, info) -> Union[OpenAIEmbeddingConfig]:
+    def validate_config_type(cls, v: Any, info) -> Union[OpenAIEmbeddingConfig, OllamaEmbeddingConfig, MistralEmbeddingConfig, LiteLLMEmbeddingConfig]:
         """
         Validate and convert config dictionary to appropriate provider type.
 
@@ -649,13 +770,19 @@ class EmbeddingConfig(BaseModel):
             info: Validation context containing provider information.
 
         Returns:
-            Union[OpenAIEmbeddingConfig]: Validated configuration object.
+            Validated configuration object for the specified provider.
         """
         provider = info.data.get("provider")
 
         if isinstance(v, dict):
             if provider == "openai":
                 return OpenAIEmbeddingConfig(**v)
+            if provider == "ollama":
+                return OllamaEmbeddingConfig(**v)
+            if provider == "mistral":
+                return MistralEmbeddingConfig(**v)
+            if provider == "litellm":
+                return LiteLLMEmbeddingConfig(**v)
 
         return v
 
@@ -1950,6 +2077,275 @@ class OpenAIEmbeddingProvider:
         return self.config.model
 
 
+class OllamaEmbeddingProvider:
+    """
+    Ollama Embeddings provider implementation.
+
+    Manages connection and interaction with a local or remote Ollama instance
+    for embedding generation.
+
+    Attributes:
+        config: Ollama embedding configuration object.
+
+    Examples:
+        >>> config = OllamaEmbeddingConfig(model="nomic-embed-text")
+        >>> provider = OllamaEmbeddingProvider(config)
+        >>> provider.get_model_name()
+        'nomic-embed-text'
+    """
+
+    def __init__(self, config: OllamaEmbeddingConfig):
+        """
+        Initialize Ollama embedding provider.
+
+        Args:
+            config: Ollama embedding configuration with server URL and model settings.
+
+        Raises:
+            ImportError: If langchain-ollama is not installed.
+
+        Examples:
+            >>> config = OllamaEmbeddingConfig(model="nomic-embed-text")
+            >>> provider = OllamaEmbeddingProvider(config)
+        """
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("Ollama embedding provider requires langchain-ollama package. Install it with: pip install langchain-ollama")
+
+        self.config = config
+        self._embedding_model: Any = None
+        logger.info(f"Initializing Ollama embedding provider with model: {config.model}")
+
+    def get_embedding_model(self) -> Any:
+        """
+        Get Ollama Embeddings instance with lazy initialization.
+
+        Creates and caches the Ollama embeddings model instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            OllamaEmbeddings: Configured Ollama embeddings model.
+
+        Raises:
+            Exception: If embedding model initialization fails (e.g., Ollama not running).
+
+        Examples:
+            >>> config = OllamaEmbeddingConfig(model="nomic-embed-text")
+            >>> provider = OllamaEmbeddingProvider(config)
+            >>> # embeddings = provider.get_embedding_model()  # Returns OllamaEmbeddings instance
+        """
+        if self._embedding_model is None:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "model": self.config.model,
+                    "base_url": self.config.base_url,
+                }
+
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self._embedding_model = OllamaEmbeddings(**kwargs)  # type: ignore[misc]
+                logger.info("Ollama embedding model instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create Ollama embedding model: {e}")
+                raise
+
+        return self._embedding_model
+
+    def get_model_name(self) -> str:
+        """
+        Get the Ollama embedding model name.
+
+        Returns:
+            str: The embedding model name configured for this provider.
+        """
+        return self.config.model
+
+
+class MistralEmbeddingProvider:
+    """
+    Mistral AI Embeddings provider implementation.
+
+    Manages connection and interaction with the Mistral AI API for embedding generation.
+
+    Attributes:
+        config: Mistral embedding configuration object.
+
+    Examples:
+        >>> config = MistralEmbeddingConfig(api_key="your-key")  # doctest: +SKIP
+        >>> provider = MistralEmbeddingProvider(config)  # doctest: +SKIP
+        >>> provider.get_model_name()  # doctest: +SKIP
+        'mistral-embed'
+    """
+
+    def __init__(self, config: MistralEmbeddingConfig):
+        """
+        Initialize Mistral embedding provider.
+
+        Args:
+            config: Mistral embedding configuration with API key and settings.
+
+        Raises:
+            ImportError: If langchain-mistralai is not installed.
+
+        Examples:
+            >>> config = MistralEmbeddingConfig(api_key="your-key")  # doctest: +SKIP
+            >>> provider = MistralEmbeddingProvider(config)  # doctest: +SKIP
+        """
+        if not _MISTRAL_AVAILABLE:
+            raise ImportError("Mistral embedding provider requires langchain-mistralai package. Install it with: pip install langchain-mistralai")
+
+        self.config = config
+        self._embedding_model: Any = None
+        logger.info(f"Initializing Mistral embedding provider with model: {config.model}")
+
+    def get_embedding_model(self) -> Any:
+        """
+        Get Mistral AI Embeddings instance with lazy initialization.
+
+        Creates and caches the Mistral embeddings model instance on first call.
+        Subsequent calls return the cached instance.
+
+        Returns:
+            MistralAIEmbeddings: Configured Mistral embeddings model.
+
+        Raises:
+            Exception: If embedding model initialization fails (e.g., invalid credentials).
+
+        Examples:
+            >>> config = MistralEmbeddingConfig(api_key="your-key")  # doctest: +SKIP
+            >>> provider = MistralEmbeddingProvider(config)  # doctest: +SKIP
+            >>> # embeddings = provider.get_embedding_model()
+        """
+        if self._embedding_model is None:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "model": self.config.model,
+                    "api_key": self.config.api_key,
+                }
+
+                if self.config.timeout:
+                    kwargs["timeout"] = int(self.config.timeout)
+
+                if self.config.max_retries:
+                    kwargs["max_retries"] = self.config.max_retries
+
+                self._embedding_model = MistralAIEmbeddings(**kwargs)  # type: ignore[misc]
+                logger.info("Mistral embedding model instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create Mistral embedding model: {e}")
+                raise
+
+        return self._embedding_model
+
+    def get_model_name(self) -> str:
+        """
+        Get the Mistral embedding model name.
+
+        Returns:
+            str: The embedding model name configured for this provider.
+        """
+        return self.config.model
+
+
+class LiteLLMEmbeddingProvider:
+    """
+    LiteLLM proxy Embeddings provider implementation.
+
+    Uses the OpenAI-compatible embedding endpoint exposed by a LiteLLM proxy.
+    Internally creates an OpenAIEmbeddings instance pointed at the proxy URL.
+
+    Attributes:
+        config: LiteLLM embedding configuration object.
+
+    Examples:
+        >>> config = LiteLLMEmbeddingConfig(
+        ...     base_url="http://localhost:4000",
+        ...     model="text-embedding-3-small"
+        ... )
+        >>> provider = LiteLLMEmbeddingProvider(config)
+        >>> provider.get_model_name()
+        'text-embedding-3-small'
+    """
+
+    def __init__(self, config: LiteLLMEmbeddingConfig):
+        """
+        Initialize LiteLLM embedding provider.
+
+        Args:
+            config: LiteLLM embedding configuration with proxy URL and settings.
+
+        Raises:
+            ImportError: If langchain-openai is not installed.
+
+        Examples:
+            >>> config = LiteLLMEmbeddingConfig(
+            ...     base_url="http://localhost:4000",
+            ...     model="text-embedding-3-small"
+            ... )
+            >>> provider = LiteLLMEmbeddingProvider(config)
+        """
+        if not _LLMCHAT_AVAILABLE:
+            raise ImportError("LiteLLM embedding provider requires langchain-openai package. Install it with: pip install langchain-openai")
+
+        self.config = config
+        self._embedding_model: Any = None
+        logger.info(f"Initializing LiteLLM embedding provider with model: {config.model} at {config.base_url}")
+
+    def get_embedding_model(self) -> Any:
+        """
+        Get LiteLLM proxy Embeddings instance with lazy initialization.
+
+        Creates and caches an OpenAIEmbeddings instance pointed at the LiteLLM
+        proxy on first call. Subsequent calls return the cached instance.
+
+        Returns:
+            OpenAIEmbeddings: Configured OpenAI embeddings model pointed at LiteLLM proxy.
+
+        Raises:
+            Exception: If embedding model initialization fails.
+
+        Examples:
+            >>> config = LiteLLMEmbeddingConfig(
+            ...     base_url="http://localhost:4000",
+            ...     model="text-embedding-3-small"
+            ... )
+            >>> provider = LiteLLMEmbeddingProvider(config)
+            >>> # embeddings = provider.get_embedding_model()  # Returns OpenAIEmbeddings instance
+        """
+        if self._embedding_model is None:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "model": self.config.model,
+                    "base_url": self.config.base_url,
+                    "max_retries": self.config.max_retries,
+                }
+
+                if self.config.api_key:
+                    kwargs["api_key"] = self.config.api_key
+                else:
+                    kwargs["api_key"] = "litellm-proxy"  # nosec B105 - placeholder for keyless proxies
+
+                if self.config.timeout:
+                    kwargs["timeout"] = self.config.timeout
+
+                self._embedding_model = OpenAIEmbeddings(**kwargs)  # type: ignore[misc]
+                logger.info("LiteLLM embedding model instance created successfully")
+            except Exception as e:
+                logger.error(f"Failed to create LiteLLM embedding model: {e}")
+                raise
+
+        return self._embedding_model
+
+    def get_model_name(self) -> str:
+        """
+        Get the LiteLLM embedding model name.
+
+        Returns:
+            str: The embedding model name configured for this provider.
+        """
+        return self.config.model
+
+
 class LLMProviderFactory:
     """
     Factory for creating LLM providers.
@@ -2065,7 +2461,7 @@ class EmbeddingProviderFactory:
     """
 
     @staticmethod
-    def create(embedding_config: EmbeddingConfig) -> "OpenAIEmbeddingProvider":
+    def create(embedding_config: EmbeddingConfig) -> Any:
         """
         Create an embedding provider based on configuration.
 
@@ -2073,7 +2469,7 @@ class EmbeddingProviderFactory:
             embedding_config: Embedding configuration specifying provider type and settings.
 
         Returns:
-            OpenAIEmbeddingProvider: Instantiated embedding provider.
+            An instantiated embedding provider (OpenAI, Ollama, Mistral, or LiteLLM).
 
         Raises:
             ValueError: If provider type is not supported.
@@ -2091,9 +2487,21 @@ class EmbeddingProviderFactory:
             >>> provider = EmbeddingProviderFactory.create(config)
             >>> isinstance(provider, OpenAIEmbeddingProvider)
             True
+
+            >>> # Create Ollama embedding provider
+            >>> config = EmbeddingConfig(
+            ...     provider="ollama",
+            ...     config=OllamaEmbeddingConfig(model="nomic-embed-text")
+            ... )
+            >>> provider = EmbeddingProviderFactory.create(config)
+            >>> isinstance(provider, OllamaEmbeddingProvider)
+            True
         """
         provider_map: Dict[str, type] = {
             "openai": OpenAIEmbeddingProvider,
+            "ollama": OllamaEmbeddingProvider,
+            "mistral": MistralEmbeddingProvider,
+            "litellm": LiteLLMEmbeddingProvider,
         }
 
         provider_class = provider_map.get(embedding_config.provider)
