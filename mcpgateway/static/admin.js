@@ -15766,6 +15766,100 @@ async function handleEditResFormSubmit(e) {
     }
 }
 
+async function handleGrpcServiceFormSubmit(e) {
+    e.preventDefault();
+
+    const form = e.target;
+    const formData = new FormData(form);
+    const status = safeGetElement("grpcFormError");
+    const submitButton = form.querySelector('button[type="submit"]');
+
+    try {
+        const name = formData.get("name");
+        const target = formData.get("target");
+
+        // Basic validation
+        const nameValidation = validateInputName(name, "gRPC service");
+        if (!nameValidation.valid) {
+            throw new Error(nameValidation.error);
+        }
+
+        if (!target || !target.includes(":")) {
+            throw new Error("Target must be in host:port format");
+        }
+
+        // Disable submit button during request
+        if (submitButton) {
+            submitButton.disabled = true;
+        }
+
+        if (status) {
+            status.textContent = "";
+            status.classList.add("hidden");
+        }
+
+        // Build JSON payload matching GrpcServiceCreate schema
+        const payload = {
+            name: name,
+            target: target,
+            description: formData.get("description") || null,
+            reflection_enabled: formData.get("reflection_enabled") === "on",
+            tls_enabled: formData.get("tls_enabled") === "on",
+            tls_cert_path: formData.get("tls_cert_path") || null,
+            tls_key_path: formData.get("tls_key_path") || null,
+            grpc_metadata: {},
+            tags: [],
+            visibility: "public"
+        };
+
+        // Add team_id if present
+        const teamIdFromForm = formData.get("team_id");
+        const teamIdFromUrl = new URL(window.location.href).searchParams.get("team_id");
+        const teamId = teamIdFromForm || teamIdFromUrl;
+        if (teamId) {
+            payload.team_id = teamId;
+        }
+
+        const response = await fetch(`${window.ROOT_PATH}/admin/grpc`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(payload),
+            credentials: "include",
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.detail || `Failed to register gRPC service (${response.status})`);
+        }
+
+        const result = await response.json();
+
+        // Success - redirect to grpc services panel
+        const searchParams = new URLSearchParams();
+        if (teamId) {
+            searchParams.set("team_id", teamId);
+        }
+
+        const queryString = searchParams.toString();
+        const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
+        window.location.href = redirectUrl;
+
+    } catch (error) {
+        console.error("Add gRPC Service Error:", error);
+        if (status) {
+            status.textContent = error.message || "An error occurred while registering the gRPC service.";
+            status.classList.remove("hidden");
+        }
+        showErrorMessage(error.message);
+    } finally {
+        if (submitButton) {
+            submitButton.disabled = false;
+        }
+    }
+}
+
 // ===================================================================
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
@@ -16607,6 +16701,11 @@ function setupFormHandlers() {
                 refreshEditors();
             }
         });
+    }
+
+    const addGrpcServiceForm = safeGetElement("add-grpc-service-form");
+    if (addGrpcServiceForm) {
+        addGrpcServiceForm.addEventListener("submit", handleGrpcServiceFormSubmit);
     }
 
     // Setup search functionality for selectors
