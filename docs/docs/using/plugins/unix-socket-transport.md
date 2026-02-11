@@ -15,7 +15,7 @@ High-performance local IPC transport using length-prefixed protobuf messages.
 **Environment variables:**
 ```bash
 PLUGINS_TRANSPORT=unix
-UNIX_SOCKET_PATH=/tmp/mcpgateway-plugins.sock
+PLUGINS_UNIX_SOCKET_PATH=/tmp/mcpgateway-plugins.sock
 ```
 
 **YAML config:**

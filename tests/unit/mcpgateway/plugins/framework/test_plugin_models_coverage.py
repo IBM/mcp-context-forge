@@ -244,13 +244,13 @@ class TestGRPCServerConfigMethods:
 
 class TestUnixSocketServerConfig:
     def test_from_env_with_path(self, monkeypatch):
-        monkeypatch.setenv("UNIX_SOCKET_PATH", "/tmp/custom.sock")
+        monkeypatch.setenv("PLUGINS_UNIX_SOCKET_PATH", "/tmp/custom.sock")
         config = UnixSocketServerConfig.from_env()
         assert config is not None
         assert config.path == "/tmp/custom.sock"
 
     def test_from_env_without_env(self, monkeypatch):
-        monkeypatch.delenv("UNIX_SOCKET_PATH", raising=False)
+        monkeypatch.delenv("PLUGINS_UNIX_SOCKET_PATH", raising=False)
         config = UnixSocketServerConfig.from_env()
         assert config is None
 
