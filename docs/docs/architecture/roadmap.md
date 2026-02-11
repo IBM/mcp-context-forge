@@ -967,7 +967,23 @@
     - ✅ [**#2805**](https://github.com/IBM/mcp-context-forge/issues/2805) - The error message from API on updating a user is not displayed
     - ✅ [**#2806**](https://github.com/IBM/mcp-context-forge/issues/2806) - Admin login redirect loop behind reverse proxy without path rewriting
     - ✅ [**#2821**](https://github.com/IBM/mcp-context-forge/issues/2821) - RBAC middleware crashes on token creation
-    - ✅ [**#2870**](https://github.com/IBM/mcp-context-forge/issues/2870) - API Call - Tokens - Can no longer create tokens - 403 error
+
+???+ info "🐛 Bugs - Remaining (14)"
+
+    - ⏳ [**#1595**](https://github.com/IBM/mcp-context-forge/issues/1595) - [SSE]: SSE transport incorrect endpoint and data parsing
+    - ⏳ [**#1672**](https://github.com/IBM/mcp-context-forge/issues/1672) - Permission system inconsistencies - Undefined permissions in use
+    - ⏳ [**#2189**](https://github.com/IBM/mcp-context-forge/issues/2189) - Multi-team users denied access to non-primary teams and cannot see public resources from other teams
+    - ⏳ [**#2626**](https://github.com/IBM/mcp-context-forge/issues/2626) - Browser autocomplete incorrectly fills fields with saved credentials (UX issue)
+    - ⏳ [**#2628**](https://github.com/IBM/mcp-context-forge/issues/2628) - Account lockout issues - counter persists after expiry, no user notification, no admin unlock capability
+    - ⏳ [**#2641**](https://github.com/IBM/mcp-context-forge/issues/2641) - Endpoints using current_user_ctx["db"] fail with NoneType error
+    - ⏳ [**#2671**](https://github.com/IBM/mcp-context-forge/issues/2671) - ASGI protocol violation in streamable_http: response emitted after completion causing ClosedResourceError
+    - ⏳ [**#2672**](https://github.com/IBM/mcp-context-forge/issues/2672) - MCP Agent rejects valid A2A request as malformed (UAT agent only)
+    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - (X-exchange) - UI: "Failed to load plugin details: Not Found" when opening/enabling plugins in Admin Panel
+    - ⏳ [**#2706**](https://github.com/IBM/mcp-context-forge/issues/2706) - [AUTH] OAuth Protected Resource Metadata endpoint not RFC 9728 compliant
+    - ⏳ [**#2764**](https://github.com/IBM/mcp-context-forge/issues/2764) - API Tokens page missing pagination and team filter not updating
+    - ⏳ [**#2794**](https://github.com/IBM/mcp-context-forge/issues/2794) - Admin users should not have option to remove administration privileges by themselves.
+    - ⏳ [**#2811**](https://github.com/IBM/mcp-context-forge/issues/2811) - Teams - Add / Remove members - The updates are shown only after a refresh
+    - ⏳ [**#2836**](https://github.com/IBM/mcp-context-forge/issues/2836) - API Token - Token created with no expiration days - Error 401 when trying to use it
 
 ???+ check "🔒 Security - Completed (3)"
 

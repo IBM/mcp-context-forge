@@ -5,6 +5,7 @@ This keeps repository-level `--cov=...` addopts parseable when pytest-cov is
 not installed, while preserving normal pytest-cov behavior when it is present.
 """
 
+# Future
 from __future__ import annotations
 
 # Standard
