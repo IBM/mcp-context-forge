@@ -674,6 +674,204 @@ class TestAuthHooksOptimization:
                         assert user.email == mock_user.email
 
 
+class TestGetSyncRedisClient:
+    """Test cases for _get_sync_redis_client helper function."""
+
+    def test_get_sync_redis_client_returns_cached_client(self):
+        """Test that _get_sync_redis_client returns cached client if already initialized."""
+        # Third-Party
+        from mcpgateway import auth
+
+        # Set up a mock cached client
+        mock_redis = MagicMock()
+        auth._SYNC_REDIS_CLIENT = mock_redis
+
+        try:
+            result = auth._get_sync_redis_client()
+            assert result is mock_redis
+        finally:
+            # Clean up
+            auth._SYNC_REDIS_CLIENT = None
+
+    def test_get_sync_redis_client_returns_none_when_redis_not_configured(self):
+        """Test that _get_sync_redis_client returns None when Redis is not configured."""
+        # Third-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        auth._SYNC_REDIS_CLIENT = None
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.redis_url = ""
+            mock_settings.cache_type = "redis"
+
+            result = auth._get_sync_redis_client()
+            assert result is None
+
+    def test_get_sync_redis_client_returns_none_when_cache_type_not_redis(self):
+        """Test that _get_sync_redis_client returns None when cache_type is not redis."""
+        # Third-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        auth._SYNC_REDIS_CLIENT = None
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.cache_type = "memory"
+
+            result = auth._get_sync_redis_client()
+            assert result is None
+
+    def test_get_sync_redis_client_initializes_on_first_call(self):
+        """Test that _get_sync_redis_client initializes Redis client on first call."""
+        # Third-Party
+        from mcpgateway import auth
+        import sys
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.return_value = True
+
+            # Mock the redis module
+            mock_redis_module =MagicMock()
+            mock_redis_module.from_url.return_value = mock_redis_client
+
+            with patch("mcpgateway.config.settings") as mock_settings, \
+                 patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                result = auth._get_sync_redis_client()
+
+                mock_redis_module.from_url.assert_called_once()
+                mock_redis_client.ping.assert_called_once()
+                assert result is mock_redis_client
+                # Verify it's cached
+                assert auth._SYNC_REDIS_CLIENT is mock_redis_client
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_handles_redis_connection_failure(self):
+        """Test that _get_sync_redis_client handles Redis connection failure gracefully."""
+        # Third-Party
+        from mcpgateway import auth
+        import sys
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            # Mock the redis module to raise an exception
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.side_effect = Exception("Connection failed")
+
+            with patch("mcpgateway.config.settings") as mock_settings, \
+                 patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                result = auth._get_sync_redis_client()
+
+                assert result is None
+                # Verify None is cached
+                assert auth._SYNC_REDIS_CLIENT is None
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_handles_redis_ping_failure(self):
+        """Test that _get_sync_redis_client handles Redis ping failure gracefully."""
+        # Third-Party
+        from mcpgateway import auth
+        import sys
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.side_effect = Exception("Ping failed")
+
+            # Mock the redis module
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.return_value = mock_redis_client
+
+            with patch("mcpgateway.config.settings") as mock_settings, \
+                 patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                result = auth._get_sync_redis_client()
+
+                assert result is None
+                # Verify None is cached
+                assert auth._SYNC_REDIS_CLIENT is None
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_double_check_locking(self):
+        """Test that _get_sync_redis_client properly handles double-check locking."""
+        # Third-Party
+        from mcpgateway import auth
+        import threading
+        import sys
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.return_value = True
+
+            call_count = 0
+
+            def mock_from_url_with_delay(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                # Simulate initialization delay
+                import time
+                time.sleep(0.01)
+                return mock_redis_client
+
+            # Mock the redis module
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.side_effect = mock_from_url_with_delay
+
+            with patch("mcpgateway.config.settings") as mock_settings, \
+                 patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                # Call from multiple threads simultaneously
+                results = []
+                def call_get_sync():
+                    results.append(auth._get_sync_redis_client())
+
+                threads = [threading.Thread(target=call_get_sync) for _ in range(5)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+
+                # Should only initialize once despite multiple concurrent calls
+                assert call_count <= 1  # May be 0 if already cached or 1 if initialized
+                # All threads should get the same instance (or None if uninitialized)
+                assert all(r == results[0] for r in results)
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+
 class TestUpdateApiTokenLastUsed:
     """Test cases for _update_api_token_last_used_sync helper function."""
 
@@ -790,6 +988,7 @@ class TestUpdateApiTokenLastUsed:
         # Third-Party
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
+        import sys
 
         # Clear the in-memory cache if it exists
         if hasattr(_update_api_token_last_used_sync, "_cache"):
@@ -804,8 +1003,12 @@ class TestUpdateApiTokenLastUsed:
         mock_result.scalar_one_or_none.return_value = mock_api_token
         mock_db.execute.return_value = mock_result
 
+        # Mock the redis module to raise an exception
+        mock_redis_module = MagicMock()
+        mock_redis_module.from_url.side_effect = Exception("Redis unavailable")
+
         with patch("mcpgateway.auth.settings") as mock_settings, \
-             patch("redis.from_url", side_effect=Exception("Redis unavailable")), \
+             patch.dict(sys.modules, {"redis": mock_redis_module}), \
              patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
              patch("time.time", return_value=1234567890.0), \
              patch("mcpgateway.db.utc_now") as mock_utc_now:
@@ -826,6 +1029,49 @@ class TestUpdateApiTokenLastUsed:
             mock_db.reset_mock()
             _update_api_token_last_used_sync("jti-fallback-123")
             mock_db.commit.assert_not_called()
+
+    def test_update_api_token_last_used_sync_redis_exception_falls_back_to_memory(self):
+        """Test that _update_api_token_last_used_sync falls back to memory cache when Redis operations fail."""
+        # Third-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        # Clear the in-memory cache if it exists
+        if hasattr(_update_api_token_last_used_sync, "_cache"):
+            _update_api_token_last_used_sync._cache.clear()
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-redis-error-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        # Mock a Redis client that exists but throws exceptions on operations
+        mock_redis_client = MagicMock()
+        mock_redis_client.get.side_effect = Exception("Redis get failed")
+
+        with patch("mcpgateway.auth.settings") as mock_settings, \
+             patch("mcpgateway.auth._get_sync_redis_client", return_value=mock_redis_client), \
+             patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
+             patch("time.time", return_value=1234567890.0), \
+             patch("mcpgateway.db.utc_now") as mock_utc_now:
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+            mock_utc_now.return_value = mock_time
+
+            # Should fall back to in-memory cache when Redis get fails
+            _update_api_token_last_used_sync("jti-redis-error-123")
+
+            # Verify Redis was attempted
+            mock_redis_client.get.assert_called()
+            # Verify DB update still occurred via fallback
+            mock_db.commit.assert_called_once()
+            assert mock_api_token.last_used == mock_time
 
     @pytest.mark.asyncio
     async def test_api_token_last_used_updated_on_jwt_auth(self, monkeypatch):

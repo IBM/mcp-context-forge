@@ -93,7 +93,7 @@ class TokenUsageMiddleware:
 
         async def send_wrapper(message: dict) -> None:
             """Wrap send to capture response status.
-            
+
             Args:
                 message: ASGI message dict containing response data
             """

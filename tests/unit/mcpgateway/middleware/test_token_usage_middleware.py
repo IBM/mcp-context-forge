@@ -407,3 +407,37 @@ async def test_handles_non_http_scope():
     # Should just pass through to the app
     app.assert_awaited_once_with(scope, receive, send)
 
+
+@pytest.mark.asyncio
+async def test_handles_exception_extracting_token_info():
+    """Middleware should handle exceptions when extracting token information."""
+    app = AsyncMock()
+    
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+    
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+    
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {
+            "auth_method": "api_token",
+            "jti": None,
+            "user": None,
+        },
+        "headers": [(b"authorization", b"Bearer test_token")],
+    }
+    
+    # Mock Headers to raise an exception
+    with patch("mcpgateway.middleware.token_usage_middleware.Headers", side_effect=Exception("Headers error")), \
+         patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_session:
+        await _make_asgi_call(middleware, scope)
+    
+    # Should not create DB session if header extraction fails
+    mock_session.assert_not_called()
+    # Request should still succeed
+    app.assert_awaited_once()
