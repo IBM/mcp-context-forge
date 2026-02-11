@@ -1309,7 +1309,7 @@ def test_gateway_provider_bedrock_completion(monkeypatch):
     assert llm is not None
 
 
-def test_gateway_provider_anthropic_completion(monkeypatch):
+def test_gateway_provider_anthropic_completion_with_helper_patches(monkeypatch):
     """GatewayProvider anthropic completion branch."""
     _patch_gateway_llms(monkeypatch)
     model, provider = _make_model_and_provider("anthropic")

@@ -21,7 +21,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 import jwt
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, SecretStr, ValidationError
 import pytest
 import sqlalchemy as sa
 from starlette.requests import Request
@@ -43,6 +43,7 @@ from mcpgateway.schemas import (
 # Constants                                                                   #
 # --------------------------------------------------------------------------- #
 PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
+TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 
 # Mock data templates with complete field structures
 MOCK_METRICS = {
@@ -306,6 +307,13 @@ def test_client(app_with_temp_db):
     # Override old auth system
     app_with_temp_db.dependency_overrides[require_auth] = lambda: "test_user"
 
+    # Use a strong JWT secret during tests to avoid short-key warnings.
+    original_jwt_secret = settings.jwt_secret_key
+    if hasattr(original_jwt_secret, "get_secret_value") and callable(getattr(original_jwt_secret, "get_secret_value", None)):
+        settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
+    else:
+        settings.jwt_secret_key = TEST_JWT_SECRET
+
     # Patch the auth function used by DocsAuthMiddleware
     # Standard
     from unittest.mock import MagicMock, patch
@@ -388,6 +396,7 @@ def test_client(app_with_temp_db):
     yield client
 
     # Clean up overrides and restore original methods
+    settings.jwt_secret_key = original_jwt_secret
     app_with_temp_db.dependency_overrides.pop(require_auth, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
@@ -1129,7 +1138,7 @@ class TestPromptEndpoints:
         assert response.status_code == 422
 
     @patch("mcpgateway.main.prompt_service.get_prompt")
-    def test_get_prompt_no_args(self, mock_get, test_client, auth_headers):
+    def test_get_prompt_no_args_secondary(self, mock_get, test_client, auth_headers):
         """Test getting a prompt without arguments."""
         mock_get.return_value = {"name": "test", "template": "Hello"}
         response = test_client.get("/prompts/test", headers=auth_headers)
@@ -1137,7 +1146,7 @@ class TestPromptEndpoints:
         mock_get.assert_called_once_with(ANY, "test", {}, user=None, server_id=None, token_teams=None, plugin_context_table=None, plugin_global_context=ANY)
 
     @patch("mcpgateway.main.prompt_service.update_prompt")
-    def test_update_prompt_endpoint(self, mock_update, test_client, auth_headers):
+    def test_update_prompt_endpoint_secondary(self, mock_update, test_client, auth_headers):
         """Test updating an existing prompt."""
         updated = {**MOCK_PROMPT_READ, "description": "Updated description"}
         mock_update.return_value = PromptRead(**updated)
@@ -1162,7 +1171,7 @@ class TestPromptEndpoints:
         assert response.status_code == status_code
 
     @patch("mcpgateway.main.prompt_service.delete_prompt")
-    def test_delete_prompt_endpoint(self, mock_delete, test_client, auth_headers):
+    def test_delete_prompt_endpoint_secondary(self, mock_delete, test_client, auth_headers):
         """Test deleting a prompt."""
         mock_delete.return_value = None
         response = test_client.delete("/prompts/test_prompt", headers=auth_headers)
@@ -1171,7 +1180,7 @@ class TestPromptEndpoints:
         mock_delete.assert_called_once()
 
     @patch("mcpgateway.main.prompt_service.set_prompt_state")
-    def test_set_prompt_state(self, mock_toggle, test_client, auth_headers):
+    def test_set_prompt_state_secondary(self, mock_toggle, test_client, auth_headers):
         """Test setting prompt active/inactive state."""
         mock_prompt = MagicMock()
         mock_prompt.model_dump.return_value = {"id": 1, "enabled": False}
@@ -1283,7 +1292,7 @@ class TestPromptEndpoints:
 # ----------------------------------------------------- #
 class TestGatewayEndpoints:
     @patch("mcpgateway.main.gateway_service.list_gateways")
-    def test_list_gateways_endpoint(self, mock_list, test_client, auth_headers):
+    def test_list_gateways_endpoint_secondary(self, mock_list, test_client, auth_headers):
         """Test listing all registered gateways."""
         gateway_read = GatewayRead(**MOCK_GATEWAY_READ)
         mock_list.return_value = ([gateway_read], None)
@@ -1296,7 +1305,7 @@ class TestGatewayEndpoints:
         mock_list.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.register_gateway")
-    def test_create_gateway_endpoint(self, mock_create, test_client, auth_headers):
+    def test_create_gateway_endpoint_secondary(self, mock_create, test_client, auth_headers):
         """Test registering a new gateway."""
         mock_create.return_value = MOCK_GATEWAY_READ
         req = {"name": "test_gateway", "url": "http://example.com"}
@@ -1305,7 +1314,7 @@ class TestGatewayEndpoints:
         mock_create.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):
+    def test_get_gateway_endpoint_secondary(self, mock_get, test_client, auth_headers):
         """Test retrieving a specific gateway."""
         mock_get.return_value = MOCK_GATEWAY_READ
         response = test_client.get("/gateways/1", headers=auth_headers)
@@ -1314,7 +1323,7 @@ class TestGatewayEndpoints:
         mock_get.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.update_gateway")
-    def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
+    def test_update_gateway_endpoint_secondary(self, mock_update, test_client, auth_headers):
         """Test updating an existing gateway."""
         mock_update.return_value = MOCK_GATEWAY_READ
         req = {"description": "Updated description"}
@@ -1348,7 +1357,7 @@ class TestGatewayEndpoints:
         mock_invalidate_cache.assert_called_once()
 
     @patch("mcpgateway.main.gateway_service.set_gateway_state")
-    def test_set_gateway_state(self, mock_toggle, test_client, auth_headers):
+    def test_set_gateway_state_secondary(self, mock_toggle, test_client, auth_headers):
         """Test setting gateway active/inactive state."""
         mock_gateway = MagicMock()
         mock_gateway.model_dump.return_value = {"id": "1", "is_active": False}

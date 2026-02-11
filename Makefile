@@ -636,7 +636,7 @@ coverage:
 			--ignore=tests/fuzz --ignore=tests/manual --ignore=test.py tests/ || true"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage html -d $(COVERAGE_DIR) --include=mcpgateway/*"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage xml"
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && PYTHONWARNINGS='ignore::UserWarning' coverage-badge -fo $(DOCS_DIR)/docs/images/coverage.svg"
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage report -m --no-skip-covered"
 	@echo "🔍  Generating annotated coverage files..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && coverage annotate -d ."

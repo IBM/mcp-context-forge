@@ -1910,6 +1910,16 @@ class TestEmailAuthServiceUserDeletion:
         """Create email auth service instance."""
         return EmailAuthService(mock_db)
 
+    @pytest.fixture(autouse=True)
+    def patch_background_task_creation(self, monkeypatch):
+        """Close fire-and-forget coroutines to avoid unawaited coroutine warnings."""
+
+        def _close_task(coro):
+            coro.close()
+            return None
+
+        monkeypatch.setattr("asyncio.create_task", _close_task)
+
     @pytest.fixture
     def mock_user(self):
         """Create a mock user object."""
@@ -1964,7 +1974,11 @@ class TestEmailAuthServiceUserDeletion:
         mock_result.scalars.return_value.all.return_value = []  # No teams owned
         mock_db.execute.return_value = mock_result
 
-        with patch("asyncio.create_task", side_effect=Exception("task-failure")):
+        def _raise_after_close(coro):
+            coro.close()
+            raise Exception("task-failure")
+
+        with patch("asyncio.create_task", side_effect=_raise_after_close):
             result = await service.delete_user("test@example.com")
 
         assert result is True
@@ -1976,8 +1990,13 @@ class TestEmailAuthServiceUserDeletion:
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
+        def _close_task(coro):
+            coro.close()
+            return None
+
         with pytest.raises(ValueError, match="not found"):
-            await service.delete_user("nonexistent@example.com")
+            with patch("asyncio.create_task", side_effect=_close_task):
+                await service.delete_user("nonexistent@example.com")
 
     @pytest.mark.asyncio
     async def test_delete_user_with_team_transfer(self, service, mock_db, mock_user, mock_team, mock_team_member):
@@ -2003,8 +2022,13 @@ class TestEmailAuthServiceUserDeletion:
         mock_role_svc = MagicMock()
         mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
 
+        def _close_task(coro):
+            coro.close()
+            return None
+
         with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
-            result = await service.delete_user("test@example.com")
+            with patch("asyncio.create_task", side_effect=_close_task):
+                result = await service.delete_user("test@example.com")
 
         assert result is True
         assert mock_team.created_by == "other@example.com"  # Ownership transferred
@@ -2050,8 +2074,13 @@ class TestEmailAuthServiceUserDeletion:
         mock_role_svc = MagicMock()
         mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
 
+        def _close_task(coro):
+            coro.close()
+            return None
+
         with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
-            result = await service.delete_user("test@example.com")
+            with patch("asyncio.create_task", side_effect=_close_task):
+                result = await service.delete_user("test@example.com")
 
         assert result is True
         mock_role_svc.delete_all_user_roles.assert_called_once_with("test@example.com")
@@ -2258,14 +2287,14 @@ class TestEmailAuthServiceAdminCounting:
 
     # ---- count_active_admin_users ---- #
     @pytest.mark.asyncio
-    async def test_count_active_admin_users(self, service, mock_db):
+    async def test_count_active_admin_users_additional_case(self, service, mock_db):
         """count_active_admin_users returns count."""
         mock_db.execute.return_value.scalar.return_value = 3
         result = await service.count_active_admin_users()
         assert result == 3
 
     @pytest.mark.asyncio
-    async def test_count_active_admin_users_none(self, service, mock_db):
+    async def test_count_active_admin_users_none_additional_case(self, service, mock_db):
         """count_active_admin_users returns 0 when None."""
         mock_db.execute.return_value.scalar.return_value = None
         result = await service.count_active_admin_users()
@@ -2320,7 +2349,7 @@ class TestEmailAuthServiceAdminCounting:
 
     # ---- is_last_active_admin true case ---- #
     @pytest.mark.asyncio
-    async def test_is_last_active_admin_true(self, service, mock_db):
+    async def test_is_last_active_admin_true_additional_case(self, service, mock_db):
         """is_last_active_admin returns True when only 1 active admin."""
         mock_user = MagicMock()
         mock_user.is_admin = True

@@ -8,6 +8,8 @@ import types
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
+from fastapi import HTTPException
+import orjson
 import pytest
 
 # First-Party
@@ -191,6 +193,30 @@ async def test_enrich_tool_conversion_failure_raises(monkeypatch):
 
     with pytest.raises(RuntimeError, match="boom"):
         await svc.enrich_tool("tool-1", tool_service, db=MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_execute_tool_nl_testcases_json_decode_error_maps_to_http_400(monkeypatch):
+    """Router should map JSON decode issues to HTTP 400 for execute endpoint."""
+    # First-Party
+    from mcpgateway.routers import toolops_router as router
+
+    try:
+        orjson.loads("{")
+    except orjson.JSONDecodeError as exc:
+        json_error = exc
+
+    monkeypatch.setattr(router, "execute_tool_nl_test_cases", AsyncMock(side_effect=json_error))
+
+    with pytest.raises(HTTPException) as exc_info:
+        await router.execute_tool_nl_testcases(
+            router.ToolNLTestInput(tool_id="tool-1", tool_nl_test_cases=["ping"]),
+            db=MagicMock(),
+            _user={"email": "test@example.com"},
+        )
+
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.detail == "Invalid JSON in request body"
 
 
 def test_import_with_altk_present_overrides_execute_prompt_and_builds_llm_config(monkeypatch):
