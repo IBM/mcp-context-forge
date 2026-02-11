@@ -21886,6 +21886,15 @@ function initializeAddMembersForms(root = document) {
     allForms.forEach((form) => initializeAddMembersForm(form));
 }
 
+// Get current pagination state from URL parameters
+function getTeamsCurrentPaginationState() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return {
+        page: urlParams.get('teams_page') || '1',
+        perPage: urlParams.get('teams_size') || '10'
+    };
+}
+
 function handleAdminTeamAction(event) {
     const detail = event.detail || {};
     const delayMs = Number(detail.delayMs) || 0;
@@ -21913,11 +21922,10 @@ function handleAdminTeamAction(event) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
                 // Preserve current pagination/filter state on refresh
+                const paginationState = getTeamsCurrentPaginationState();
                 const params = new URLSearchParams();
-                params.set("page", "1"); // Reset to first page on action
-                if (typeof getTeamsPerPage === "function") {
-                    params.set("per_page", getTeamsPerPage().toString());
-                }
+                params.set("page", paginationState.page);
+                params.set("per_page", paginationState.perPage);
                 // Preserve search query from input field
                 const searchInput = document.getElementById("team-search");
                 if (searchInput && searchInput.value.trim()) {
