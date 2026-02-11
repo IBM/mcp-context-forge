@@ -88,20 +88,25 @@ VIEWPORT_SIZE = _parse_video_size(PLAYWRIGHT_VIEWPORT_SIZE)
 def _wait_for_admin_transition(page: Page, previous_url: Optional[str] = None) -> None:
     """Wait for admin-related navigation after login actions."""
     try:
-        page.wait_for_load_state("domcontentloaded", timeout=5000)
+        page.wait_for_load_state("domcontentloaded", timeout=10000)
     except PlaywrightTimeoutError:
-        page.wait_for_timeout(500)
+        pass  # Page may already be loaded
     if previous_url and page.url == previous_url:
-        page.wait_for_timeout(500)
+        # URL hasn't changed yet; wait for navigation to complete
+        try:
+            page.wait_for_url(lambda url: url != previous_url, timeout=5000)
+        except PlaywrightTimeoutError:
+            pass  # May not navigate (e.g., auth not required)
 
 
-def _wait_for_login_response(page: Page) -> Optional[int]:
-    """Wait for the login POST response and return its status code."""
+def _submit_login_and_wait(page: Page, login_page, email: str, password: str) -> Optional[int]:
+    """Submit login form and return the POST response status code."""
     try:
-        response = page.wait_for_response(lambda resp: "/admin/login" in resp.url and resp.request.method == "POST", timeout=10000)
-    except Exception:
+        with page.expect_response(lambda resp: "/admin/login" in resp.url and resp.request.method == "POST", timeout=10000) as response_info:
+            login_page.submit_login(email, password)
+        return response_info.value.status
+    except PlaywrightTimeoutError:
         return None
-    return response.status
 
 
 def _set_admin_jwt_cookie(page: Page, email: str) -> None:
@@ -154,9 +159,8 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     # Handle login page redirect if auth is required
     if login_page.is_on_login_page() or login_page.is_login_form_available():
         current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
-        login_page.submit_login(admin_email, current_password)
 
-        status = _wait_for_login_response(page)
+        status = _submit_login_and_wait(page, login_page, admin_email, current_password)
         if status is not None and status >= 400:
             raise AssertionError(f"Login failed with status {status}")
         _wait_for_admin_transition(page)
@@ -169,8 +173,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
 
         # Retry with new password if credentials were invalid
         if login_page.has_invalid_credentials_error() and ADMIN_NEW_PASSWORD != current_password:
-            login_page.submit_login(admin_email, ADMIN_NEW_PASSWORD)
-            status = _wait_for_login_response(page)
+            status = _submit_login_and_wait(page, login_page, admin_email, ADMIN_NEW_PASSWORD)
             if status is not None and status >= 400:
                 raise AssertionError(f"Login failed with status {status}")
             ADMIN_ACTIVE_PASSWORD[0] = ADMIN_NEW_PASSWORD
@@ -190,7 +193,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     # Wait for the application shell to load
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
-    except Exception:
+    except PlaywrightTimeoutError:
         content = page.content()
         if "Internal Server Error" in content:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")

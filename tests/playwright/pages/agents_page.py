@@ -334,7 +334,7 @@ class AgentsPage(BasePage):
             password: Basic auth password
         """
         self.set_auth_type("basic")
-        self.page.wait_for_timeout(300)  # Wait for fields to appear
+        self.wait_for_visible(self.auth_basic_fields)
         self.fill_locator(self.auth_username_input, username)
         self.fill_locator(self.auth_password_input, password)
 
@@ -345,7 +345,7 @@ class AgentsPage(BasePage):
             token: Bearer token
         """
         self.set_auth_type("bearer")
-        self.page.wait_for_timeout(300)  # Wait for field to appear
+        self.wait_for_visible(self.auth_bearer_fields)
         self.fill_locator(self.auth_token_input, token)
 
     def fill_query_param_auth(self, param_key: str, param_value: str) -> None:
@@ -356,7 +356,7 @@ class AgentsPage(BasePage):
             param_value: Query parameter value
         """
         self.set_auth_type("query_param")
-        self.page.wait_for_timeout(300)  # Wait for fields to appear
+        self.wait_for_visible(self.auth_query_param_fields)
         self.fill_locator(self.auth_query_param_key_input, param_key)
         self.fill_locator(self.auth_query_param_value_input, param_value)
 
@@ -372,7 +372,7 @@ class AgentsPage(BasePage):
             scopes: Space-separated OAuth scopes
         """
         self.set_auth_type("oauth")
-        self.page.wait_for_timeout(300)  # Wait for fields to appear
+        self.wait_for_visible(self.auth_oauth_fields)
 
         self.oauth_grant_type_select.select_option(grant_type)
 

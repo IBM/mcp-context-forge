@@ -205,8 +205,8 @@ class TestHTMXInteractions:
         # Type a search term that likely won't match
         servers_page.search_servers("xyznonexistentserver123")
 
-        # Wait a moment for any filtering to apply
-        servers_page.page.wait_for_timeout(500)
+        # Wait for filtering to take effect (count should change)
+        servers_page.wait_for_count_change(servers_page.server_items, initial_rows, timeout=5000)
 
         # Check if the table has been filtered
         filtered_visible = servers_page.server_items.locator(":visible").count()
@@ -214,7 +214,9 @@ class TestHTMXInteractions:
 
         # Clear search
         servers_page.clear_search()
-        servers_page.page.wait_for_timeout(500)
+
+        # Wait for rows to be restored
+        servers_page.wait_for_count_change(servers_page.server_items, filtered_visible, timeout=5000)
 
         # Verify rows are restored
         restored_rows = servers_page.server_items.count()
