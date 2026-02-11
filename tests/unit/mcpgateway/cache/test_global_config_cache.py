@@ -39,4 +39,3 @@ def test_get_double_checked_lock_returns_refreshed_cache(monkeypatch: pytest.Mon
     assert result is refreshed
     assert cache._hit_count == 1
     db.query.assert_not_called()
-
