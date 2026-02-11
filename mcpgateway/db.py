@@ -953,6 +953,7 @@ class Permissions:
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"
+    SERVERS_USE = "servers.use"
     SERVERS_UPDATE = "servers.update"
     SERVERS_DELETE = "servers.delete"
     SERVERS_MANAGE = "servers.manage"
