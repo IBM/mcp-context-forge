@@ -540,7 +540,7 @@ class TestGetTeamMembersEdge:
 class TestCacheGetters:
     def test_auth_cache_import_error(self, svc):
         """ImportError in _get_auth_cache returns None."""
-        with patch.dict("sys.modules", {"mcpgateway.cache.auth_cache": None}):
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", side_effect=ImportError("mocked")):
             result = svc._get_auth_cache()
         assert result is None
 
@@ -774,7 +774,7 @@ class TestMemberCountsCachedEdge:
         mock_redis.mget = AsyncMock(return_value=[b"5"])
 
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
-             patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
+             patch("mcpgateway.services.team_management_service.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True
             mock_settings.team_member_count_cache_ttl = 300
             mock_settings.cache_prefix = "test:"

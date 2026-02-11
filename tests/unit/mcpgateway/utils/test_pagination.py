@@ -427,8 +427,8 @@ class TestOffsetPagination:
         assert len(result["data"]) == 10  # Last page has 10 items
 
     @pytest.mark.asyncio
-    async def test_offset_paginate_page_stays_1_when_no_items(self, db_session):
-        """When there are no items, page should stay at 1 regardless of input."""
+    async def test_offset_paginate_page_not_clamped_when_no_items(self, db_session):
+        """When there are no items (total_pages=0), page is not clamped."""
         query = select(Tool).where(Tool.enabled.is_(True))
 
         result = await offset_paginate(

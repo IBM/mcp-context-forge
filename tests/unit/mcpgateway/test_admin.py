@@ -14364,13 +14364,26 @@ class TestGetUserTeamRolesWrapper:
 class TestAdjustPaginationForConversionFailures:
     """Tests for _adjust_pagination_for_conversion_failures."""
 
-    def _make_pagination(self, total_items: int = 100) -> PaginationMeta:
-        return PaginationMeta(page=1, per_page=20, total_items=total_items, total_pages=5, has_next=True, has_prev=False)
+    def _make_pagination(self, total_items: int = 100, page: int = 1, per_page: int = 20) -> PaginationMeta:
+        import math
+
+        total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
+        return PaginationMeta(
+            page=page,
+            per_page=per_page,
+            total_items=total_items,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
 
     def test_decrements_total_items_by_failed_count(self):
         pagination = self._make_pagination(total_items=100)
         _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
         assert pagination.total_items == 97
+        assert pagination.total_pages == 5
+        assert pagination.has_next is True
+        assert pagination.has_prev is False
 
     def test_zero_failures_leaves_total_unchanged(self):
         pagination = self._make_pagination(total_items=50)
@@ -14381,11 +14394,15 @@ class TestAdjustPaginationForConversionFailures:
         pagination = self._make_pagination(total_items=2)
         _adjust_pagination_for_conversion_failures(pagination, failed_count=5)
         assert pagination.total_items == 0
+        assert pagination.total_pages == 0
+        assert pagination.has_next is False
+        assert pagination.has_prev is False
 
     def test_exact_match_results_in_zero(self):
         pagination = self._make_pagination(total_items=10)
         _adjust_pagination_for_conversion_failures(pagination, failed_count=10)
         assert pagination.total_items == 0
+        assert pagination.total_pages == 0
 
     def test_total_items_already_zero(self):
         pagination = self._make_pagination(total_items=0)
@@ -14396,3 +14413,23 @@ class TestAdjustPaginationForConversionFailures:
         pagination = self._make_pagination(total_items=1)
         _adjust_pagination_for_conversion_failures(pagination, failed_count=1)
         assert pagination.total_items == 0
+        assert pagination.total_pages == 0
+
+    def test_recomputes_has_next_on_boundary(self):
+        """When failures reduce total_pages, has_next should become False."""
+        pagination = self._make_pagination(total_items=21, page=1, per_page=20)
+        assert pagination.has_next is True
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
+        assert pagination.total_items == 19
+        assert pagination.total_pages == 1
+        assert pagination.has_next is False
+
+    def test_clamps_page_when_total_pages_shrinks(self):
+        """When failures shrink total_pages below current page, page is clamped."""
+        pagination = self._make_pagination(total_items=41, page=3, per_page=20)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
+        assert pagination.total_items == 39
+        assert pagination.total_pages == 2
+        assert pagination.page == 2
+        assert pagination.has_next is False
+        assert pagination.has_prev is True

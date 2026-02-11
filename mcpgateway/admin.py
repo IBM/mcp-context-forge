@@ -534,8 +534,8 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
     """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
 
     When items on the current page fail to convert, the "Showing X of Y" display
-    would otherwise count items that aren't actually displayed. This decrements
-    total_items by the number of failures on the current page.
+    would otherwise count items that aren't actually displayed. This adjusts
+    total_items and recomputes derived fields (total_pages, has_next, has_prev).
 
     Args:
         pagination: The PaginationMeta object to adjust (modified in-place).
@@ -543,6 +543,11 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
     """
     if failed_count > 0:
         pagination.total_items = max(0, pagination.total_items - failed_count)
+        pagination.total_pages = math.ceil(pagination.total_items / pagination.per_page) if pagination.total_items > 0 else 0
+        if pagination.total_pages > 0:
+            pagination.page = min(pagination.page, pagination.total_pages)
+        pagination.has_next = pagination.page < pagination.total_pages
+        pagination.has_prev = pagination.page > 1
 
 
 def _get_span_entity_performance(
