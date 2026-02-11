@@ -326,6 +326,19 @@ class TestWebSocketTransport:
         mock_websocket.close.assert_not_called()
         assert await websocket_transport.is_connected() is True
 
+    @pytest.mark.asyncio
+    async def test_disconnect_returns_when_no_running_loop(self, websocket_transport, monkeypatch, mock_websocket):
+        def _raise_runtime_error():
+            raise RuntimeError("no running loop")
+
+        monkeypatch.setattr("asyncio.get_running_loop", _raise_runtime_error)
+        websocket_transport._connected = True
+
+        await websocket_transport.disconnect()
+
+        mock_websocket.close.assert_not_called()
+        assert await websocket_transport.is_connected() is True
+
     # @pytest.mark.asyncio
     # async def test_ping_loop(websocket_transport, mock_websocket):
     #     """Test the ping loop with valid response."""

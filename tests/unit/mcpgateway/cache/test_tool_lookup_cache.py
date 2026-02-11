@@ -128,6 +128,17 @@ async def test_tool_lookup_cache_set_with_gateway_updates_redis(tool_lookup_cach
 
 
 @pytest.mark.asyncio
+async def test_tool_lookup_cache_set_redis_exception_is_swallowed(tool_lookup_cache_instance):
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
+    redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    # Exception path is intentionally swallowed and logged.
+    await tool_lookup_cache_instance.set("tool-a", {"status": "active"}, gateway_id="gw-1")
+
+
+@pytest.mark.asyncio
 async def test_tool_lookup_cache_invalidate_redis(tool_lookup_cache_instance):
     tool_lookup_cache_instance._l2_enabled = True
     redis = MagicMock()
@@ -140,6 +151,17 @@ async def test_tool_lookup_cache_invalidate_redis(tool_lookup_cache_instance):
     assert redis.delete.called
     assert redis.srem.called
     assert redis.publish.called
+
+
+@pytest.mark.asyncio
+async def test_tool_lookup_cache_invalidate_redis_exception_is_swallowed(tool_lookup_cache_instance):
+    tool_lookup_cache_instance._l2_enabled = True
+    redis = MagicMock()
+    redis.delete = AsyncMock(side_effect=RuntimeError("boom"))
+    tool_lookup_cache_instance._get_redis_client = AsyncMock(return_value=redis)
+
+    # Exception path is intentionally swallowed and logged.
+    await tool_lookup_cache_instance.invalidate("tool-a", gateway_id="gw-1")
 
 
 @pytest.mark.asyncio

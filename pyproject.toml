@@ -720,18 +720,26 @@ also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
 [tool.coverage.run]
 source = ["mcpgateway"]
 omit = [
+    "mcpgateway/alembic/*",
+    "mcpgateway/tools/builder/*",
     "*/tests/*",
     "*/test_*.py",
-    "*/__init__.py",
-    "*/alembic/*",
-    "*/version.py",
-    # Builder deployment files - require external tools (docker, kubectl, templates)
-    "mcpgateway/tools/builder/common.py",
-    "mcpgateway/tools/builder/dagger_deploy.py",
-    "mcpgateway/tools/builder/python_deploy.py",
     # Generated protobuf files - auto-generated, not hand-written code
     "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py",
 ]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug",
+    "if TYPE_CHECKING:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.",
+]
+ignore_errors = true
 
 # --------------------------------------------------------------------
 #  Pylint - Static code analysis

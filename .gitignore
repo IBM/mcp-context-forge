@@ -275,6 +275,7 @@ FIXMEs
 # Debug & profiling artifacts
 debug_login_page.png
 docs/pstats.png
+docs/docs/coverage/
 docs/docs/images/coverage.svg
 mcp.prof
 mcp.pstats
