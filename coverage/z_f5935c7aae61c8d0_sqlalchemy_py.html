@@ -2,22 +2,22 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/instrumentation/sqlalchemy.py: 92%</title>
-    <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
-    <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
-    <script src="coverage_html_cb_6fb7b396.js" defer></script>
+    <title>Coverage for mcpgateway/instrumentation/sqlalchemy.py: 100%</title>
+    <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
+    <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
+    <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
 </head>
 <body class="pyfile">
 <header>
     <div class="content">
         <h1>
-            <span class="text">Coverage for </span><b>mcpgateway/instrumentation/sqlalchemy.py</b>:
-            <span class="pc_cov">92%</span>
+            <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;instrumentation&#8201;/&#8201;sqlalchemy.py</b>:
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
             <label for="help_panel_state">
-                <img id="keyboard_icon" src="keybd_closed_cb_ce680311.png" alt="Show/hide keyboard shortcuts">
+                <img id="keyboard_icon" src="keybd_closed_cb_900cfef5.png" alt="Show/hide keyboard shortcuts">
             </label>
             <div id="help_panel">
                 <p class="legend">Shortcuts on this page</p>
@@ -56,18 +56,18 @@
         </aside>
         <h2>
             <span class="text">95 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">91<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">4<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">95<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">5<span class="text"> partial</span></button>
+            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_2033f88d4b89233e_sampling_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_llm_schemas_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_llm_provider_configs_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-12-17 06:36 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
+            created at 2026-02-11 07:10 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -162,14 +162,14 @@
     <p class="pln"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">            <span class="com"># Update the span duration to match what we actually measured</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">            <span class="nam">span</span> <span class="op">=</span> <span class="nam">db</span><span class="op">.</span><span class="nam">query</span><span class="op">(</span><span class="nam">ObservabilitySpan</span><span class="op">)</span><span class="op">.</span><span class="nam">filter_by</span><span class="op">(</span><span class="nam">span_id</span><span class="op">=</span><span class="nam">span_id</span><span class="op">)</span><span class="op">.</span><span class="nam">first</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">            <span class="key">if</span> <span class="nam">span</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">81&#x202F;&#x219B;&#x202F;85</span><span class="annotate long">line 81 didn't jump to line 85 because the condition on line 81 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">            <span class="key">if</span> <span class="nam">span</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">                <span class="nam">span</span><span class="op">.</span><span class="nam">duration_ms</span> <span class="op">=</span> <span class="nam">span_data</span><span class="op">[</span><span class="str">"duration_ms"</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t83" href="#t83">83</a></span><span class="t">                <span class="nam">db</span><span class="op">.</span><span class="nam">commit</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t84" href="#t84">84</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Created span for </span><span class="op">{</span><span class="nam">span_data</span><span class="op">[</span><span class="str">'resource_name'</span><span class="op">]</span><span class="op">}</span><span class="fst"> query: </span><span class="fst">"</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">span_data</span><span class="op">[</span><span class="str">'duration_ms'</span><span class="op">]</span><span class="op">:</span><span class="fst">.2f</span><span class="op">}</span><span class="fst">ms, </span><span class="op">{</span><span class="nam">span_data</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">'row_count'</span><span class="op">)</span><span class="op">}</span><span class="fst"> rows</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t">        <span class="key">finally</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t">            <span class="nam">db</span><span class="op">.</span><span class="nam">close</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t">            <span class="nam">db</span><span class="op">.</span><span class="nam">close</span><span class="op">(</span><span class="op">)</span>  <span class="com"># Commit already done above</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>  <span class="com"># pylint: disable=broad-except</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t">        <span class="com"># Don't fail if span creation fails</span>&nbsp;</span><span class="r"></span></p>
@@ -196,8 +196,8 @@
     <p class="run"><span class="n"><a id="t112" href="#t112">112</a></span><span class="t">            <span class="nam">_write_span_to_db</span><span class="op">(</span><span class="nam">span_data</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t113" href="#t113">113</a></span><span class="t">            <span class="nam">_span_queue</span><span class="op">.</span><span class="nam">task_done</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>  <span class="com"># pylint: disable=broad-except</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error in span writer worker: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>  <span class="com"># pylint: disable=broad-except</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error in span writer worker: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">            <span class="com"># Continue processing even if one span fails</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">    <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Span writer worker stopped"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -221,7 +221,7 @@
     <p class="run"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">    <span class="nam">event</span><span class="op">.</span><span class="nam">listen</span><span class="op">(</span><span class="nam">engine</span><span class="op">,</span> <span class="str">"after_cursor_execute"</span><span class="op">,</span> <span class="nam">_after_cursor_execute</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">    <span class="com"># Start background span writer thread if not already running</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">    <span class="key">if</span> <span class="nam">_span_writer_thread</span> <span class="key">is</span> <span class="key">None</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">_span_writer_thread</span><span class="op">.</span><span class="nam">is_alive</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">140&#x202F;&#x219B;&#x202F;145</span><span class="annotate long">line 140 didn't jump to line 145 because the condition on line 140 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">    <span class="key">if</span> <span class="nam">_span_writer_thread</span> <span class="key">is</span> <span class="key">None</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">_span_writer_thread</span><span class="op">.</span><span class="nam">is_alive</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">        <span class="nam">_span_writer_thread</span> <span class="op">=</span> <span class="nam">threading</span><span class="op">.</span><span class="nam">Thread</span><span class="op">(</span><span class="nam">target</span><span class="op">=</span><span class="nam">_span_writer_worker</span><span class="op">,</span> <span class="nam">name</span><span class="op">=</span><span class="str">"SpanWriterThread"</span><span class="op">,</span> <span class="nam">daemon</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">        <span class="nam">_span_writer_thread</span><span class="op">.</span><span class="nam">start</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Started background span writer thread"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -297,10 +297,10 @@
     <p class="pln"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">    <span class="com"># Get row count if available</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t">    <span class="nam">row_count</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">    <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">        <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">cursor</span><span class="op">,</span> <span class="str">"rowcount"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">cursor</span><span class="op">.</span><span class="nam">rowcount</span> <span class="op">>=</span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">216&#x202F;&#x219B;&#x202F;222</span><span class="annotate long">line 216 didn't jump to line 222 because the condition on line 216 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">        <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">cursor</span><span class="op">,</span> <span class="str">"rowcount"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">cursor</span><span class="op">.</span><span class="nam">rowcount</span> <span class="op">>=</span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">            <span class="nam">row_count</span> <span class="op">=</span> <span class="nam">cursor</span><span class="op">.</span><span class="nam">rowcount</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>  <span class="com"># pylint: disable=broad-except  # nosec B110 - row_count is optional metadata</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">        <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">    <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>  <span class="com"># pylint: disable=broad-except  # nosec B110 - row_count is optional metadata</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">        <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">    <span class="com"># Try to get trace context from connection info</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">    <span class="nam">trace_id</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
@@ -394,10 +394,10 @@
     <p class="pln"><span class="n"><a id="t310" href="#t310">310</a></span><span class="t"><span class="str">        >>> db = SessionLocal()  # doctest: +SKIP</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t"><span class="str">        >>> attach_trace_to_session(db, trace_id)  # doctest: +SKIP</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t312" href="#t312">312</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">    <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">session</span><span class="op">,</span> <span class="str">"bind"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">session</span><span class="op">.</span><span class="nam">bind</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">313&#x202F;&#x219B;&#x202F;exit</span><span class="annotate long">line 313 didn't return from function 'attach_trace_to_session' because the condition on line 313 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t313" href="#t313">313</a></span><span class="t">    <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">session</span><span class="op">,</span> <span class="str">"bind"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">session</span><span class="op">.</span><span class="nam">bind</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t314" href="#t314">314</a></span><span class="t">        <span class="com"># Get a connection and attach trace_id to its info dict</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t315" href="#t315">315</a></span><span class="t">        <span class="nam">connection</span> <span class="op">=</span> <span class="nam">session</span><span class="op">.</span><span class="nam">connection</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">        <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">connection</span><span class="op">,</span> <span class="str">"info"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">316&#x202F;&#x219B;&#x202F;exit</span><span class="annotate long">line 316 didn't return from function 'attach_trace_to_session' because the condition on line 316 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t316" href="#t316">316</a></span><span class="t">        <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">connection</span><span class="op">,</span> <span class="str">"info"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t317" href="#t317">317</a></span><span class="t">            <span class="nam">connection</span><span class="op">.</span><span class="nam">info</span><span class="op">[</span><span class="str">"trace_id"</span><span class="op">]</span> <span class="op">=</span> <span class="nam">trace_id</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
@@ -405,10 +405,10 @@
         <p>
             <a class="nav" href="z_2033f88d4b89233e_sampling_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_580dae60cda9039c_llm_schemas_py.html">&#xbb; next</a>
+            <a class="nav" href="z_580dae60cda9039c_llm_provider_configs_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-12-17 06:36 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
+            created at 2026-02-11 07:10 +0000
         </p>
     </div>
 </footer>

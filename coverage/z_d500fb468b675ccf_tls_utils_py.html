@@ -3,21 +3,21 @@
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
     <title>Coverage for mcpgateway/plugins/framework/external/mcp/tls_utils.py: 100%</title>
-    <link rel="icon" sizes="32x32" href="favicon_32_cb_58284776.png">
-    <link rel="stylesheet" href="style_cb_6b508a39.css" type="text/css">
-    <script src="coverage_html_cb_6fb7b396.js" defer></script>
+    <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
+    <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
+    <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
 </head>
 <body class="pyfile">
 <header>
     <div class="content">
         <h1>
-            <span class="text">Coverage for </span><b>mcpgateway/plugins/framework/external/mcp/tls_utils.py</b>:
+            <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;plugins&#8201;/&#8201;framework&#8201;/&#8201;external&#8201;/&#8201;mcp&#8201;/&#8201;tls_utils.py</b>:
             <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
             <label for="help_panel_state">
-                <img id="keyboard_icon" src="keybd_closed_cb_ce680311.png" alt="Show/hide keyboard shortcuts">
+                <img id="keyboard_icon" src="keybd_closed_cb_900cfef5.png" alt="Show/hide keyboard shortcuts">
             </label>
             <div id="help_panel">
                 <p class="legend">Shortcuts on this page</p>
@@ -64,10 +64,10 @@
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_822f96aab523e3c3_server_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_3749c6a41567077d_agents_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_cf3241d508cf3aed_proto_convert_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-12-17 06:36 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
+            created at 2026-02-11 07:10 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -271,7 +271,7 @@
     <p class="pln"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t">        <span class="com"># - Certificate signature validation</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">        <span class="com"># - Certificate chain validation up to trusted CA</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">        <span class="com"># - Automatic expiration checking (notBefore/notAfter per RFC 5280)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t">        <span class="nam">ssl_context</span> <span class="op">=</span> <span class="nam">ssl</span><span class="op">.</span><span class="nam">create_default_context</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t">        <span class="nam">ssl_context</span> <span class="op">=</span> <span class="nam">ssl</span><span class="op">.</span><span class="nam">create_default_context</span><span class="op">(</span><span class="op">)</span>  <span class="com"># NOSONAR as this will fail check_hostname from NOT tls_config.verify</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t192" href="#t192">192</a></span><span class="t">        <span class="com"># Enforce TLS 1.2 or higher for security</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t193" href="#t193">193</a></span><span class="t">        <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">minimum_version</span> <span class="op">=</span> <span class="nam">ssl</span><span class="op">.</span><span class="nam">TLSVersion</span><span class="op">.</span><span class="nam">TLSv1_2</span>&nbsp;</span><span class="r"></span></p>
@@ -279,8 +279,8 @@
     <p class="run"><span class="n"><a id="t195" href="#t195">195</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">tls_config</span><span class="op">.</span><span class="nam">verify</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t">            <span class="com"># Disable certificate verification (not recommended for production)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Certificate verification disabled for plugin '</span><span class="op">{</span><span class="nam">plugin_name</span><span class="op">}</span><span class="fst">'. This is not recommended for production use.</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t">            <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">check_hostname</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">            <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">verify_mode</span> <span class="op">=</span> <span class="nam">ssl</span><span class="op">.</span><span class="nam">CERT_NONE</span>  <span class="com"># nosec B502  # noqa: DUO122</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t">            <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">check_hostname</span> <span class="op">=</span> <span class="key">False</span>  <span class="com"># NOSONAR as this is specifically NOT tls_config.verify</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">            <span class="nam">ssl_context</span><span class="op">.</span><span class="nam">verify_mode</span> <span class="op">=</span> <span class="nam">ssl</span><span class="op">.</span><span class="nam">CERT_NONE</span>  <span class="com"># nosec B502  # noqa: DUO122 #NOSONAR as this is specifically NOT tls_config.verify</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t">            <span class="com"># Enable strict certificate verification (production mode)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">            <span class="com"># Load CA certificate bundle for server certificate validation</span>&nbsp;</span><span class="r"></span></p>
@@ -326,10 +326,10 @@
         <p>
             <a class="nav" href="z_822f96aab523e3c3_server_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_3749c6a41567077d_agents_py.html">&#xbb; next</a>
+            <a class="nav" href="z_cf3241d508cf3aed_proto_convert_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
-            <a class="nav" href="https://coverage.readthedocs.io/en/7.10.7">coverage.py v7.10.7</a>,
-            created at 2025-12-17 06:36 +0000
+            <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
+            created at 2026-02-11 07:10 +0000
         </p>
     </div>
 </footer>
