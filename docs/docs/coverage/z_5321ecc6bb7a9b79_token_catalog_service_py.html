@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/services/token_catalog_service.py: 99%</title>
+    <title>Coverage for mcpgateway/services/token_catalog_service.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;services&#8201;/&#8201;token_catalog_service.py</b>:
-            <span class="pc_cov">99%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,15 +58,14 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">253<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">4<span class="text"> partial</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_team_management_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_tag_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_token_storage_service_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_b656afd4b78c0335_toolops_altk_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -435,7 +433,7 @@
     <p class="run"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">                <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">            <span class="com"># Check for category wildcard (e.g., "tools.*" allows "tools.read")</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">            <span class="key">if</span> <span class="str">"."</span> <span class="key">in</span> <span class="nam">req_perm</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">354&#x202F;&#x219B;&#x202F;359</span><span class="annotate long">line 354 didn't jump to line 359 because the condition on line 354 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t354" href="#t354">354</a></span><span class="t">            <span class="key">if</span> <span class="str">"."</span> <span class="key">in</span> <span class="nam">req_perm</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t355" href="#t355">355</a></span><span class="t">                <span class="nam">category</span> <span class="op">=</span> <span class="nam">req_perm</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">"."</span><span class="op">)</span><span class="op">[</span><span class="num">0</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t356" href="#t356">356</a></span><span class="t">                <span class="key">if</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">category</span><span class="op">}</span><span class="fst">.*</span><span class="fst">"</span> <span class="key">in</span> <span class="nam">caller_permissions</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t357" href="#t357">357</a></span><span class="t">                    <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
@@ -647,7 +645,7 @@
     <p class="pln"><span class="n"><a id="t563" href="#t563">563</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t564" href="#t564">564</a></span><span class="t">        <span class="nam">query</span> <span class="op">=</span> <span class="nam">select</span><span class="op">(</span><span class="nam">EmailApiToken</span><span class="op">)</span><span class="op">.</span><span class="nam">where</span><span class="op">(</span><span class="nam">EmailApiToken</span><span class="op">.</span><span class="nam">team_id</span> <span class="op">==</span> <span class="nam">team_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t565" href="#t565">565</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t566" href="#t566">566</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">include_inactive</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">566&#x202F;&#x219B;&#x202F;569</span><span class="annotate long">line 566 didn't jump to line 569 because the condition on line 566 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t566" href="#t566">566</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">include_inactive</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t567" href="#t567">567</a></span><span class="t">            <span class="nam">query</span> <span class="op">=</span> <span class="nam">query</span><span class="op">.</span><span class="nam">where</span><span class="op">(</span><span class="nam">and_</span><span class="op">(</span><span class="nam">EmailApiToken</span><span class="op">.</span><span class="nam">is_active</span><span class="op">.</span><span class="nam">is_</span><span class="op">(</span><span class="key">True</span><span class="op">)</span><span class="op">,</span> <span class="nam">or_</span><span class="op">(</span><span class="nam">EmailApiToken</span><span class="op">.</span><span class="nam">expires_at</span><span class="op">.</span><span class="nam">is_</span><span class="op">(</span><span class="key">None</span><span class="op">)</span><span class="op">,</span> <span class="nam">EmailApiToken</span><span class="op">.</span><span class="nam">expires_at</span> <span class="op">></span> <span class="nam">utc_now</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t568" href="#t568">568</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t569" href="#t569">569</a></span><span class="t">        <span class="nam">query</span> <span class="op">=</span> <span class="nam">query</span><span class="op">.</span><span class="nam">order_by</span><span class="op">(</span><span class="nam">EmailApiToken</span><span class="op">.</span><span class="nam">created_at</span><span class="op">.</span><span class="nam">desc</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">limit</span><span class="op">(</span><span class="nam">limit</span><span class="op">)</span><span class="op">.</span><span class="nam">offset</span><span class="op">(</span><span class="nam">offset</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -931,7 +929,7 @@
     <p class="run"><span class="n"><a id="t847" href="#t847">847</a></span><span class="t">        <span class="nam">token_jti</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t848" href="#t848">848</a></span><span class="t">        <span class="key">if</span> <span class="nam">token_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t849" href="#t849">849</a></span><span class="t">            <span class="nam">token</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">get_token</span><span class="op">(</span><span class="nam">token_id</span><span class="op">,</span> <span class="nam">user_email</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t850" href="#t850">850</a></span><span class="t">            <span class="key">if</span> <span class="nam">token</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">850&#x202F;&#x219B;&#x202F;854</span><span class="annotate long">line 850 didn't jump to line 854 because the condition on line 850 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t850" href="#t850">850</a></span><span class="t">            <span class="key">if</span> <span class="nam">token</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t851" href="#t851">851</a></span><span class="t">                <span class="nam">token_jti</span> <span class="op">=</span> <span class="nam">token</span><span class="op">.</span><span class="nam">jti</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t852" href="#t852">852</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t853" href="#t853">853</a></span><span class="t">        <span class="com"># Use SQL aggregation for PostgreSQL, Python fallback for SQLite</span>&nbsp;</span><span class="r"></span></p>
@@ -1046,7 +1044,7 @@
     <p class="pln"><span class="n"><a id="t962" href="#t962">962</a></span><span class="t">        <span class="com"># Most accessed endpoints</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t963" href="#t963">963</a></span><span class="t">        <span class="nam">endpoint_counts</span><span class="op">:</span> <span class="nam">dict</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t964" href="#t964">964</a></span><span class="t">        <span class="key">for</span> <span class="nam">log</span> <span class="key">in</span> <span class="nam">usage_logs</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t965" href="#t965">965</a></span><span class="t">            <span class="key">if</span> <span class="nam">log</span><span class="op">.</span><span class="nam">endpoint</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">965&#x202F;&#x219B;&#x202F;964</span><span class="annotate long">line 965 didn't jump to line 964 because the condition on line 965 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t965" href="#t965">965</a></span><span class="t">            <span class="key">if</span> <span class="nam">log</span><span class="op">.</span><span class="nam">endpoint</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t966" href="#t966">966</a></span><span class="t">                <span class="nam">endpoint_counts</span><span class="op">[</span><span class="nam">log</span><span class="op">.</span><span class="nam">endpoint</span><span class="op">]</span> <span class="op">=</span> <span class="nam">endpoint_counts</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">log</span><span class="op">.</span><span class="nam">endpoint</span><span class="op">,</span> <span class="num">0</span><span class="op">)</span> <span class="op">+</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t967" href="#t967">967</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t968" href="#t968">968</a></span><span class="t">        <span class="nam">top_endpoints</span> <span class="op">=</span> <span class="nam">sorted</span><span class="op">(</span><span class="nam">endpoint_counts</span><span class="op">.</span><span class="nam">items</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">key</span><span class="op">=</span><span class="key">lambda</span> <span class="nam">x</span><span class="op">:</span> <span class="nam">x</span><span class="op">[</span><span class="num">1</span><span class="op">]</span><span class="op">,</span> <span class="nam">reverse</span><span class="op">=</span><span class="key">True</span><span class="op">)</span><span class="op">[</span><span class="op">:</span><span class="num">5</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
@@ -1110,12 +1108,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_5321ecc6bb7a9b79_team_management_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_5321ecc6bb7a9b79_tag_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_5321ecc6bb7a9b79_token_storage_service_py.html">&#xbb; next</a>
+            <a class="nav" href="z_b656afd4b78c0335_toolops_altk_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
     </div>
 </footer>

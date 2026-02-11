@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/services/metrics_rollup_service.py: 98%</title>
+    <title>Coverage for mcpgateway/services/metrics_rollup_service.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;services&#8201;/&#8201;metrics_rollup_service.py</b>:
-            <span class="pc_cov">98%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,15 +58,14 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">345<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">8<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_metrics_query_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_notification_service_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_oauth_manager_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 12:00 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -269,7 +267,7 @@
     <p class="run"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t">    <span class="key">def</span> <span class="nam">resume</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t">        <span class="str">"""Resume background rollup execution."""</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t">        <span class="key">with</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_pause_lock</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">            <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_pause_count</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">188&#x202F;&#x219B;&#x202F;190</span><span class="annotate long">line 188 didn't jump to line 190 because the condition on line 188 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">            <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_pause_count</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_pause_count</span> <span class="op">-=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t">            <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_pause_count</span> <span class="op">&lt;=</span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_pause_count</span> <span class="op">=</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
@@ -298,7 +296,7 @@
     <p class="run"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"MetricsRollupService disabled, skipping start"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span> <span class="key">is</span> <span class="key">None</span> <span class="key">or</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span><span class="op">.</span><span class="nam">done</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">217&#x202F;&#x219B;&#x202F;exit</span><span class="annotate long">line 217 didn't return from function 'start' because the condition on line 217 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span> <span class="key">is</span> <span class="key">None</span> <span class="key">or</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span><span class="op">.</span><span class="nam">done</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">_shutdown_event</span><span class="op">.</span><span class="nam">clear</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">create_task</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_loop</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"MetricsRollupService background task started"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -311,7 +309,7 @@
     <p class="run"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_shutdown_event</span><span class="op">.</span><span class="nam">set</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">        <span class="com"># Cancel the rollup task</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t230" href="#t230">230</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">230&#x202F;&#x219B;&#x202F;237</span><span class="annotate long">line 230 didn't jump to line 237 because the condition on line 230 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t230" href="#t230">230</a></span><span class="t">        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span><span class="op">.</span><span class="nam">cancel</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t232" href="#t232">232</a></span><span class="t">            <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t">                <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_rollup_task</span>&nbsp;</span><span class="r"></span></p>
@@ -560,7 +558,7 @@
     <p class="run run2"><span class="n"><a id="t476" href="#t476">476</a></span><span class="t">                        <span class="key">or</span> <span class="num">0</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t477" href="#t477">477</a></span><span class="t">                    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t478" href="#t478">478</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t479" href="#t479">479</a></span><span class="t">                    <span class="key">if</span> <span class="nam">raw_count</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">479&#x202F;&#x219B;&#x202F;518</span><span class="annotate long">line 479 didn't jump to line 518 because the condition on line 479 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t479" href="#t479">479</a></span><span class="t">                    <span class="key">if</span> <span class="nam">raw_count</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t480" href="#t480">480</a></span><span class="t">                        <span class="com"># Always re-aggregate when there's raw data, even if rollup exists.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t481" href="#t481">481</a></span><span class="t">                        <span class="com"># This ensures late-arriving metrics (buffer flush, ingestion lag) are included.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t482" href="#t482">482</a></span><span class="t">                        <span class="com"># The _aggregate_hour queries ALL raw data for the hour, and _upsert_rollup</span>&nbsp;</span><span class="r"></span></p>
@@ -593,9 +591,9 @@
     <p class="run"><span class="n"><a id="t509" href="#t509">509</a></span><span class="t">                        <span class="nam">hours_processed</span> <span class="op">+=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t510" href="#t510">510</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t511" href="#t511">511</a></span><span class="t">                        <span class="com"># Delete raw metrics if configured</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t512" href="#t512">512</a></span><span class="t">                        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">delete_raw_after_rollup</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">512&#x202F;&#x219B;&#x202F;518</span><span class="annotate long">line 512 didn't jump to line 518 because the condition on line 512 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t512" href="#t512">512</a></span><span class="t">                        <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">delete_raw_after_rollup</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t513" href="#t513">513</a></span><span class="t">                            <span class="nam">delete_cutoff</span> <span class="op">=</span> <span class="nam">datetime</span><span class="op">.</span><span class="nam">now</span><span class="op">(</span><span class="nam">timezone</span><span class="op">.</span><span class="nam">utc</span><span class="op">)</span> <span class="op">-</span> <span class="nam">timedelta</span><span class="op">(</span><span class="nam">hours</span><span class="op">=</span><span class="nam">self</span><span class="op">.</span><span class="nam">delete_raw_after_rollup_hours</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t514" href="#t514">514</a></span><span class="t">                            <span class="key">if</span> <span class="nam">hour_end</span> <span class="op">&lt;</span> <span class="nam">delete_cutoff</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">514&#x202F;&#x219B;&#x202F;518</span><span class="annotate long">line 514 didn't jump to line 518 because the condition on line 514 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t514" href="#t514">514</a></span><span class="t">                            <span class="key">if</span> <span class="nam">hour_end</span> <span class="op">&lt;</span> <span class="nam">delete_cutoff</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t515" href="#t515">515</a></span><span class="t">                                <span class="nam">deleted</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_delete_raw_metrics</span><span class="op">(</span><span class="nam">db</span><span class="op">,</span> <span class="nam">raw_model</span><span class="op">,</span> <span class="nam">current</span><span class="op">,</span> <span class="nam">hour_end</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t516" href="#t516">516</a></span><span class="t">                                <span class="nam">raw_deleted</span> <span class="op">+=</span> <span class="nam">deleted</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t517" href="#t517">517</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -769,7 +767,7 @@
     <p class="pln"><span class="n"><a id="t685" href="#t685">685</a></span><span class="t">                <span class="com"># OPTIMIZED: Bulk load entity names in one query</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t686" href="#t686">686</a></span><span class="t">                <span class="nam">entity_ids</span> <span class="op">=</span> <span class="nam">list</span><span class="op">(</span><span class="nam">set</span><span class="op">(</span><span class="nam">r</span><span class="op">[</span><span class="str">"entity_id"</span><span class="op">]</span> <span class="key">for</span> <span class="nam">r</span> <span class="key">in</span> <span class="nam">agg_results</span><span class="op">.</span><span class="nam">values</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t687" href="#t687">687</a></span><span class="t">                <span class="nam">entity_names</span> <span class="op">=</span> <span class="op">{</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t688" href="#t688">688</a></span><span class="t">                <span class="key">if</span> <span class="nam">entity_ids</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">688&#x202F;&#x219B;&#x202F;694</span><span class="annotate long">line 688 didn't jump to line 694 because the condition on line 688 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t688" href="#t688">688</a></span><span class="t">                <span class="key">if</span> <span class="nam">entity_ids</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t689" href="#t689">689</a></span><span class="t">                    <span class="nam">entities</span> <span class="op">=</span> <span class="nam">db</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="nam">select</span><span class="op">(</span><span class="nam">entity_model</span><span class="op">.</span><span class="nam">id</span><span class="op">,</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">entity_model</span><span class="op">,</span> <span class="nam">entity_name_col</span><span class="op">)</span><span class="op">)</span><span class="op">.</span><span class="nam">where</span><span class="op">(</span><span class="nam">entity_model</span><span class="op">.</span><span class="nam">id</span><span class="op">.</span><span class="nam">in_</span><span class="op">(</span><span class="nam">entity_ids</span><span class="op">)</span><span class="op">)</span><span class="op">)</span>  <span class="com"># .fetchall()</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t690" href="#t690">690</a></span><span class="t">                    <span class="nam">entity_names</span> <span class="op">=</span> <span class="op">{</span><span class="nam">e</span><span class="op">[</span><span class="num">0</span><span class="op">]</span><span class="op">:</span> <span class="nam">e</span><span class="op">[</span><span class="num">1</span><span class="op">]</span> <span class="key">for</span> <span class="nam">e</span> <span class="key">in</span> <span class="nam">entities</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t691" href="#t691">691</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -794,7 +792,7 @@
     <p class="pln"><span class="n"><a id="t710" href="#t710">710</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t711" href="#t711">711</a></span><span class="t">                    <span class="key">if</span> <span class="nam">key</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">response_times_by_entity</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t712" href="#t712">712</a></span><span class="t">                        <span class="nam">response_times_by_entity</span><span class="op">[</span><span class="nam">key</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t713" href="#t713">713</a></span><span class="t">                    <span class="key">if</span> <span class="nam">rt</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">713&#x202F;&#x219B;&#x202F;705</span><span class="annotate long">line 713 didn't jump to line 705 because the condition on line 713 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t713" href="#t713">713</a></span><span class="t">                    <span class="key">if</span> <span class="nam">rt</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t714" href="#t714">714</a></span><span class="t">                        <span class="nam">response_times_by_entity</span><span class="op">[</span><span class="nam">key</span><span class="op">]</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">rt</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t715" href="#t715">715</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t716" href="#t716">716</a></span><span class="t">                <span class="com"># Build aggregation results with percentiles</span>&nbsp;</span><span class="r"></span></p>
@@ -1105,10 +1103,10 @@
         <p>
             <a class="nav" href="z_5321ecc6bb7a9b79_metrics_query_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_5321ecc6bb7a9b79_notification_service_py.html">&#xbb; next</a>
+            <a class="nav" href="z_5321ecc6bb7a9b79_oauth_manager_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 12:00 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
     </div>
 </footer>

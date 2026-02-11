@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/routers/oauth_router.py: 99%</title>
+    <title>Coverage for mcpgateway/routers/oauth_router.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;routers&#8201;/&#8201;oauth_router.py</b>:
-            <span class="pc_cov">99%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,7 +58,6 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">236<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">4<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_metrics_maintenance_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_observability_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -208,7 +206,7 @@
     <p class="pln"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t">            <span class="nam">auth_service</span> <span class="op">=</span> <span class="nam">EmailAuthService</span><span class="op">(</span><span class="nam">db</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t">            <span class="nam">user</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">auth_service</span><span class="op">.</span><span class="nam">get_user_by_email</span><span class="op">(</span><span class="nam">user_email</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">user</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">user</span><span class="op">.</span><span class="nam">is_team_member</span><span class="op">(</span><span class="nam">gateway_team_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">127&#x202F;&#x219B;&#x202F;131</span><span class="annotate long">line 127 didn't jump to line 131 because the condition on line 127 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">user</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">user</span><span class="op">.</span><span class="nam">is_team_member</span><span class="op">(</span><span class="nam">gateway_team_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">OAuth access denied: user </span><span class="op">{</span><span class="nam">user_email</span><span class="op">}</span><span class="fst"> not member of gateway team </span><span class="op">{</span><span class="nam">gateway_team_id</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">                <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="num">403</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="str">"You don't have access to this gateway"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -279,7 +277,7 @@
     <p class="pln"><span class="n"><a id="t195" href="#t195">195</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t">                    <span class="com"># Discover AS metadata to get authorization/token endpoints if not already set</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t">                    <span class="com"># Note: OAuthManager expects 'authorization_url' and 'token_url', not 'authorization_endpoint'/'token_endpoint'</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t">                    <span class="key">if</span> <span class="key">not</span> <span class="nam">oauth_config</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"authorization_url"</span><span class="op">)</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">oauth_config</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"token_url"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">198&#x202F;&#x219B;&#x202F;205</span><span class="annotate long">line 198 didn't jump to line 205 because the condition on line 198 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t">                    <span class="key">if</span> <span class="key">not</span> <span class="nam">oauth_config</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"authorization_url"</span><span class="op">)</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">oauth_config</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"token_url"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">                        <span class="nam">metadata</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">dcr_service</span><span class="op">.</span><span class="nam">discover_as_metadata</span><span class="op">(</span><span class="nam">issuer</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">                        <span class="nam">oauth_config</span><span class="op">[</span><span class="str">"authorization_url"</span><span class="op">]</span> <span class="op">=</span> <span class="nam">metadata</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"authorization_endpoint"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t">                        <span class="nam">oauth_config</span><span class="op">[</span><span class="str">"token_url"</span><span class="op">]</span> <span class="op">=</span> <span class="nam">metadata</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"token_endpoint"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -450,7 +448,7 @@
     <p class="run"><span class="n"><a id="t366" href="#t366">366</a></span><span class="t">                <span class="nam">original_count</span> <span class="op">=</span> <span class="nam">len</span><span class="op">(</span><span class="nam">existing</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t367" href="#t367">367</a></span><span class="t">                <span class="nam">normalized</span> <span class="op">=</span> <span class="op">[</span><span class="nam">_normalize_resource_url</span><span class="op">(</span><span class="nam">r</span><span class="op">,</span> <span class="nam">preserve_query</span><span class="op">=</span><span class="key">True</span><span class="op">)</span> <span class="key">for</span> <span class="nam">r</span> <span class="key">in</span> <span class="nam">existing</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t368" href="#t368">368</a></span><span class="t">                <span class="nam">oauth_config_with_resource</span><span class="op">[</span><span class="str">"resource"</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span><span class="nam">r</span> <span class="key">for</span> <span class="nam">r</span> <span class="key">in</span> <span class="nam">normalized</span> <span class="key">if</span> <span class="nam">r</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">                <span class="key">if</span> <span class="key">not</span> <span class="nam">oauth_config_with_resource</span><span class="op">[</span><span class="str">"resource"</span><span class="op">]</span> <span class="key">and</span> <span class="nam">original_count</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">369&#x202F;&#x219B;&#x202F;377</span><span class="annotate long">line 369 didn't jump to line 377 because the condition on line 369 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">                <span class="key">if</span> <span class="key">not</span> <span class="nam">oauth_config_with_resource</span><span class="op">[</span><span class="str">"resource"</span><span class="op">]</span> <span class="key">and</span> <span class="nam">original_count</span> <span class="op">></span> <span class="num">0</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">                    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">All </span><span class="op">{</span><span class="nam">original_count</span><span class="op">}</span><span class="fst"> configured resource values were invalid and removed</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">                <span class="nam">oauth_config_with_resource</span><span class="op">[</span><span class="str">"resource"</span><span class="op">]</span> <span class="op">=</span> <span class="nam">_normalize_resource_url</span><span class="op">(</span><span class="nam">existing</span><span class="op">,</span> <span class="nam">preserve_query</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -666,7 +664,7 @@
     <p class="pln"><span class="n"><a id="t582" href="#t582">582</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t583" href="#t583">583</a></span><span class="t">            <span class="nam">auth_service</span> <span class="op">=</span> <span class="nam">EmailAuthService</span><span class="op">(</span><span class="nam">db</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t584" href="#t584">584</a></span><span class="t">            <span class="nam">user</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">auth_service</span><span class="op">.</span><span class="nam">get_user_by_email</span><span class="op">(</span><span class="nam">user_email</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t585" href="#t585">585</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">user</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">user</span><span class="op">.</span><span class="nam">is_team_member</span><span class="op">(</span><span class="nam">gateway_team_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">585&#x202F;&#x219B;&#x202F;588</span><span class="annotate long">line 585 didn't jump to line 588 because the condition on line 585 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t585" href="#t585">585</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">user</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">user</span><span class="op">.</span><span class="nam">is_team_member</span><span class="op">(</span><span class="nam">gateway_team_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t586" href="#t586">586</a></span><span class="t">                <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="num">403</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="str">"You don't have access to this gateway"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t587" href="#t587">587</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t588" href="#t588">588</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">gateway</span><span class="op">.</span><span class="nam">oauth_config</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -896,7 +894,7 @@
             <a class="nav" href="z_66e097f12625e52f_observability_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
     </div>
 </footer>

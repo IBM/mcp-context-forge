@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/plugins/framework/hooks/http.py: 98%</title>
+    <title>Coverage for mcpgateway/plugins/framework/hooks/http.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;plugins&#8201;/&#8201;framework&#8201;/&#8201;hooks&#8201;/&#8201;http.py</b>:
-            <span class="pc_cov">98%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,7 +58,6 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">57<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">1<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_3749c6a41567077d_agents_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_3749c6a41567077d_prompts_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -286,7 +284,7 @@
     <p class="run"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">    <span class="nam">registry</span> <span class="op">=</span> <span class="nam">get_hook_registry</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t203" href="#t203">203</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t204" href="#t204">204</a></span><span class="t">    <span class="com"># Only register if not already registered (idempotent)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">registry</span><span class="op">.</span><span class="nam">is_registered</span><span class="op">(</span><span class="nam">HttpHookType</span><span class="op">.</span><span class="nam">HTTP_PRE_REQUEST</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">205&#x202F;&#x219B;&#x202F;exit</span><span class="annotate long">line 205 didn't return from function '_register_http_auth_hooks' because the condition on line 205 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t205" href="#t205">205</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">registry</span><span class="op">.</span><span class="nam">is_registered</span><span class="op">(</span><span class="nam">HttpHookType</span><span class="op">.</span><span class="nam">HTTP_PRE_REQUEST</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t">        <span class="nam">registry</span><span class="op">.</span><span class="nam">register_hook</span><span class="op">(</span><span class="nam">HttpHookType</span><span class="op">.</span><span class="nam">HTTP_PRE_REQUEST</span><span class="op">,</span> <span class="nam">HttpPreRequestPayload</span><span class="op">,</span> <span class="nam">HttpPreRequestResult</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t">        <span class="nam">registry</span><span class="op">.</span><span class="nam">register_hook</span><span class="op">(</span><span class="nam">HttpHookType</span><span class="op">.</span><span class="nam">HTTP_POST_REQUEST</span><span class="op">,</span> <span class="nam">HttpPostRequestPayload</span><span class="op">,</span> <span class="nam">HttpPostRequestResult</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t">        <span class="nam">registry</span><span class="op">.</span><span class="nam">register_hook</span><span class="op">(</span><span class="nam">HttpHookType</span><span class="op">.</span><span class="nam">HTTP_AUTH_RESOLVE_USER</span><span class="op">,</span> <span class="nam">HttpAuthResolveUserPayload</span><span class="op">,</span> <span class="nam">HttpAuthResolveUserResult</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -303,7 +301,7 @@
             <a class="nav" href="z_3749c6a41567077d_prompts_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/middleware/token_scoping.py: 99%</title>
+    <title>Coverage for mcpgateway/middleware/token_scoping.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;middleware&#8201;/&#8201;token_scoping.py</b>:
-            <span class="pc_cov">99%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,7 +58,6 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">382<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">4<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_7c505f6fa7f5f82c_security_headers_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_validation_middleware_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 20:44 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -323,7 +321,7 @@
     <p class="run"><span class="n"><a id="t239" href="#t239">239</a></span><span class="t">                            <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t240" href="#t240">240</a></span><span class="t">                    <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t241" href="#t241">241</a></span><span class="t">                        <span class="com"># Single IP address</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t242" href="#t242">242</a></span><span class="t">                        <span class="key">if</span> <span class="nam">client_ip_obj</span> <span class="op">==</span> <span class="nam">ipaddress</span><span class="op">.</span><span class="nam">ip_address</span><span class="op">(</span><span class="nam">restriction</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">242&#x202F;&#x219B;&#x202F;233</span><span class="annotate long">line 242 didn't jump to line 233 because the condition on line 242 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t242" href="#t242">242</a></span><span class="t">                        <span class="key">if</span> <span class="nam">client_ip_obj</span> <span class="op">==</span> <span class="nam">ipaddress</span><span class="op">.</span><span class="nam">ip_address</span><span class="op">(</span><span class="nam">restriction</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t243" href="#t243">243</a></span><span class="t">                            <span class="key">return</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t244" href="#t244">244</a></span><span class="t">                <span class="key">except</span> <span class="op">(</span><span class="nam">ValueError</span><span class="op">,</span> <span class="nam">ipaddress</span><span class="op">.</span><span class="nam">AddressValueError</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t245" href="#t245">245</a></span><span class="t">                    <span class="key">continue</span>&nbsp;</span><span class="r"></span></p>
@@ -517,7 +515,7 @@
     <p class="run"><span class="n"><a id="t433" href="#t433">433</a></span><span class="t">        <span class="nam">auth_cache</span> <span class="op">=</span> <span class="nam">get_auth_cache</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t434" href="#t434">434</a></span><span class="t">        <span class="nam">cached_result</span> <span class="op">=</span> <span class="nam">auth_cache</span><span class="op">.</span><span class="nam">get_team_membership_valid_sync</span><span class="op">(</span><span class="nam">user_email</span><span class="op">,</span> <span class="nam">team_ids</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t435" href="#t435">435</a></span><span class="t">        <span class="key">if</span> <span class="nam">cached_result</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t436" href="#t436">436</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">cached_result</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">436&#x202F;&#x219B;&#x202F;438</span><span class="annotate long">line 436 didn't jump to line 438 because the condition on line 436 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t436" href="#t436">436</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">cached_result</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t437" href="#t437">437</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Token invalid (cached): User </span><span class="op">{</span><span class="nam">user_email</span><span class="op">}</span><span class="fst"> no longer member of teams</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t438" href="#t438">438</a></span><span class="t">            <span class="key">return</span> <span class="nam">cached_result</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t439" href="#t439">439</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -530,7 +528,7 @@
     <p class="pln"><span class="n"><a id="t446" href="#t446">446</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t447" href="#t447">447</a></span><span class="t">        <span class="com"># Track if we own the session (and thus must clean it up)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t448" href="#t448">448</a></span><span class="t">        <span class="nam">owns_session</span> <span class="op">=</span> <span class="nam">db</span> <span class="key">is</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t449" href="#t449">449</a></span><span class="t">        <span class="key">if</span> <span class="nam">owns_session</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">449&#x202F;&#x219B;&#x202F;452</span><span class="annotate long">line 449 didn't jump to line 452 because the condition on line 449 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t449" href="#t449">449</a></span><span class="t">        <span class="key">if</span> <span class="nam">owns_session</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t450" href="#t450">450</a></span><span class="t">            <span class="nam">db</span> <span class="op">=</span> <span class="nam">next</span><span class="op">(</span><span class="nam">get_db</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t451" href="#t451">451</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t452" href="#t452">452</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -1016,7 +1014,7 @@
     <p class="run"><span class="n"><a id="t932" href="#t932">932</a></span><span class="t">            <span class="nam">ip_restrictions</span> <span class="op">=</span> <span class="nam">scopes</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"ip_restrictions"</span><span class="op">,</span> <span class="op">[</span><span class="op">]</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t933" href="#t933">933</a></span><span class="t">            <span class="key">if</span> <span class="nam">ip_restrictions</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t934" href="#t934">934</a></span><span class="t">                <span class="nam">client_ip</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_get_client_ip</span><span class="op">(</span><span class="nam">request</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t935" href="#t935">935</a></span><span class="t">                <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_check_ip_restrictions</span><span class="op">(</span><span class="nam">client_ip</span><span class="op">,</span> <span class="nam">ip_restrictions</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">935&#x202F;&#x219B;&#x202F;940</span><span class="annotate long">line 935 didn't jump to line 940 because the condition on line 935 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t935" href="#t935">935</a></span><span class="t">                <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_check_ip_restrictions</span><span class="op">(</span><span class="nam">client_ip</span><span class="op">,</span> <span class="nam">ip_restrictions</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t936" href="#t936">936</a></span><span class="t">                    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Request from IP </span><span class="op">{</span><span class="nam">client_ip</span><span class="op">}</span><span class="fst"> not allowed by token restrictions</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t937" href="#t937">937</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="nam">status</span><span class="op">.</span><span class="nam">HTTP_403_FORBIDDEN</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="fst">f"</span><span class="fst">Request from IP </span><span class="op">{</span><span class="nam">client_ip</span><span class="op">}</span><span class="fst"> not allowed by token restrictions</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t938" href="#t938">938</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1054,7 +1052,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_validation_middleware_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 20:44 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
     </div>
 </footer>

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/toolops/toolops_altk_service.py: 97%</title>
+    <title>Coverage for mcpgateway/toolops/toolops_altk_service.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;toolops&#8201;/&#8201;toolops_altk_service.py</b>:
-            <span class="pc_cov">97%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,15 +58,14 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">136<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">1<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">5<span class="text"> partial</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_tool_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_5321ecc6bb7a9b79_token_catalog_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_8be813bc1e614268_db_util_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 12:00 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -238,7 +236,7 @@
     <p class="run run2"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">                <span class="str">"Generating test cases for tool - "</span> <span class="op">+</span> <span class="nam">str</span><span class="op">(</span><span class="nam">tool_id</span><span class="op">)</span> <span class="op">+</span> <span class="str">","</span> <span class="op">+</span> <span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="op">{</span><span class="str">"number_of_test_cases"</span><span class="op">:</span> <span class="nam">number_of_test_cases</span><span class="op">,</span> <span class="str">"number_of_nl_variations"</span><span class="op">:</span> <span class="nam">number_of_nl_variations</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">            <span class="nam">mcp_cf_tool</span> <span class="op">=</span> <span class="nam">tool_schema</span><span class="op">.</span><span class="nam">to_dict</span><span class="op">(</span><span class="nam">use_alias</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">            <span class="key">if</span> <span class="nam">mcp_cf_tool</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">157&#x202F;&#x219B;&#x202F;188</span><span class="annotate long">line 157 didn't jump to line 188 because the condition on line 157 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">            <span class="key">if</span> <span class="nam">mcp_cf_tool</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">                <span class="nam">wxo_tool_spec</span> <span class="op">=</span> <span class="nam">convert_to_toolops_spec</span><span class="op">(</span><span class="nam">mcp_cf_tool</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">                <span class="nam">populate_testcases_table</span><span class="op">(</span><span class="nam">tool_id</span><span class="op">,</span> <span class="nam">test_cases</span><span class="op">,</span> <span class="str">"in-progress"</span><span class="op">,</span> <span class="nam">db</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">                <span class="nam">tc_generator</span> <span class="op">=</span> <span class="nam">TestcaseGeneration</span><span class="op">(</span><span class="nam">client</span><span class="op">=</span><span class="key">None</span><span class="op">,</span> <span class="nam">gen_mode</span><span class="op">=</span><span class="key">None</span><span class="op">,</span> <span class="nam">max_number_testcases_to_generate</span><span class="op">=</span><span class="nam">number_of_test_cases</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -250,11 +248,11 @@
     <p class="run"><span class="n"><a id="t166" href="#t166">166</a></span><span class="t">        <span class="key">elif</span> <span class="nam">mode</span> <span class="op">==</span> <span class="str">"query"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t167" href="#t167">167</a></span><span class="t">            <span class="com"># check if tool test cases generation is complete and get test cases</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t168" href="#t168">168</a></span><span class="t">            <span class="nam">tool_record</span> <span class="op">=</span> <span class="nam">query_testcases_table</span><span class="op">(</span><span class="nam">tool_id</span><span class="op">,</span> <span class="nam">db</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">            <span class="key">if</span> <span class="nam">tool_record</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">169&#x202F;&#x219B;&#x202F;188</span><span class="annotate long">line 169 didn't jump to line 188 because the condition on line 169 was always true</span></span></p>
-    <p class="par run show_par"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t">                <span class="key">if</span> <span class="nam">tool_record</span><span class="op">.</span><span class="nam">run_status</span> <span class="op">==</span> <span class="str">"completed"</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">170&#x202F;&#x219B;&#x202F;188</span><span class="annotate long">line 170 didn't jump to line 188 because the condition on line 170 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t169" href="#t169">169</a></span><span class="t">            <span class="key">if</span> <span class="nam">tool_record</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t170" href="#t170">170</a></span><span class="t">                <span class="key">if</span> <span class="nam">tool_record</span><span class="op">.</span><span class="nam">run_status</span> <span class="op">==</span> <span class="str">"completed"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t171" href="#t171">171</a></span><span class="t">                    <span class="nam">test_cases</span> <span class="op">=</span> <span class="nam">tool_record</span><span class="op">.</span><span class="nam">test_cases</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t172" href="#t172">172</a></span><span class="t">                    <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Obtained exisitng test cases from the table for tool "</span> <span class="op">+</span> <span class="nam">str</span><span class="op">(</span><span class="nam">tool_id</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t">        <span class="key">elif</span> <span class="nam">mode</span> <span class="op">==</span> <span class="str">"status"</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">173&#x202F;&#x219B;&#x202F;188</span><span class="annotate long">line 173 didn't jump to line 188 because the condition on line 173 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t173" href="#t173">173</a></span><span class="t">        <span class="key">elif</span> <span class="nam">mode</span> <span class="op">==</span> <span class="str">"status"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t174" href="#t174">174</a></span><span class="t">            <span class="com"># check the test case generation status</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t175" href="#t175">175</a></span><span class="t">            <span class="nam">tool_record</span> <span class="op">=</span> <span class="nam">query_testcases_table</span><span class="op">(</span><span class="nam">tool_id</span><span class="op">,</span> <span class="nam">db</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t176" href="#t176">176</a></span><span class="t">            <span class="key">if</span> <span class="nam">tool_record</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -340,7 +338,7 @@
     <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">    <span class="nam">toolops_enrichment</span> <span class="op">=</span> <span class="nam">ToolOpsMCPCFToolEnrichment</span><span class="op">(</span><span class="nam">llm_client</span><span class="op">=</span><span class="key">None</span><span class="op">,</span> <span class="nam">gen_mode</span><span class="op">=</span><span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">    <span class="nam">enriched_description</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">toolops_enrichment</span><span class="op">.</span><span class="nam">enrich_mc_cf_tool</span><span class="op">(</span><span class="nam">mcp_cf_toolspec</span><span class="op">=</span><span class="nam">mcp_cf_tool</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">    <span class="key">if</span> <span class="nam">enriched_description</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">259&#x202F;&#x219B;&#x202F;272</span><span class="annotate long">line 259 didn't jump to line 272 because the condition on line 259 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">    <span class="key">if</span> <span class="nam">enriched_description</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">            <span class="nam">update_data</span><span class="op">:</span> <span class="nam">dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">Any</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">                <span class="str">"name"</span><span class="op">:</span> <span class="nam">tool_schema</span><span class="op">.</span><span class="nam">name</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -384,12 +382,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_5321ecc6bb7a9b79_tool_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_5321ecc6bb7a9b79_token_catalog_service_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_8be813bc1e614268_db_util_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 12:00 +0000
+            created at 2026-02-11 21:31 +0000
         </p>
     </div>
 </footer>
