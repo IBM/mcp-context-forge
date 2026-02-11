@@ -224,3 +224,5 @@ exclude plugins/external/cedar/.ruff.toml
 exclude plugins/external/cedar/Containerfile
 exclude plugins/external/cedar/MANIFEST.in
 exclude plugins/external/cedar/pyproject.toml
+recursive-include mcpgateway/plugins *.md
+recursive-include mcpgateway/plugins *.yaml
