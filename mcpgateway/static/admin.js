@@ -23933,7 +23933,7 @@ window.toggleGrpcTlsFields = function () {
 window.viewGrpcMethods = function (serviceId) {
     const rootPath = window.ROOT_PATH || "";
 
-    fetch(`${rootPath}/grpc/${serviceId}/methods`, {
+    fetch(`${rootPath}/admin/grpc/${serviceId}/methods`, {
         method: "GET",
         headers: {
             "Content-Type": "application/json",
