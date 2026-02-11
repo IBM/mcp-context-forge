@@ -2034,28 +2034,28 @@ def test_email_team_invitation_is_expired_handles_timezone_mismatch(monkeypatch)
     # now naive, expires_at aware
     aware_expires = db.utc_now() + timedelta(minutes=1)
     inv2 = db.EmailTeamInvitation(team_id="t", email="u2@example.com", invited_by="admin@example.com", expires_at=aware_expires, token="tok2")
-    monkeypatch.setattr(db, "utc_now", lambda: datetime.now().replace(microsecond=0))  # naive now
+    monkeypatch.setattr(db, "utc_now", lambda: datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0))  # naive now (UTC-based)
     assert inv2.is_expired() is False
 
 
 def test_email_team_join_request_is_expired_handles_timezone_mismatch_now_naive(monkeypatch):
     expires_at = db.utc_now() + timedelta(minutes=1)
     join_request = db.EmailTeamJoinRequest(team_id="team-1", user_email="user@example.com", expires_at=expires_at)
-    monkeypatch.setattr(db, "utc_now", lambda: datetime.now().replace(microsecond=0))  # naive now
+    monkeypatch.setattr(db, "utc_now", lambda: datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0))  # naive now (UTC-based)
     assert join_request.is_expired() is False
 
 
 def test_pending_user_approval_is_expired_handles_timezone_mismatch_now_naive(monkeypatch):
     expires_at = db.utc_now() + timedelta(minutes=1)
     approval = db.PendingUserApproval(email="user@example.com", full_name="User", auth_provider="github", expires_at=expires_at, status="pending")
-    monkeypatch.setattr(db, "utc_now", lambda: datetime.now().replace(microsecond=0))  # naive now
+    monkeypatch.setattr(db, "utc_now", lambda: datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0))  # naive now (UTC-based)
     assert approval.is_expired() is False
 
 
 def test_sso_auth_session_is_expired_handles_timezone_mismatch_now_naive(monkeypatch):
     session = db.SSOAuthSession(provider_id="github", state="state2", redirect_uri="http://example.com")
     session.expires_at = db.utc_now() + timedelta(minutes=1)
-    monkeypatch.setattr(db, "utc_now", lambda: datetime.now().replace(microsecond=0))  # naive now
+    monkeypatch.setattr(db, "utc_now", lambda: datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0))  # naive now (UTC-based)
     assert session.is_expired is False
 
 
