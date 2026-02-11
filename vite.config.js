@@ -37,7 +37,7 @@ export default defineConfig({
     manifest: true,
     // Use standard build mode instead of lib mode for direct script inclusion
     rollupOptions: {
-      input: path.resolve(__dirname, 'mcpgateway/static/js/admin.js'),
+      input: path.resolve(__dirname, 'mcpgateway/static/js/index.js'),
       output: {
         // Add content hash to filename for cache busting
         entryFileNames: 'bundle-[hash].js',

@@ -2,151 +2,153 @@
 // ENHANCED MODAL FUNCTIONS with Security and State Management
 // ===================================================================
 
-import { AppState } from './appState.js';
-import { safeGetElement } from './utils.js';
+import { AppState } from "./appState.js";
+import { escapeHtml } from "./security.js";
+import { safeGetElement } from "./utils.js";
 
 // Callback registry for cleanup functions defined in other modules
 const cleanupCallbacks = {
-    gatewayTest: null,
-    toolTest: null,
-    promptTest: null,
-    resourceTest: null,
-    a2aTest: null,
+  gatewayTest: null,
+  toolTest: null,
+  promptTest: null,
+  resourceTest: null,
+  a2aTest: null,
 };
 
 export function registerModalCleanup(modalType, callback) {
-    if (modalType in cleanupCallbacks) {
-        cleanupCallbacks[modalType] = callback;
-    }
+  if (modalType in cleanupCallbacks) {
+    cleanupCallbacks[modalType] = callback;
+  }
 }
 
 export function openModal(modalId) {
-    try {
-        if (AppState.isModalActive(modalId)) {
-            console.warn(`Modal ${modalId} is already active`);
-            return;
-        }
-
-        const modal = safeGetElement(modalId);
-        if (!modal) {
-            console.error(`Modal ${modalId} not found`);
-            return;
-        }
-
-        // Reset modal state
-        const resetModelVariable = false;
-        if (resetModelVariable) {
-            resetModalState(modalId);
-        }
-
-        modal.classList.remove("hidden");
-        AppState.setModalActive(modalId);
-
-        console.log(`✓ Opened modal: ${modalId}`);
-    } catch (error) {
-        console.error(`Error opening modal ${modalId}:`, error);
+  try {
+    if (AppState.isModalActive(modalId)) {
+      console.warn(`Modal ${modalId} is already active`);
+      return;
     }
+
+    const modal = safeGetElement(modalId);
+    if (!modal) {
+      console.error(`Modal ${modalId} not found`);
+      return;
+    }
+
+    // Reset modal state
+    const resetModelVariable = false;
+    if (resetModelVariable) {
+      resetModalState(modalId);
+    }
+
+    modal.classList.remove("hidden");
+    AppState.setModalActive(modalId);
+
+    console.log(`✓ Opened modal: ${modalId}`);
+  } catch (error) {
+    console.error(`Error opening modal ${modalId}:`, error);
+  }
 }
 
 export function closeModal(modalId, clearId = null) {
-    try {
-        const modal = safeGetElement(modalId);
-        if (!modal) {
-            console.error(`Modal ${modalId} not found`);
-            return;
-        }
-
-        // Clear specified content if provided
-        if (clearId) {
-            const resultEl = safeGetElement(clearId);
-            if (resultEl) {
-                resultEl.innerHTML = "";
-            }
-        }
-
-        // Clean up specific modal types via registered callbacks
-        if (modalId === "gateway-test-modal" && cleanupCallbacks.gatewayTest) {
-            cleanupCallbacks.gatewayTest();
-        } else if (modalId === "tool-test-modal" && cleanupCallbacks.toolTest) {
-            cleanupCallbacks.toolTest();
-        } else if (modalId === "prompt-test-modal" && cleanupCallbacks.promptTest) {
-            cleanupCallbacks.promptTest();
-        } else if (modalId === "resource-test-modal" && cleanupCallbacks.resourceTest) {
-            cleanupCallbacks.resourceTest();
-        } else if (modalId === "a2a-test-modal" && cleanupCallbacks.a2aTest) {
-            cleanupCallbacks.a2aTest();
-        }
-
-        modal.classList.add("hidden");
-        AppState.setModalInactive(modalId);
-
-        console.log(`✓ Closed modal: ${modalId}`);
-    } catch (error) {
-        console.error(`Error closing modal ${modalId}:`, error);
+  try {
+    const modal = safeGetElement(modalId);
+    if (!modal) {
+      console.error(`Modal ${modalId} not found`);
+      return;
     }
+
+    // Clear specified content if provided
+    if (clearId) {
+      const resultEl = safeGetElement(clearId);
+      if (resultEl) {
+        resultEl.innerHTML = "";
+      }
+    }
+
+    // Clean up specific modal types via registered callbacks
+    if (modalId === "gateway-test-modal" && cleanupCallbacks.gatewayTest) {
+      cleanupCallbacks.gatewayTest();
+    } else if (modalId === "tool-test-modal" && cleanupCallbacks.toolTest) {
+      cleanupCallbacks.toolTest();
+    } else if (modalId === "prompt-test-modal" && cleanupCallbacks.promptTest) {
+      cleanupCallbacks.promptTest();
+    } else if (
+      modalId === "resource-test-modal" &&
+      cleanupCallbacks.resourceTest
+    ) {
+      cleanupCallbacks.resourceTest();
+    } else if (modalId === "a2a-test-modal" && cleanupCallbacks.a2aTest) {
+      cleanupCallbacks.a2aTest();
+    }
+
+    modal.classList.add("hidden");
+    AppState.setModalInactive(modalId);
+
+    console.log(`✓ Closed modal: ${modalId}`);
+  } catch (error) {
+    console.error(`Error closing modal ${modalId}:`, error);
+  }
 }
 
 export function resetModalState(modalId) {
-    try {
-        // Clear any dynamic content
-        const modalContent = document.querySelector(
-            `#${modalId} [data-dynamic-content]`,
-        );
-        if (modalContent) {
-            modalContent.innerHTML = "";
-        }
-
-        // Reset any forms in the modal
-        const forms = document.querySelectorAll(`#${modalId} form`);
-        forms.forEach((form) => {
-            try {
-                form.reset();
-                // Clear any error messages
-                const errorElements = form.querySelectorAll(".error-message");
-                errorElements.forEach((el) => el.remove());
-                // Clear inline validation error styling
-                const inlineErrors = form.querySelectorAll(
-                    "p[data-error-message-for]",
-                );
-                inlineErrors.forEach((el) => el.classList.add("invisible"));
-                // Clear red border styling from inputs
-                const invalidInputs = form.querySelectorAll(
-                    ".border-red-500, .focus\\:ring-red-500, .dark\\:border-red-500, .dark\\:ring-red-500",
-                );
-                invalidInputs.forEach((el) => {
-                    el.classList.remove(
-                        "border-red-500",
-                        "focus:ring-red-500",
-                        "dark:border-red-500",
-                        "dark:ring-red-500",
-                    );
-                    el.setCustomValidity("");
-                });
-            } catch (error) {
-                console.error("Error resetting form:", error);
-            }
-        });
-
-        console.log(`✓ Reset modal state: ${modalId}`);
-    } catch (error) {
-        console.error(`Error resetting modal state ${modalId}:`, error);
+  try {
+    // Clear any dynamic content
+    const modalContent = document.querySelector(
+      `#${modalId} [data-dynamic-content]`
+    );
+    if (modalContent) {
+      modalContent.innerHTML = "";
     }
+
+    // Reset any forms in the modal
+    const forms = document.querySelectorAll(`#${modalId} form`);
+    forms.forEach((form) => {
+      try {
+        form.reset();
+        // Clear any error messages
+        const errorElements = form.querySelectorAll(".error-message");
+        errorElements.forEach((el) => el.remove());
+        // Clear inline validation error styling
+        const inlineErrors = form.querySelectorAll("p[data-error-message-for]");
+        inlineErrors.forEach((el) => el.classList.add("invisible"));
+        // Clear red border styling from inputs
+        const invalidInputs = form.querySelectorAll(
+          ".border-red-500, .focus\\:ring-red-500, .dark\\:border-red-500, .dark\\:ring-red-500"
+        );
+        invalidInputs.forEach((el) => {
+          el.classList.remove(
+            "border-red-500",
+            "focus:ring-red-500",
+            "dark:border-red-500",
+            "dark:ring-red-500"
+          );
+          el.setCustomValidity("");
+        });
+      } catch (error) {
+        console.error("Error resetting form:", error);
+      }
+    });
+
+    console.log(`✓ Reset modal state: ${modalId}`);
+  } catch (error) {
+    console.error(`Error resetting modal state ${modalId}:`, error);
+  }
 }
 
 /**
-* Show a modal dialog with copyable content.
-*
-* @param {string} title - The modal title.
-* @param {string} message - The message to display (can be multi-line).
-* @param {string} type - The type of modal: 'success', 'error', or 'info'.
-*/
+ * Show a modal dialog with copyable content.
+ *
+ * @param {string} title - The modal title.
+ * @param {string} message - The message to display (can be multi-line).
+ * @param {string} type - The type of modal: 'success', 'error', or 'info'.
+ */
 export const showCopyableModal = function (title, message, type = "info") {
   // Remove any existing modal
   const existingModal = safeGetElement("copyable-modal-overlay");
   if (existingModal) {
     existingModal.remove();
   }
-  
+
   // Color schemes based on type
   const colors = {
     success: {
@@ -174,24 +176,24 @@ export const showCopyableModal = function (title, message, type = "info") {
                 </svg>`,
     },
   };
-  
+
   const colorScheme = colors[type] || colors.info;
-  
+
   // Create modal overlay
   const overlay = document.createElement("div");
   overlay.id = "copyable-modal-overlay";
   overlay.className =
-  "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
+    "fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50";
   overlay.onclick = (e) => {
     if (e.target === overlay) {
       overlay.remove();
     }
   };
-  
+
   // Create modal content
   const modal = document.createElement("div");
   modal.className = `${colorScheme.bg} border-l-4 ${colorScheme.border} rounded-lg shadow-xl max-w-lg w-full mx-4 overflow-hidden`;
-  
+
   modal.innerHTML = `
     <div class="p-4">
       <div class="flex items-start">
@@ -218,14 +220,13 @@ export const showCopyableModal = function (title, message, type = "info") {
       </div>
     </div>
   `;
-  
+
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
-  
+
   // Add event listeners
-  safeGetElement("copyable-modal-close").onclick = () =>
-    overlay.remove();
-  
+  safeGetElement("copyable-modal-close").onclick = () => overlay.remove();
+
   safeGetElement("copyable-modal-copy").onclick = async () => {
     const content = safeGetElement("copyable-modal-content");
     try {
@@ -248,7 +249,7 @@ export const showCopyableModal = function (title, message, type = "info") {
       selection.addRange(range);
     }
   };
-  
+
   // Close on Escape key
   const handleEscape = (e) => {
     if (e.key === "Escape") {
@@ -257,4 +258,4 @@ export const showCopyableModal = function (title, message, type = "info") {
     }
   };
   document.addEventListener("keydown", handleEscape);
-}
+};

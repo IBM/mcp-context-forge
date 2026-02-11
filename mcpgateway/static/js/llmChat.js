@@ -1,5 +1,7 @@
+/* global Admin */
 // ==================== LLM CHAT FUNCTIONALITY ====================
 
+import { getSelectedGatewayIds } from "./gateway";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
 import { escapeHtml, escapeHtmlChat } from "./security";
@@ -2015,8 +2017,8 @@ export const serverSideToolSearch = async function (searchTerm) {
   }
 
   // Get selected gateway IDs to maintain filtering
-  const selectedGatewayIds = Admin.getSelectedGatewayIds
-    ? Admin.getSelectedGatewayIds()
+  const selectedGatewayIds = getSelectedGatewayIds
+    ? getSelectedGatewayIds()
     : [];
   const gatewayIdParam =
     selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
@@ -2526,8 +2528,8 @@ export const serverSidePromptSearch = async function (searchTerm) {
   }
 
   // Get selected gateway IDs to maintain filtering
-  const selectedGatewayIds = Admin.getSelectedGatewayIds
-    ? Admin.getSelectedGatewayIds()
+  const selectedGatewayIds = getSelectedGatewayIds
+    ? getSelectedGatewayIds()
     : [];
   const gatewayIdParam =
     selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
@@ -2801,8 +2803,8 @@ export const serverSideResourceSearch = async function (searchTerm) {
   }
 
   // Get selected gateway IDs to maintain filtering
-  const selectedGatewayIds = Admin.getSelectedGatewayIds
-    ? Admin.getSelectedGatewayIds()
+  const selectedGatewayIds = getSelectedGatewayIds
+    ? getSelectedGatewayIds()
     : [];
   const gatewayIdParam =
     selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
@@ -3094,8 +3096,8 @@ export const serverSideEditToolSearch = async function (searchTerm) {
   }
 
   // Get selected gateway IDs to maintain filtering
-  const selectedGatewayIds = Admin.getSelectedGatewayIds
-    ? Admin.getSelectedGatewayIds()
+  const selectedGatewayIds = getSelectedGatewayIds
+    ? getSelectedGatewayIds()
     : [];
   const gatewayIdParam =
     selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
@@ -3378,8 +3380,8 @@ export const serverSideEditPromptsSearch = async function (searchTerm) {
   }
 
   // Get selected gateway IDs to maintain filtering
-  const selectedGatewayIds = Admin.getSelectedGatewayIds
-    ? Admin.getSelectedGatewayIds()
+  const selectedGatewayIds = getSelectedGatewayIds
+    ? getSelectedGatewayIds()
     : [];
   const gatewayIdParam =
     selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
@@ -3645,8 +3647,8 @@ export const serverSideEditResourcesSearch = async function (searchTerm) {
   }
 
   // Get selected gateway IDs to maintain filtering
-  const selectedGatewayIds = Admin.getSelectedGatewayIds
-    ? Admin.getSelectedGatewayIds()
+  const selectedGatewayIds = getSelectedGatewayIds
+    ? getSelectedGatewayIds()
     : [];
   const gatewayIdParam =
     selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
