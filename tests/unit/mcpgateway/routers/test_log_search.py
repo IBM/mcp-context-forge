@@ -194,7 +194,7 @@ def test_aggregate_custom_windows_adds_timezone_to_naive_earliest_log():
     max_exec = MagicMock()
     max_exec.scalar.return_value = None
     earliest_exec = MagicMock()
-    earliest_exec.scalar.return_value = datetime.now() - timedelta(minutes=30)  # naive
+    earliest_exec.scalar.return_value = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=30)  # naive
 
     db.execute.side_effect = [sample_exec, max_exec, earliest_exec]
 
