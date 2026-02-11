@@ -1,4 +1,5 @@
 import { AppState } from "./appState";
+import { getSelectedGatewayIds } from "./gateway";
 import { openModal } from "./modals";
 import { escapeHtml } from "./security";
 import { getCurrentTeamId, safeGetElement, showErrorMessage } from "./utils";
@@ -216,9 +217,9 @@ export const initPromptSelect = function (
           visibleCheckboxes.forEach((cb) => (cb.checked = true));
         } else {
           // Paginated (or no visible items) => fetch full set from server
-          const selectedGatewayIds = Admin.getSelectedGatewayIds
-          ? Admin.getSelectedGatewayIds()
-          : [];
+          const selectedGatewayIds = getSelectedGatewayIds
+            ? getSelectedGatewayIds()
+            : [];
           const selectedTeamId = getCurrentTeamId();
           const params = new URLSearchParams();
           if (selectedGatewayIds && selectedGatewayIds.length) {

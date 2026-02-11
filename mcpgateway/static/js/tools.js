@@ -1,4 +1,6 @@
+/* global Admin */
 import { AppState } from "./appState";
+import { getSelectedGatewayIds } from "./gateway";
 import { closeModal, openModal } from "./modals";
 import { 
   escapeHtml, 
@@ -306,9 +308,9 @@ export const initToolSelect = function (
           visibleCheckboxes.forEach((cb) => (cb.checked = true));
         } else {
           // Paginated (or no visible items) => fetch full set from server
-          const selectedGatewayIds = Admin.getSelectedGatewayIds
-          ? Admin.getSelectedGatewayIds()
-          : [];
+          const selectedGatewayIds = getSelectedGatewayIds
+            ? getSelectedGatewayIds()
+            : [];
           const selectedTeamId = getCurrentTeamId();
           const params = new URLSearchParams();
           if (selectedGatewayIds && selectedGatewayIds.length) {
@@ -742,7 +744,7 @@ export const testTool = async function (toolId) {
           const arrayContainer = document.createElement("div");
           arrayContainer.className = "space-y-2";
           
-          createArrayInput = function (value = "") {
+          const createArrayInput = function (value = "") {
             const wrapper = document.createElement("div");
             wrapper.className = "flex items-center space-x-2";
             
@@ -754,8 +756,8 @@ export const testTool = async function (toolId) {
             "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
             
             const itemTypes = Array.isArray(prop.items?.anyOf)
-            ? prop.items.anyOf.map((t) => t.type)
-            : [prop.items?.type];
+              ? prop.items.anyOf.map((t) => t.type)
+              : [prop.items?.type];
             
             if (
               itemTypes.includes("number") ||
@@ -763,8 +765,8 @@ export const testTool = async function (toolId) {
             ) {
               input.type = "number";
               input.step = itemTypes.includes("integer")
-              ? "1"
-              : "any";
+                ? "1"
+                : "any";
             } else if (itemTypes.includes("boolean")) {
               input.type = "checkbox";
               input.value = "true";
@@ -855,8 +857,8 @@ export const testTool = async function (toolId) {
           schema.required && schema.required.includes(key);
           fieldInput.className =
           prop.type === "boolean"
-          ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-          : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+            ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+            : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
           
           // Set default values here
           if (prop.default !== undefined) {
@@ -960,22 +962,22 @@ export const loadTools = async function () {
       }
       
       const rows = tools
-      .map((tool) => {
-        const { id, name, integrationType, enabled, reachable } =
+        .map((tool) => {
+          const { id, name, integrationType, enabled, reachable } =
         tool;
-        let statusText = "";
-        let statusClass = "";
-        if (enabled && reachable) {
-          statusText = "Online";
-          statusClass = "bg-green-100 text-green-800";
-        } else if (enabled) {
-          statusText = "Offline";
-          statusClass = "bg-yellow-100 text-yellow-800";
-        } else {
-          statusText = "Inactive";
-          statusClass = "bg-red-100 text-red-800";
-        }
-        return `
+          let statusText = "";
+          let statusClass = "";
+          if (enabled && reachable) {
+            statusText = "Online";
+            statusClass = "bg-green-100 text-green-800";
+          } else if (enabled) {
+            statusText = "Offline";
+            statusClass = "bg-yellow-100 text-yellow-800";
+          } else {
+            statusText = "Inactive";
+            statusClass = "bg-red-100 text-red-800";
+          }
+          return `
                 <tr data-name="${name.toLowerCase()}" data-status="${enabled ? "enabled" : "disabled"}">
                     <td class="px-4 py-3">
                     <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
@@ -1014,8 +1016,8 @@ export const loadTools = async function () {
                     </td>
                 </tr>
                 `;
-      })
-      .join("");
+        })
+        .join("");
       toolBody.innerHTML = rows;
     }
   } catch (error) {
@@ -1634,7 +1636,7 @@ export const validateTool = async function (toolId) {
                   document.createElement("div");
                   arrayContainer.className = "space-y-2";
                   
-                  createArrayInput = function (value = "") {
+                  const createArrayInput = function (value = "") {
                     const wrapper =
                     document.createElement("div");
                     wrapper.className =
@@ -1652,10 +1654,10 @@ export const validateTool = async function (toolId) {
                     const itemTypes = Array.isArray(
                       prop.items?.anyOf,
                     )
-                    ? prop.items.anyOf.map(
-                      (t) => t.type,
-                    )
-                    : [prop.items?.type];
+                      ? prop.items.anyOf.map(
+                        (t) => t.type,
+                      )
+                      : [prop.items?.type];
                     
                     if (
                       itemTypes.includes("number") ||
@@ -1665,8 +1667,8 @@ export const validateTool = async function (toolId) {
                       input.step = itemTypes.includes(
                         "integer",
                       )
-                      ? "1"
-                      : "any";
+                        ? "1"
+                        : "any";
                     } else if (
                       itemTypes.includes("boolean")
                     ) {
@@ -1780,8 +1782,8 @@ export const validateTool = async function (toolId) {
                   schema.required.includes(key);
                   fieldInput.className =
                   prop.type === "boolean"
-                  ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
-                  : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
+                    ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
+                    : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
                   
                   // Set default values here
                   if (prop.default !== undefined) {
@@ -1955,32 +1957,32 @@ export const validateTool = async function (toolId) {
           
           // Hook up Run All button
           document
-          .getElementById("run-all-tests-btn")
-          ?.addEventListener("click", async () => {
-            showSuccessMessage(
-              "🔍 Validation in progress; View results by expanding each test case.",
-            );
-            const total = testCases.length;
-            document
-            .querySelectorAll(
-              "#tool-validation-form-fields > div",
-            )
-            .forEach((acc) => {
-              const body =
+            .getElementById("run-all-tests-btn")
+            ?.addEventListener("click", async () => {
+              showSuccessMessage(
+                "🔍 Validation in progress; View results by expanding each test case.",
+              );
+              const total = testCases.length;
+              document
+                .querySelectorAll(
+                  "#tool-validation-form-fields > div",
+                )
+                .forEach((acc) => {
+                  const body =
               acc.querySelector("div.hidden");
-              const icon =
+                  const icon =
               acc.querySelector(".toggle-icon");
-              if (body) {
-                body.classList.remove("hidden");
-              }
-              if (icon) {
-                icon.textContent = "−";
+                  if (body) {
+                    body.classList.remove("hidden");
+                  }
+                  if (icon) {
+                    icon.textContent = "−";
+                  }
+                });
+              for (let i = 0; i < total; i++) {
+                await runToolValidation(i);
               }
             });
-            for (let i = 0; i < total; i++) {
-              await runToolValidation(i);
-            }
-          });
           
           openModal("tool-validation-modal");
           console.log(
@@ -2051,7 +2053,7 @@ export const runToolValidation = async function (testIndex) {
     const formData = new FormData(form);
     // const formData = {};
     // form.querySelectorAll("input, textarea, select").forEach((input) => {
-      // formData[input.name] =
+    // formData[input.name] =
     //     input.type === "checkbox" ? input.checked : input.value;
     // });
     const params = {};
@@ -2073,8 +2075,8 @@ export const runToolValidation = async function (testIndex) {
             // Convert values based on the items schema type
             if (prop.items) {
               const itemType = Array.isArray(prop.items.anyOf)
-              ? prop.items.anyOf.map((t) => t.type)
-              : [prop.items.type];
+                ? prop.items.anyOf.map((t) => t.type)
+                : [prop.items.type];
               
               if (
                 itemType.includes("number") ||
@@ -2184,19 +2186,19 @@ export const runToolValidation = async function (testIndex) {
     );
     if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
       const headerLines = passthroughHeadersField.value
-      .trim()
-      .split("\n");
+        .trim()
+        .split("\n");
       for (const line of headerLines) {
         const trimmedLine = line.trim();
         if (trimmedLine) {
           const colonIndex = trimmedLine.indexOf(":");
           if (colonIndex > 0) {
             const headerName = trimmedLine
-            .substring(0, colonIndex)
-            .trim();
+              .substring(0, colonIndex)
+              .trim();
             const headerValue = trimmedLine
-            .substring(colonIndex + 1)
-            .trim();
+              .substring(colonIndex + 1)
+              .trim();
             
             // Validate header name and value
             const validation = validatePassthroughHeader(
@@ -2331,8 +2333,8 @@ export const runToolAgentValidation = async function (testIndex) {
     }
     
     const nlTestCases = document
-    .getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
-    .value.split(/\r?\n\r?\n/);
+      .getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
+      .value.split(/\r?\n\r?\n/);
     const toolId = AppState.currentTestTool.id;
     
     console.log(nlTestCases);
@@ -2358,19 +2360,19 @@ export const runToolAgentValidation = async function (testIndex) {
     );
     if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
       const headerLines = passthroughHeadersField.value
-      .trim()
-      .split("\n");
+        .trim()
+        .split("\n");
       for (const line of headerLines) {
         const trimmedLine = line.trim();
         if (trimmedLine) {
           const colonIndex = trimmedLine.indexOf(":");
           if (colonIndex > 0) {
             const headerName = trimmedLine
-            .substring(0, colonIndex)
-            .trim();
+              .substring(0, colonIndex)
+              .trim();
             const headerValue = trimmedLine
-            .substring(colonIndex + 1)
-            .trim();
+              .substring(colonIndex + 1)
+              .trim();
             
             // Validate header name and value
             const validation = validatePassthroughHeader(
@@ -2520,8 +2522,8 @@ export const runToolTest = async function () {
             // Convert values based on the items schema type
             if (prop.items) {
               const itemType = Array.isArray(prop.items.anyOf)
-              ? prop.items.anyOf.map((t) => t.type)
-              : [prop.items.type];
+                ? prop.items.anyOf.map((t) => t.type)
+                : [prop.items.type];
               
               if (
                 itemType.includes("number") ||
@@ -2631,19 +2633,19 @@ export const runToolTest = async function () {
     );
     if (passthroughHeadersField && passthroughHeadersField.value.trim()) {
       const headerLines = passthroughHeadersField.value
-      .trim()
-      .split("\n");
+        .trim()
+        .split("\n");
       for (const line of headerLines) {
         const trimmedLine = line.trim();
         if (trimmedLine) {
           const colonIndex = trimmedLine.indexOf(":");
           if (colonIndex > 0) {
             const headerName = trimmedLine
-            .substring(0, colonIndex)
-            .trim();
+              .substring(0, colonIndex)
+              .trim();
             const headerValue = trimmedLine
-            .substring(colonIndex + 1)
-            .trim();
+              .substring(colonIndex + 1)
+              .trim();
             
             // Validate header name and value
             const validation = validatePassthroughHeader(
@@ -2811,22 +2813,22 @@ export const cleanupToolTestModal = function () {
 * SECURE: View Tool function with safe display
 */
 export const viewTool = async function (toolId) {
-    try {
-        console.log(`Fetching tool details for ID: ${toolId}`);
+  try {
+    console.log(`Fetching tool details for ID: ${toolId}`);
 
-        const response = await fetchWithTimeout(
-            `${window.ROOT_PATH}/admin/tools/${toolId}`,
-        );
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/tools/${toolId}`,
+    );
 
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-        }
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
 
-        const tool = await response.json();
-        // Build auth HTML safely with new styling
-        let authHTML = "";
-        if (tool.auth?.username && tool.auth?.password) {
-            authHTML = `
+    const tool = await response.json();
+    // Build auth HTML safely with new styling
+    let authHTML = "";
+    if (tool.auth?.username && tool.auth?.password) {
+      authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
         <div class="text-gray-600 dark:text-gray-400">Basic Authentication</div>
@@ -2834,16 +2836,16 @@ export const viewTool = async function (toolId) {
         <div>Password: <span class="font-medium">********</span></div>
         </div>
     `;
-        } else if (tool.auth?.token) {
-            authHTML = `
+    } else if (tool.auth?.token) {
+      authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
         <div class="text-gray-600 dark:text-gray-400">Bearer Token</div>
         <div class="mt-1">Token: <span class="font-medium">********</span></div>
         </div>
     `;
-        } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
-            authHTML = `
+    } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+      authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">
         <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
@@ -2851,72 +2853,72 @@ export const viewTool = async function (toolId) {
         <div>Value: <span class="font-medium">********</span></div>
         </div>
     `;
-        } else {
-            authHTML = `
+    } else {
+      authHTML = `
         <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
         <div class="mt-1 text-sm">None</div>
     `;
+    }
+
+    // Create annotation badges safely - NO ESCAPING since we're using textContent
+    const renderAnnotations = (annotations) => {
+      if (!annotations || Object.keys(annotations).length === 0) {
+        return '<p><strong>Annotations:</strong> <span class="text-gray-600 dark:text-gray-300">None</span></p>';
+      }
+
+      const badges = [];
+
+      // Show title if present
+      if (annotations.title) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1 annotation-title"></span>',
+        );
+      }
+
+      // Show behavior hints with appropriate colors
+      if (annotations.readOnlyHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>',
+        );
+      }
+
+      if (annotations.destructiveHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>',
+        );
+      }
+
+      if (annotations.idempotentHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>',
+        );
+      }
+
+      if (annotations.openWorldHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>',
+        );
+      }
+
+      // Show any other custom annotations
+      Object.keys(annotations).forEach((key) => {
+        if (
+          ![
+            "title",
+            "readOnlyHint",
+            "destructiveHint",
+            "idempotentHint",
+            "openWorldHint",
+          ].includes(key)
+        ) {
+          const value = annotations[key];
+          badges.push(
+            `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:text-gray-200 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
+          );
         }
+      });
 
-        // Create annotation badges safely - NO ESCAPING since we're using textContent
-        const renderAnnotations = (annotations) => {
-            if (!annotations || Object.keys(annotations).length === 0) {
-                return '<p><strong>Annotations:</strong> <span class="text-gray-600 dark:text-gray-300">None</span></p>';
-            }
-
-            const badges = [];
-
-            // Show title if present
-            if (annotations.title) {
-                badges.push(
-                    '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1 annotation-title"></span>',
-                );
-            }
-
-            // Show behavior hints with appropriate colors
-            if (annotations.readOnlyHint === true) {
-                badges.push(
-                    '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>',
-                );
-            }
-
-            if (annotations.destructiveHint === true) {
-                badges.push(
-                    '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>',
-                );
-            }
-
-            if (annotations.idempotentHint === true) {
-                badges.push(
-                    '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>',
-                );
-            }
-
-            if (annotations.openWorldHint === true) {
-                badges.push(
-                    '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>',
-                );
-            }
-
-            // Show any other custom annotations
-            Object.keys(annotations).forEach((key) => {
-                if (
-                    ![
-                        "title",
-                        "readOnlyHint",
-                        "destructiveHint",
-                        "idempotentHint",
-                        "openWorldHint",
-                    ].includes(key)
-                ) {
-                    const value = annotations[key];
-                    badges.push(
-                        `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:text-gray-200 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
-                    );
-                }
-            });
-
-            return `
+      return `
         <div>
         <strong>Annotations:</strong>
         <div class="mt-1 flex flex-wrap">
@@ -2924,12 +2926,12 @@ export const viewTool = async function (toolId) {
         </div>
         </div>
     `;
-        };
+    };
 
-        const toolDetailsDiv = safeGetElement("tool-details");
-        if (toolDetailsDiv) {
-            // Create structure safely without double-escaping
-            const safeHTML = `
+    const toolDetailsDiv = safeGetElement("tool-details");
+    if (toolDetailsDiv) {
+      // Create structure safely without double-escaping
+      const safeHTML = `
         <div class="bg-transparent dark:bg-transparent dark:text-gray-300">
         <!-- Two Column Layout for Main Info -->
         <div class="grid grid-cols-2 gap-6 mb-6">
@@ -3088,170 +3090,170 @@ export const viewTool = async function (toolId) {
         </div>
     `;
 
-            // Set structure first
-            safeSetInnerHTML(toolDetailsDiv, safeHTML, true);
+      // Set structure first
+      safeSetInnerHTML(toolDetailsDiv, safeHTML, true);
 
-            // Now safely set text content - NO ESCAPING since textContent is safe
-            const setTextSafely = (selector, value) => {
-                const element = toolDetailsDiv.querySelector(selector);
-                if (element) {
-                    element.textContent = value || "N/A";
-                }
-            };
-
-            setTextSafely(
-                ".tool-display-name",
-                tool.displayName || tool.customName || tool.name,
-            );
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
-            setTextSafely(".tool-name", tool.name);
-            setTextSafely(".tool-url", tool.url);
-            setTextSafely(".tool-type", tool.integrationType);
-            setTextSafely(".tool-description", tool.description);
-            setTextSafely(".tool-visibility", tool.visibility);
-
-            // Set tags as HTML with badges
-            const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
-            if (tagsElement) {
-                if (tool.tags && tool.tags.length > 0) {
-                    tagsElement.innerHTML = tool.tags
-                        .map((tag) => {
-                            const raw =
-                                typeof tag === "object" && tag !== null
-                                    ? tag.id || tag.label || JSON.stringify(tag)
-                                    : tag;
-                            return `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(raw)}</span>`;
-                        })
-                        .join("");
-                } else {
-                    tagsElement.textContent = "None";
-                }
-            }
-
-            setTextSafely(".tool-request-type", tool.requestType);
-            setTextSafely(
-                ".tool-headers",
-                JSON.stringify(tool.headers || {}, null, 2),
-            );
-            setTextSafely(
-                ".tool-schema",
-                JSON.stringify(tool.inputSchema || {}, null, 2),
-            );
-            setTextSafely(
-                ".tool-output-schema",
-                JSON.stringify(tool.outputSchema || {}, null, 2),
-            );
-
-            // Set auth fields safely
-            if (tool.auth?.username) {
-                setTextSafely(".auth-username", tool.auth.username);
-            }
-            if (tool.auth?.authHeaderKey) {
-                setTextSafely(".auth-header-key", tool.auth.authHeaderKey);
-            }
-
-            // Set annotation title safely
-            if (tool.annotations?.title) {
-                setTextSafely(".annotation-title", tool.annotations.title);
-            }
-
-            // Set custom annotations safely
-            const customAnnotations =
-                toolDetailsDiv.querySelectorAll(".custom-annotation");
-            customAnnotations.forEach((element) => {
-                const key = element.dataset.key;
-                const value = element.dataset.value;
-                element.textContent = `${key}: ${value}`;
-            });
-
-            // Set metrics safely
-            setTextSafely(".metric-total", tool.metrics?.totalExecutions ?? 0);
-            setTextSafely(
-                ".metric-success",
-                tool.metrics?.successfulExecutions ?? 0,
-            );
-            setTextSafely(
-                ".metric-failed",
-                tool.metrics?.failedExecutions ?? 0,
-            );
-            setTextSafely(
-                ".metric-failure-rate",
-                tool.metrics?.failureRate ?? 0,
-            );
-            setTextSafely(
-                ".metric-min-time",
-                tool.metrics?.minResponseTime ?? "N/A",
-            );
-            setTextSafely(
-                ".metric-max-time",
-                tool.metrics?.maxResponseTime ?? "N/A",
-            );
-            setTextSafely(
-                ".metric-avg-time",
-                tool.metrics?.avgResponseTime ?? "N/A",
-            );
-            setTextSafely(
-                ".metric-last-time",
-                tool.metrics?.lastExecutionTime ?? "N/A",
-            );
-
-            // Set metadata fields safely with appropriate fallbacks for legacy entities
-            setTextSafely(
-                ".metadata-created-by",
-                tool.created_by || tool.createdBy || "Legacy Entity",
-            );
-            setTextSafely(
-                ".metadata-created-at",
-                tool.created_at
-                    ? new Date(tool.created_at).toLocaleString()
-                    : tool.createdAt
-                    ? new Date(tool.createdAt).toLocaleString()
-                    : "Pre-metadata",
-            );
-            setTextSafely(
-                ".metadata-created-from",
-                tool.created_from_ip || tool.createdFromIp || "Unknown",
-            );
-            setTextSafely(
-                ".metadata-created-via",
-                tool.created_via || tool.createdVia || "Unknown",
-            );
-            setTextSafely(
-                ".metadata-modified-by",
-                tool.modified_by || tool.modifiedBy || "N/A",
-            );
-            setTextSafely(
-                ".metadata-modified-at",
-                tool.updated_at
-                    ? new Date(tool.updated_at).toLocaleString()
-                    : tool.updatedAt
-                    ? new Date(tool.updatedAt).toLocaleString()
-                    : "N/A",
-            );
-            setTextSafely(
-                ".metadata-modified-from",
-                tool.modified_from_ip || tool.modifiedFromIp || "N/A",
-            );
-            setTextSafely(
-                ".metadata-modified-via",
-                tool.modified_via || tool.modifiedVia || "N/A",
-            );
-            setTextSafely(".metadata-version", tool.version || "1");
-            setTextSafely(
-                ".metadata-import-batch",
-                tool.import_batch_id || tool.importBatchId || "N/A",
-            );
+      // Now safely set text content - NO ESCAPING since textContent is safe
+      const setTextSafely = (selector, value) => {
+        const element = toolDetailsDiv.querySelector(selector);
+        if (element) {
+          element.textContent = value || "N/A";
         }
+      };
 
-        openModal("tool-modal");
-        console.log("✓ Tool details loaded successfully");
-    } catch (error) {
-        console.error("Error fetching tool details:", error);
-        const errorMessage = handleFetchError(error, "load tool details");
-        showErrorMessage(errorMessage);
+      setTextSafely(
+        ".tool-display-name",
+        tool.displayName || tool.customName || tool.name,
+      );
+      tool.description = tool.description.slice(
+        0,
+        tool.description.indexOf("*"),
+      );
+      setTextSafely(".tool-name", tool.name);
+      setTextSafely(".tool-url", tool.url);
+      setTextSafely(".tool-type", tool.integrationType);
+      setTextSafely(".tool-description", tool.description);
+      setTextSafely(".tool-visibility", tool.visibility);
+
+      // Set tags as HTML with badges
+      const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
+      if (tagsElement) {
+        if (tool.tags && tool.tags.length > 0) {
+          tagsElement.innerHTML = tool.tags
+            .map((tag) => {
+              const raw =
+                                typeof tag === "object" && tag !== null
+                                  ? tag.id || tag.label || JSON.stringify(tag)
+                                  : tag;
+              return `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(raw)}</span>`;
+            })
+            .join("");
+        } else {
+          tagsElement.textContent = "None";
+        }
+      }
+
+      setTextSafely(".tool-request-type", tool.requestType);
+      setTextSafely(
+        ".tool-headers",
+        JSON.stringify(tool.headers || {}, null, 2),
+      );
+      setTextSafely(
+        ".tool-schema",
+        JSON.stringify(tool.inputSchema || {}, null, 2),
+      );
+      setTextSafely(
+        ".tool-output-schema",
+        JSON.stringify(tool.outputSchema || {}, null, 2),
+      );
+
+      // Set auth fields safely
+      if (tool.auth?.username) {
+        setTextSafely(".auth-username", tool.auth.username);
+      }
+      if (tool.auth?.authHeaderKey) {
+        setTextSafely(".auth-header-key", tool.auth.authHeaderKey);
+      }
+
+      // Set annotation title safely
+      if (tool.annotations?.title) {
+        setTextSafely(".annotation-title", tool.annotations.title);
+      }
+
+      // Set custom annotations safely
+      const customAnnotations =
+                toolDetailsDiv.querySelectorAll(".custom-annotation");
+      customAnnotations.forEach((element) => {
+        const key = element.dataset.key;
+        const value = element.dataset.value;
+        element.textContent = `${key}: ${value}`;
+      });
+
+      // Set metrics safely
+      setTextSafely(".metric-total", tool.metrics?.totalExecutions ?? 0);
+      setTextSafely(
+        ".metric-success",
+        tool.metrics?.successfulExecutions ?? 0,
+      );
+      setTextSafely(
+        ".metric-failed",
+        tool.metrics?.failedExecutions ?? 0,
+      );
+      setTextSafely(
+        ".metric-failure-rate",
+        tool.metrics?.failureRate ?? 0,
+      );
+      setTextSafely(
+        ".metric-min-time",
+        tool.metrics?.minResponseTime ?? "N/A",
+      );
+      setTextSafely(
+        ".metric-max-time",
+        tool.metrics?.maxResponseTime ?? "N/A",
+      );
+      setTextSafely(
+        ".metric-avg-time",
+        tool.metrics?.avgResponseTime ?? "N/A",
+      );
+      setTextSafely(
+        ".metric-last-time",
+        tool.metrics?.lastExecutionTime ?? "N/A",
+      );
+
+      // Set metadata fields safely with appropriate fallbacks for legacy entities
+      setTextSafely(
+        ".metadata-created-by",
+        tool.created_by || tool.createdBy || "Legacy Entity",
+      );
+      setTextSafely(
+        ".metadata-created-at",
+        tool.created_at
+          ? new Date(tool.created_at).toLocaleString()
+          : tool.createdAt
+            ? new Date(tool.createdAt).toLocaleString()
+            : "Pre-metadata",
+      );
+      setTextSafely(
+        ".metadata-created-from",
+        tool.created_from_ip || tool.createdFromIp || "Unknown",
+      );
+      setTextSafely(
+        ".metadata-created-via",
+        tool.created_via || tool.createdVia || "Unknown",
+      );
+      setTextSafely(
+        ".metadata-modified-by",
+        tool.modified_by || tool.modifiedBy || "N/A",
+      );
+      setTextSafely(
+        ".metadata-modified-at",
+        tool.updated_at
+          ? new Date(tool.updated_at).toLocaleString()
+          : tool.updatedAt
+            ? new Date(tool.updatedAt).toLocaleString()
+            : "N/A",
+      );
+      setTextSafely(
+        ".metadata-modified-from",
+        tool.modified_from_ip || tool.modifiedFromIp || "N/A",
+      );
+      setTextSafely(
+        ".metadata-modified-via",
+        tool.modified_via || tool.modifiedVia || "N/A",
+      );
+      setTextSafely(".metadata-version", tool.version || "1");
+      setTextSafely(
+        ".metadata-import-batch",
+        tool.import_batch_id || tool.importBatchId || "N/A",
+      );
     }
+
+    openModal("tool-modal");
+    console.log("✓ Tool details loaded successfully");
+  } catch (error) {
+    console.error("Error fetching tool details:", error);
+    const errorMessage = handleFetchError(error, "load tool details");
+    showErrorMessage(errorMessage);
+  }
 }
 

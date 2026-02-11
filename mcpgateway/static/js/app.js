@@ -13,22 +13,17 @@ import {
   setupIntegrationTypeHandlers,
   setupSchemaModeHandlers,
 } from "./initialization.js";
-import { closeModal, openModal } from "./modals.js";
-import { initPromptSelect } from "./prompts.js";
 import { initResourceSelect } from "./resources.js";
 import {
   escapeHtml,
   safeSetInnerHTML,
-  validateJson,
-  validateUrl,
 } from "./security.js";
 import { fetchWithAuth, getAuthToken, getTeamNameById } from "./tokens.js";
 import { initToolSelect } from "./tools.js";
 import {
-  createMemoizedInit,
   fetchWithTimeout,
+  formatTimestamp,
   getCookie,
-  getCurrentTeamId,
   getRootPath,
   isAdminUser,
   safeGetElement,
@@ -83,7 +78,7 @@ import {
         }
       });
       console.log(
-        `Destroying ${toDestroy.length} charts with prefix: ${prefix}`,
+        `Destroying ${toDestroy.length} charts with prefix: ${prefix}`
       );
       toDestroy.forEach((id) => this.destroy(id));
     },
@@ -181,7 +176,7 @@ import {
           if (container) {
             // Update tool mapping for newly loaded tools
             const newCheckboxes = container.querySelectorAll(
-              "input[data-auto-check=true]",
+              "input[data-auto-check=true]"
             );
 
             if (!Admin.toolMapping) {
@@ -197,7 +192,7 @@ import {
             });
 
             const selectAllInput = container.querySelector(
-              'input[name="selectAllTools"]',
+              'input[name="selectAllTools"]'
             );
 
             // Check if Select All is active
@@ -320,11 +315,11 @@ import {
 
           if (container) {
             const newCheckboxes = container.querySelectorAll(
-              "input[data-auto-check=true]",
+              "input[data-auto-check=true]"
             );
 
             const selectAllInput = container.querySelector(
-              'input[name="selectAllResources"]',
+              'input[name="selectAllResources"]'
             );
 
             // Check if Select All is active
@@ -370,7 +365,7 @@ import {
             else if (container.id === "associatedResources") {
               try {
                 const dataAttr = container.getAttribute(
-                  "data-selected-resources",
+                  "data-selected-resources"
                 );
                 if (dataAttr) {
                   const selectedIds = JSON.parse(dataAttr);
@@ -391,7 +386,7 @@ import {
               } catch (e) {
                 console.warn(
                   "Error restoring associatedResources selections:",
-                  e,
+                  e
                 );
               }
             }
@@ -433,22 +428,19 @@ import {
               editModal && !editModal.classList.contains("hidden");
 
             if (isEditModalOpen) {
-              container = safeGetElement(
-                "edit-server-prompts",
-              );
+              container = safeGetElement("edit-server-prompts");
             } else {
-              container =
-              safeGetElement("associatedPrompts");
+              container = safeGetElement("associatedPrompts");
             }
           }
 
           if (container) {
             const newCheckboxes = container.querySelectorAll(
-              "input[data-auto-check=true]",
+              "input[data-auto-check=true]"
             );
 
             const selectAllInput = container.querySelector(
-              'input[name="selectAllPrompts"]',
+              'input[name="selectAllPrompts"]'
             );
 
             // Check if Select All is active
@@ -467,17 +459,13 @@ import {
             }
 
             // Also check for edit mode: pre-select items based on server's associated prompts
-            const dataAttr = container.getAttribute(
-              "data-server-prompts",
-            );
+            const dataAttr = container.getAttribute("data-server-prompts");
             if (dataAttr) {
               try {
                 const associatedPromptIds = JSON.parse(dataAttr);
                 newCheckboxes.forEach((cb) => {
                   const checkboxValue = cb.value;
-                  if (
-                    associatedPromptIds.includes(checkboxValue)
-                  ) {
+                  if (associatedPromptIds.includes(checkboxValue)) {
                     cb.checked = true;
                   }
                   cb.removeAttribute("data-auto-check");
@@ -490,10 +478,7 @@ import {
                   container.dispatchEvent(event);
                 }
               } catch (e) {
-                console.error(
-                  "Error parsing data-server-prompts:",
-                  e,
-                );
+                console.error("Error parsing data-server-prompts:", e);
               }
             }
 
@@ -501,14 +486,11 @@ import {
             else if (container.id === "associatedPrompts") {
               try {
                 const dataAttr = container.getAttribute(
-                  "data-selected-prompts",
+                  "data-selected-prompts"
                 );
                 if (dataAttr) {
                   const selectedIds = JSON.parse(dataAttr);
-                  if (
-                    Array.isArray(selectedIds) &&
-                    selectedIds.length > 0
-                  ) {
+                  if (Array.isArray(selectedIds) && selectedIds.length > 0) {
                     newCheckboxes.forEach((cb) => {
                       if (selectedIds.includes(cb.value)) {
                         cb.checked = true;
@@ -525,7 +507,7 @@ import {
               } catch (e) {
                 console.warn(
                   "Error restoring associatedPrompts selections:",
-                  e,
+                  e
                 );
               }
             }
@@ -533,1392 +515,15 @@ import {
         }, 10);
       }
     });
-  };
-
-  // ===================================================================
-  // GATEWAY SELECT (Associated MCP Servers) - search/select/clear
-  // ===================================================================
-  Admin.initGatewaySelect = function (
-    selectId = "associatedGateways",
-    pillsId = "selectedGatewayPills",
-    warnId = "selectedGatewayWarning",
-    max = 12,
-    selectBtnId = "selectAllGatewayBtn",
-    clearBtnId = "clearAllGatewayBtn",
-    searchInputId = "searchGateways",
-  ) {
-    const container = safeGetElement(selectId);
-    const pillsBox = safeGetElement(pillsId);
-    const warnBox = safeGetElement(warnId);
-    const clearBtn = clearBtnId ? safeGetElement(clearBtnId) : null;
-    const selectBtn = selectBtnId ? safeGetElement(selectBtnId) : null;
-    const searchInput = searchInputId
-    ? safeGetElement(searchInputId)
-    : null;
-
-    if (!container || !pillsBox || !warnBox) {
-      console.warn(
-        `Gateway select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
-      );
-      return;
-    }
-
-    const pillClasses =
-    "inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-1 rounded-full dark:bg-indigo-900 dark:text-indigo-200";
-
-    // Search functionality
-    Admin.applySearch = function () {
-      if (!searchInput) {
-        return;
-      }
-
-      try {
-        const query = searchInput.value.toLowerCase().trim();
-        const items = container.querySelectorAll(".tool-item");
-        let visibleCount = 0;
-
-        items.forEach((item) => {
-          const text = item.textContent.toLowerCase();
-          if (!query || text.includes(query)) {
-            item.style.display = "";
-            visibleCount++;
-          } else {
-            item.style.display = "none";
-          }
-        });
-
-        // Update "no results" message if it exists
-        const noMsg = safeGetElement("noGatewayMessage");
-        const searchQuerySpan =
-        safeGetElement("searchQueryServers");
-
-        if (noMsg) {
-          if (query && visibleCount === 0) {
-            noMsg.style.display = "block";
-            if (searchQuerySpan) {
-              searchQuerySpan.textContent = query;
-            }
-          } else {
-            noMsg.style.display = "none";
-          }
-        }
-      } catch (error) {
-        console.error("Error applying gateway search:", error);
-      }
-    }
-
-    // Bind search input
-    if (searchInput && !searchInput.dataset.searchBound) {
-      searchInput.addEventListener("input", Admin.applySearch);
-      searchInput.dataset.searchBound = "true";
-    }
-
-    Admin.update = function () {
-      try {
-        const checkboxes = container.querySelectorAll(
-          'input[type="checkbox"]',
-        );
-        const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-
-        // Check if "Select All" mode is active
-        const selectAllInput = container.querySelector(
-          'input[name="selectAllGateways"]',
-        );
-        const allIdsInput = container.querySelector(
-          'input[name="allGatewayIds"]',
-        );
-
-        let count = checked.length;
-
-        // If Select All mode is active, use the count from allGatewayIds
-        if (
-          selectAllInput &&
-          selectAllInput.value === "true" &&
-          allIdsInput
-        ) {
-          try {
-            const allIds = JSON.parse(allIdsInput.value);
-            count = allIds.length;
-          } catch (e) {
-            console.error("Error parsing allGatewayIds:", e);
-          }
-        }
-
-        // Rebuild pills safely - show first 3, then summarize the rest
-        pillsBox.innerHTML = "";
-        const maxPillsToShow = 3;
-
-        checked.slice(0, maxPillsToShow).forEach((cb) => {
-          const span = document.createElement("span");
-          span.className = pillClasses;
-          span.textContent =
-          cb.nextElementSibling?.textContent?.trim() || "Unnamed";
-          pillsBox.appendChild(span);
-        });
-
-        // If more than maxPillsToShow, show a summary pill
-        if (count > maxPillsToShow) {
-          const span = document.createElement("span");
-          span.className = pillClasses + " cursor-pointer";
-          span.title = "Click to see all selected gateways";
-          const remaining = count - maxPillsToShow;
-          span.textContent = `+${remaining} more`;
-          pillsBox.appendChild(span);
-        }
-
-        // Warning when > max
-        if (count > max) {
-          warnBox.textContent = `Selected ${count} MCP servers. Selecting more than ${max} servers may impact performance.`;
-        } else {
-          warnBox.textContent = "";
-        }
-      } catch (error) {
-        console.error("Error updating gateway select:", error);
-      }
-    }
-
-    // Remove old event listeners by cloning and replacing (preserving ID)
-    if (clearBtn && !clearBtn.dataset.listenerAttached) {
-      clearBtn.dataset.listenerAttached = "true";
-      const newClearBtn = clearBtn.cloneNode(true);
-      newClearBtn.dataset.listenerAttached = "true";
-      clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-
-      newClearBtn.addEventListener("click", () => {
-        const checkboxes = container.querySelectorAll(
-          'input[type="checkbox"]',
-        );
-        checkboxes.forEach((cb) => (cb.checked = false));
-
-        // Clear the "select all" flag
-        const selectAllInput = container.querySelector(
-          'input[name="selectAllGateways"]',
-        );
-        if (selectAllInput) {
-          selectAllInput.remove();
-        }
-        const allIdsInput = container.querySelector(
-          'input[name="allGatewayIds"]',
-        );
-        if (allIdsInput) {
-          allIdsInput.remove();
-        }
-
-        Admin.update();
-
-        // Reload associated items after clearing selection
-        Admin.reloadAssociatedItems();
-      });
-    }
-
-    if (selectBtn && !selectBtn.dataset.listenerAttached) {
-      selectBtn.dataset.listenerAttached = "true";
-      const newSelectBtn = selectBtn.cloneNode(true);
-      newSelectBtn.dataset.listenerAttached = "true";
-      selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
-
-      newSelectBtn.addEventListener("click", async () => {
-        // Disable button and show loading state
-        const originalText = newSelectBtn.textContent;
-        newSelectBtn.disabled = true;
-        newSelectBtn.textContent = "Selecting all gateways...";
-
-        try {
-          // Fetch all gateway IDs from the server
-          const selectedTeamId = getCurrentTeamId();
-          const params = new URLSearchParams();
-          if (selectedTeamId) {
-            params.set("team_id", selectedTeamId);
-          }
-          const queryString = params.toString();
-          const response = await fetch(
-            `${window.ROOT_PATH}/admin/gateways/ids${queryString ? `?${queryString}` : ""}`,
-          );
-          if (!response.ok) {
-            throw new Error("Failed to fetch gateway IDs");
-          }
-
-          const data = await response.json();
-          const allGatewayIds = data.gateway_ids || [];
-
-          // Apply search filter first to determine which items are visible
-          Admin.applySearch();
-
-          // Check only currently visible checkboxes
-          const loadedCheckboxes = container.querySelectorAll(
-            'input[type="checkbox"]',
-          );
-          loadedCheckboxes.forEach((cb) => {
-            const parent = cb.closest(".tool-item") || cb.parentElement;
-            const isVisible =
-            parent && getComputedStyle(parent).display !== "none";
-            if (isVisible) {
-              cb.checked = true;
-            }
-          });
-
-          // Add a hidden input to indicate "select all" mode
-          // Remove any existing one first
-          let selectAllInput = container.querySelector(
-            'input[name="selectAllGateways"]',
-          );
-          if (!selectAllInput) {
-            selectAllInput = document.createElement("input");
-            selectAllInput.type = "hidden";
-            selectAllInput.name = "selectAllGateways";
-            container.appendChild(selectAllInput);
-          }
-          selectAllInput.value = "true";
-
-          // Also store the IDs as a JSON array for the backend
-          // Ensure the special 'null' sentinel is included when selecting all
-          try {
-            const nullCheckbox = container.querySelector(
-              'input[data-gateway-null="true"]',
-            );
-            if (nullCheckbox) {
-              // Include the literal string "null" so server-side
-              // `any(gid.lower() == 'null' ...)` evaluates to true.
-              if (!allGatewayIds.includes("null")) {
-                allGatewayIds.push("null");
-              }
-            }
-          } catch (err) {
-            console.error(
-              "Error ensuring null sentinel in gateway IDs:",
-              err,
-            );
-          }
-
-          let allIdsInput = container.querySelector(
-            'input[name="allGatewayIds"]',
-          );
-          if (!allIdsInput) {
-            allIdsInput = document.createElement("input");
-            allIdsInput.type = "hidden";
-            allIdsInput.name = "allGatewayIds";
-            container.appendChild(allIdsInput);
-          }
-          allIdsInput.value = JSON.stringify(allGatewayIds);
-
-          Admin.update();
-
-          newSelectBtn.textContent = `✓ All ${allGatewayIds.length} gateways selected`;
-          setTimeout(() => {
-            newSelectBtn.textContent = originalText;
-          }, 2000);
-
-          // Reload associated items after selecting all
-          Admin.reloadAssociatedItems();
-        } catch (error) {
-          console.error("Error in Select All:", error);
-          alert("Failed to select all gateways. Please try again.");
-          newSelectBtn.disabled = false;
-          newSelectBtn.textContent = originalText;
-        } finally {
-          newSelectBtn.disabled = false;
-        }
-      });
-    }
-
-    Admin.update(); // Initial render
-
-    // Attach change listeners to checkboxes (using delegation for dynamic content)
-    if (!container.dataset.changeListenerAttached) {
-      container.dataset.changeListenerAttached = "true";
-      container.addEventListener("change", (e) => {
-        if (e.target.type === "checkbox") {
-          // Log gateway_id when checkbox is clicked
-          // Normalize the special null-gateway checkbox to the literal string "null"
-          let gatewayId = e.target.value;
-          if (
-            e.target.dataset &&
-            e.target.dataset.gatewayNull === "true"
-          ) {
-            gatewayId = "null";
-          }
-          const gatewayName =
-          e.target.nextElementSibling?.textContent?.trim() ||
-          "Unknown";
-          const isChecked = e.target.checked;
-
-          console.log(
-            `[MCP Server Selection] Gateway ID: ${gatewayId}, Name: ${gatewayName}, Checked: ${isChecked}`,
-          );
-
-          // Check if we're in "Select All" mode
-          const selectAllInput = container.querySelector(
-            'input[name="selectAllGateways"]',
-          );
-          const allIdsInput = container.querySelector(
-            'input[name="allGatewayIds"]',
-          );
-
-          if (
-            selectAllInput &&
-            selectAllInput.value === "true" &&
-            allIdsInput
-          ) {
-            // User is manually checking/unchecking after Select All
-            // Update the allGatewayIds array to reflect the change
-            try {
-              let allIds = JSON.parse(allIdsInput.value);
-
-              if (e.target.checked) {
-                // Add the ID if it's not already there
-                if (!allIds.includes(gatewayId)) {
-                  allIds.push(gatewayId);
-                }
-              } else {
-                // Remove the ID from the array
-                allIds = allIds.filter((id) => id !== gatewayId);
-              }
-
-              // Update the hidden field
-              allIdsInput.value = JSON.stringify(allIds);
-            } catch (error) {
-              console.error("Error updating allGatewayIds:", error);
-            }
-          }
-
-          // No exclusivity: allow the special 'null' gateway (RestTool/Prompts/Resources) to be
-          // selected together with real gateways. Server-side filtering already
-          // supports mixed lists like `gateway_id=abc,null`.
-
-          Admin.update();
-
-          // Trigger reload of associated tools, resources, and prompts with selected gateway filter
-          Admin.reloadAssociatedItems();
-        }
-      });
-    }
-
-    // Initial render
-    Admin.applySearch();
-    Admin.update();
-  };
-
-  /**
-  * Get all selected gateway IDs from the gateway selection container
-  * @returns {string[]} Array of selected gateway IDs
-  */
-  Admin.getSelectedGatewayIds = function () {
-    // Prefer the gateway selection belonging to the currently active form.
-    // If the edit-server modal is open, use the edit modal's gateway container
-    // (`associatedEditGateways`). Otherwise use the create form container
-    // (`associatedGateways`). This allows the same filtering logic to work
-    // for both Add and Edit flows.
-    let container = safeGetElement("associatedGateways");
-    const editContainer = safeGetElement("associatedEditGateways");
-
-    const editModal = safeGetElement("server-edit-modal");
-    const isEditModalOpen =
-    editModal && !editModal.classList.contains("hidden");
-
-    if (isEditModalOpen && editContainer) {
-      container = editContainer;
-    } else if (
-      editContainer &&
-      editContainer.offsetParent !== null &&
-      !container
-    ) {
-      // If edit container is visible (e.g. modal rendered) and associatedGateways
-      // not present, prefer edit container.
-      container = editContainer;
-    }
-
-    console.log(
-      "[Gateway Selection DEBUG] Container used:",
-      container ? container.id : null,
-    );
-
-    if (!container) {
-      console.warn(
-        "[Gateway Selection DEBUG] No gateway container found (associatedGateways or associatedEditGateways)",
-      );
-      return [];
-    }
-
-    // Check if "Select All" mode is active
-    const selectAllInput = container.querySelector(
-      "input[name='selectAllGateways']",
-    );
-    const allIdsInput = container.querySelector("input[name='allGatewayIds']");
-
-    console.log(
-      "[Gateway Selection DEBUG] Select All mode:",
-      selectAllInput?.value === "true",
-    );
-    if (selectAllInput && selectAllInput.value === "true" && allIdsInput) {
-      try {
-        const allIds = JSON.parse(allIdsInput.value);
-        console.log(
-          `[Gateway Selection DEBUG] Returning all gateway IDs (${allIds.length} total)`,
-        );
-        return allIds;
-      } catch (error) {
-        console.error(
-          "[Gateway Selection DEBUG] Error parsing allGatewayIds:",
-          error,
-        );
-      }
-    }
-
-    // Otherwise, get all checked checkboxes. If the special 'null' gateway
-    // checkbox is selected, include the sentinel 'null' alongside any real
-    // gateway ids. This allows requests like `gateway_id=abc,null` which the
-    // server interprets as (gateway_id = abc) OR (gateway_id IS NULL).
-    const checkboxes = container.querySelectorAll(
-      "input[type='checkbox']:checked",
-    );
-
-    const selectedIds = Array.from(checkboxes)
-    .map((cb) => {
-      // Convert the special null-gateway checkbox to the literal 'null'
-      if (cb.dataset?.gatewayNull === "true") {
-        return "null";
-      }
-      return cb.value;
-    })
-    // Filter out any empty values to avoid sending empty CSV entries
-    .filter((id) => id !== "" && id !== null && id !== undefined);
-
-    console.log(
-      `[Gateway Selection DEBUG] Found ${selectedIds.length} checked gateway checkboxes`,
-    );
-    console.log("[Gateway Selection DEBUG] Selected gateway IDs:", selectedIds);
-
-    return selectedIds;
-  };
-
-  /**
-  * Reload associated tools, resources, and prompts filtered by selected gateway IDs
-  */
-  Admin.reloadAssociatedItems = function () {
-    const selectedGatewayIds = Admin.getSelectedGatewayIds();
-    // Join all selected IDs (including the special 'null' sentinel if present)
-    // so the server receives a combined filter like `gateway_id=abc,null`.
-    let gatewayIdParam = "";
-    if (selectedGatewayIds.length > 0) {
-      gatewayIdParam = selectedGatewayIds.join(",");
-    }
-
-    console.log(
-      `[Filter Update] Reloading associated items for gateway IDs: ${gatewayIdParam || "none (showing all)"}`,
-    );
-    console.log(
-      "[Filter Update DEBUG] Selected gateway IDs array:",
-      selectedGatewayIds,
-    );
-
-    // Determine whether to reload the 'create server' containers (associated*)
-    // or the 'edit server' containers (edit-server-*). Prefer the edit
-    // containers when the edit modal is open or the edit-gateway selector
-    // exists and is visible.
-    const editModal = safeGetElement("server-edit-modal");
-    const isEditModalOpen =
-    editModal && !editModal.classList.contains("hidden");
-    const editGateways = safeGetElement("associatedEditGateways");
-
-    const useEditContainers =
-    isEditModalOpen || (editGateways && editGateways.offsetParent !== null);
-
-    const toolsContainerId = useEditContainers
-    ? "edit-server-tools"
-    : "associatedTools";
-    const resourcesContainerId = useEditContainers
-    ? "edit-server-resources"
-    : "associatedResources";
-    const promptsContainerId = useEditContainers
-    ? "edit-server-prompts"
-    : "associatedPrompts";
-
-    // Reload tools
-    const toolsContainer = safeGetElement(toolsContainerId);
-    if (toolsContainer) {
-      const toolsUrl = gatewayIdParam
-      ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-      : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
-
-      console.log(
-        "[Filter Update DEBUG] Tools URL:",
-        toolsUrl,
-        "-> target:",
-        `#${toolsContainerId}`,
-      );
-
-      // Use HTMX to reload the content into the chosen container
-      if (window.htmx) {
-        htmx.ajax("GET", toolsUrl, {
-          target: `#${toolsContainerId}`,
-          swap: "innerHTML",
-        })
-        .then(() => {
-          console.log(
-            "[Filter Update DEBUG] Tools reloaded successfully",
-          );
-          // Re-initialize the tool select after content is loaded
-          const pillsId = useEditContainers
-          ? "selectedEditToolsPills"
-          : "selectedToolsPills";
-          const warnId = useEditContainers
-          ? "selectedEditToolsWarning"
-          : "selectedToolsWarning";
-          const selectBtn = useEditContainers
-          ? "selectAllEditToolsBtn"
-          : "selectAllToolsBtn";
-          const clearBtn = useEditContainers
-          ? "clearAllEditToolsBtn"
-          : "clearAllToolsBtn";
-
-          initToolSelect(
-            toolsContainerId,
-            pillsId,
-            warnId,
-            6,
-            selectBtn,
-            clearBtn,
-          );
-        })
-        .catch((err) => {
-          console.error(
-            "[Filter Update DEBUG] Tools reload failed:",
-            err,
-          );
-        });
-      } else {
-        console.error(
-          "[Filter Update DEBUG] HTMX not available for tools reload",
-        );
-      }
-    } else {
-      console.warn(
-        "[Filter Update DEBUG] Tools container not found ->",
-        toolsContainerId,
-      );
-    }
-
-    // Reload resources - use fetch directly to avoid HTMX race conditions
-    const resourcesContainer = safeGetElement(resourcesContainerId);
-    if (resourcesContainer) {
-      const resourcesUrl = gatewayIdParam
-      ? `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-      : `${window.ROOT_PATH}/admin/resources/partial?page=1&per_page=50&render=selector`;
-
-      console.log("[Filter Update DEBUG] Resources URL:", resourcesUrl);
-
-      // Use fetch() directly instead of htmx.ajax() to avoid race conditions
-      fetch(resourcesUrl, {
-        method: "GET",
-        headers: {
-          "HX-Request": "true",
-          "HX-Current-URL": window.location.href,
-        },
-      })
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-          }
-          return response.text();
-        })
-        .then((html) => {
-          console.log(
-            "[Filter Update DEBUG] Resources fetch successful, HTML length:",
-            html.length,
-          );
-          // Persist current selections to window fallback before replacing container
-          // AND preserve the data-selected-resources attribute
-          let persistedResourceIds = [];
-          try {
-            // First, try to get from the container's data attribute
-            const dataAttr = resourcesContainer.getAttribute(
-              "data-selected-resources",
-            );
-            if (dataAttr) {
-              try {
-                const parsed = JSON.parse(dataAttr);
-                if (Array.isArray(parsed)) {
-                  persistedResourceIds = parsed.slice();
-                }
-              } catch (e) {
-                console.error("Error parsing data-selected-resources:", e);
-              }
-            }
-
-            // Merge with currently checked items
-            const currentChecked = Array.from(
-              resourcesContainer.querySelectorAll(
-                'input[type="checkbox"]:checked',
-              ),
-            ).map((cb) => cb.value);
-            const merged = new Set([
-              ...persistedResourceIds,
-              ...currentChecked,
-            ]);
-            persistedResourceIds = Array.from(merged);
-
-            // Update window fallback
-            Admin._selectedAssociatedResources =
-            persistedResourceIds.slice();
-          } catch (e) {
-            console.error(
-              "Error capturing current resource selections before reload:",
-              e,
-            );
-          }
-
-          resourcesContainer.innerHTML = html;
-
-          // Immediately restore the data-selected-resources attribute after innerHTML replacement
-          if (persistedResourceIds.length > 0) {
-            resourcesContainer.setAttribute(
-              "data-selected-resources",
-              JSON.stringify(persistedResourceIds),
-            );
-          }
-          // If HTMX is available, process the newly-inserted HTML so hx-*
-          // triggers (like the infinite-scroll 'intersect' trigger) are
-          // initialized. To avoid HTMX re-triggering the container's
-          // own `hx-get`/`hx-trigger="load"` (which would issue a second
-          // request without the gateway filter), temporarily remove those
-          // attributes from the container while we call `htmx.process`.
-          if (window.htmx && typeof window.htmx.process === "function") {
-            try {
-              // Backup and remove attributes that could auto-fire
-              const hadHxGet =
-              resourcesContainer.hasAttribute("hx-get");
-              const hadHxTrigger =
-              resourcesContainer.hasAttribute("hx-trigger");
-              const oldHxGet =
-              resourcesContainer.getAttribute("hx-get");
-              const oldHxTrigger =
-              resourcesContainer.getAttribute("hx-trigger");
-
-              if (hadHxGet) {
-                resourcesContainer.removeAttribute("hx-get");
-              }
-              if (hadHxTrigger) {
-                resourcesContainer.removeAttribute("hx-trigger");
-              }
-
-              // Process only the newly-inserted inner nodes to initialize
-              // any hx-* behavior (infinite scroll, after-swap hooks, etc.)
-              window.htmx.process(resourcesContainer);
-
-              // Restore original attributes so the container retains its
-              // declarative behavior for future operations, but don't
-              // re-process (we already processed child nodes).
-              if (hadHxGet && oldHxGet !== null) {
-                resourcesContainer.setAttribute("hx-get", oldHxGet);
-              }
-              if (hadHxTrigger && oldHxTrigger !== null) {
-                resourcesContainer.setAttribute(
-                  "hx-trigger",
-                  oldHxTrigger,
-                );
-              }
-
-              console.log(
-                "[Filter Update DEBUG] htmx.process called on resources container (attributes temporarily removed)",
-              );
-            } catch (e) {
-              console.warn(
-                "[Filter Update DEBUG] htmx.process failed:",
-                e,
-              );
-            }
-          }
-
-          // Re-initialize the resource select after content is loaded
-          const resPills = useEditContainers
-          ? "selectedEditResourcesPills"
-          : "selectedResourcesPills";
-          const resWarn = useEditContainers
-          ? "selectedEditResourcesWarning"
-          : "selectedResourcesWarning";
-          const resSelectBtn = useEditContainers
-          ? "selectAllEditResourcesBtn"
-          : "selectAllResourcesBtn";
-          const resClearBtn = useEditContainers
-          ? "clearAllEditResourcesBtn"
-          : "clearAllResourcesBtn";
-
-          // The data-selected-resources attribute should already be restored above,
-          // but double-check and merge with window fallback if needed
-          try {
-            const dataAttr = resourcesContainer.getAttribute(
-              "data-selected-resources",
-            );
-            let selectedIds = [];
-            if (dataAttr) {
-              try {
-                const parsed = JSON.parse(dataAttr);
-                if (Array.isArray(parsed)) {
-                  selectedIds = parsed.slice();
-                }
-              } catch (e) {
-                console.error("Error parsing data-selected-resources:", e);
-              }
-            }
-
-            // Merge with window fallback if it has additional selections
-            if (
-              Array.isArray(Admin._selectedAssociatedResources) &&
-              Admin._selectedAssociatedResources.length > 0
-            ) {
-              const merged = new Set([
-                ...selectedIds,
-                ...Admin._selectedAssociatedResources,
-              ]);
-              const mergedArray = Array.from(merged);
-              if (mergedArray.length > selectedIds.length) {
-                resourcesContainer.setAttribute(
-                  "data-selected-resources",
-                  JSON.stringify(mergedArray),
-                );
-                console.log(
-                  "[Filter Update DEBUG] Merged additional selections from window fallback",
-                );
-              }
-            }
-          } catch (e) {
-            console.error(
-              "Error restoring data-selected-resources after fetch reload:",
-              e,
-            );
-          }
-
-          // First restore persisted selections from data-selected-resources (Add Server mode)
-          try {
-            const dataAttr = resourcesContainer.getAttribute(
-              "data-selected-resources",
-            );
-            if (dataAttr && resourcesContainerId === "associatedResources") {
-              const selectedIds = JSON.parse(dataAttr);
-              if (Array.isArray(selectedIds) && selectedIds.length > 0) {
-                const resourceCheckboxes = resourcesContainer.querySelectorAll(
-                  'input[type="checkbox"][name="associatedResources"]',
-                );
-                resourceCheckboxes.forEach((cb) => {
-                  if (selectedIds.includes(cb.value)) {
-                    cb.checked = true;
-                  }
-                });
-                console.log(
-                  "[Filter Update DEBUG] Restored",
-                  selectedIds.length,
-                  "persisted resource selections",
-                );
-              }
-            }
-          } catch (e) {
-            console.warn("Error restoring persisted resource selections:", e);
-          }
-
-          initResourceSelect(
-            resourcesContainerId,
-            resPills,
-            resWarn,
-            6,
-            resSelectBtn,
-            resClearBtn,
-          );
-
-          // Re-apply server-associated resource selections so selections
-          // persist across gateway-filtered reloads (Edit Server mode).
-          // The resources partial replaces checkbox inputs; use the container's
-          // `data-server-resources` attribute (set when opening edit modal)
-          // to restore checked state.
-          try {
-            const dataAttr = resourcesContainer.getAttribute(
-              "data-server-resources",
-            );
-            if (dataAttr) {
-              const associated = JSON.parse(dataAttr);
-              if (Array.isArray(associated) && associated.length > 0) {
-                const resourceCheckboxes = resourcesContainer.querySelectorAll(
-                  'input[type="checkbox"][name="associatedResources"]',
-                );
-                resourceCheckboxes.forEach((cb) => {
-                  const val = cb.value;
-                  if (!Number.isNaN(val) && associated.includes(val)) {
-                    cb.checked = true;
-                  }
-                });
-
-                // Trigger change so pills and counts update
-                const event = new Event("change", {
-                  bubbles: true,
-                });
-                resourcesContainer.dispatchEvent(event);
-              }
-            }
-          } catch (e) {
-            console.warn("Error restoring associated resources:", e);
-          }
-          console.log(
-            "[Filter Update DEBUG] Resources reloaded successfully via fetch",
-          );
-        })
-        .catch((err) => {
-          console.error("[Filter Update DEBUG] Resources reload failed:", err);
-        });
-    } else {
-      console.warn("[Filter Update DEBUG] Resources container not found");
-    }
-
-    // Reload prompts
-    const promptsContainer = safeGetElement(promptsContainerId);
-    if (promptsContainer) {
-      const promptsUrl = gatewayIdParam
-        ? `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
-        : `${window.ROOT_PATH}/admin/prompts/partial?page=1&per_page=50&render=selector`;
-
-      // Persist current prompt selections before HTMX replaces the container
-      try {
-        const currentCheckedPrompts = Array.from(
-          promptsContainer.querySelectorAll('input[type="checkbox"]:checked'),
-        ).map((cb) => cb.value);
-        if (
-          !Array.isArray(window._selectedAssociatedPrompts) ||
-          window._selectedAssociatedPrompts.length === 0
-        ) {
-          window._selectedAssociatedPrompts = currentCheckedPrompts.slice();
-        } else {
-          const merged = new Set([
-            ...(window._selectedAssociatedPrompts || []),
-            ...currentCheckedPrompts,
-          ]);
-          Admin._selectedAssociatedPrompts = Array.from(merged);
-        }
-      } catch (e) {
-        console.error(
-          "Error capturing current prompt selections before reload:",
-          e,
-        );
-      }
-
-      if (window.htmx) {
-        window.htmx
-          .ajax("GET", promptsUrl, {
-            target: `#${promptsContainerId}`,
-            swap: "innerHTML",
-          })
-          .then(() => {
-            try {
-              const containerEl =
-              safeGetElement(promptsContainerId);
-              if (containerEl) {
-                const existingAttr = containerEl.getAttribute(
-                  "data-selected-prompts",
-                );
-                let existingIds = null;
-                if (existingAttr) {
-                  try {
-                    existingIds = JSON.parse(existingAttr);
-                  } catch (e) {
-                    console.error(
-                      "Error parsing existing data-selected-prompts after reload:",
-                      e,
-                    );
-                  }
-                }
-
-                if (
-                  (!existingIds ||
-                    !Array.isArray(existingIds) ||
-                    existingIds.length === 0) &&
-                  Array.isArray(window._selectedAssociatedPrompts) &&
-                  window._selectedAssociatedPrompts.length > 0
-                ) {
-                  containerEl.setAttribute(
-                    "data-selected-prompts",
-                    JSON.stringify(window._selectedAssociatedPrompts.slice()),
-                  );
-                } else if (
-                  Array.isArray(existingIds) &&
-                  Array.isArray(window._selectedAssociatedPrompts) &&
-                  window._selectedAssociatedPrompts.length > 0
-                ) {
-                  const merged = new Set([
-                    ...(existingIds || []),
-                    ...window._selectedAssociatedPrompts,
-                  ]);
-                  containerEl.setAttribute(
-                    "data-selected-prompts",
-                    JSON.stringify(Array.from(merged)),
-                  );
-                }
-              }
-            } catch (e) {
-              console.error(
-                "Error restoring data-selected-prompts after HTMX reload:",
-                e,
-              );
-            }
-            // Re-initialize the prompt select after content is loaded
-            const pPills = useEditContainers
-              ? "selectedEditPromptsPills"
-              : "selectedPromptsPills";
-            const pWarn = useEditContainers
-              ? "selectedEditPromptsWarning"
-              : "selectedPromptsWarning";
-            const pSelectBtn = useEditContainers
-              ? "selectAllEditPromptsBtn"
-              : "selectAllPromptsBtn";
-            const pClearBtn = useEditContainers
-              ? "clearAllEditPromptsBtn"
-              : "clearAllPromptsBtn";
-
-            initPromptSelect(
-              promptsContainerId,
-              pPills,
-              pWarn,
-              6,
-              pSelectBtn,
-              pClearBtn,
-            );
-          });
-      }
-    }
-  };
-
-  // ===================================================================
-  // ENHANCED GATEWAY TEST FUNCTIONALITY
-  // ===================================================================
-
-  Admin.gatewayTestHeadersEditor = null;
-  Admin.gatewayTestBodyEditor = null;
-  Admin.gatewayTestFormHandler = null;
-  Admin.gatewayTestCloseHandler = null;
-
-  Admin.testGateway = async function (gatewayURL) {
-    try {
-      console.log("Opening gateway test modal for:", gatewayURL);
-
-      // Validate URL
-      const urlValidation = validateUrl(gatewayURL);
-      if (!urlValidation.valid) {
-        showErrorMessage(`Invalid gateway URL: ${urlValidation.error}`);
-        return;
-      }
-
-      // Clean up any existing event listeners first
-      Admin.cleanupGatewayTestModal();
-
-      // Open the modal
-      openModal("gateway-test-modal");
-
-      // Initialize CodeMirror editors if they don't exist
-      if (!Admin.gatewayTestHeadersEditor) {
-        const headersElement = safeGetElement("gateway-test-headers");
-        if (headersElement && window.CodeMirror) {
-          Admin.gatewayTestHeadersEditor = window.CodeMirror.fromTextArea(
-            headersElement,
-            {
-              mode: "application/json",
-              lineNumbers: true,
-              lineWrapping: true,
-            },
-          );
-          Admin.gatewayTestHeadersEditor.setSize(null, 100);
-          console.log("✓ Initialized gateway test headers editor");
-        }
-      }
-
-      if (!Admin.gatewayTestBodyEditor) {
-        const bodyElement = safeGetElement("gateway-test-body");
-        if (bodyElement && window.CodeMirror) {
-          Admin.gatewayTestBodyEditor = window.CodeMirror.fromTextArea(
-            bodyElement,
-            {
-              mode: "application/json",
-              lineNumbers: true,
-              lineWrapping: true,
-            },
-          );
-          Admin.gatewayTestBodyEditor.setSize(null, 100);
-          console.log("✓ Initialized gateway test body editor");
-        }
-      }
-
-      // Set form action and URL
-      const form = safeGetElement("gateway-test-form");
-      const urlInput = safeGetElement("gateway-test-url");
-
-      if (form) {
-        form.action = `${window.ROOT_PATH}/admin/gateways/test`;
-      }
-      if (urlInput) {
-        urlInput.value = urlValidation.value;
-      }
-
-      // Set up form submission handler
-      if (form) {
-        Admin.gatewayTestFormHandler = async (e) => {
-          await Admin.handleGatewayTestSubmit(e);
-        };
-        form.addEventListener("submit", Admin.gatewayTestFormHandler);
-      }
-
-      // Set up close button handler
-      const closeButton = safeGetElement("gateway-test-close");
-      if (closeButton) {
-        Admin.gatewayTestCloseHandler = () => {
-          Admin.handleGatewayTestClose();
-        };
-        closeButton.addEventListener("click", Admin.gatewayTestCloseHandler);
-      }
-    } catch (error) {
-      console.error("Error setting up gateway test modal:", error);
-      showErrorMessage("Failed to open gateway test modal");
-    }
   }
-
-  Admin.handleGatewayTestSubmit = async function (e) {
-    e.preventDefault();
-
-    const loading = safeGetElement("gateway-test-loading");
-    const responseDiv = safeGetElement("gateway-test-response-json");
-    const resultDiv = safeGetElement("gateway-test-result");
-    const testButton = safeGetElement("gateway-test-submit");
-
-    try {
-      // Show loading
-      if (loading) {
-        loading.classList.remove("hidden");
-      }
-      if (resultDiv) {
-        resultDiv.classList.add("hidden");
-      }
-      if (testButton) {
-        testButton.disabled = true;
-        testButton.textContent = "Testing...";
-      }
-
-      const form = e.target;
-      const url = form.action;
-
-      // Get form data with validation
-      const formData = new FormData(form);
-      const baseUrl = formData.get("url");
-      const method = formData.get("method");
-      const path = formData.get("path");
-      const contentType = formData.get("content_type") || "application/json";
-
-      // Validate URL
-      const urlValidation = validateUrl(baseUrl);
-      if (!urlValidation.valid) {
-        throw new Error(`Invalid URL: ${urlValidation.error}`);
-      }
-
-      // Get CodeMirror content safely
-      let headersRaw = "";
-      let bodyRaw = "";
-
-      if (Admin.gatewayTestHeadersEditor) {
-        try {
-          headersRaw = Admin.gatewayTestHeadersEditor.getValue() || "";
-        } catch (error) {
-          console.error("Error getting headers value:", error);
-        }
-      }
-
-      if (Admin.gatewayTestBodyEditor) {
-        try {
-          bodyRaw = Admin.gatewayTestBodyEditor.getValue() || "";
-        } catch (error) {
-          console.error("Error getting body value:", error);
-        }
-      }
-
-      // Validate and parse JSON safely
-      const headersValidation = validateJson(headersRaw, "Headers");
-      const bodyValidation = validateJson(bodyRaw, "Body");
-
-      if (!headersValidation.valid) {
-        throw new Error(headersValidation.error);
-      }
-
-      if (!bodyValidation.valid) {
-        throw new Error(bodyValidation.error);
-      }
-
-      // Process body based on content type
-      let processedBody = bodyValidation.value;
-      if (
-        contentType === "application/x-www-form-urlencoded" &&
-        bodyValidation.value &&
-        typeof bodyValidation.value === "object"
-      ) {
-        // Convert JSON object to URL-encoded string
-        const params = new URLSearchParams();
-        Object.entries(bodyValidation.value).forEach(([key, value]) => {
-          params.append(key, String(value));
-        });
-        processedBody = params.toString();
-      }
-
-      const payload = {
-        base_url: urlValidation.value,
-        method,
-        path,
-        headers: headersValidation.value,
-        body: processedBody,
-        content_type: contentType,
-      };
-
-      // Make the request with timeout
-      const response = await fetchWithTimeout(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      const result = await response.json();
-
-      const isSuccess =
-      result.statusCode &&
-      result.statusCode >= 200 &&
-      result.statusCode < 300;
-
-      const alertType = isSuccess ? "success" : "error";
-      const icon = isSuccess ? "✅" : "❌";
-      const title = isSuccess ? "Connection Successful" : "Connection Failed";
-      const statusCode = result.statusCode || "Unknown";
-      const latency =
-      result.latencyMs != null ? `${result.latencyMs}ms` : "NA";
-      const body = result.body
-      ? `<details open>
-                  <summary class='cursor-pointer'><strong>Response Body</strong></summary>
-                  <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto">${JSON.stringify(result.body, null, 2)}</pre>
-              </details>`
-      : "";
-
-      responseDiv.innerHTML = `
-          <div class="alert alert-${alertType}">
-              <h4><strong>${icon} ${title}</strong></h4>
-              <p><strong>Status Code:</strong> ${statusCode}</p>
-              <p><strong>Response Time:</strong> ${latency}</p>
-              ${body}
-          </div>
-          `;
-    } catch (error) {
-      console.error("Gateway test error:", error);
-      if (responseDiv) {
-        const errorDiv = document.createElement("div");
-        errorDiv.className = "text-red-600 p-4";
-        errorDiv.textContent = `❌ Error: ${error.message}`;
-        responseDiv.innerHTML = "";
-        responseDiv.appendChild(errorDiv);
-      }
-    } finally {
-      if (loading) {
-        loading.classList.add("hidden");
-      }
-      if (resultDiv) {
-        resultDiv.classList.remove("hidden");
-      }
-
-      testButton.disabled = false;
-      testButton.textContent = "Test";
-    }
-  }
-
-  Admin.handleGatewayTestClose = function () {
-    try {
-      // Reset form
-      const form = safeGetElement("gateway-test-form");
-      if (form) {
-        form.reset();
-      }
-
-      // Clear editors
-      if (Admin.gatewayTestHeadersEditor) {
-        try {
-          Admin.gatewayTestHeadersEditor.setValue("");
-        } catch (error) {
-          console.error("Error clearing headers editor:", error);
-        }
-      }
-
-      if (Admin.gatewayTestBodyEditor) {
-        try {
-          Admin.gatewayTestBodyEditor.setValue("");
-        } catch (error) {
-          console.error("Error clearing body editor:", error);
-        }
-      }
-
-      // Clear response
-      const responseDiv = safeGetElement("gateway-test-response-json");
-      const resultDiv = safeGetElement("gateway-test-result");
-
-      if (responseDiv) {
-        responseDiv.innerHTML = "";
-      }
-      if (resultDiv) {
-        resultDiv.classList.add("hidden");
-      }
-
-      // Close modal
-      closeModal("gateway-test-modal");
-    } catch (error) {
-      console.error("Error closing gateway test modal:", error);
-    }
-  }
-
-  Admin.cleanupGatewayTestModal = function () {
-    try {
-      const form = safeGetElement("gateway-test-form");
-      const closeButton = safeGetElement("gateway-test-close");
-
-      // Remove existing event listeners
-      if (form && Admin.gatewayTestFormHandler) {
-        form.removeEventListener("submit", Admin.gatewayTestFormHandler);
-        Admin.gatewayTestFormHandler = null;
-      }
-
-      if (closeButton && Admin.gatewayTestCloseHandler) {
-        closeButton.removeEventListener("click", Admin.gatewayTestCloseHandler);
-        Admin.gatewayTestCloseHandler = null;
-      }
-
-      console.log("✓ Cleaned up gateway test modal listeners");
-    } catch (error) {
-      console.error("Error cleaning up gateway test modal:", error);
-    }
-  }
-
-  // ===================================================================
-  // Tool Tips for components with Alpine.js
-  // ===================================================================
-
-  /* global Alpine, htmx */
-  Admin.setupTooltipsWithAlpine = function () {
-    document.addEventListener("alpine:init", () => {
-      console.log("Initializing Alpine tooltip directive...");
-
-      Alpine.directive("tooltip", (el, { expression }, { evaluate }) => {
-        let tooltipEl = null;
-        let animationFrameId = null; // Track animation frame
-
-        const moveTooltip = (e) => {
-          if (!tooltipEl) {
-            return;
-          }
-
-          const paddingX = 12;
-          const paddingY = 20;
-          const tipRect = tooltipEl.getBoundingClientRect();
-
-          let left = e.clientX + paddingX;
-          let top = e.clientY + paddingY;
-
-          if (left + tipRect.width > window.innerWidth - 8) {
-            left = e.clientX - tipRect.width - paddingX;
-          }
-          if (top + tipRect.height > window.innerHeight - 8) {
-            top = e.clientY - tipRect.height - paddingY;
-          }
-
-          tooltipEl.style.left = `${left}px`;
-          tooltipEl.style.top = `${top}px`;
-        };
-
-        const showTooltip = (event) => {
-          const text = evaluate(expression);
-          if (!text) {
-            return;
-          }
-
-          hideTooltip(); // Clean up any existing tooltip
-
-          tooltipEl = document.createElement("div");
-          tooltipEl.textContent = text;
-          tooltipEl.setAttribute("role", "tooltip");
-          tooltipEl.className =
-          "fixed z-50 max-w-xs px-3 py-2 text-sm text-white bg-black/80 rounded-lg shadow-lg pointer-events-none opacity-0 transition-opacity duration-200";
-
-          document.body.appendChild(tooltipEl);
-
-          if (event?.clientX && event?.clientY) {
-            moveTooltip(event);
-            el.addEventListener("mousemove", moveTooltip);
-          } else {
-            const rect = el.getBoundingClientRect();
-            const scrollY = window.scrollY || window.pageYOffset;
-            const scrollX = window.scrollX || window.pageXOffset;
-            tooltipEl.style.left = `${rect.left + scrollX}px`;
-            tooltipEl.style.top = `${rect.bottom + scrollY + 10}px`;
-          }
-
-          // FIX: Cancel any pending animation frame before setting a new one
-          if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-          }
-
-          animationFrameId = requestAnimationFrame(() => {
-            // FIX: Check if tooltipEl still exists before accessing its style
-            if (tooltipEl) {
-              tooltipEl.style.opacity = "1";
-            }
-            animationFrameId = null;
-          });
-
-          window.addEventListener("scroll", hideTooltip, {
-            passive: true,
-          });
-          window.addEventListener("resize", hideTooltip, {
-            passive: true,
-          });
-        };
-
-        const hideTooltip = () => {
-          if (!tooltipEl) {
-            return;
-          }
-
-          // FIX: Cancel any pending animation frame
-          if (animationFrameId) {
-            cancelAnimationFrame(animationFrameId);
-            animationFrameId = null;
-          }
-
-          tooltipEl.style.opacity = "0";
-          el.removeEventListener("mousemove", moveTooltip);
-          window.removeEventListener("scroll", hideTooltip);
-          window.removeEventListener("resize", hideTooltip);
-          el.removeEventListener("click", hideTooltip);
-
-          const toRemove = tooltipEl;
-          tooltipEl = null; // Set to null immediately
-
-          setTimeout(() => {
-            if (toRemove && toRemove.parentNode) {
-              toRemove.parentNode.removeChild(toRemove);
-            }
-          }, 200);
-        };
-
-        el.addEventListener("mouseenter", showTooltip);
-        el.addEventListener("mouseleave", hideTooltip);
-        el.addEventListener("focus", showTooltip);
-        el.addEventListener("blur", hideTooltip);
-        el.addEventListener("click", hideTooltip);
-      });
-    });
-  }
-
-  Admin.setupTooltipsWithAlpine();
 
   // ===================================================================
   // SEARCH & FILTERING FUNCTIONS
   // ===================================================================
 
   /**
-  * Filter server table rows based on search text
-  */
+   * Filter server table rows based on search text
+   */
   Admin.filterServerTable = function (searchText) {
     try {
       // Try to find the table using multiple strategies
@@ -1953,8 +558,8 @@ import {
           if (cells[index]) {
             // Clean the text content and make it searchable
             const cellText = cells[index].textContent
-            .replace(/\s+/g, " ")
-            .trim();
+              .replace(/\s+/g, " ")
+              .trim();
             textContent += " " + cellText;
           }
         });
@@ -1968,11 +573,11 @@ import {
     } catch (error) {
       console.error("Error filtering server table:", error);
     }
-  }
+  };
 
   /**
-  * Filter Tools table based on search text
-  */
+   * Filter Tools table based on search text
+   */
   Admin.filterToolsTable = function (searchText) {
     try {
       const tbody = document.querySelector("#tools-table-body");
@@ -1996,14 +601,14 @@ import {
           if (cells[index]) {
             // Clean the text content and make it searchable
             const cellText = cells[index].textContent
-            .replace(/\s+/g, " ")
-            .trim();
+              .replace(/\s+/g, " ")
+              .trim();
             textContent += " " + cellText;
           }
         });
 
         const isMatch =
-        search === "" || textContent.toLowerCase().includes(search);
+          search === "" || textContent.toLowerCase().includes(search);
         if (isMatch) {
           row.style.display = "";
         } else {
@@ -2013,11 +618,11 @@ import {
     } catch (error) {
       console.error("Error filtering tools table:", error);
     }
-  }
+  };
 
   /**
-  * Filter Resources table based on search text
-  */
+   * Filter Resources table based on search text
+   */
   Admin.filterResourcesTable = function (searchText) {
     try {
       const tbody = document.querySelector("#resources-table-body");
@@ -2052,11 +657,11 @@ import {
     } catch (error) {
       console.error("Error filtering resources table:", error);
     }
-  }
+  };
 
   /**
-  * Filter Prompts table based on search text
-  */
+   * Filter Prompts table based on search text
+   */
   Admin.filterPromptsTable = function (searchText) {
     try {
       const tbody = document.querySelector("#prompts-table-body");
@@ -2091,11 +696,11 @@ import {
     } catch (error) {
       console.error("Error filtering prompts table:", error);
     }
-  }
+  };
 
   /**
-  * Filter A2A Agents table based on search text
-  */
+   * Filter A2A Agents table based on search text
+   */
   Admin.filterA2AAgentsTable = function (searchText) {
     try {
       // Try to find the table using multiple strategies
@@ -2137,45 +742,43 @@ import {
     } catch (error) {
       console.error("Error filtering A2A agents table:", error);
     }
-  }
+  };
 
   /**
-  * Filter MCP Servers (Gateways) table based on search text
-  */
+   * Filter MCP Servers (Gateways) table based on search text
+   */
   Admin.filterGatewaysTable = function (searchText) {
-      try {
-        console.log("🔍 Starting MCP Servers search for:", searchText);
+    try {
+      console.log("🔍 Starting MCP Servers search for:", searchText);
 
-        // Find the MCP servers table - use multiple strategies
-        let table = null;
+      // Find the MCP servers table - use multiple strategies
+      let table = null;
 
-        // Strategy 1: Direct selector for gateways panel
-        const gatewaysPanel = document.querySelector("#gateways-panel");
-        if (gatewaysPanel) {
-          table = gatewaysPanel.querySelector("table");
-          console.log("✅ Found table in gateways panel");
+      // Strategy 1: Direct selector for gateways panel
+      const gatewaysPanel = document.querySelector("#gateways-panel");
+      if (gatewaysPanel) {
+        table = gatewaysPanel.querySelector("table");
+        console.log("✅ Found table in gateways panel");
+      }
+
+      // Strategy 2: Look for table in currently visible tab
+      if (!table) {
+        const visiblePanel = document.querySelector(".tab-panel:not(.hidden)");
+        if (visiblePanel) {
+          table = visiblePanel.querySelector("table");
+          console.log("✅ Found table in visible panel");
         }
+      }
 
-        // Strategy 2: Look for table in currently visible tab
-        if (!table) {
-          const visiblePanel = document.querySelector(
-            ".tab-panel:not(.hidden)",
-          );
-          if (visiblePanel) {
-            table = visiblePanel.querySelector("table");
-            console.log("✅ Found table in visible panel");
-          }
-        }
-
-        // Strategy 3: Just look for any table with MCP server structure
-        if (!table) {
-          const allTables = document.querySelectorAll("table");
-          for (const t of allTables) {
-            const headers = t.querySelectorAll("thead th");
-            if (headers.length >= 8) {
-              // Check for MCP server specific headers
-              const headerTexts = Array.from(headers).map((h) =>
-                h.textContent.toLowerCase().trim(),
+      // Strategy 3: Just look for any table with MCP server structure
+      if (!table) {
+        const allTables = document.querySelectorAll("table");
+        for (const t of allTables) {
+          const headers = t.querySelectorAll("thead th");
+          if (headers.length >= 8) {
+            // Check for MCP server specific headers
+            const headerTexts = Array.from(headers).map((h) =>
+              h.textContent.toLowerCase().trim()
             );
             if (
               headerTexts.includes("name") &&
@@ -2244,7 +847,7 @@ import {
         // Debug first few rows
         if (index < 3) {
           console.log(
-            `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Search: ${matchesSearch}, Filter: ${matchesFilter}, Show: ${shouldShow}`,
+            `Row ${index + 1}: "${fullText.substring(0, 50)}..." -> Search: ${matchesSearch}, Filter: ${matchesFilter}, Show: ${shouldShow}`
           );
         }
 
@@ -2260,12 +863,12 @@ import {
       });
 
       console.log(
-        `✅ Search complete: ${visibleCount}/${rows.length} rows visible`,
+        `✅ Search complete: ${visibleCount}/${rows.length} rows visible`
       );
     } catch (error) {
       console.error("❌ Error in filterGatewaysTable:", error);
     }
-  }
+  };
 
   // Add a test function for debugging
   Admin.testGatewaySearch = function (searchTerm = "Cou") {
@@ -2309,7 +912,7 @@ import {
         if (cells.length >= 8) {
           // MCP servers table should have many columns
           console.log(
-            `Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`,
+            `Table ${tableIndex} looks like MCP servers table with ${cells.length} columns`
           );
 
           const search = searchTerm.toLowerCase().trim();
@@ -2325,7 +928,7 @@ import {
             }
 
             const shouldShow =
-            search === "" || rowText.toLowerCase().includes(search);
+              search === "" || rowText.toLowerCase().includes(search);
 
             if (shouldShow) {
               row.style.display = "";
@@ -2336,7 +939,7 @@ import {
           });
 
           console.log(
-            `✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`,
+            `✅ Simple search complete: ${visibleCount}/${rows.length} rows visible`
           );
           // Found the table, stop searching
         }
@@ -2351,8 +954,8 @@ import {
   };
 
   /**
-  * Clear search functionality for different entity types
-  */
+   * Clear search functionality for different entity types
+   */
   Admin.clearSearch = function (entityType) {
     try {
       if (entityType === "catalog") {
@@ -2368,9 +971,7 @@ import {
           Admin.filterToolsTable(""); // Clear the filter
         }
       } else if (entityType === "resources") {
-        const searchInput = safeGetElement(
-          "resources-search-input",
-        );
+        const searchInput = safeGetElement("resources-search-input");
         if (searchInput) {
           searchInput.value = "";
           Admin.filterResourcesTable(""); // Clear the filter
@@ -2382,25 +983,19 @@ import {
           Admin.filterPromptsTable(""); // Clear the filter
         }
       } else if (entityType === "a2a-agents") {
-        const searchInput = safeGetElement(
-          "a2a-agents-search-input",
-        );
+        const searchInput = safeGetElement("a2a-agents-search-input");
         if (searchInput) {
           searchInput.value = "";
           Admin.filterA2AAgentsTable(""); // Clear the filter
         }
       } else if (entityType === "gateways") {
-        const searchInput = safeGetElement(
-          "gateways-search-input",
-        );
+        const searchInput = safeGetElement("gateways-search-input");
         if (searchInput) {
           searchInput.value = "";
           Admin.filterGatewaysTable(""); // Clear the filter
         }
       } else if (entityType === "gateways") {
-        const searchInput = safeGetElement(
-          "gateways-search-input",
-        );
+        const searchInput = safeGetElement("gateways-search-input");
         if (searchInput) {
           searchInput.value = "";
           Admin.filterGatewaysTable(""); // Clear the filter
@@ -2409,1101 +1004,15 @@ import {
     } catch (error) {
       console.error("Error clearing search:", error);
     }
-  }
-
-  /**
-  * Create memoized version of search inputs initialization
-  * This prevents repeated initialization and provides explicit reset capability
-  */
-  const {
-    init: initializeSearchInputsMemoized,
-    debouncedInit: initializeSearchInputsDebounced,
-    reset: resetSearchInputsState,
-  } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
-
-  // ===================================================================
-  // A2A AGENT TEST MODAL FUNCTIONALITY
-  // ===================================================================
-
-  Admin.a2aTestFormHandler = null;
-  Admin.a2aTestCloseHandler = null;
-
-  /**
-  * Open A2A test modal with agent details
-  * @param {string} agentId - ID of the agent to test
-  * @param {string} agentName - Name of the agent for display
-  * @param {string} endpointUrl - Endpoint URL of the agent
-  */
-  Admin.testA2AAgent = async function (agentId, agentName, endpointUrl) {
-    try {
-      console.log("Opening A2A test modal for:", agentName);
-
-      // Clean up any existing event listeners
-      Admin.cleanupA2ATestModal();
-
-      // Open the modal
-      openModal("a2a-test-modal");
-
-      // Set modal title and description
-      const titleElement = safeGetElement("a2a-test-modal-title");
-      const descElement = safeGetElement("a2a-test-modal-description");
-      const agentIdInput = safeGetElement("a2a-test-agent-id");
-      const queryInput = safeGetElement("a2a-test-query");
-      const resultDiv = safeGetElement("a2a-test-result");
-
-      if (titleElement) {
-        titleElement.textContent = `Test A2A Agent: ${agentName}`;
-      }
-      if (descElement) {
-        descElement.textContent = `Endpoint: ${endpointUrl}`;
-      }
-      if (agentIdInput) {
-        agentIdInput.value = agentId;
-      }
-      if (queryInput) {
-        // Reset to default value
-        queryInput.value = "Hello from MCP Gateway Admin UI test!";
-      }
-      if (resultDiv) {
-        resultDiv.classList.add("hidden");
-      }
-
-      // Set up form submission handler
-      const form = safeGetElement("a2a-test-form");
-      if (form) {
-        Admin.a2aTestFormHandler = async (e) => {
-          await Admin.handleA2ATestSubmit(e);
-        };
-        form.addEventListener("submit", Admin.a2aTestFormHandler);
-      }
-
-      // Set up close button handler
-      const closeButton = safeGetElement("a2a-test-close");
-      if (closeButton) {
-        Admin.a2aTestCloseHandler = () => {
-          Admin.handleA2ATestClose();
-        };
-        closeButton.addEventListener("click", Admin.a2aTestCloseHandler);
-      }
-    } catch (error) {
-      console.error("Error setting up A2A test modal:", error);
-      showErrorMessage("Failed to open A2A test modal");
-    }
-  }
-
-  /**
-  * Handle A2A test form submission
-  * @param {Event} e - Form submit event
-  */
-  Admin.handleA2ATestSubmit = async function (e) {
-    e.preventDefault();
-
-    const loading = safeGetElement("a2a-test-loading");
-    const responseDiv = safeGetElement("a2a-test-response-json");
-    const resultDiv = safeGetElement("a2a-test-result");
-    const testButton = safeGetElement("a2a-test-submit");
-
-    try {
-      // Show loading
-      if (loading) {
-        loading.classList.remove("hidden");
-      }
-      if (resultDiv) {
-        resultDiv.classList.add("hidden");
-      }
-      if (testButton) {
-        testButton.disabled = true;
-        testButton.textContent = "Testing...";
-      }
-
-      const agentId = safeGetElement("a2a-test-agent-id")?.value;
-      const query =
-      safeGetElement("a2a-test-query")?.value ||
-      "Hello from MCP Gateway Admin UI test!";
-
-      if (!agentId) {
-        throw new Error("Agent ID is missing");
-      }
-
-      // Get auth token
-      const token = await getAuthToken();
-      const headers = { "Content-Type": "application/json" };
-      if (token) {
-        headers.Authorization = `Bearer ${token}`;
-      } else {
-        // Fallback to basic auth if JWT not available
-        console.warn("JWT token not found, attempting basic auth fallback");
-        headers.Authorization = "Basic " + btoa("admin:changeme");
-      }
-
-      // Send test request with user query
-      const response = await fetchWithTimeout(
-        `${window.ROOT_PATH}/admin/a2a/${agentId}/test`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ query }),
-        },
-        window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
-      );
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-
-      // Display result
-      const isSuccess = result.success && !result.error;
-      const icon = isSuccess ? "✅" : "❌";
-      const title = isSuccess ? "Test Successful" : "Test Failed";
-
-      let bodyHtml = "";
-      if (result.result) {
-        bodyHtml = `<details open>
-                      <summary class='cursor-pointer font-medium'>Response</summary>
-                      <pre class="text-sm px-4 max-h-96 dark:bg-gray-800 dark:text-gray-100 overflow-auto whitespace-pre-wrap">${escapeHtml(JSON.stringify(result.result, null, 2))}</pre>
-                  </details>`;
-      }
-
-      responseDiv.innerHTML = `
-                  <div class="p-3 rounded ${isSuccess ? "bg-green-50 dark:bg-green-900/20" : "bg-red-50 dark:bg-red-900/20"}">
-                      <h4 class="font-bold ${isSuccess ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400"}">${icon} ${title}</h4>
-                      ${result.error ? `<p class="text-red-600 dark:text-red-400 mt-2">Error: ${escapeHtml(result.error)}</p>` : ""}
-                      ${bodyHtml}
-                  </div>
-              `;
-    } catch (error) {
-      console.error("A2A test error:", error);
-      if (responseDiv) {
-        responseDiv.innerHTML = `<div class="text-red-600 dark:text-red-400 p-4 bg-red-50 dark:bg-red-900/20 rounded">❌ Error: ${escapeHtml(error.message)}</div>`;
-      }
-    } finally {
-      if (loading) {
-        loading.classList.add("hidden");
-      }
-      if (resultDiv) {
-        resultDiv.classList.remove("hidden");
-      }
-      if (testButton) {
-        testButton.disabled = false;
-        testButton.textContent = "Test Agent";
-      }
-    }
-  }
-
-  /**
-  * Handle A2A test modal close
-  */
-  Admin.handleA2ATestClose = function () {
-    try {
-      // Reset form
-      const form = safeGetElement("a2a-test-form");
-      if (form) {
-        form.reset();
-      }
-
-      // Clear response
-      const responseDiv = safeGetElement("a2a-test-response-json");
-      const resultDiv = safeGetElement("a2a-test-result");
-      if (responseDiv) {
-        responseDiv.innerHTML = "";
-      }
-      if (resultDiv) {
-        resultDiv.classList.add("hidden");
-      }
-
-      // Close modal
-      closeModal("a2a-test-modal");
-    } catch (error) {
-      console.error("Error closing A2A test modal:", error);
-    }
-  }
-
-  /**
-  * Clean up A2A test modal event listeners
-  */
-  Admin.cleanupA2ATestModal = function () {
-    try {
-      const form = safeGetElement("a2a-test-form");
-      const closeButton = safeGetElement("a2a-test-close");
-
-      if (form && Admin.a2aTestFormHandler) {
-        form.removeEventListener("submit", Admin.a2aTestFormHandler);
-        Admin.a2aTestFormHandler = null;
-      }
-
-      if (closeButton && a2aTestCloseHandler) {
-        closeButton.removeEventListener("click", a2aTestCloseHandler);
-        a2aTestCloseHandler = null;
-      }
-
-      console.log("✓ Cleaned up A2A test modal listeners");
-    } catch (error) {
-      console.error("Error cleaning up A2A test modal:", error);
-    }
-  }
-
-  // ===================================================================
-  // USER MANAGEMENT FUNCTIONS
-  // ===================================================================
-
-  /**
-   * Show user edit modal and load edit form
-   */
-  Admin.showUserEditModal = function (userEmail) {
-    const modal = safeGetElement("user-edit-modal");
-    if (modal) {
-      modal.style.display = "block";
-      modal.classList.remove("hidden");
-    }
-  }
-
-  /**
-   * Hide user edit modal
-   */
-  Admin.hideUserEditModal = function () {
-    const modal = safeGetElement("user-edit-modal");
-    if (modal) {
-      modal.style.display = "none";
-      modal.classList.add("hidden");
-    }
   };
-
-  /**
-   * Close modal when clicking outside of it
-   */
-  document.addEventListener("DOMContentLoaded", function () {
-    const userModal = safeGetElement("user-edit-modal");
-    if (userModal) {
-      userModal.addEventListener("click", function (event) {
-        if (event.target === userModal) {
-          Admin.hideUserEditModal();
-        }
-      });
-    }
-
-    const teamModal = safeGetElement("team-edit-modal");
-    if (teamModal) {
-      teamModal.addEventListener("click", function (event) {
-        if (event.target === teamModal) {
-          Admin.hideTeamEditModal();
-        }
-      });
-    }
-  });
-
-  // Team edit modal functions
-  Admin.showTeamEditModal = async function (teamId) {
-    // Get the root path by extracting it from the current pathname
-    let rootPath = window.location.pathname;
-    const adminIndex = rootPath.lastIndexOf("/admin");
-    if (adminIndex !== -1) {
-      rootPath = rootPath.substring(0, adminIndex);
-    } else {
-      rootPath = "";
-    }
-
-    // Construct the full URL - ensure it starts with /
-    const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit";
-
-    // Load the team edit form via HTMX
-    fetch(url, {
-      method: "GET",
-      headers: {
-        Authorization: "Bearer " + (await getAuthToken()),
-      },
-    })
-    .then((response) => response.text())
-    .then((html) => {
-      safeGetElement("team-edit-modal-content").innerHTML = html;
-      document
-      .getElementById("team-edit-modal")
-      .classList.remove("hidden");
-    })
-    .catch((error) => {
-      console.error("Error loading team edit form:", error);
-    });
-  }
-
-  Admin.hideTeamEditModal = function () {
-    safeGetElement("team-edit-modal").classList.add("hidden");
-  }
-
-  // Team member management functions
-  Admin.showAddMemberForm = function (teamId) {
-    const form = safeGetElement("add-member-form-" + teamId);
-    if (form) {
-      form.classList.remove("hidden");
-    }
-  }
-
-  Admin.hideAddMemberForm = function (teamId) {
-    const form = safeGetElement("add-member-form-" + teamId);
-    if (form) {
-      form.classList.add("hidden");
-      // Reset form
-      const formElement = form.querySelector("form");
-      if (formElement) {
-        formElement.reset();
-      }
-    }
-  }
-
-  // Reset team creation form after successful HTMX actions
-  Admin.resetTeamCreateForm = function () {
-    const form = document.querySelector('form[hx-post*="/admin/teams"]');
-    if (form) {
-      form.reset();
-    }
-    const errorEl = safeGetElement("create-team-error");
-    if (errorEl) {
-      errorEl.innerHTML = "";
-    }
-  }
-
-  // Normalize team ID from element IDs like "add-members-form-<id>"
-  Admin.extractTeamId = function (prefix, elementId) {
-    if (!elementId || !elementId.startsWith(prefix)) {
-      return null;
-    }
-    return elementId.slice(prefix.length);
-  }
-
-  Admin.updateAddMembersCount = function (teamId) {
-    const form = safeGetElement(`add-members-form-${teamId}`);
-    const countEl = safeGetElement(`selected-count-${teamId}`);
-    if (!form || !countEl) {
-      return;
-    }
-    const checked = form.querySelectorAll(
-      'input[name="associatedUsers"]:checked',
-    );
-    countEl.textContent =
-    checked.length === 0
-    ? "No users selected"
-    : `${checked.length} user${checked.length !== 1 ? "s" : ""} selected`;
-  }
-
-  Admin.dedupeSelectorItems = function (container) {
-    if (!container) {
-      return;
-    }
-    const seen = new Set();
-    const items = Array.from(container.querySelectorAll(".user-item"));
-    items.forEach((item) => {
-      const email = item.getAttribute("data-user-email") || "";
-      if (!email) {
-        return;
-      }
-      if (seen.has(email)) {
-        item.remove();
-        return;
-      }
-      seen.add(email);
-    });
-  }
-
-  // Perform server-side user search and build HTML from JSON (like tools search)
-  Admin.performUserSearch = async function (teamId, query, container, teamMemberData) {
-    console.log(`[Team ${teamId}] Performing user search: "${query}"`);
-
-    // Step 1: Capture current selections before replacing HTML
-    const selections = {};
-    const roleSelections = {};
-    try {
-      const userItems = container.querySelectorAll(".user-item");
-      userItems.forEach((item) => {
-        const email = item.dataset.userEmail || "";
-        const checkbox = item.querySelector(
-          'input[name="associatedUsers"]',
-        );
-        const roleSelect = item.querySelector(".role-select");
-        if (checkbox && email) {
-          selections[email] = checkbox.checked;
-        }
-        if (roleSelect && email) {
-          roleSelections[email] = roleSelect.value;
-        }
-      });
-      console.log(
-        `[Team ${teamId}] Captured ${Object.keys(selections).length} selections and ${Object.keys(roleSelections).length} role selections`,
-      );
-    } catch (e) {
-      console.error(`[Team ${teamId}] Error capturing selections:`, e);
-    }
-
-    // Step 2: Show loading state
-    container.innerHTML = `
-              <div class="text-center py-4">
-                  <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  <p class="mt-2 text-sm text-gray-500">Searching users...</p>
-              </div>
-          `;
-
-    // Step 3: If query is empty, reload default list from /admin/users/partial
-    if (query === "") {
-      try {
-        const usersUrl = `${window.ROOT_PATH}/admin/users/partial?page=1&per_page=50&render=selector&team_id=${encodeURIComponent(teamId)}`;
-        console.log(
-          `[Team ${teamId}] Loading default users with URL: ${usersUrl}`,
-        );
-
-        const response = await fetchWithAuth(usersUrl);
-        if (response.ok) {
-          const html = await response.text();
-          container.innerHTML = html;
-
-          // Restore selections
-          Admin.restoreUserSelections(container, selections, roleSelections);
-        } else {
-          console.error(
-            `[Team ${teamId}] Failed to load users: ${response.status}`,
-          );
-          container.innerHTML =
-          '<div class="text-center py-4 text-red-600">Failed to load users</div>';
-        }
-      } catch (error) {
-        console.error(`[Team ${teamId}] Error loading users:`, error);
-        container.innerHTML =
-        '<div class="text-center py-4 text-red-600">Error loading users</div>';
-      }
-      return;
-    }
-
-    // Step 4: Call /admin/users/search API
-    try {
-      const searchUrl = `${window.ROOT_PATH}/admin/users/search?q=${encodeURIComponent(query)}&limit=50`;
-      console.log(`[Team ${teamId}] Searching users with URL: ${searchUrl}`);
-
-      const response = await fetchWithAuth(searchUrl);
-      if (!response.ok) {
-        console.error(
-          `[Team ${teamId}] Search failed: ${response.status} ${response.statusText}`,
-        );
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-
-      if (data.users && data.users.length > 0) {
-        // Step 5: Build HTML manually from JSON
-        let searchResultsHtml = "";
-        data.users.forEach((user) => {
-          const memberData = teamMemberData[user.email] || {};
-          const isMember = Object.keys(memberData).length > 0;
-          const memberRole = memberData.role || "member";
-          const joinedAt = memberData.joined_at;
-          const isCurrentUser = memberData.is_current_user || false;
-          const isLastOwner = memberData.is_last_owner || false;
-          const isChecked =
-          selections[user.email] !== undefined
-          ? selections[user.email]
-          : isMember;
-          const selectedRole = roleSelections[user.email] || memberRole;
-
-          const borderClass = isMember
-          ? "border-indigo-200 dark:border-indigo-800 bg-indigo-50/50 dark:bg-indigo-900/20"
-          : "border-transparent";
-
-          searchResultsHtml += `
-                          <div class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-3 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item border ${borderClass}" data-user-email="${escapeHtml(user.email)}">
-                              <!-- Avatar Circle -->
-                              <div class="flex-shrink-0">
-                                  <div class="w-8 h-8 bg-gray-300 dark:bg-gray-600 rounded-full flex items-center justify-center">
-                                      <span class="text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(user.email[0].toUpperCase())}</span>
-                                  </div>
-                              </div>
-
-                              <!-- Checkbox -->
-                              <input
-                                  type="checkbox"
-                                  name="associatedUsers"
-                                  value="${escapeHtml(user.email)}"
-                                  data-user-name="${escapeHtml(user.full_name || user.email)}"
-                                  class="user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0"
-                                  data-auto-check="true"
-                                  ${isChecked ? "checked" : ""}
-                              />
-
-                              <!-- User Info with Badges -->
-                              <div class="flex-grow min-w-0">
-                                  <div class="flex items-center gap-2 flex-wrap">
-                                      <span class="select-none font-medium text-gray-900 dark:text-white truncate">${escapeHtml(user.full_name || user.email)}</span>
-                                      ${isCurrentUser ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded-full dark:bg-blue-900 dark:text-blue-200">You</span>' : ""}
-                                      ${isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-yellow-100 text-yellow-800 rounded-full dark:bg-yellow-900 dark:text-yellow-200">Last Owner</span>' : ""}
-                                      ${isMember && memberRole === "owner" && !isLastOwner ? '<span class="inline-flex items-center px-2 py-0.5 text-xs font-medium bg-purple-100 text-purple-800 rounded-full dark:bg-purple-900 dark:text-purple-200">Owner</span>' : ""}
-                                  </div>
-                                  <div class="text-sm text-gray-500 dark:text-gray-400 truncate">${escapeHtml(user.email)}</div>
-                                  ${isMember && joinedAt ? `<div class="text-xs text-gray-400 dark:text-gray-500">Joined: ${formatDate(joinedAt)}</div>` : ""}
-                              </div>
-
-                              <!-- Role Selector -->
-                              <select
-                                  name="role_${encodeURIComponent(user.email)}"
-                                  class="role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0"
-                              >
-                                  <option value="member" ${selectedRole === "member" ? "selected" : ""}>Member</option>
-                                  <option value="owner" ${selectedRole === "owner" ? "selected" : ""}>Owner</option>
-                              </select>
-                          </div>
-                      `;
-        });
-
-        // Step 6: Replace container innerHTML
-        container.innerHTML = searchResultsHtml;
-
-        // Step 7: No need to restore selections - they're already built into the HTML
-        console.log(
-          `[Team ${teamId}] Rendered ${data.users.length} users from search`,
-        );
-      } else {
-        container.innerHTML =
-        '<div class="text-center py-4 text-gray-500">No users found</div>';
-      }
-    } catch (error) {
-      console.error(`[Team ${teamId}] Error searching users:`, error);
-      container.innerHTML =
-      '<div class="text-center py-4 text-red-600">Error searching users</div>';
-    }
-  }
-
-  // Restore user selections after loading default list
-  Admin.restoreUserSelections = function (container, selections, roleSelections) {
-    try {
-      const checkboxes = container.querySelectorAll(
-        'input[name="associatedUsers"]',
-      );
-      checkboxes.forEach((cb) => {
-        if (selections[cb.value] !== undefined) {
-          cb.checked = selections[cb.value];
-        }
-      });
-
-      const roleSelects = container.querySelectorAll(".role-select");
-      roleSelects.forEach((select) => {
-        const email = select.name.replace("role_", "");
-        const decodedEmail = decodeURIComponent(email);
-        if (roleSelections[decodedEmail]) {
-          select.value = roleSelections[decodedEmail];
-        }
-      });
-
-      console.log(`Restored ${Object.keys(selections).length} selections`);
-    } catch (e) {
-      console.error("Error restoring selections:", e);
-    }
-  }
-
-  // Helper to format date (similar to Python strftime "%b %d, %Y")
-  Admin.formatDate = function (dateString) {
-    try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString("en-US", {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-      });
-    } catch (e) {
-      return dateString;
-    }
-  }
-
-  Admin.initializeAddMembersForm = function (form) {
-    if (!form || form.dataset.initialized === "true") {
-      return;
-    }
-    form.dataset.initialized = "true";
-
-    // Support both old add-members-form pattern and new team-members-form pattern
-    const teamId =
-    form.dataset.teamId ||
-    Admin.extractTeamId("add-members-form-", form.id) ||
-    Admin.extractTeamId("team-members-form-", form.id) ||
-    "";
-
-    console.log(
-      `[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`,
-    );
-
-    if (!teamId) {
-      console.warn(
-        `[initializeAddMembersForm] No team ID found for form:`,
-        form,
-      );
-      return;
-    }
-
-    const searchInput = safeGetElement(`user-search-${teamId}`);
-    const searchResults = safeGetElement(
-      `user-search-results-${teamId}`,
-    );
-    const searchLoading = safeGetElement(
-      `user-search-loading-${teamId}`,
-    );
-
-    // For unified view, find the list container for client-side filtering
-    const userListContainer = safeGetElement(
-      `team-members-list-${teamId}`,
-    );
-
-    console.log(
-      `[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`,
-    );
-
-    const memberEmails = [];
-    if (searchResults?.dataset.memberEmails) {
-      try {
-        const parsed = JSON.parse(searchResults.dataset.memberEmails);
-        if (Array.isArray(parsed)) {
-          memberEmails.push(...parsed);
-        }
-      } catch (error) {
-        console.warn("Failed to parse member emails", error);
-      }
-    }
-    const memberEmailSet = new Set(memberEmails);
-
-    form.addEventListener("change", function (event) {
-      if (event.target?.name === "associatedUsers") {
-        Admin.updateAddMembersCount(teamId);
-        // Role dropdown state is not managed client-side - all logic is server-side
-      }
-    });
-
-    Admin.updateAddMembersCount(teamId);
-
-    // If we have searchInput and userListContainer, use server-side search like tools (unified view)
-    if (searchInput && userListContainer) {
-      console.log(
-        `[Team ${teamId}] Initializing server-side search for unified view`,
-      );
-
-      // Get team member data from the initial page load (embedded in the form)
-      const teamMemberDataScript = safeGetElement(
-        `team-member-data-${teamId}`,
-      );
-      let teamMemberData = {};
-      if (teamMemberDataScript) {
-        try {
-          teamMemberData = JSON.parse(
-            teamMemberDataScript.textContent || "{}",
-          );
-          console.log(
-            `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberData).length} members`,
-          );
-        } catch (e) {
-          console.error(
-            `[Team ${teamId}] Failed to parse team member data:`,
-            e,
-          );
-        }
-      }
-
-      let searchTimeout;
-      searchInput.addEventListener("input", function () {
-        clearTimeout(searchTimeout);
-        const query = this.value.trim();
-
-        searchTimeout = setTimeout(async () => {
-          await Admin.performUserSearch(
-            teamId,
-            query,
-            userListContainer,
-            teamMemberData,
-          );
-        }, 300);
-      });
-
-      return;
-    }
-
-    if (!searchInput || !searchResults) {
-      return;
-    }
-
-    let searchTimeout;
-    searchInput.addEventListener("input", function () {
-      clearTimeout(searchTimeout);
-      const query = this.value.trim();
-
-      if (query.length < 2) {
-        searchResults.innerHTML = "";
-        if (searchLoading) {
-          searchLoading.classList.add("hidden");
-        }
-        return;
-      }
-
-      searchTimeout = setTimeout(async () => {
-        if (searchLoading) {
-          searchLoading.classList.remove("hidden");
-        }
-        try {
-          const searchUrl = searchInput.dataset.searchUrl || "";
-          const limit = searchInput.dataset.searchLimit || "10";
-          if (!searchUrl) {
-            throw new Error("Search URL missing");
-          }
-          const response = await fetchWithAuth(
-            `${searchUrl}?q=${encodeURIComponent(query)}&limit=${limit}`,
-          );
-          if (!response.ok) {
-            throw new Error(`Search failed: ${response.status}`);
-          }
-          const data = await response.json();
-
-          searchResults.innerHTML = "";
-          if (data.users && data.users.length > 0) {
-            const container = document.createElement("div");
-            container.className =
-            "bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1";
-
-            data.users.forEach((user) => {
-              if (memberEmailSet.has(user.email)) {
-                return;
-              }
-              const item = document.createElement("div");
-              item.className =
-              "p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm";
-              item.textContent = `${user.full_name || ""} (${user.email})`;
-              item.addEventListener("click", () => {
-                const container = safeGetElement(
-                  `user-selector-container-${teamId}`,
-                );
-                if (!container) {
-                  return;
-                }
-                const checkbox = container.querySelector(
-                  `input[value="${user.email}"]`,
-                );
-
-                if (checkbox) {
-                  checkbox.checked = true;
-                  checkbox.dispatchEvent(
-                    new Event("change", { bubbles: true }),
-                  );
-                } else {
-                  const userItem = document.createElement("div");
-                  userItem.className =
-                  "flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item";
-                  userItem.setAttribute(
-                    "data-user-email",
-                    user.email,
-                  );
-
-                  const newCheckbox =
-                  document.createElement("input");
-                  newCheckbox.type = "checkbox";
-                  newCheckbox.name = "associatedUsers";
-                  newCheckbox.value = user.email;
-                  newCheckbox.setAttribute(
-                    "data-user-name",
-                    user.full_name || "",
-                  );
-                  newCheckbox.className =
-                  "user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0";
-                  newCheckbox.setAttribute(
-                    "data-auto-check",
-                    "true",
-                  );
-                  newCheckbox.checked = true;
-
-                  const label = document.createElement("span");
-                  label.className = "select-none flex-grow";
-                  label.textContent = `${user.full_name || ""} (${user.email})`;
-
-                  const roleSelect =
-                  document.createElement("select");
-                  roleSelect.name = `role_${encodeURIComponent(
-                    user.email,
-                  )}`;
-                  roleSelect.className =
-                  "role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0";
-
-                  const memberOption =
-                  document.createElement("option");
-                  memberOption.value = "member";
-                  memberOption.textContent = "Member";
-                  memberOption.selected = true;
-
-                  const ownerOption =
-                  document.createElement("option");
-                  ownerOption.value = "owner";
-                  ownerOption.textContent = "Owner";
-
-                  roleSelect.appendChild(memberOption);
-                  roleSelect.appendChild(ownerOption);
-
-                  userItem.appendChild(newCheckbox);
-                  userItem.appendChild(label);
-                  userItem.appendChild(roleSelect);
-
-                  const firstChild = container.firstChild;
-                  if (firstChild) {
-                    container.insertBefore(
-                      userItem,
-                      firstChild,
-                    );
-                  } else {
-                    container.appendChild(userItem);
-                  }
-
-                  newCheckbox.dispatchEvent(
-                    new Event("change", { bubbles: true }),
-                  );
-                }
-
-                searchInput.value = "";
-                searchResults.innerHTML = "";
-              });
-              container.appendChild(item);
-            });
-
-            if (container.childElementCount > 0) {
-              searchResults.appendChild(container);
-            } else {
-              const empty = document.createElement("div");
-              empty.className =
-              "text-sm text-gray-500 dark:text-gray-400 mt-1";
-              empty.textContent = "No users found";
-              searchResults.appendChild(empty);
-            }
-          } else {
-            const empty = document.createElement("div");
-            empty.className =
-            "text-sm text-gray-500 dark:text-gray-400 mt-1";
-            empty.textContent = "No users found";
-            searchResults.appendChild(empty);
-          }
-        } catch (error) {
-          console.error("Search error:", error);
-          searchResults.innerHTML = "";
-          const errorEl = document.createElement("div");
-          errorEl.className = "text-sm text-red-500 mt-1";
-          errorEl.textContent = "Search failed";
-          searchResults.appendChild(errorEl);
-        } finally {
-          if (searchLoading) {
-            searchLoading.classList.add("hidden");
-          }
-        }
-      }, 300);
-    });
-  }
-
-  Admin.initializeAddMembersForms = function (root = document) {
-    // Support both old add-members-form pattern and new unified team-members-form pattern
-    const addMembersForms =
-    root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
-    const teamMembersForms =
-    root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
-    const allForms = [...addMembersForms, ...teamMembersForms];
-    allForms.forEach((form) => Admin.initializeAddMembersForm(form));
-  }
-
-  Admin.handleAdminTeamAction = function (event) {
-    const detail = event.detail || {};
-    const delayMs = Number(detail.delayMs) || 0;
-    setTimeout(() => {
-      if (detail.resetTeamCreateForm) {
-        Admin.resetTeamCreateForm();
-      }
-      if (
-        detail.closeTeamEditModal &&
-        typeof hideTeamEditModal === "function"
-      ) {
-        Admin.hideTeamEditModal();
-      }
-      if (detail.closeRoleModal) {
-        const roleModal = safeGetElement("role-assignment-modal");
-        if (roleModal) {
-          roleModal.classList.add("hidden");
-        }
-      }
-      if (detail.closeAllModals) {
-        const modals = document.querySelectorAll('[id$="-modal"]');
-        modals.forEach((modal) => modal.classList.add("hidden"));
-      }
-      if (detail.refreshUnifiedTeamsList && window.htmx) {
-        const unifiedList = safeGetElement("unified-teams-list");
-        if (unifiedList) {
-          // Preserve current pagination/filter state on refresh
-          const params = new URLSearchParams();
-          params.set("page", "1"); // Reset to first page on action
-          if (typeof getTeamsPerPage === "function") {
-            params.set("per_page", Admin.getTeamsPerPage().toString());
-          }
-          // Preserve search query from input field
-          const searchInput = safeGetElement("team-search");
-          if (searchInput && searchInput.value.trim()) {
-            params.set("q", searchInput.value.trim());
-          }
-          // Preserve relationship filter
-          if (
-            typeof currentTeamRelationshipFilter !== "undefined" &&
-            currentTeamRelationshipFilter &&
-            currentTeamRelationshipFilter !== "all"
-          ) {
-            params.set("relationship", currentTeamRelationshipFilter);
-          }
-          const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
-          window.htmx.ajax("GET", url, {
-            target: "#unified-teams-list",
-            swap: "innerHTML",
-          });
-        }
-      }
-      if (detail.refreshTeamMembers && detail.teamId) {
-        if (typeof window.loadTeamMembersView === "function") {
-          window.loadTeamMembersView(detail.teamId);
-        } else if (window.htmx) {
-          const modalContent = safeGetElement(
-            "team-edit-modal-content",
-          );
-          if (modalContent) {
-            window.htmx.ajax(
-              "GET",
-              `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
-              {
-                target: "#team-edit-modal-content",
-                swap: "innerHTML",
-              },
-            );
-          }
-        }
-      }
-      if (detail.refreshJoinRequests && detail.teamId && window.htmx) {
-        const joinRequests = safeGetElement(
-          "team-join-requests-modal-content",
-        );
-        if (joinRequests) {
-          window.htmx.ajax(
-            "GET",
-            `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/join-requests`,
-            {
-              target: "#team-join-requests-modal-content",
-              swap: "innerHTML",
-            },
-          );
-        }
-      }
-    }, delayMs);
-  }
-
-  Admin.handleAdminUserAction = function (event) {
-    const detail = event.detail || {};
-    const delayMs = Number(detail.delayMs) || 0;
-    setTimeout(() => {
-      if (
-        detail.closeUserEditModal &&
-        typeof hideUserEditModal === "function"
-      ) {
-        Admin.hideUserEditModal();
-      }
-      if (detail.refreshUsersList) {
-        const usersList = safeGetElement("users-list-container");
-        if (usersList && window.htmx) {
-          window.htmx.trigger(usersList, "refreshUsers");
-        }
-      }
-    }, delayMs);
-  }
-
-  Admin.registerAdminActionListeners = function () {
-    if (!document.body) {
-      return;
-    }
-    if (document.body.dataset.adminActionListeners === "1") {
-      return;
-    }
-    document.body.dataset.adminActionListeners = "1";
-
-    document.body.addEventListener("adminTeamAction", Admin.handleAdminTeamAction);
-    document.body.addEventListener("adminUserAction", Admin.handleAdminUserAction);
-    document.body.addEventListener("userCreated", function () {
-      Admin.handleAdminUserAction({ detail: { refreshUsersList: true } });
-    });
-
-    document.body.addEventListener("htmx:afterSwap", function (event) {
-      const target = event.target;
-      Admin.initializeAddMembersForms(target);
-      // Only initialize password validation if the swapped content contains password fields
-      if (target?.querySelector?.("#password-field")) {
-        Admin.initializePasswordValidation(target);
-      }
-      if (
-        target &&
-        target.id &&
-        target.id.startsWith("user-selector-container-")
-      ) {
-        const teamId = Admin.extractTeamId("user-selector-container-", target.id);
-        if (teamId) {
-          Admin.dedupeSelectorItems(target);
-          Admin.updateAddMembersCount(teamId);
-        }
-      }
-    });
-
-    document.body.addEventListener("htmx:load", function (event) {
-      const target = event.target;
-      Admin.initializeAddMembersForms(target);
-      // Only initialize password validation if the loaded content contains password fields
-      if (target?.querySelector?.("#password-field")) {
-        Admin.initializePasswordValidation(target);
-      }
-    });
-  }
-
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", Admin.registerAdminActionListeners);
-  } else {
-    Admin.registerAdminActionListeners();
-  }
-
-  // Logs refresh function
-  Admin.refreshLogs = function () {
-    const logsSection = safeGetElement("logs");
-    if (logsSection && typeof window.htmx !== "undefined") {
-      // Trigger HTMX refresh on the logs section
-      window.htmx.trigger(logsSection, "refresh");
-    }
-  }
-
-  // User edit modal functions (already defined above)
-  // Functions are already exposed to global scope
-
-  // Team permissions functions are implemented in the admin.html template
-  // Remove placeholder functions to avoid overriding template functionality
-
-  Admin.initializePermissionsPanel = function () {
-    // Load team data if available
-    if (window.USER_TEAMS && window.USER_TEAMS.length > 0) {
-      const membersList = safeGetElement("team-members-list");
-      const rolesList = safeGetElement("role-assignments-list");
-
-      if (membersList) {
-        membersList.innerHTML =
-        '<div class="text-sm text-gray-500 dark:text-gray-400">Use the Teams Management tab to view and manage team members.</div>';
-      }
-
-      if (rolesList) {
-        rolesList.innerHTML =
-        '<div class="text-sm text-gray-500 dark:text-gray-400">Use the Teams Management tab to assign roles to team members.</div>';
-      }
-    }
-  }
 
   // ===================================================================
   // TEAM DISCOVERY AND SELF-SERVICE FUNCTIONS
   // ===================================================================
 
   /**
-  * Load and display public teams that the user can join
-  */
+   * Load and display public teams that the user can join
+   */
   Admin.loadPublicTeams = async function () {
     const container = safeGetElement("public-teams-list");
     if (!container) {
@@ -3513,7 +1022,7 @@ import {
 
     // Show loading state
     container.innerHTML =
-    '<div class="animate-pulse text-gray-500 dark:text-gray-400">Loading public teams...</div>';
+      '<div class="animate-pulse text-gray-500 dark:text-gray-400">Loading public teams...</div>';
 
     try {
       const response = await fetchWithTimeout(
@@ -3523,7 +1032,7 @@ import {
             Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
-        },
+        }
       );
       if (!response.ok) {
         throw new Error(`Failed to load teams: ${response.status}`);
@@ -3553,12 +1062,12 @@ import {
                   </div>
               `;
     }
-  }
+  };
 
   /**
-  * Display public teams in the UI
-  * @param {Array} teams - Array of team objects
-  */
+   * Display public teams in the UI
+   * @param {Array} teams - Array of team objects
+   */
   Admin.displayPublicTeams = function (teams) {
     const container = safeGetElement("public-teams-list");
     if (!container) {
@@ -3580,8 +1089,8 @@ import {
 
     // Create teams grid
     const teamsHtml = teams
-    .map(
-      (team) => `
+      .map(
+        (team) => `
               <div class="bg-white dark:bg-gray-700 shadow rounded-lg p-6 hover:shadow-lg transition-shadow">
                   <div class="flex items-center justify-between">
                       <h3 class="text-lg font-medium text-gray-900 dark:text-white">
@@ -3593,14 +1102,14 @@ import {
                   </div>
 
                   ${
-      team.description
-      ? `
+  team.description
+    ? `
                       <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">
                           ${escapeHtml(team.description)}
                       </p>
                   `
-      : ""
-    }
+    : ""
+  }
 
                   <div class="mt-4 flex items-center justify-between">
                       <div class="flex items-center text-sm text-gray-500 dark:text-gray-400">
@@ -3617,21 +1126,21 @@ import {
                       </button>
                   </div>
               </div>
-          `,
-  )
-  .join("");
+          `
+      )
+      .join("");
 
-  container.innerHTML = `
+    container.innerHTML = `
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   ${teamsHtml}
               </div>
           `;
-  }
+  };
 
   /**
-  * Request to join a public team
-  * @param {string} teamId - ID of the team to join
-  */
+   * Request to join a public team
+   * @param {string} teamId - ID of the team to join
+   */
   Admin.requestToJoinTeam = async function (teamId) {
     if (!teamId) {
       console.error("Team ID is required");
@@ -3653,14 +1162,13 @@ import {
           body: JSON.stringify({
             message: message || null,
           }),
-        },
+        }
       );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
-          errorData?.detail ||
-          `Failed to request join: ${response.status}`,
+          errorData?.detail || `Failed to request join: ${response.status}`
         );
       }
 
@@ -3668,7 +1176,7 @@ import {
 
       // Show success message
       showSuccessMessage(
-        `Join request sent to ${result.team_name}! Team owners will review your request.`,
+        `Join request sent to ${result.team_name}! Team owners will review your request.`
       );
 
       // Refresh the public teams list
@@ -3677,13 +1185,13 @@ import {
       console.error("Error requesting to join team:", error);
       showErrorMessage(`Failed to send join request: ${error.message}`);
     }
-  }
+  };
 
   /**
-  * Leave a team
-  * @param {string} teamId - ID of the team to leave
-  * @param {string} teamName - Name of the team (for confirmation)
-  */
+   * Leave a team
+   * @param {string} teamId - ID of the team to leave
+   * @param {string} teamName - Name of the team (for confirmation)
+   */
   Admin.leaveTeam = async function (teamId, teamName) {
     if (!teamId) {
       console.error("Team ID is required");
@@ -3692,7 +1200,7 @@ import {
 
     // Show confirmation dialog
     const confirmed = confirm(
-      `Are you sure you want to leave the team "${teamName}"? This action cannot be undone.`,
+      `Are you sure you want to leave the team "${teamName}"? This action cannot be undone.`
     );
     if (!confirmed) {
       return;
@@ -3707,13 +1215,13 @@ import {
             Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
-        },
+        }
       );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
-          errorData?.detail || `Failed to leave team: ${response.status}`,
+          errorData?.detail || `Failed to leave team: ${response.status}`
         );
       }
 
@@ -3739,13 +1247,13 @@ import {
       console.error("Error leaving team:", error);
       showErrorMessage(`Failed to leave team: ${error.message}`);
     }
-  }
+  };
 
   /**
-  * Approve a join request
-  * @param {string} teamId - ID of the team
-  * @param {string} requestId - ID of the join request
-  */
+   * Approve a join request
+   * @param {string} teamId - ID of the team
+   * @param {string} requestId - ID of the join request
+   */
   Admin.approveJoinRequest = async function (teamId, requestId) {
     if (!teamId || !requestId) {
       console.error("Team ID and request ID are required");
@@ -3761,14 +1269,14 @@ import {
             Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
-        },
+        }
       );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
           errorData?.detail ||
-          `Failed to approve join request: ${response.status}`,
+            `Failed to approve join request: ${response.status}`
         );
       }
 
@@ -3776,7 +1284,7 @@ import {
 
       // Show success message
       showSuccessMessage(
-        `Join request approved! ${result.user_email} is now a member.`,
+        `Join request approved! ${result.user_email} is now a member.`
       );
 
       // Refresh teams list
@@ -3788,13 +1296,13 @@ import {
       console.error("Error approving join request:", error);
       showErrorMessage(`Failed to approve join request: ${error.message}`);
     }
-  }
+  };
 
   /**
-  * Reject a join request
-  * @param {string} teamId - ID of the team
-  * @param {string} requestId - ID of the join request
-  */
+   * Reject a join request
+   * @param {string} teamId - ID of the team
+   * @param {string} requestId - ID of the join request
+   */
   Admin.rejectJoinRequest = async function (teamId, requestId) {
     if (!teamId || !requestId) {
       console.error("Team ID and request ID are required");
@@ -3802,7 +1310,7 @@ import {
     }
 
     const confirmed = confirm(
-      "Are you sure you want to reject this join request?",
+      "Are you sure you want to reject this join request?"
     );
     if (!confirmed) {
       return;
@@ -3817,14 +1325,14 @@ import {
             Authorization: `Bearer ${await getAuthToken()}`,
             "Content-Type": "application/json",
           },
-        },
+        }
       );
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => null);
         throw new Error(
           errorData?.detail ||
-          `Failed to reject join request: ${response.status}`,
+            `Failed to reject join request: ${response.status}`
         );
       }
 
@@ -3840,11 +1348,11 @@ import {
       console.error("Error rejecting join request:", error);
       showErrorMessage(`Failed to reject join request: ${error.message}`);
     }
-  }
+  };
 
   /**
-  * Validate password match in user edit form
-  */
+   * Validate password match in user edit form
+   */
   Admin.getPasswordPolicy = function () {
     const policyEl = safeGetElement("edit-password-policy-data");
     if (!policyEl) {
@@ -3857,7 +1365,7 @@ import {
       requireNumbers: policyEl.dataset.requireNumbers === "true",
       requireSpecial: policyEl.dataset.requireSpecial === "true",
     };
-  }
+  };
 
   Admin.updateRequirementIcon = function (elementId, isValid) {
     const req = safeGetElement(elementId);
@@ -3870,14 +1378,14 @@ import {
     }
     if (isValid) {
       icon.className =
-      "inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2";
+        "inline-flex items-center justify-center w-4 h-4 bg-green-500 text-white rounded-full text-xs mr-2";
       icon.textContent = "✓";
     } else {
       icon.className =
-      "inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2";
+        "inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2";
       icon.textContent = "✗";
     }
-  }
+  };
 
   Admin.validatePasswordRequirements = function () {
     const policy = Admin.getPasswordPolicy();
@@ -3901,33 +1409,33 @@ import {
 
     const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
     const specialCheck =
-    !policy.requireSpecial ||
-    [...password].some((char) => specialChars.includes(char));
+      !policy.requireSpecial ||
+      [...password].some((char) => specialChars.includes(char));
     Admin.updateRequirementIcon("edit-req-special", specialCheck);
 
     const submitButton = document.querySelector(
-      '#user-edit-modal-content button[type="submit"]',
+      '#user-edit-modal-content button[type="submit"]'
     );
     const allRequirementsMet =
-    lengthCheck &&
-    uppercaseCheck &&
-    lowercaseCheck &&
-    numbersCheck &&
-    specialCheck;
+      lengthCheck &&
+      uppercaseCheck &&
+      lowercaseCheck &&
+      numbersCheck &&
+      specialCheck;
     const passwordEmpty = password.length === 0;
 
     if (submitButton) {
       if (passwordEmpty || allRequirementsMet) {
         submitButton.disabled = false;
         submitButton.className =
-        "px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500";
+          "px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500";
       } else {
         submitButton.disabled = true;
         submitButton.className =
-        "px-4 py-2 text-sm font-medium text-white bg-gray-400 border border-transparent rounded-md cursor-not-allowed";
+          "px-4 py-2 text-sm font-medium text-white bg-gray-400 border border-transparent rounded-md cursor-not-allowed";
       }
     }
-  }
+  };
 
   Admin.initializePasswordValidation = function (root = document) {
     if (
@@ -3937,17 +1445,14 @@ import {
       Admin.validatePasswordRequirements();
       Admin.validatePasswordMatch();
     }
-  }
+  };
 
   Admin.validatePasswordMatch = function () {
     const passwordField = safeGetElement("password-field", true);
-    const confirmPasswordField = safeGetElement(
-      "confirm-password-field",
-      true,
-    );
+    const confirmPasswordField = safeGetElement("confirm-password-field", true);
     const messageElement = safeGetElement("password-match-message", true);
     const submitButton = document.querySelector(
-      '#user-edit-modal-content button[type="submit"]',
+      '#user-edit-modal-content button[type="submit"]'
     );
 
     if (!passwordField || !confirmPasswordField || !messageElement) {
@@ -3976,15 +1481,15 @@ import {
         submitButton.classList.remove("opacity-50", "cursor-not-allowed");
       }
     }
-  }
+  };
 
   // ===================================================================
   // SELECTIVE IMPORT FUNCTIONS
   // ===================================================================
 
   /**
-  * Display import preview with selective import options
-  */
+   * Display import preview with selective import options
+   */
   Admin.displayImportPreview = function (preview) {
     console.log("📋 Displaying import preview:", preview);
 
@@ -3997,8 +1502,7 @@ import {
 
       // Insert after import options in the import section
       const importSection =
-      document.querySelector("#import-drop-zone").parentElement
-      .parentElement;
+        document.querySelector("#import-drop-zone").parentElement.parentElement;
       importSection.appendChild(previewContainer);
     }
 
@@ -4047,7 +1551,7 @@ import {
 
               <!-- Gateway Bundles -->
               ${
-    Object.keys(preview.bundles || {}).length > 0
+  Object.keys(preview.bundles || {}).length > 0
     ? `
                   <div class="mb-6">
                       <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3">
@@ -4073,20 +1577,20 @@ import {
                                           <div class="text-xs text-blue-600 dark:text-blue-400">
                                               Bundle includes: ${bundle.total_items} items
                                               (${Object.entries(bundle.items)
-      .filter(
-        ([type, items]) =>
-          items.length > 0,
-      )
-      .map(
-        ([type, items]) =>
-          `${items.length} ${type}`,
-      )
-      .join(", ")})
+    .filter(
+      ([type, items]) =>
+        items.length > 0
+    )
+    .map(
+      ([type, items]) =>
+        `${items.length} ${type}`
+    )
+    .join(", ")})
                                           </div>
                                       </div>
                                   </label>
                               </div>
-                          `,
+                          `
     )
     .join("")}
                       </div>
@@ -4097,10 +1601,10 @@ import {
 
               <!-- Custom Items by Type -->
               ${Object.entries(preview.items || {})
-  .map(([entityType, items]) => {
-    const customItems = items.filter((item) => item.is_custom);
-    return customItems.length > 0
-    ? `
+    .map(([entityType, items]) => {
+      const customItems = items.filter((item) => item.is_custom);
+      return customItems.length > 0
+        ? `
                       <div class="mb-6">
                           <h5 class="text-md font-medium text-gray-900 dark:text-white mb-3 capitalize">
                               🛠️ Custom ${entityType}
@@ -4120,10 +1624,10 @@ import {
                                               <div class="text-sm font-medium text-gray-900 dark:text-white">
                                                   ${item.name}
                                                   ${
-      item.conflicts_with
-      ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
-      : ""
-    }
+  item.conflicts_with
+    ? '<span class="text-orange-600 text-xs ml-1">⚠️ Conflict</span>'
+    : ""
+  }
                                               </div>
                                               <div class="text-xs text-gray-500 dark:text-gray-400">
                                                   ${item.description || `Custom ${entityType} item`}
@@ -4131,20 +1635,20 @@ import {
                                           </div>
                                       </label>
                                   </div>
-                              `,
-  )
-  .join("")}
+                              `
+    )
+    .join("")}
                           </div>
                       </div>
                   `
-  : "";
-  })
-  .join("")}
+        : "";
+    })
+    .join("")}
 
               <!-- Conflicts Warning -->
               ${
   Object.keys(preview.conflicts || {}).length > 0
-  ? `
+    ? `
                   <div class="mb-6">
                       <div class="bg-orange-50 dark:bg-orange-900 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
                           <div class="flex items-start">
@@ -4165,7 +1669,7 @@ import {
                       </div>
                   </div>
               `
-  : ""
+    : ""
   }
 
               <!-- Action Buttons -->
@@ -4188,14 +1692,14 @@ import {
               </div>
           `;
 
-  // Store preview data and show preview section
-  Admin.currentImportPreview = preview;
-  Admin.updateSelectionCount();
-  }
+    // Store preview data and show preview section
+    Admin.currentImportPreview = preview;
+    Admin.updateSelectionCount();
+  };
 
   /**
-  * Handle selective import based on user selections
-  */
+   * Handle selective import based on user selections
+   */
   Admin.handleSelectiveImport = async function (dryRun = false) {
     console.log(`🎯 Starting selective import (dry_run=${dryRun})`);
 
@@ -4213,17 +1717,15 @@ import {
       if (Object.keys(selectedEntities).length === 0) {
         showNotification(
           "❌ Please select at least one item to import",
-          "warning",
+          "warning"
         );
         showImportProgress(false);
         return;
       }
 
       const conflictStrategy =
-      safeGetElement("import-conflict-strategy")?.value ||
-      "update";
-      const rekeySecret =
-      safeGetElement("import-rekey-secret")?.value || null;
+        safeGetElement("import-conflict-strategy")?.value || "update";
+      const rekeySecret = safeGetElement("import-rekey-secret")?.value || null;
 
       const requestData = {
         import_data: window.currentImportData,
@@ -4244,13 +1746,13 @@ import {
             Authorization: `Bearer ${await getAuthToken()}`,
           },
           body: JSON.stringify(requestData),
-        },
+        }
       );
 
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(
-          errorData.detail || `Import failed: ${response.statusText}`,
+          errorData.detail || `Import failed: ${response.statusText}`
         );
       }
 
@@ -4261,7 +1763,7 @@ import {
         refreshCurrentTabData();
         showNotification(
           "✅ Selective import completed successfully",
-          "success",
+          "success"
         );
       } else {
         showNotification("✅ Import preview completed", "success");
@@ -4272,24 +1774,24 @@ import {
     } finally {
       showImportProgress(false);
     }
-  }
+  };
 
   /**
-  * Collect user selections for selective import
-  */
+   * Collect user selections for selective import
+   */
   Admin.collectUserSelections = function () {
     const selections = {};
 
     // Collect gateway selections
     document
-    .querySelectorAll(".gateway-checkbox:checked")
-    .forEach((checkbox) => {
-      const gatewayName = checkbox.dataset.gateway;
-      if (!selections.gateways) {
-        selections.gateways = [];
-      }
-      selections.gateways.push(gatewayName);
-    });
+      .querySelectorAll(".gateway-checkbox:checked")
+      .forEach((checkbox) => {
+        const gatewayName = checkbox.dataset.gateway;
+        if (!selections.gateways) {
+          selections.gateways = [];
+        }
+        selections.gateways.push(gatewayName);
+      });
 
     // Collect individual item selections
     document.querySelectorAll(".item-checkbox:checked").forEach((checkbox) => {
@@ -4302,17 +1804,17 @@ import {
     });
 
     return selections;
-  }
+  };
 
   /**
-  * Update selection count display
-  */
+   * Update selection count display
+   */
   Admin.updateSelectionCount = function () {
     const gatewayCount = document.querySelectorAll(
-      ".gateway-checkbox:checked",
+      ".gateway-checkbox:checked"
     ).length;
     const itemCount = document.querySelectorAll(
-      ".item-checkbox:checked",
+      ".item-checkbox:checked"
     ).length;
     const totalCount = gatewayCount + itemCount;
 
@@ -4320,35 +1822,35 @@ import {
     if (countElement) {
       countElement.textContent = `${totalCount} items selected (${gatewayCount} gateways, ${itemCount} individual items)`;
     }
-  }
+  };
 
   /**
-  * Select all items
-  */
+   * Select all items
+   */
   Admin.selectAllItems = function () {
     document
-    .querySelectorAll(".gateway-checkbox, .item-checkbox")
-    .forEach((checkbox) => {
-      checkbox.checked = true;
-    });
+      .querySelectorAll(".gateway-checkbox, .item-checkbox")
+      .forEach((checkbox) => {
+        checkbox.checked = true;
+      });
     Admin.updateSelectionCount();
-  }
+  };
 
   /**
-  * Select no items
-  */
+   * Select no items
+   */
   Admin.selectNoneItems = function () {
     document
-    .querySelectorAll(".gateway-checkbox, .item-checkbox")
-    .forEach((checkbox) => {
-      checkbox.checked = false;
-    });
+      .querySelectorAll(".gateway-checkbox, .item-checkbox")
+      .forEach((checkbox) => {
+        checkbox.checked = false;
+      });
     Admin.updateSelectionCount();
-  }
+  };
 
   /**
-  * Select only custom items (not gateway items)
-  */
+   * Select only custom items (not gateway items)
+   */
   Admin.selectOnlyCustom = function () {
     document.querySelectorAll(".gateway-checkbox").forEach((checkbox) => {
       checkbox.checked = false;
@@ -4357,20 +1859,18 @@ import {
       checkbox.checked = true;
     });
     Admin.updateSelectionCount();
-  }
+  };
 
   /**
-  * Reset import selection
-  */
+   * Reset import selection
+   */
   Admin.resetImportSelection = function () {
-    const previewContainer = safeGetElement(
-      "import-preview-container",
-    );
+    const previewContainer = safeGetElement("import-preview-container");
     if (previewContainer) {
       previewContainer.remove();
     }
     Admin.currentImportPreview = null;
-  }
+  };
 
   /* ---------------------------------------------------------------------------
   Robust reloadAllResourceSections
@@ -4416,19 +1916,14 @@ import {
             if (typeof window.Alpine.initTree === "function") {
               window.Alpine.initTree(sectionEl);
             } else if (
-              typeof window.Alpine.discoverAndRegisterComponents ===
-              "function"
+              typeof window.Alpine.discoverAndRegisterComponents === "function"
             ) {
               // fallback: attempt a component discovery if available
               window.Alpine.discoverAndRegisterComponents(sectionEl);
             }
           }
         } catch (err) {
-          console.warn(
-            "Alpine re-init failed for section",
-            sectionName,
-            err,
-          );
+          console.warn("Alpine re-init failed for section", sectionName, err);
         }
 
         // 2) Re-initialize tool/resource/pill helpers that expect DOM structure
@@ -4442,7 +1937,7 @@ import {
               "selectedResourceWarning",
               10,
               null,
-              null,
+              null
             );
           }
           if (typeof initToolSelect === "function") {
@@ -4452,16 +1947,13 @@ import {
               "selectedToolsWarning",
               10,
               null,
-              null,
+              null
             );
           }
           // restore generic tool/resource selection areas if present
           if (typeof initResourceSelect === "function") {
             // try specific common containers if present (safeGetElement suppresses warnings)
-            const containers = [
-              "edit-server-resources",
-              "edit-server-tools",
-            ];
+            const containers = ["edit-server-resources", "edit-server-tools"];
             containers.forEach((cid) => {
               const c = safeGetElement(cid);
               if (c && typeof initResourceSelect === "function") {
@@ -4506,10 +1998,7 @@ import {
                 ta.CodeMirror.refresh();
               } else {
                 // Create a new CodeMirror instance only when an explicit init function is present on page
-                if (
-                  typeof window.createCodeMirrorForTextarea ===
-                  "function"
-                ) {
+                if (typeof window.createCodeMirrorForTextarea === "function") {
                   try {
                     window.createCodeMirrorForTextarea(ta);
                   } catch (e) {
@@ -4529,9 +2018,7 @@ import {
           const checkboxChangeEvent = new Event("change", {
             bubbles: true,
           });
-          sectionEl
-          .querySelectorAll('input[type="checkbox"]')
-          .forEach((cb) => {
+          sectionEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
             // If there were checkbox-specific change functions on page, they will now re-run
             cb.dispatchEvent(checkboxChangeEvent);
           });
@@ -4540,7 +2027,7 @@ import {
           if (window.htmx && typeof window.htmx.trigger === "function") {
             // find elements with data-htmx or that previously had an HTMX load
             const htmxTargets = sectionEl.querySelectorAll(
-              "[hx-get], [hx-post], [data-hx-load]",
+              "[hx-get], [hx-post], [data-hx-load]"
             );
             htmxTargets.forEach((el) => {
               try {
@@ -4564,21 +2051,13 @@ import {
       } catch (err) {
         console.error("Error reinitializing section", sectionName, err);
       }
-    }
+    };
 
     Admin.updateSectionHeaders = function (teamId) {
-      const sections = [
-        "tools",
-        "resources",
-        "prompts",
-        "servers",
-        "gateways",
-      ];
+      const sections = ["tools", "resources", "prompts", "servers", "gateways"];
 
       sections.forEach((section) => {
-        const header = document.querySelector(
-          "#" + section + "-section h2",
-        );
+        const header = document.querySelector("#" + section + "-section h2");
         if (header) {
           // Remove existing team badge
           const existingBadge = header.querySelector(".team-badge");
@@ -4592,29 +2071,23 @@ import {
             if (teamName) {
               const badge = document.createElement("span");
               badge.className =
-              "team-badge inline-flex items-center px-2 py-1 ml-2 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full";
+                "team-badge inline-flex items-center px-2 py-1 ml-2 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full";
               badge.textContent = teamName;
               header.appendChild(badge);
             }
           }
         }
       });
-    }
+    };
 
     // The exported function: reloadAllResourceSections
     Admin.reloadAllResourceSections = async function (teamId) {
-      const sections = [
-        "tools",
-        "resources",
-        "prompts",
-        "servers",
-        "gateways",
-      ];
+      const sections = ["tools", "resources", "prompts", "servers", "gateways"];
 
       // ensure there is a ROOT_PATH set
       if (!window.ROOT_PATH) {
         console.warn(
-          "ROOT_PATH not defined; aborting reloadAllResourceSections",
+          "ROOT_PATH not defined; aborting reloadAllResourceSections"
         );
         return;
       }
@@ -4638,7 +2111,7 @@ import {
           const resp = await fetchWithTimeout(
             url,
             { credentials: "same-origin" },
-            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+            window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
           );
           if (!resp.ok) {
             throw new Error(`HTTP ${resp.status}`);
@@ -4652,27 +2125,21 @@ import {
           // After replacement, re-run local initializers so the new DOM behaves like initial load
           Admin.reinitializeSection(sectionEl, section);
         } catch (err) {
-          console.error(
-            `Failed to load section ${section} from server:`,
-            err,
-          );
+          console.error(`Failed to load section ${section} from server:`, err);
 
           // Restore the original markup exactly as it was on initial load (fallback)
           if (
             window.__initialSectionMarkup &&
             window.__initialSectionMarkup[section]
           ) {
-            sectionEl.innerHTML =
-            window.__initialSectionMarkup[section];
+            sectionEl.innerHTML = window.__initialSectionMarkup[section];
             // Re-run initializers on restored markup as well
             Admin.reinitializeSection(sectionEl, section);
-            console.log(
-              `Restored initial markup for section ${section}`,
-            );
+            console.log(`Restored initial markup for section ${section}`);
           } else {
             // No fallback available: leave existing DOM intact and show error to console
             console.warn(
-              `No saved initial markup for section ${section}; leaving DOM untouched`,
+              `No saved initial markup for section ${section}; leaving DOM untouched`
             );
           }
         }
@@ -4688,8 +2155,8 @@ import {
       }
 
       console.log("✓ reloadAllResourceSections completed");
-    }
-  }
+    };
+  };
 
   Admin.registerReloadAllResourceSections();
 
@@ -4703,9 +2170,7 @@ import {
       const authorSet = new Set();
 
       cards.forEach((card) => {
-        const hooks = card.dataset.hooks
-        ? card.dataset.hooks.split(",")
-        : [];
+        const hooks = card.dataset.hooks ? card.dataset.hooks.split(",") : [];
         const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
         const author = card.dataset.author;
 
@@ -4733,8 +2198,8 @@ import {
           const option = document.createElement("option");
           option.value = hook;
           option.textContent = hook
-          .replace(/_/g, " ")
-          .replace(/\b\w/g, (l) => l.toUpperCase());
+            .replace(/_/g, " ")
+            .replace(/\b\w/g, (l) => l.toUpperCase());
           hookFilter.appendChild(option);
         });
       }
@@ -4755,8 +2220,7 @@ import {
           const option = document.createElement("option");
           // Value is lowercase (matches data-author), text is capitalized for display
           option.value = author.toLowerCase();
-          option.textContent =
-          author.charAt(0).toUpperCase() + author.slice(1);
+          option.textContent = author.charAt(0).toUpperCase() + author.slice(1);
           authorFilter.appendChild(option);
         });
       }
@@ -4786,20 +2250,16 @@ import {
       const cards = document.querySelectorAll(".plugin-card");
 
       cards.forEach((card) => {
-        const name = card.dataset.name
-        ? card.dataset.name.toLowerCase()
-        : "";
+        const name = card.dataset.name ? card.dataset.name.toLowerCase() : "";
         const description = card.dataset.description
-        ? card.dataset.description.toLowerCase()
-        : "";
+          ? card.dataset.description.toLowerCase()
+          : "";
         const author = card.dataset.author
-        ? card.dataset.author.toLowerCase()
-        : "";
+          ? card.dataset.author.toLowerCase()
+          : "";
         const mode = card.dataset.mode;
         const status = card.dataset.status;
-        const hooks = card.dataset.hooks
-        ? card.dataset.hooks.split(",")
-        : [];
+        const hooks = card.dataset.hooks ? card.dataset.hooks.split(",") : [];
         const tags = card.dataset.tags ? card.dataset.tags.split(",") : [];
 
         let visible = true;
@@ -4916,35 +2376,35 @@ import {
 
         // Check if this badge matches the selected value
         const badgeValue = badge
-        .getAttribute("onclick")
-        .match(/'([^']*)'/)?.[1];
+          .getAttribute("onclick")
+          .match(/'([^']*)'/)?.[1];
         const isSelected =
-        value === ""
-        ? isAllBadge
-        : badgeValue?.toLowerCase() === value?.toLowerCase();
+          value === ""
+            ? isAllBadge
+            : badgeValue?.toLowerCase() === value?.toLowerCase();
 
         if (isSelected) {
           // Apply active/selected styling
           badge.classList.remove(
             "bg-gray-100",
             "text-gray-800",
-            "hover:bg-gray-200",
+            "hover:bg-gray-200"
           );
           badge.classList.remove(
             "dark:bg-gray-700",
             "dark:text-gray-200",
-            "dark:hover:bg-gray-600",
+            "dark:hover:bg-gray-600"
           );
           badge.classList.add(
             "bg-indigo-100",
             "text-indigo-800",
             "border",
-            "border-indigo-300",
+            "border-indigo-300"
           );
           badge.classList.add(
             "dark:bg-indigo-900",
             "dark:text-indigo-200",
-            "dark:border-indigo-700",
+            "dark:border-indigo-700"
           );
         } else if (!isAllBadge) {
           // Reset to default styling for non-All badges
@@ -4952,26 +2412,26 @@ import {
             "bg-indigo-100",
             "text-indigo-800",
             "border",
-            "border-indigo-300",
+            "border-indigo-300"
           );
           badge.classList.remove(
             "dark:bg-indigo-900",
             "dark:text-indigo-200",
-            "dark:border-indigo-700",
+            "dark:border-indigo-700"
           );
           badge.classList.add(
             "bg-gray-100",
             "text-gray-800",
-            "hover:bg-gray-200",
+            "hover:bg-gray-200"
           );
           badge.classList.add(
             "dark:bg-gray-700",
             "dark:text-gray-200",
-            "dark:hover:bg-gray-600",
+            "dark:hover:bg-gray-600"
           );
         }
       });
-    }
+    };
 
     // Show plugin details modal
     Admin.showPluginDetails = async function (pluginName) {
@@ -4986,8 +2446,7 @@ import {
 
       // Show loading state
       modalName.textContent = pluginName;
-      modalContent.innerHTML =
-      '<div class="text-center py-4">Loading...</div>';
+      modalContent.innerHTML = '<div class="text-center py-4">Loading...</div>';
       modal.classList.remove("hidden");
 
       try {
@@ -5000,12 +2459,12 @@ import {
             headers: {
               Accept: "application/json",
             },
-          },
+          }
         );
 
         if (!response.ok) {
           throw new Error(
-            `Failed to load plugin details: ${response.statusText}`,
+            `Failed to load plugin details: ${response.statusText}`
           );
         }
 
@@ -5035,12 +2494,12 @@ import {
                                   <h4 class="font-medium text-gray-700 dark:text-gray-300">Mode</h4>
                                   <p class="mt-1">
                                       <span class="px-2 py-1 text-xs rounded-full ${
-        plugin.mode === "enforce"
-        ? "bg-red-100 text-red-800"
-        : plugin.mode === "permissive"
-        ? "bg-yellow-100 text-yellow-800"
-        : "bg-gray-100 text-gray-800"
-      }">
+  plugin.mode === "enforce"
+    ? "bg-red-100 text-red-800"
+    : plugin.mode === "permissive"
+      ? "bg-yellow-100 text-yellow-800"
+      : "bg-gray-100 text-gray-800"
+  }">
                                           ${plugin.mode}
                                       </span>
                                   </p>
@@ -5055,11 +2514,11 @@ import {
                               <h4 class="font-medium text-gray-700 dark:text-gray-300">Hooks</h4>
                               <div class="mt-1 flex flex-wrap gap-1">
                                   ${(plugin.hooks || [])
-      .map(
-        (hook) =>
-          `<span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">${hook}</span>`,
-      )
-      .join("")}
+    .map(
+      (hook) =>
+        `<span class="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded">${hook}</span>`
+    )
+    .join("")}
                               </div>
                           </div>
 
@@ -5067,45 +2526,46 @@ import {
                               <h4 class="font-medium text-gray-700 dark:text-gray-300">Tags</h4>
                               <div class="mt-1 flex flex-wrap gap-1">
                                   ${(plugin.tags || [])
-      .map(
-        (tag) =>
-          `<span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">${tag}</span>`,
-      )
-      .join("")}
+    .map(
+      (tag) =>
+        `<span class="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">${tag}</span>`
+    )
+    .join("")}
                               </div>
                           </div>
 
                           ${
-      plugin.config && Object.keys(plugin.config).length > 0
-      ? `
+  plugin.config &&
+                            Object.keys(plugin.config).length > 0
+    ? `
                               <div>
                                   <h4 class="font-medium text-gray-700 dark:text-gray-300">Configuration</h4>
                                   <pre class="mt-1 p-2 bg-gray-50 dark:bg-gray-800 rounded text-xs overflow-x-auto">${JSON.stringify(plugin.config, null, 2)}</pre>
                               </div>
                           `
-      : ""
-    }
+    : ""
+  }
                       </div>
                   `;
-  } catch (error) {
-    console.error("Error loading plugin details:", error);
-    modalContent.innerHTML = `
+      } catch (error) {
+        console.error("Error loading plugin details:", error);
+        modalContent.innerHTML = `
                       <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
                           <strong class="font-bold">Error:</strong>
                           <span class="block sm:inline">${error.message}</span>
                       </div>
                   `;
-  }
-  };
+      }
+    };
 
-  // Close plugin details modal
-  Admin.closePluginDetails = function () {
-    const modal = safeGetElement("plugin-details-modal");
-    if (modal) {
-      modal.classList.add("hidden");
-    }
+    // Close plugin details modal
+    Admin.closePluginDetails = function () {
+      const modal = safeGetElement("plugin-details-modal");
+      if (modal) {
+        modal.classList.add("hidden");
+      }
+    };
   };
-  }
 
   // Initialize plugin functions if plugins panel exists
   if (isAdminUser() && safeGetElement("plugins-panel")) {
@@ -5168,38 +2628,33 @@ import {
       },
       body: JSON.stringify(requestData),
     })
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.success) {
-        Admin.closeApiKeyModal();
-        // Reload the catalog
-        if (window.htmx && window.htmx.ajax) {
-          window.htmx.ajax(
-            "GET",
-            `${rootPath}/admin/mcp-registry/partial`,
-            {
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.success) {
+          Admin.closeApiKeyModal();
+          // Reload the catalog
+          if (window.htmx && window.htmx.ajax) {
+            window.htmx.ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
               target: "#mcp-registry-content",
               swap: "innerHTML",
-            },
-          );
+            });
+          }
+        } else {
+          alert("Registration failed: " + (data.error || data.message));
         }
-      } else {
-        alert("Registration failed: " + (data.error || data.message));
-      }
-    })
-    .catch((error) => {
-      alert("Error registering server: " + error);
-    });
+      })
+      .catch((error) => {
+        alert("Error registering server: " + error);
+      });
   };
 
   // gRPC Services Functions
 
   /**
-  * Toggle visibility of TLS certificate/key fields based on TLS checkbox
-  */
+   * Toggle visibility of TLS certificate/key fields based on TLS checkbox
+   */
   Admin.toggleGrpcTlsFields = function () {
-    const tlsEnabled =
-    safeGetElement("grpc-tls-enabled")?.checked || false;
+    const tlsEnabled = safeGetElement("grpc-tls-enabled")?.checked || false;
     const certField = safeGetElement("grpc-tls-cert-field");
     const keyField = safeGetElement("grpc-tls-key-field");
 
@@ -5213,9 +2668,9 @@ import {
   };
 
   /**
-  * View gRPC service methods in a modal or alert
-  * @param {string} serviceId - The gRPC service ID
-  */
+   * View gRPC service methods in a modal or alert
+   * @param {string} serviceId - The gRPC service ID
+   */
   Admin.viewGrpcMethods = function (serviceId) {
     const rootPath = window.ROOT_PATH || "";
 
@@ -5226,29 +2681,29 @@ import {
         Authorization: "Bearer " + (getCookie("jwt_token") || ""),
       },
     })
-    .then((response) => response.json())
-    .then((data) => {
-      if (data.methods && data.methods.length > 0) {
-        let methodsList = "gRPC Methods:\n\n";
-        data.methods.forEach((method) => {
-          methodsList += `${method.full_name}\n`;
-          methodsList += `  Input: ${method.input_type || "N/A"}\n`;
-          methodsList += `  Output: ${method.output_type || "N/A"}\n`;
-          if (method.client_streaming || method.server_streaming) {
-            methodsList += `  Streaming: ${method.client_streaming ? "Client" : ""} ${method.server_streaming ? "Server" : ""}\n`;
-          }
-          methodsList += "\n";
-        });
-        alert(methodsList);
-      } else {
-        alert(
-          "No methods discovered for this service. Try re-reflecting the service.",
-        );
-      }
-    })
-    .catch((error) => {
-      alert("Error fetching methods: " + error);
-    });
+      .then((response) => response.json())
+      .then((data) => {
+        if (data.methods && data.methods.length > 0) {
+          let methodsList = "gRPC Methods:\n\n";
+          data.methods.forEach((method) => {
+            methodsList += `${method.full_name}\n`;
+            methodsList += `  Input: ${method.input_type || "N/A"}\n`;
+            methodsList += `  Output: ${method.output_type || "N/A"}\n`;
+            if (method.client_streaming || method.server_streaming) {
+              methodsList += `  Streaming: ${method.client_streaming ? "Client" : ""} ${method.server_streaming ? "Server" : ""}\n`;
+            }
+            methodsList += "\n";
+          });
+          alert(methodsList);
+        } else {
+          alert(
+            "No methods discovered for this service. Try re-reflecting the service."
+          );
+        }
+      })
+      .catch((error) => {
+        alert("Error fetching methods: " + error);
+      });
   };
 
   // ============================================================================
@@ -5256,9 +2711,9 @@ import {
   // ============================================================================
 
   /**
-  * Validate CA certificate file on upload (supports multiple files)
-  * @param {Event} event - The file input change event
-  */
+   * Validate CA certificate file on upload (supports multiple files)
+   * @param {Event} event - The file input change event
+   */
   Admin.validateCACertFiles = async function (event) {
     const files = Array.from(event.target.files);
     const feedbackEl = safeGetElement("ca-certificate-feedback");
@@ -5338,14 +2793,10 @@ import {
     const allValid = certResults.every((r) => r.isValid);
     if (allValid) {
       const orderedCerts = Admin.orderCertificateChain(certResults);
-      const concatenated = orderedCerts
-      .map((r) => r.content.trim())
-      .join("\n");
+      const concatenated = orderedCerts.map((r) => r.content.trim()).join("\n");
 
       // Store concatenated result in a hidden field
-      let hiddenInput = safeGetElement(
-        "ca_certificate_concatenated",
-      );
+      let hiddenInput = safeGetElement("ca_certificate_concatenated");
       if (!hiddenInput) {
         hiddenInput = document.createElement("input");
         hiddenInput.type = "hidden";
@@ -5360,13 +2811,13 @@ import {
     } else {
       event.target.value = "";
     }
-  }
+  };
 
   /**
-  * Helper function to read file as text asynchronously
-  * @param {File} file - The file to read
-  * @returns {Promise<string>} - Promise resolving to file content
-  */
+   * Helper function to read file as text asynchronously
+   * @param {File} file - The file to read
+   * @returns {Promise<string>} - Promise resolving to file content
+   */
   Admin.readFileAsync = function (file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -5374,13 +2825,13 @@ import {
       reader.onerror = () => Admin.reject(new Error("Error reading file"));
       reader.readAsText(file);
     });
-  }
+  };
 
   /**
-  * Parse certificate information to determine if it's self-signed (root CA)
-  * @param {string} content - PEM certificate content
-  * @returns {Object} - Certificate info with isRoot flag
-  */
+   * Parse certificate information to determine if it's self-signed (root CA)
+   * @param {string} content - PEM certificate content
+   * @returns {Object} - Certificate info with isRoot flag
+   */
   Admin.parseCertificateInfo = function (content) {
     // Basic heuristic: check if Subject and Issuer appear the same
     // In a real implementation, you'd parse the ASN.1 structure properly
@@ -5400,29 +2851,29 @@ import {
       subject,
       issuer,
     };
-  }
+  };
 
   /**
-  * Order certificates in chain: root CA first, then intermediates, then leaf
-  * @param {Array} certResults - Array of certificate result objects
-  * @returns {Array} - Ordered array of certificate results
-  */
+   * Order certificates in chain: root CA first, then intermediates, then leaf
+   * @param {Array} certResults - Array of certificate result objects
+   * @returns {Array} - Ordered array of certificate results
+   */
   Admin.orderCertificateChain = function (certResults) {
     const roots = certResults.filter((r) => r.certInfo && r.certInfo.isRoot);
     const nonRoots = certResults.filter(
-      (r) => r.certInfo && !r.certInfo.isRoot,
+      (r) => r.certInfo && !r.certInfo.isRoot
     );
 
     // Simple ordering: roots first, then rest
     // In production, you'd build a proper chain by matching issuer/subject
     return [...roots, ...nonRoots];
-  }
+  };
 
   /**
-  * Display validation results for each certificate file
-  * @param {Array} certResults - Array of validation result objects
-  * @param {HTMLElement} feedbackEl - Element to display feedback
-  */
+   * Display validation results for each certificate file
+   * @param {Array} certResults - Array of validation result objects
+   * @param {HTMLElement} feedbackEl - Element to display feedback
+   */
   Admin.displayCertValidationResults = function (certResults, feedbackEl) {
     const allValid = certResults.every((r) => r.isValid);
 
@@ -5449,12 +2900,12 @@ import {
     html += '<div class="mt-3 space-y-1">';
     for (const result of certResults) {
       const icon = result.isValid
-      ? '<svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
-      : '<svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
+        ? '<svg class="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>'
+        : '<svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>';
 
       const statusClass = result.isValid ? "text-gray-700" : "text-red-700";
       const typeLabel =
-      result.certInfo && result.certInfo.isRoot ? " (Root CA)" : "";
+        result.certInfo && result.certInfo.isRoot ? " (Root CA)" : "";
 
       html += `
   <div class="flex items-center ${statusClass}">
@@ -5467,13 +2918,13 @@ import {
 
     feedbackEl.innerHTML = html;
     feedbackEl.className = "mt-2 text-sm";
-  }
+  };
 
   /**
-  * Validate certificate content (PEM format)
-  * @param {string} content - The certificate file content
-  * @returns {boolean} - True if valid certificate
-  */
+   * Validate certificate content (PEM format)
+   * @param {string} content - The certificate file content
+   * @returns {boolean} - True if valid certificate
+   */
   Admin.isValidCertificate = function (content) {
     // Trim whitespace
     content = content.trim();
@@ -5488,7 +2939,7 @@ import {
 
     // Check for proper structure
     const certPattern =
-    /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
+      /-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g;
     const matches = content.match(certPattern);
 
     if (!matches || matches.length === 0) {
@@ -5498,9 +2949,9 @@ import {
     // Validate base64 content between markers
     for (const cert of matches) {
       const base64Content = cert
-      .replace(/-----BEGIN CERTIFICATE-----/, "")
-      .replace(/-----END CERTIFICATE-----/, "")
-      .replace(/\s/g, "");
+        .replace(/-----BEGIN CERTIFICATE-----/, "")
+        .replace(/-----END CERTIFICATE-----/, "")
+        .replace(/\s/g, "");
 
       // Check if content is valid base64
       if (!isValidBase64(base64Content)) {
@@ -5514,13 +2965,13 @@ import {
     }
 
     return true;
-  }
+  };
 
   /**
-  * Check if string is valid base64
-  * @param {string} str - The string to validate
-  * @returns {boolean} - True if valid base64
-  */
+   * Check if string is valid base64
+   * @param {string} str - The string to validate
+   * @returns {boolean} - True if valid base64
+   */
   Admin.isValidBase64 = function (str) {
     if (str.length === 0) {
       return false;
@@ -5529,12 +2980,12 @@ import {
     // Base64 regex pattern
     const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
     return base64Pattern.test(str);
-  }
+  };
 
   /**
-  * Update drop zone UI with selected file info
-  * @param {File} file - The selected file
-  */
+   * Update drop zone UI with selected file info
+   * @param {File} file - The selected file
+   */
   Admin.updateDropZoneWithFiles = function (files) {
     const dropZone = safeGetElement("ca-certificate-upload-drop-zone");
     if (!dropZone) {
@@ -5542,11 +2993,11 @@ import {
     }
 
     const fileListHTML = Array.from(files)
-    .map(
-      (file) =>
-        `<div>${escapeHtml(file.name)} • ${formatFileSize(file.size)}</div>`,
-    )
-    .join("");
+      .map(
+        (file) =>
+          `<div>${escapeHtml(file.name)} • ${formatFileSize(file.size)}</div>`
+      )
+      .join("");
 
     dropZone.innerHTML = `
         <div class="space-y-2">
@@ -5559,13 +3010,13 @@ import {
             <div class="text-xs text-gray-500 dark:text-gray-400">${fileListHTML}</div>
         </div>
     `;
-  }
+  };
 
   /**
-  * Format file size for display
-  * @param {number} bytes - File size in bytes
-  * @returns {string} - Formatted file size
-  */
+   * Format file size for display
+   * @param {number} bytes - File size in bytes
+   * @returns {string} - Formatted file size
+   */
   Admin.formatFileSize = function (bytes) {
     if (bytes === 0) {
       return "0 Bytes";
@@ -5574,12 +3025,12 @@ import {
     const sizes = ["Bytes", "KB", "MB", "GB"];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + " " + sizes[i];
-  }
+  };
 
   /**
-  * Initialize drag and drop for CA cert upload
-  * Called on DOMContentLoaded
-  */
+   * Initialize drag and drop for CA cert upload
+   * Called on DOMContentLoaded
+   */
   Admin.initializeCACertUpload = function () {
     const dropZone = safeGetElement("ca-certificate-upload-drop-zone");
     const fileInput = safeGetElement("upload-ca-certificate");
@@ -5597,7 +3048,7 @@ import {
         dropZone.classList.add(
           "border-indigo-500",
           "bg-indigo-50",
-          "dark:bg-indigo-900/20",
+          "dark:bg-indigo-900/20"
         );
       });
 
@@ -5607,7 +3058,7 @@ import {
         dropZone.classList.remove(
           "border-indigo-500",
           "bg-indigo-50",
-          "dark:bg-indigo-900/20",
+          "dark:bg-indigo-900/20"
         );
       });
 
@@ -5617,7 +3068,7 @@ import {
         dropZone.classList.remove(
           "border-indigo-500",
           "bg-indigo-50",
-          "dark:bg-indigo-900/20",
+          "dark:bg-indigo-900/20"
         );
 
         const files = e.dataTransfer.files;
@@ -5629,29 +3080,27 @@ import {
         }
       });
     }
-  }
+  };
 
   // Function to update body label based on content type selection
   Admin.updateBodyLabel = function () {
     const bodyLabel = safeGetElement("gateway-test-body-label");
-    const contentType = safeGetElement(
-      "gateway-test-content-type",
-    )?.value;
+    const contentType = safeGetElement("gateway-test-content-type")?.value;
 
     if (bodyLabel) {
       bodyLabel.innerHTML =
-      contentType === "application/x-www-form-urlencoded"
-      ? 'Body (JSON)<br><small class="text-gray-500">Auto-converts to form data</small>'
-      : "Body (JSON)";
+        contentType === "application/x-www-form-urlencoded"
+          ? 'Body (JSON)<br><small class="text-gray-500">Auto-converts to form data</small>'
+          : "Body (JSON)";
     }
-  }
+  };
 
   /**
-  * ====================================================================
-  * REAL-TIME GATEWAY & TOOL MONITORING (SSE)
-  * Handles live status updates for Gateways and Tools
-  * ====================================================================
-  */
+   * ====================================================================
+   * REAL-TIME GATEWAY & TOOL MONITORING (SSE)
+   * Handles live status updates for Gateways and Tools
+   * ====================================================================
+   */
 
   document.addEventListener("DOMContentLoaded", function () {
     Admin.initializeRealTimeMonitoring();
@@ -5670,10 +3119,10 @@ import {
 
     // eventSource.addEventListener("gateway_deactivated", (e) => Admin.handleEntityEvent("gateway", e));
     eventSource.addEventListener("gateway_activated", (e) =>
-      Admin.handleEntityEvent("gateway", e),
+      Admin.handleEntityEvent("gateway", e)
     );
     eventSource.addEventListener("gateway_offline", (e) =>
-      Admin.handleEntityEvent("gateway", e),
+      Admin.handleEntityEvent("gateway", e)
     );
 
     // --- Tool Events ---
@@ -5681,21 +3130,21 @@ import {
 
     // eventSource.addEventListener("tool_deactivated", (e) => Admin.handleEntityEvent("tool", e));
     eventSource.addEventListener("tool_activated", (e) =>
-      Admin.handleEntityEvent("tool", e),
+      Admin.handleEntityEvent("tool", e)
     );
     eventSource.addEventListener("tool_offline", (e) =>
-      Admin.handleEntityEvent("tool", e),
+      Admin.handleEntityEvent("tool", e)
     );
 
     eventSource.onopen = () =>
       console.log("✅ SSE Connected for Real-time Monitoring");
     eventSource.onerror = (err) =>
       console.warn("⚠️ SSE Connection issue, retrying...", err);
-  }
+  };
 
   /**
-  * Generic handler for entity events
-  */
+   * Generic handler for entity events
+   */
   Admin.handleEntityEvent = function (type, event) {
     try {
       const data = JSON.parse(event.data);
@@ -5705,11 +3154,11 @@ import {
     } catch (err) {
       console.error(`Error processing ${type} event:`, err);
     }
-  }
+  };
 
   /**
-  * Updates the status badge and action buttons for a row
-  */
+   * Updates the status badge and action buttons for a row
+   */
 
   Admin.updateEntityStatus = function (type, data) {
     let row = null;
@@ -5790,14 +3239,13 @@ import {
     // --- 1. Update Status Badge ---
     if (statusCell) {
       const isEnabled =
-      data.enabled !== undefined ? data.enabled : data.isActive;
-      const isReachable =
-      data.reachable !== undefined ? data.reachable : true;
+        data.enabled !== undefined ? data.enabled : data.isActive;
+      const isReachable = data.reachable !== undefined ? data.reachable : true;
 
       statusCell.innerHTML = Admin.generateStatusBadgeHtml(
         isEnabled,
         isReachable,
-        type,
+        type
       );
 
       // Flash effect
@@ -5805,7 +3253,7 @@ import {
         "bg-blue-50",
         "dark:bg-blue-900",
         "transition-colors",
-        "duration-500",
+        "duration-500"
       );
       setTimeout(() => {
         statusCell.classList.remove("bg-blue-50", "dark:bg-blue-900");
@@ -5815,10 +3263,10 @@ import {
     // --- 2. Update Action Buttons ---
     if (actionCell) {
       const isEnabled =
-      data.enabled !== undefined ? data.enabled : data.isActive;
+        data.enabled !== undefined ? data.enabled : data.isActive;
       Admin.updateEntityActionButtons(actionCell, type, data.id, isEnabled);
     }
-  }
+  };
   // ============================================================================
   // Structured Logging UI Functions
   // ============================================================================
@@ -5831,37 +3279,35 @@ import {
   let currentPerformanceAggregationKey = "5m";
 
   Admin.getPerformanceAggregationConfig = function (
-    rangeKey = currentPerformanceAggregationKey,
+    rangeKey = currentPerformanceAggregationKey
   ) {
     return (
       PERFORMANCE_AGGREGATION_OPTIONS[rangeKey] ||
       PERFORMANCE_AGGREGATION_OPTIONS["5m"]
     );
-  }
+  };
 
   Admin.getPerformanceAggregationLabel = function (
-    rangeKey = currentPerformanceAggregationKey,
+    rangeKey = currentPerformanceAggregationKey
   ) {
     return Admin.getPerformanceAggregationConfig(rangeKey).label;
-  }
+  };
 
   Admin.getPerformanceAggregationQuery = function (
-    rangeKey = currentPerformanceAggregationKey,
+    rangeKey = currentPerformanceAggregationKey
   ) {
     return Admin.getPerformanceAggregationConfig(rangeKey).query;
-  }
+  };
 
   Admin.syncPerformanceAggregationSelect = function () {
     const select = safeGetElement("performance-aggregation-select");
     if (select && select.value !== currentPerformanceAggregationKey) {
       select.value = currentPerformanceAggregationKey;
     }
-  }
+  };
 
   Admin.setPerformanceAggregationVisibility = function (shouldShow) {
-    const controls = safeGetElement(
-      "performance-aggregation-controls",
-    );
+    const controls = safeGetElement("performance-aggregation-controls");
     if (!controls) {
       return;
     }
@@ -5870,7 +3316,7 @@ import {
     } else {
       controls.classList.add("hidden");
     }
-  }
+  };
 
   Admin.setLogFiltersVisibility = function (shouldShow) {
     const filters = safeGetElement("log-filters");
@@ -5882,25 +3328,23 @@ import {
     } else {
       filters.classList.add("hidden");
     }
-  }
+  };
 
   Admin.handlePerformanceAggregationChange = function (event) {
     const selectedKey = event?.target?.value;
     if (selectedKey && PERFORMANCE_AGGREGATION_OPTIONS[selectedKey]) {
       Admin.showPerformanceMetrics(selectedKey);
     }
-  }
+  };
 
   /**
-  * Search structured logs with filters
-  */
+   * Search structured logs with filters
+   */
   Admin.searchStructuredLogs = async function () {
     Admin.setPerformanceAggregationVisibility(false);
     Admin.setLogFiltersVisibility(true);
     const levelFilter = safeGetElement("log-level-filter")?.value;
-    const componentFilter = safeGetElement(
-      "log-component-filter",
-    )?.value;
+    const componentFilter = safeGetElement("log-component-filter")?.value;
     const searchQuery = safeGetElement("log-search")?.value;
 
     // Restore default log table headers (in case we're coming from performance metrics view)
@@ -5919,7 +3363,7 @@ import {
       const trimmedSearch = searchQuery.trim();
       // Check if search is a correlation ID (32 hex chars or UUID format) or text search
       const correlationIdPattern =
-      /^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+        /^([0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
       if (correlationIdPattern.test(trimmedSearch)) {
         searchRequest.correlation_id = trimmedSearch;
       } else {
@@ -5937,22 +3381,19 @@ import {
     currentLogFilters = searchRequest;
 
     try {
-      const response = await fetchWithAuth(
-        `${getRootPath()}/api/logs/search`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(searchRequest),
+      const response = await fetchWithAuth(`${getRootPath()}/api/logs/search`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
         },
-      );
+        body: JSON.stringify(searchRequest),
+      });
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error("API Error Response:", errorText);
         throw new Error(
-          `Failed to search logs: ${response.statusText} - ${errorText}`,
+          `Failed to search logs: ${response.statusText} - ${errorText}`
         );
       }
 
@@ -5967,11 +3408,11 @@ import {
   </td></tr>
   `;
     }
-  }
+  };
 
   /**
-  * Display log search results
-  */
+   * Display log search results
+   */
   Admin.displayLogResults = function (data) {
     const tbody = safeGetElement("logs-tbody");
     const logCount = safeGetElement("log-count");
@@ -6009,15 +3450,15 @@ import {
 
     // Render log entries
     tbody.innerHTML = data.results
-    .map((log) => {
-      const levelClass = Admin.getLogLevelClass(log.level);
-      const durationDisplay = log.duration_ms
-      ? `${log.duration_ms.toFixed(2)}ms`
-      : "-";
-      const correlationId = log.correlation_id || "-";
-      const userDisplay = log.user_email || log.user_id || "-";
+      .map((log) => {
+        const levelClass = Admin.getLogLevelClass(log.level);
+        const durationDisplay = log.duration_ms
+          ? `${log.duration_ms.toFixed(2)}ms`
+          : "-";
+        const correlationId = log.correlation_id || "-";
+        const userDisplay = log.user_email || log.user_id || "-";
 
-      return `
+        return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
           onclick="Admin.showLogDetails('${log.id}', '${escapeHtml(log.correlation_id || "")}')">
           <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
@@ -6043,68 +3484,54 @@ import {
           </td>
           <td class="px-4 py-3 text-sm">
             ${
-              correlationId !== "-"
-              ? `
+  correlationId !== "-"
+    ? `
                   <button onclick="event.stopPropagation(); Admin.showCorrelationTrace('${escapeHtml(correlationId)}')"
                     class="text-blue-600 dark:text-blue-400 hover:underline"
                   >
                     ${escapeHtml(Admin.truncateText(correlationId, 12))}
                   </button>
               `
-              : "-"
-            }
+    : "-"
+  }
           </td>
         </tr>
       `;
-    })
-    .join("");
-  }
+      })
+      .join("");
+  };
 
   /**
-  * Get CSS class for log level badge
-  */
+   * Get CSS class for log level badge
+   */
   Admin.getLogLevelClass = function (level) {
     const classes = {
       DEBUG: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
       INFO: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
       WARNING:
-      "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+        "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
       ERROR: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
       CRITICAL:
-      "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200",
+        "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200",
     };
     return classes[level] || classes.INFO;
-  }
+  };
 
   /**
-  * Format timestamp for display
-  */
-  Admin.formatTimestamp = function (timestamp) {
-    const date = new Date(timestamp);
-    return date.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-    });
-  }
-
-  /**
-  * Truncate text with ellipsis
-  */
+   * Truncate text with ellipsis
+   */
   Admin.truncateText = function (text, maxLength) {
     if (!text) {
       return "";
     }
     return text.length > maxLength
-    ? text.substring(0, maxLength) + "..."
-    : text;
-  }
+      ? text.substring(0, maxLength) + "..."
+      : text;
+  };
 
   /**
-  * Show detailed log entry (future enhancement - modal)
-  */
+   * Show detailed log entry (future enhancement - modal)
+   */
   Admin.showLogDetails = function (logId, correlationId) {
     if (correlationId) {
       Admin.showCorrelationTrace(correlationId);
@@ -6112,11 +3539,11 @@ import {
       console.log("Log details:", logId);
       showToast("Full log details view coming soon", "info");
     }
-  }
+  };
 
   /**
-  * Restore default log table headers
-  */
+   * Restore default log table headers
+   */
   Admin.restoreLogTableHeaders = function () {
     const thead = safeGetElement("logs-thead");
     if (thead) {
@@ -6146,11 +3573,11 @@ import {
         </tr>
       `;
     }
-  }
+  };
 
   /**
-  * Trace all logs for a correlation ID
-  */
+   * Trace all logs for a correlation ID
+   */
   Admin.showCorrelationTrace = async function (correlationId) {
     Admin.setPerformanceAggregationVisibility(false);
     Admin.setLogFiltersVisibility(true);
@@ -6158,7 +3585,7 @@ import {
       const searchInput = safeGetElement("log-search");
       correlationId = prompt(
         "Enter Correlation ID to trace:",
-        searchInput?.value || "",
+        searchInput?.value || ""
       );
       if (!correlationId) {
         return;
@@ -6170,7 +3597,7 @@ import {
         `${getRootPath()}/api/logs/trace/${encodeURIComponent(correlationId)}`,
         {
           method: "GET",
-        },
+        }
       );
 
       if (!response.ok) {
@@ -6181,20 +3608,17 @@ import {
       Admin.displayCorrelationTrace(trace);
     } catch (error) {
       console.error("Error fetching correlation trace:", error);
-      showToast(
-        "Failed to fetch correlation trace: " + error.message,
-        "error",
-      );
+      showToast("Failed to fetch correlation trace: " + error.message, "error");
     }
-  }
+  };
 
   /**
-  * Generates the HTML for the status badge (Active/Inactive/Offline)
-  */
+   * Generates the HTML for the status badge (Active/Inactive/Offline)
+   */
   Admin.generateStatusBadgeHtml = function (enabled, reachable, typeLabel) {
     const label = typeLabel
-    ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)
-    : "Item";
+      ? typeLabel.charAt(0).toUpperCase() + typeLabel.slice(1)
+      : "Item";
 
     if (!enabled) {
       // CASE 1: Inactive (Manually disabled) -> RED
@@ -6206,9 +3630,9 @@ import {
             </span>
             <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Manually Deactivated</div>
         </div>`;
-                } else if (!reachable) {
-                  // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
-                  return `
+    } else if (!reachable) {
+      // CASE 2: Offline (Enabled but Unreachable/Health Check Failed) -> YELLOW
+      return `
         <div class="relative group inline-block">
             <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
                 Offline
@@ -6216,9 +3640,9 @@ import {
             </span>
             <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Not Reachable (Health Check Failed)</div>
         </div>`;
-                } else {
-                  // CASE 3: Active (Enabled and Reachable) -> GREEN
-                  return `
+    } else {
+      // CASE 3: Active (Enabled and Reachable) -> GREEN
+      return `
         <div class="relative group inline-block">
             <span class="px-2 inline-flex items-center text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
                 Active
@@ -6227,11 +3651,11 @@ import {
             <div class="absolute left-full top-1/2 -translate-y-1/2 ml-2 hidden group-hover:block bg-gray-800 text-white text-xs rounded py-1 px-2 z-10 whitespace-nowrap shadow">💡${label} is Active</div>
         </div>`;
     }
-  }
+  };
 
   /**
-  * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
-  */
+   * Dynamically updates the action buttons (Activate/Deactivate) inside the table cell
+   */
   Admin.updateEntityActionButtons = function (cell, type, id, isEnabled) {
     // We look for the form that toggles activation inside the cell
     const form = cell.querySelector('form[action*="/state"]');
@@ -6259,7 +3683,7 @@ import {
         </button>
       `;
     }
-  }
+  };
 
   // CRITICAL DEBUG AND FIX FOR MCP SERVERS SEARCH
   console.log("🔧 LOADING MCP SERVERS SEARCH DEBUG FUNCTIONS...");
@@ -6289,7 +3713,7 @@ import {
     });
 
     console.log(
-      "✅ Emergency fix applied - test by typing in MCP Servers search box",
+      "✅ Emergency fix applied - test by typing in MCP Servers search box"
     );
     return true;
   };
@@ -6308,7 +3732,7 @@ import {
     console.log("Search input:", searchInput);
     console.log(
       "Search input value:",
-      searchInput ? searchInput.value : "NOT FOUND",
+      searchInput ? searchInput.value : "NOT FOUND"
     );
 
     const panel = safeGetElement("gateways-panel");
@@ -6346,8 +3770,8 @@ import {
   console.log("💡 Use: Admin.debugMCPSearchState() to check current state");
 
   /**
-  * Display correlation trace results
-  */
+   * Display correlation trace results
+   */
   Admin.displayCorrelationTrace = function (trace) {
     const tbody = safeGetElement("logs-tbody");
     const thead = safeGetElement("logs-thead");
@@ -6356,9 +3780,9 @@ import {
 
     // Calculate total events
     const totalEvents =
-    (trace.logs?.length || 0) +
-    (trace.security_events?.length || 0) +
-    (trace.audit_trails?.length || 0);
+      (trace.logs?.length || 0) +
+      (trace.security_events?.length || 0) +
+      (trace.audit_trails?.length || 0);
 
     // Update table headers for trace view
     if (thead) {
@@ -6466,8 +3890,8 @@ import {
     (trace.security_events || []).forEach((event) => {
       const severityClass = Admin.getSeverityClass(event.severity);
       const threatScore = event.threat_score
-      ? (event.threat_score * 100).toFixed(0)
-      : 0;
+        ? (event.threat_score * 100).toFixed(0)
+        : 0;
       allEvents.push({
         timestamp: new Date(event.timestamp),
         html: `
@@ -6520,13 +3944,13 @@ import {
         read: "bg-gray-200 text-gray-800",
       };
       const actionBadge =
-      actionBadgeColors[audit.action?.toLowerCase()] ||
-      "bg-purple-200 text-purple-800";
+        actionBadgeColors[audit.action?.toLowerCase()] ||
+        "bg-purple-200 text-purple-800";
       const statusIcon = audit.success ? "✓" : "✗";
       const statusClass = audit.success ? "text-green-600" : "text-red-600";
       const statusBg = audit.success
-      ? "bg-green-100 dark:bg-green-900"
-      : "bg-red-100 dark:bg-red-900";
+        ? "bg-green-100 dark:bg-green-900"
+        : "bg-red-100 dark:bg-red-900";
 
       allEvents.push({
         timestamp: new Date(audit.timestamp),
@@ -6568,11 +3992,11 @@ import {
 
     // Render sorted events
     tbody.innerHTML = allEvents.map((event) => event.html).join("");
-  }
+  };
 
   /**
-  * Show security events
-  */
+   * Show security events
+   */
   Admin.showSecurityEvents = async function () {
     Admin.setPerformanceAggregationVisibility(false);
     Admin.setLogFiltersVisibility(false);
@@ -6581,12 +4005,12 @@ import {
         `${getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
         {
           method: "GET",
-        },
+        }
       );
 
       if (!response.ok) {
         throw new Error(
-          `Failed to fetch security events: ${response.statusText}`,
+          `Failed to fetch security events: ${response.statusText}`
         );
       }
 
@@ -6596,11 +4020,11 @@ import {
       console.error("Error fetching security events:", error);
       showToast("Failed to fetch security events: " + error.message, "error");
     }
-  }
+  };
 
   /**
-  * Display security events
-  */
+   * Display security events
+   */
   Admin.displaySecurityEvents = function (events) {
     const tbody = safeGetElement("logs-tbody");
     const thead = safeGetElement("logs-thead");
@@ -6653,11 +4077,11 @@ import {
     }
 
     tbody.innerHTML = events
-    .map((event) => {
-      const severityClass = Admin.getSeverityClass(event.severity);
-      const threatScore = (event.threat_score * 100).toFixed(0);
+      .map((event) => {
+        const severityClass = Admin.getSeverityClass(event.severity);
+        const threatScore = (event.threat_score * 100).toFixed(0);
 
-      return `
+        return `
         <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
             <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                 ${formatTimestamp(event.timestamp)}
@@ -6686,38 +4110,39 @@ import {
             </td>
             <td class="px-4 py-3 text-sm">
                 ${
-              event.correlation_id
-              ? `
+  event.correlation_id
+    ? `
                     <button onclick="event.stopPropagation(); Admin.showCorrelationTrace('${escapeHtml(event.correlation_id)}')"
                             class="text-blue-600 dark:text-blue-400 hover:underline">
                         ${escapeHtml(Admin.truncateText(event.correlation_id, 12))}
                     </button>
                 `
-              : "-"
-            }
+    : "-"
+  }
             </td>
         </tr>
       `;
-    })
-    .join("");
-  }
+      })
+      .join("");
+  };
 
   /**
-  * Get CSS class for severity badge
-  */
+   * Get CSS class for severity badge
+   */
   Admin.getSeverityClass = function (severity) {
     const classes = {
       LOW: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
-      MEDIUM: "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+      MEDIUM:
+        "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
       HIGH: "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
       CRITICAL: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
     };
     return classes[severity] || classes.MEDIUM;
-  }
+  };
 
   /**
-  * Show audit trail
-  */
+   * Show audit trail
+   */
   Admin.showAuditTrail = async function () {
     Admin.setPerformanceAggregationVisibility(false);
     Admin.setLogFiltersVisibility(false);
@@ -6726,13 +4151,11 @@ import {
         `${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
         {
           method: "GET",
-        },
+        }
       );
 
       if (!response.ok) {
-        throw new Error(
-          `Failed to fetch audit trails: ${response.statusText}`,
-        );
+        throw new Error(`Failed to fetch audit trails: ${response.statusText}`);
       }
 
       const trails = await response.json();
@@ -6741,11 +4164,11 @@ import {
       console.error("Error fetching audit trails:", error);
       showToast("Failed to fetch audit trails: " + error.message, "error");
     }
-  }
+  };
 
   /**
-  * Display audit trail entries
-  */
+   * Display audit trail entries
+   */
   Admin.displayAuditTrail = function (trails) {
     const tbody = safeGetElement("logs-tbody");
     const thead = safeGetElement("logs-thead");
@@ -6798,37 +4221,36 @@ import {
     }
 
     tbody.innerHTML = trails
-    .map((trail) => {
-      const actionClass = trail.success
-      ? "text-green-600"
-      : "text-red-600";
-      const actionIcon = trail.success ? "✓" : "✗";
+      .map((trail) => {
+        const actionClass = trail.success ? "text-green-600" : "text-red-600";
+        const actionIcon = trail.success ? "✓" : "✗";
 
-      // Determine action badge color
-      const actionBadgeColors = {
-        create: "bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200",
-        update: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
-        delete: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
-        read: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
-        activate:
-        "bg-teal-200 text-teal-800 dark:bg-teal-800 dark:text-teal-200",
-        deactivate:
-        "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
-      };
-      const actionBadge =
-      actionBadgeColors[trail.action.toLowerCase()] ||
-      "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200";
+        // Determine action badge color
+        const actionBadgeColors = {
+          create:
+            "bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200",
+          update:
+            "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+          delete: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+          read: "bg-gray-200 text-gray-800 dark:bg-gray-600 dark:text-gray-200",
+          activate:
+            "bg-teal-200 text-teal-800 dark:bg-teal-800 dark:text-teal-200",
+          deactivate:
+            "bg-orange-200 text-orange-800 dark:bg-orange-800 dark:text-orange-200",
+        };
+        const actionBadge =
+          actionBadgeColors[trail.action.toLowerCase()] ||
+          "bg-purple-200 text-purple-800 dark:bg-purple-800 dark:text-purple-200";
 
-      // Format resource name with ID
-      const resourceName =
-      trail.resource_name || trail.resource_id || "-";
-      const resourceDisplay = `
+        // Format resource name with ID
+        const resourceName = trail.resource_name || trail.resource_id || "-";
+        const resourceDisplay = `
           <div class="font-medium">${escapeHtml(resourceName)}</div>
           ${trail.resource_id && trail.resource_name ? `<div class="text-xs text-gray-500">UUID: ${escapeHtml(trail.resource_id)}</div>` : ""}
           ${trail.data_classification ? `<div class="text-xs text-orange-600 mt-1">🔒 ${escapeHtml(trail.data_classification)}</div>` : ""}
       `;
 
-      return `
+        return `
           <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
               <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                   ${formatTimestamp(trail.timestamp)}
@@ -6852,32 +4274,30 @@ import {
               </td>
               <td class="px-4 py-3 text-sm">
                   ${
-              trail.correlation_id
-              ? `
+  trail.correlation_id
+    ? `
                       <button onclick="event.stopPropagation(); Admin.showCorrelationTrace('${escapeHtml(trail.correlation_id)}')"
                               class="text-blue-600 dark:text-blue-400 hover:underline">
                           ${escapeHtml(Admin.truncateText(trail.correlation_id, 12))}
                       </button>
                   `
-              : "-"
-            }
+    : "-"
+  }
               </td>
           </tr>
       `;
-    })
-    .join("");
-  }
+      })
+      .join("");
+  };
 
   /**
-  * Show performance metrics
-  */
+   * Show performance metrics
+   */
   Admin.showPerformanceMetrics = async function (rangeKey) {
     if (rangeKey && PERFORMANCE_AGGREGATION_OPTIONS[rangeKey]) {
       currentPerformanceAggregationKey = rangeKey;
     } else {
-      const select = safeGetElement(
-        "performance-aggregation-select",
-      );
+      const select = safeGetElement("performance-aggregation-select");
       if (select?.value && PERFORMANCE_AGGREGATION_OPTIONS[select.value]) {
         currentPerformanceAggregationKey = select.value;
       }
@@ -6888,7 +4308,7 @@ import {
     Admin.setLogFiltersVisibility(false);
     const hoursParam = encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
     const aggregationParam = encodeURIComponent(
-      Admin.getPerformanceAggregationQuery(),
+      Admin.getPerformanceAggregationQuery()
     );
 
     try {
@@ -6896,12 +4316,12 @@ import {
         `${getRootPath()}/api/logs/performance-metrics?hours=${hoursParam}&aggregation=${aggregationParam}`,
         {
           method: "GET",
-        },
+        }
       );
 
       if (!response.ok) {
         throw new Error(
-          `Failed to fetch performance metrics: ${response.statusText}`,
+          `Failed to fetch performance metrics: ${response.statusText}`
         );
       }
 
@@ -6911,14 +4331,14 @@ import {
       console.error("Error fetching performance metrics:", error);
       showToast(
         "Failed to fetch performance metrics: " + error.message,
-        "error",
+        "error"
       );
     }
-  }
+  };
 
   /**
-  * Display performance metrics
-  */
+   * Display performance metrics
+   */
   Admin.displayPerformanceMetrics = function (metrics) {
     const tbody = safeGetElement("logs-tbody");
     const thead = safeGetElement("logs-thead");
@@ -6972,12 +4392,12 @@ import {
     }
 
     tbody.innerHTML = metrics
-    .map((metric) => {
-      const errorRatePercent = (metric.error_rate * 100).toFixed(2);
-      const errorClass =
-      metric.error_rate > 0.1 ? "text-red-600" : "text-green-600";
+      .map((metric) => {
+        const errorRatePercent = (metric.error_rate * 100).toFixed(2);
+        const errorClass =
+          metric.error_rate > 0.1 ? "text-red-600" : "text-green-600";
 
-      return `
+        return `
           <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
               <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
                   ${formatTimestamp(metric.window_start)}
@@ -7008,46 +4428,46 @@ import {
               </td>
           </tr>
       `;
-    })
-    .join("");
-  }
+      })
+      .join("");
+  };
 
   /**
-  * Navigate to previous log page
-  */
+   * Navigate to previous log page
+   */
   Admin.previousLogPage = function () {
     if (currentLogPage > 0) {
       currentLogPage--;
       Admin.searchStructuredLogs();
     }
-  }
+  };
 
   /**
-  * Navigate to next log page
-  */
+   * Navigate to next log page
+   */
   Admin.nextLogPage = function () {
     currentLogPage++;
     Admin.searchStructuredLogs();
-  }
+  };
 
   // ============================================================================ //
   //                         TEAM SEARCH AND FILTER FUNCTIONS                      //
   // ============================================================================ //
 
   /**
-  * Debounce timer for team search
-  */
+   * Debounce timer for team search
+   */
   let teamSearchDebounceTimer = null;
 
   /**
-  * Current relationship filter state
-  */
+   * Current relationship filter state
+   */
   let currentTeamRelationshipFilter = "all";
 
   /**
-  * Perform server-side search for teams and update the teams list
-  * @param {string} searchTerm - The search query
-  */
+   * Perform server-side search for teams and update the teams list
+   * @param {string} searchTerm - The search query
+   */
   Admin.serverSideTeamSearch = function (searchTerm) {
     // Debounce the search to avoid excessive API calls
     if (teamSearchDebounceTimer) {
@@ -7057,16 +4477,14 @@ import {
     teamSearchDebounceTimer = setTimeout(() => {
       Admin.performTeamSearch(searchTerm);
     }, 300);
-  }
+  };
 
   /**
-  * Get current per_page value from pagination controls or use default
-  */
+   * Get current per_page value from pagination controls or use default
+   */
   Admin.getTeamsPerPage = function () {
     // Try to get from pagination controls select element
-    const paginationControls = safeGetElement(
-      "teams-pagination-controls",
-    );
+    const paginationControls = safeGetElement("teams-pagination-controls");
     if (paginationControls) {
       const select = paginationControls.querySelector("select");
       if (select && select.value) {
@@ -7074,12 +4492,12 @@ import {
       }
     }
     return DEFAULT_TEAMS_PER_PAGE;
-  }
+  };
 
   /**
-  * Actually perform the team search after debounce
-  * @param {string} searchTerm - The search query
-  */
+   * Actually perform the team search after debounce
+   * @param {string} searchTerm - The search query
+   */
   Admin.performTeamSearch = async function (searchTerm) {
     const container = safeGetElement("unified-teams-list");
     const loadingIndicator = safeGetElement("teams-loading");
@@ -7132,7 +4550,7 @@ import {
           container.innerHTML = html;
         } else {
           container.innerHTML =
-          '<div class="text-center py-4 text-red-600">Failed to load teams</div>';
+            '<div class="text-center py-4 text-red-600">Failed to load teams</div>';
         }
         // Only hide indicator in fetch fallback path (HTMX handles its own)
         if (loadingIndicator) {
@@ -7142,18 +4560,18 @@ import {
     } catch (error) {
       console.error("Error searching teams:", error);
       container.innerHTML =
-      '<div class="text-center py-4 text-red-600">Error searching teams</div>';
+        '<div class="text-center py-4 text-red-600">Error searching teams</div>';
       // Hide indicator on error in fallback path
       if (loadingIndicator) {
         loadingIndicator.style.display = "none";
       }
     }
-  }
+  };
 
   /**
-  * Filter teams by relationship (owner, member, public, all)
-  * @param {string} filter - The relationship filter value
-  */
+   * Filter teams by relationship (owner, member, public, all)
+   * @param {string} filter - The relationship filter value
+   */
   Admin.filterByRelationship = function (filter) {
     // Update button states
     const filterButtons = document.querySelectorAll(".filter-btn");
@@ -7166,13 +4584,13 @@ import {
           "text-indigo-700",
           "dark:text-indigo-300",
           "border-indigo-300",
-          "dark:border-indigo-600",
+          "dark:border-indigo-600"
         );
         btn.classList.remove(
           "bg-white",
           "dark:bg-gray-700",
           "text-gray-700",
-          "dark:text-gray-300",
+          "dark:text-gray-300"
         );
       } else {
         btn.classList.remove(
@@ -7182,13 +4600,13 @@ import {
           "text-indigo-700",
           "dark:text-indigo-300",
           "border-indigo-300",
-          "dark:border-indigo-600",
+          "dark:border-indigo-600"
         );
         btn.classList.add(
           "bg-white",
           "dark:bg-gray-700",
           "text-gray-700",
-          "dark:text-gray-300",
+          "dark:text-gray-300"
         );
       }
     });
@@ -7202,13 +4620,13 @@ import {
 
     // Perform search with new filter
     Admin.performTeamSearch(searchQuery);
-  }
+  };
 
   /**
-  * Legacy filterTeams function - redirects to serverSideTeamSearch
-  * @param {string} searchValue - The search query
-  */
+   * Legacy filterTeams function - redirects to serverSideTeamSearch
+   * @param {string} searchValue - The search query
+   */
   Admin.filterTeams = function (searchValue) {
     Admin.serverSideTeamSearch(searchValue);
-  }
-})(window.Admin)
+  };
+})(window.Admin);

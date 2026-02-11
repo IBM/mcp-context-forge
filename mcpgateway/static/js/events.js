@@ -1,5 +1,6 @@
 import { AppState } from "./appState";
 import { setupFormValidation } from "./formValidation";
+import { initGatewaySelect } from "./gateway";
 import {
   initializeCodeMirrorEditors,
   initializeEventListeners,
@@ -8,11 +9,13 @@ import {
   initializeTabState,
   initializeToolSelects,
   setupBulkImportModal,
+  setupTooltipsWithAlpine,
 } from "./initialization";
 import { closeModal } from "./modals";
 import { initializeTagFiltering } from "./tags";
 import { initializeTeamScopingMonitor } from "./tokens";
 import { cleanupToolTestState, loadTools } from "./tools";
+import { registerAdminActionListeners } from "./users";
 import {
   createMemoizedInit,
   safeGetElement,
@@ -265,7 +268,7 @@ import {
   document.addEventListener("DOMContentLoaded", function () {
     // Initialize for the create server form
     if (safeGetElement("associatedGateways")) {
-      Admin.initGatewaySelect(
+      initGatewaySelect(
         "associatedGateways",
         "selectedGatewayPills",
         "selectedGatewayWarning",
@@ -278,6 +281,38 @@ import {
   });
 
   document.addEventListener("DOMContentLoaded", loadTools);
+
+  /**
+   * Close modal when clicking outside of it
+   */
+  document.addEventListener("DOMContentLoaded", function () {
+    const userModal = safeGetElement("user-edit-modal");
+    if (userModal) {
+      userModal.addEventListener("click", function (event) {
+        if (event.target === userModal) {
+          Admin.hideUserEditModal();
+        }
+      });
+    }
+
+    const teamModal = safeGetElement("team-edit-modal");
+    if (teamModal) {
+      teamModal.addEventListener("click", function (event) {
+        if (event.target === teamModal) {
+          Admin.hideTeamEditModal();
+        }
+      });
+    }
+  });
+
+  if (document.readyState === "loading") {
+    document.addEventListener(
+      "DOMContentLoaded",
+      registerAdminActionListeners
+    );
+  } else {
+    registerAdminActionListeners();
+  }
 
   // ===================================================================
   // GLOBAL ERROR HANDLERS
@@ -338,29 +373,32 @@ import {
     console.log("🔐 DOM loaded - initializing secure admin interface...");
 
     try {
-      // 1. Initialize CodeMirror editors first
+      // 1. Initialize Alpine tooltips
+      setupTooltipsWithAlpine();
+
+      // 2. Initialize CodeMirror editors first
       initializeCodeMirrorEditors();
 
-      // 2. Initialize tool selects
+      // 3. Initialize tool selects
       initializeToolSelects();
 
-      // 3. Set up all event listeners
+      // 4. Set up all event listeners
       initializeEventListeners();
 
-      // 4. Handle initial tab/state
+      // 5. Handle initial tab/state
       initializeTabState();
 
-      // 5. Set up form validation
+      // 6. Set up form validation
       setupFormValidation();
 
-      // 6. Setup bulk import modal
+      // 7. Setup bulk import modal
       try {
         setupBulkImportModal();
       } catch (error) {
         console.error("Error setting up bulk import modal:", error);
       }
 
-      // 7. Initialize export/import functionality
+      // 8. Initialize export/import functionality
       try {
         initializeExportImport();
       } catch (error) {
