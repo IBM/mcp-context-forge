@@ -15,9 +15,9 @@ LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
 CALL='{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"fast-time-get-system-time","arguments":{"timezone":"UTC"}}}'
 
 HEADERS=(
-	-H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
-	-H "Content-Type: application/json; charset=utf-8"
-	-H "Accept: application/json, application/x-ndjson, text/event-stream"
+    -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"
+    -H "Content-Type: application/json; charset=utf-8"
+    -H "Accept: application/json, application/x-ndjson, text/event-stream"
 )
 
 curl -N "$URL" "${HEADERS[@]}" -d "$INIT"
