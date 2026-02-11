@@ -32,11 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: ${{ matrix.rust }}
-          components: rustfmt, clippy
+      - name: Install Rust components
+        run: |
+          rustup toolchain install stable
+          rustup component add rustfmt clippy
+          rustup default stable
 
       - name: Cache Cargo registry
         uses: actions/cache@v4
@@ -58,19 +58,16 @@ jobs:
 
       - name: Check formatting
         working-directory: plugins_rust
-        run: cargo fmt --all -- --check
+        run: make fmt-check
 
       - name: Run Clippy
         working-directory: plugins_rust
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: make clippy
 
       - name: Run Rust tests
         working-directory: plugins_rust
-        run: cargo test --verbose
+        run: make test-verbose
 
-      - name: Run Rust integration tests
-        working-directory: plugins_rust
-        run: cargo test --test integration --verbose
 
   # Build wheels for multiple platforms (native builds)
   build-wheels:
@@ -89,8 +86,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        run: rustup default stable
 
       - name: Install maturin
         run: pip install maturin
@@ -105,52 +102,6 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: plugins_rust/dist/*.whl
 
-  # Build wheels for multiple Linux architectures using QEMU
-  build-wheels-linux-multiarch:
-    name: Build wheels for Linux ${{ matrix.target }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - x86_64-unknown-linux-gnu
-          - aarch64-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabihf
-          - s390x-unknown-linux-gnu
-          - powerpc64le-unknown-linux-gnu
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
-
-      - name: Install maturin
-        run: pip install maturin
-
-      - name: Build wheel for ${{ matrix.target }}
-        working-directory: plugins_rust
-        run: |
-          # Use maturin with explicit target
-          maturin build --release --target ${{ matrix.target }} --out dist --compatibility manylinux2014
-
-      - name: Upload wheels as artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-linux-${{ matrix.target }}
-          path: plugins_rust/dist/*.whl
 
   # Python integration tests with Rust extensions
   python-integration:
@@ -171,71 +122,35 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+
+      - name: Install maturin as CLI tool
+        run: uv tool install maturin
+
+      - name: Create virtual environment
+        run: uv venv
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install maturin pytest pytest-cov
+          uv pip install pytest pytest-cov pydantic
 
       - name: Build and install Rust extension
         working-directory: plugins_rust
-        run: maturin develop --release
-
-      - name: Install Python plugin dependencies
-        run: |
-          pip install pydantic
+        run: make dev
 
       - name: Run Python unit tests (Rust)
-        run: pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
+        working-directory: plugins_rust
+        run: uv run make test-python
 
       - name: Run differential tests
-        run: pytest tests/differential/test_pii_filter_differential.py -v
-
-  # Benchmarks
-  benchmarks:
-    name: Performance Benchmarks
-    runs-on: ubuntu-latest
-    needs: build-wheels
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install maturin pydantic
-
-      - name: Build and install Rust extension
         working-directory: plugins_rust
-        run: maturin develop --release
-
-      - name: Run Rust benchmarks
-        working-directory: plugins_rust
-        run: |
-          cargo install cargo-criterion || true
-          cargo criterion --message-format=json > benchmark-results.json || true
-
-      - name: Run Python comparison benchmarks
-        run: |
-          python benchmarks/compare_pii_filter.py --output benchmark-comparison.json
-
-      - name: Upload benchmark results
-        uses: actions/upload-artifact@v4
-        with:
-          name: benchmark-results
-          path: |
-            plugins_rust/benchmark-results.json
-            benchmark-comparison.json
+        run: uv run make test-differential
 
   # Security audit
   security-audit:
@@ -245,15 +160,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        run: rustup default stable
 
       - name: Install cargo-audit
         run: cargo install cargo-audit
 
       - name: Run security audit
         working-directory: plugins_rust
-        run: cargo audit
+        run: make audit
 
   # Coverage report
   coverage:
@@ -268,40 +183,36 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable and components
+        run: |
+          rustup default stable
+          rustup component add llvm-tools-preview
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
         with:
-          components: llvm-tools-preview
+          version: "0.9.2"
+
+      - name: Install maturin as CLI tool
+        run: uv tool install maturin
+
+      - name: Create virtual environment
+        run: uv venv
 
       - name: Install coverage tools
         run: |
-          pip install maturin pytest pytest-cov pydantic
+          uv pip install pytest pytest-cov pydantic
           cargo install cargo-tarpaulin
 
       - name: Build Rust extension
         working-directory: plugins_rust
-        run: maturin develop --release
+        run: make dev
 
-      - name: Run Python tests with coverage
-        run: |
-          pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py \
-                 tests/differential/test_pii_filter_differential.py \
-                 --cov=plugins.pii_filter \
-                 --cov-report=xml \
-                 --cov-report=html
-
-      - name: Run Rust coverage
+      - name: Run coverage
         working-directory: plugins_rust
-        run: cargo tarpaulin --out Xml --output-dir coverage
+        run: uv run make coverage
 
-      - name: Upload Python coverage to Codecov
-        uses: codecov/codecov-action@v4
-        with:
-          files: ./coverage.xml
-          flags: python
-          name: python-coverage
-
-      - name: Upload Rust coverage to Codecov
+      - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
           files: ./plugins_rust/coverage/cobertura.xml
@@ -316,12 +227,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        run: rustup default stable
 
       - name: Build Rust docs
         working-directory: plugins_rust
-        run: cargo doc --no-deps --document-private-items
+        run: make doc
 
       - name: Upload documentation
         uses: actions/upload-artifact@v4
@@ -347,8 +258,8 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        run: rustup default stable
 
       - name: Install maturin
         run: pip install maturin

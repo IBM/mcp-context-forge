@@ -4030,9 +4030,6 @@ async def admin_create_team(
         return response
 
     try:
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
-
         form = await request.form()
         name = form.get("name")
         slug = form.get("slug") or None
@@ -4059,40 +4056,9 @@ async def admin_create_team(
         # Extract user email from user dict
         user_email = get_user_email(user)
 
-        team = await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
 
-        # Return HTML for the new team
-        member_count = 1  # Creator is automatically a member
-        safe_team_name = html.escape(team.name)
-        safe_description = html.escape(team.description) if team.description else ""
-        team_html = f"""
-        <div id="team-card-{team.id}" class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
-            <div class="flex justify-between items-start">
-                <div>
-                    <h4 class="text-lg font-medium text-gray-900 dark:text-white">{safe_team_name}</h4>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Slug: {team.slug}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Visibility: {team.visibility}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Members: {member_count}</p>
-                    {f'<p class="text-sm text-gray-600 dark:text-gray-400">{safe_description}</p>' if team.description else ""}
-                </div>
-                <div class="flex space-x-2">
-                    <button
-                        hx-get="{root_path}/admin/teams/{team.id}/members"
-                        hx-target="#team-details-{team.id}"
-                        hx-swap="innerHTML"
-                        class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    >
-                        View Members
-                    </button>
-                    {'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/teams/' + team.id + '" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-' + team.id + '" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ""}
-                </div>
-            </div>
-            <div id="team-details-{team.id}" class="mt-4"></div>
-        </div>
-        """
-
-        response = HTMLResponse(content=team_html, status_code=201)
-        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}}).decode()
+        response = HTMLResponse(content="", status_code=201)
         return response
 
     except (ValidationError, CoreValidationError) as e:
@@ -6140,7 +6106,8 @@ async def admin_get_user_edit(
         edit_form = f"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" class="space-y-4">
+            <div id="edit-user-error"></div>
+            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -6238,14 +6205,16 @@ async def admin_update_user(
 
         # Validate password confirmation if password is being changed
         if password and password != confirm_password:
-            return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400)
+            return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
         # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
         if user_obj and user_obj.is_admin and not is_admin:
             # This user is currently an admin and we're trying to remove admin privileges
             if await auth_service.is_last_active_admin(decoded_email):
-                return HTMLResponse(content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400)
+                return HTMLResponse(
+                    content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"}
+                )
 
         # Update user
         fn_val = form.get("full_name")
@@ -6257,7 +6226,7 @@ async def admin_update_user(
         if password:
             is_valid, error_msg = validate_password_strength(password)
             if not is_valid:
-                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
+                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
         await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
 
@@ -6273,7 +6242,7 @@ async def admin_update_user(
 
     except Exception as e:
         LOGGER.error(f"Error updating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
 
 @admin_router.post("/users/{user_email}/activate")

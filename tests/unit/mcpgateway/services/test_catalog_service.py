@@ -632,3 +632,155 @@ async def test_bulk_register_exception_per_server(service):
         assert result.total_attempted == 2
         assert len(result.failed) == 1
         assert result.total_successful == 1
+
+
+@pytest.mark.asyncio
+async def test_load_catalog_relative_path_falls_back_to_repo_root(service, tmp_path, monkeypatch):
+    """Relative catalog file missing in cwd should fall back to repo root (branches 67-85)."""
+    monkeypatch.chdir(tmp_path)
+    with patch("mcpgateway.services.catalog_service.settings", MagicMock(mcpgateway_catalog_file="mcp-catalog.yml", mcpgateway_catalog_cache_ttl=0)):
+        result = await service.load_catalog(force_reload=True)
+    assert "catalog_servers" in result
+    assert service._catalog_cache is result
+
+
+def test_get_registry_cache_importerror_returns_none(service):
+    """ImportError in registry cache path returns None (lines 102-103)."""
+    with patch("mcpgateway.cache.registry_cache.get_registry_cache", side_effect=ImportError):
+        assert service._get_registry_cache() is None
+
+
+@pytest.mark.asyncio
+async def test_get_catalog_servers_empty_servers_no_available_filter(service):
+    """Cover branches for empty catalog and show_available_only=False (lines 138, 199)."""
+    with patch.object(service, "load_catalog", AsyncMock(return_value={"catalog_servers": []})), patch.object(service, "_get_registry_cache", return_value=None):
+        req = CatalogListRequest(offset=0, limit=10, show_available_only=False)
+        result = await service.get_catalog_servers(req, MagicMock())
+    assert result.total == 0
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_match_not_first_skips_tool_query_and_cache(service):
+    """Server found after first loop iteration; gateway_read.id can be falsy (branches 245, 426, 438)."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "other", "name": "other", "url": "http://other", "description": "desc"},
+            {"id": "target", "name": "srv", "url": "http://a", "description": "desc"},
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", AsyncMock(return_value=MagicMock(id=None, name="srv"))):
+            result = await service.register_catalog_server("target", None, db)
+    assert result.success
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_oauth_without_credentials_tags_dict_format(service):
+    """OAuth no-credentials path should pass through dict tags (line 368)."""
+    fake_catalog = {
+        "catalog_servers": [
+            {
+                "id": "oauth-server",
+                "name": "OAuth Server",
+                "url": "https://oauth.example.com/mcp",
+                "description": "OAuth server",
+                "auth_type": "OAuth2.1",
+                "tags": [{"id": "oauth", "label": "oauth"}],
+            }
+        ]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        db.commit = MagicMock()
+        db.add = MagicMock()
+
+        now = datetime.now(timezone.utc)
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with patch("mcpgateway.services.catalog_service.select"), patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"):
+            result = await service.register_catalog_server("oauth-server", None, db)
+
+    assert result.success
+    assert result.oauth_required is True
+
+
+@pytest.mark.asyncio
+async def test_register_catalog_server_oauth_without_credentials_tags_empty(service):
+    """OAuth no-credentials path with empty tags should produce [] (line 370)."""
+    fake_catalog = {
+        "catalog_servers": [
+            {
+                "id": "oauth-server",
+                "name": "OAuth Server",
+                "url": "https://oauth.example.com/mcp",
+                "description": "OAuth server",
+                "auth_type": "OAuth2.1",
+                "tags": [],
+            }
+        ]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        db.commit = MagicMock()
+        db.add = MagicMock()
+
+        now = datetime.now(timezone.utc)
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with patch("mcpgateway.services.catalog_service.select"), patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"):
+            result = await service.register_catalog_server("oauth-server", None, db)
+
+    assert result.success
+    assert result.oauth_required is True
+
+
+@pytest.mark.asyncio
+async def test_check_server_availability_match_not_first(service):
+    """Server id match later in list should still succeed (branch 488->487)."""
+    fake_catalog = {"catalog_servers": [{"id": "other", "url": "http://other"}, {"id": "1", "url": "http://a"}]}
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        with patch("mcpgateway.services.http_client_service.get_http_client") as mock_get_client:
+            mock_instance = AsyncMock()
+            mock_instance.get.return_value.status_code = 200
+            mock_get_client.return_value = mock_instance
+            result = await service.check_server_availability("1")
+    assert result.is_available
+
+
+@pytest.mark.asyncio
+async def test_check_server_availability_outer_exception(service):
+    """Exceptions outside the inner HTTP check fall into the outer handler (lines 521-523)."""
+    with patch.object(service, "load_catalog", AsyncMock(side_effect=RuntimeError("catalog fail"))):
+        result = await service.check_server_availability("1")
+    assert result.is_available is False
+    assert "catalog fail" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_bulk_register_breaks_on_exception_when_not_skipping_errors(service):
+    """When a per-server call raises and skip_errors=False, loop breaks (line 554)."""
+    fake_request = CatalogBulkRegisterRequest(server_ids=["1", "2"], skip_errors=False)
+    with patch.object(service, "register_catalog_server", AsyncMock(side_effect=Exception("boom"))):
+        db = MagicMock()
+        result = await service.bulk_register_servers(fake_request, db)
+    assert result.failed and result.failed[0]["error"] == "boom"

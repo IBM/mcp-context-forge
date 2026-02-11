@@ -61,7 +61,7 @@
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-48" aria-labelledby="prompt-id-header">
           <div class="font-mono text-xs">{{ prompt.id }}</div>
         </td>
-        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{% set clean_desc = (prompt.description or "") | replace('\n', ' ') | replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags | trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{ refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}</td>
+        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{% set clean_desc = (prompt.description or "") | decode_html | replace('\n', ' ') | replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags | trim %} {% if refactor_desc | length is greaterthan 220 %} {{ refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap">{% if prompt.tags %} {% for tag in prompt.tags %}<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1">{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}</span>{% endfor %} {% else %}<span class="text-gray-500 dark:text-gray-300 text-xs">None</span>{% endif %}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{{ prompt.ownerEmail or prompt.owner_email }}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">{% if prompt.team %}{{ prompt.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}</td>

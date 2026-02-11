@@ -1260,6 +1260,7 @@
                         <input
                           type="password"
                           id="import-rekey-secret"
+                          autocomplete="off"
                           placeholder="New encryption secret (optional)"
                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
                         />
@@ -1885,7 +1886,7 @@
                           API Key
                           <span id="llm-provider-api-key-required" class="text-red-500 hidden">*</span>
                         </label>
-                        <input type="password" id="llm-provider-api-key" name="api_key" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
+                        <input type="password" id="llm-provider-api-key" name="api_key" autocomplete="off" class="mt-1 px-1.5 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white sm:text-sm" placeholder="Leave blank to keep existing">
                       </div>
                       <div>
                         <label for="llm-provider-api-base" class="block text-sm font-medium text-gray-700 dark:text-gray-300">API Base URL</label>
@@ -2098,6 +2099,7 @@
                   <input
                     type="password"
                     id="modal-api-key"
+                    autocomplete="off"
                     class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="Enter your API key"
                     required
@@ -2377,7 +2379,7 @@
                   <td
                     class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
                   >
-                    {{ server.description }}
+                    {{ server.description | decode_html }}
                   </td>
                   <td
                     class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300"
@@ -3711,6 +3713,7 @@
                   <input
                     type="text"
                     name="auth_username"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -3721,6 +3724,7 @@
                   <input
                     type="password"
                     name="auth_password"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -3733,6 +3737,7 @@
                   <input
                     type="password"
                     name="auth_token"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -5242,6 +5247,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_query_param_value"
                       id="auth-query-param-value-gw"
+                      autocomplete="off"
                       data-sensitive-label="API key"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -5265,6 +5271,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="text"
                     name="auth_username"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -5277,6 +5284,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_password"
                       id="auth-password-gw"
+                      autocomplete="off"
                       data-sensitive-label="password"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -5302,6 +5310,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_token"
                       id="auth-token-gw"
+                      autocomplete="off"
                       data-sensitive-label="token"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -5426,6 +5435,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <input
                       type="password"
                       name="oauth_client_secret"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Leave empty for auto-registration via DCR"
                     />
@@ -5444,6 +5454,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="text"
                       name="oauth_username"
                       id="oauth-username-gw"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="systemadmin@system.com"
                     />
@@ -5462,6 +5473,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="oauth_password"
                       id="oauth-password-gw"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Enter password"
                     />
@@ -5887,6 +5899,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="email"
                     name="email"
                     required
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="user@example.com"
                   />
@@ -5901,6 +5914,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     type="text"
                     name="full_name"
                     required
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm bg-gray-200 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                     placeholder="John Smith"
                   />
@@ -5919,6 +5933,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     name="password"
                     required
                     minlength="8"
+                    autocomplete="off"
                     oninput="validateNewUserPassword()"
                     class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
                     placeholder="Strong password"
@@ -6535,7 +6550,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <td class="px-6 py-4 whitespace-nowrap">
                         <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
                       </td>
-                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description }}</td>
+                      <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.description | decode_html }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.endpointUrl }}</td>
                       <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
                         {% if agent.tags %}
@@ -6683,6 +6698,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="text"
                     name="auth_username"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -6693,6 +6709,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="password"
                     name="auth_password"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -6706,6 +6723,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <input
                     type="password"
                     name="auth_token"
+                    autocomplete="off"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                   />
                 </div>
@@ -6783,6 +6801,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="auth_query_param_value"
                       id="auth-query-param-value-a2a"
+                      autocomplete="off"
                       data-sensitive-label="API key"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                     />
@@ -6866,6 +6885,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     <input
                       type="password"
                       name="oauth_client_secret"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Leave empty for auto-registration via DCR"
                     />
@@ -6884,6 +6904,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="text"
                       name="oauth_username"
                       id="oauth-username-a2a"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="systemadmin@system.com"
                     />
@@ -6902,6 +6923,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       type="password"
                       name="oauth_password"
                       id="oauth-password-a2a"
+                      autocomplete="off"
                       class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                       placeholder="Enter password"
                     />
@@ -7412,7 +7434,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       {{ service.name }}
                     </h4>
                     <p class="text-sm text-gray-600 dark:text-gray-400">
-                      {{ service.description or "" }}
+                      {{ (service.description or "") | decode_html }}
                     </p>
                     <div class="mt-2 flex flex-wrap gap-2">
                       <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if service.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">
@@ -8386,6 +8408,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="text"
                           name="auth_username"
                           id="edit-auth-username"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
                       </div>
@@ -8398,6 +8421,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_password"
                           id="edit-auth-password"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                           placeholder="********"
                         />
@@ -8413,6 +8437,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_token"
                           id="edit-auth-token"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                           placeholder="********"
                         />
@@ -9575,6 +9600,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="auth_query_param_value"
                             id="auth-query-param-value-gw-edit"
+                            autocomplete="off"
                             data-sensitive-label="API key"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                           />
@@ -9598,6 +9624,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         <input
                           type="text"
                           name="auth_username"
+                          autocomplete="off"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
                       </div>
@@ -9610,6 +9637,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_password"
                           id="auth-password-gw-edit"
+                          autocomplete="off"
                           data-sensitive-label="password"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                         />
@@ -9635,6 +9663,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           type="password"
                           name="auth_token"
                           id="auth-token-gw-edit"
+                          autocomplete="off"
                           data-sensitive-label="token"
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                         />
@@ -9765,6 +9794,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_client_secret"
                             id="oauth-client-secret-gw-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Leave empty for auto-registration via DCR"
                           />
@@ -9786,6 +9816,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="text"
                             name="oauth_username"
                             id="oauth-username-gw-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="systemadmin@system.com"
                           />
@@ -9804,6 +9835,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_password"
                             id="oauth-password-gw-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Enter password"
                           />
@@ -10058,6 +10090,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <input
                             type="text"
                             name="auth_username"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                   focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
@@ -10067,6 +10100,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <input
                             type="password"
                             name="auth_password"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                   focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
@@ -10080,6 +10114,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <input
                             type="password"
                             name="auth_token"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                   focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
@@ -10142,6 +10177,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                               type="password"
                               name="auth_query_param_value"
                               id="auth-query-param-value-a2a-edit"
+                              autocomplete="off"
                               data-sensitive-label="API key"
                               class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300 pr-16"
                             />
@@ -10235,6 +10271,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_client_secret"
                             id="oauth-client-secret-a2a-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Leave empty for auto-registration via DCR"
                           />
@@ -10257,6 +10294,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="text"
                             name="oauth_username"
                             id="oauth-username-a2a-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="systemadmin@system.com"
                           />
@@ -10279,6 +10317,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             type="password"
                             name="oauth_password"
                             id="oauth-password-a2a-edit"
+                            autocomplete="off"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                             placeholder="Enter password"
                           />
@@ -11627,13 +11666,17 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
       function createRowElement(sectionType, item) {
         const row = document.createElement('tr');
+        // XSS SAFETY: All user-provided data is escaped via escapeHtml() before being inserted into innerHTML.
+        // This pattern (escape then innerHTML) is safe as long as escapeHtml() is always called on untrusted data.
+        // DO NOT remove escapeHtml() calls - they prevent XSS attacks from malicious database content.
+
 
         // Create row content based on section type
         if (sectionType === 'tools') {
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || item.customName || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.url || '')}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
@@ -11643,7 +11686,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.uri || '')}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
@@ -11654,7 +11697,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${argsText}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
@@ -11664,7 +11707,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
           row.innerHTML = `
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(item.name || '')}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(item.description || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300">${escapeHtml(decodeHtml(item.description || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.isActive)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
@@ -11686,7 +11729,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">${escapeHtml(item.id)}</td>
             <td class="px-6 py-4 whitespace-nowrap">
               <div class="text-sm font-medium text-gray-900 dark:text-gray-200">${escapeHtml(item.name || '')}</div>
-              <div class="text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.description || '')}</div>
+              <div class="text-sm text-gray-600 dark:text-gray-400">${escapeHtml(decodeHtml(item.description || ''))}</div>
               <div class="mt-1">
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">${escapeHtml(item.ownerEmail || '')}</span>
                 <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 ml-2">${escapeHtml(item.team || '')}</span>
@@ -14154,8 +14197,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             <form
               id="create-team-form"
               hx-post="{{ root_path }}/admin/teams"
-              hx-target="#unified-teams-list"
-              hx-swap="afterbegin"
+              hx-target="#create-team-error"
+              hx-swap="innerHTML"
               data-team-validation="true"
             >
               <div id="create-team-error" class="mb-4"></div>
@@ -14421,6 +14464,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   type="email"
                   id="invite-email"
                   name="email"
+                  autocomplete="off"
                   class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:text-white"
                   placeholder="user@example.com"
                 />

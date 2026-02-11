@@ -32,6 +32,7 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
 import hashlib
+import html
 import os as _os  # local alias to avoid collisions
 import sys
 from typing import Any, AsyncIterator, Dict, List, Optional, Union
@@ -1896,6 +1897,35 @@ jinja_env = Environment(
     autoescape=True,
     auto_reload=settings.templates_auto_reload,
 )
+
+
+# Add custom filter to decode HTML entities for backward compatibility with old database records
+# that were stored with HTML entities (e.g., &#x27; instead of ')
+# NOTE: This filter can be removed after all deployments have run the c1c2c3c4c5c6 migration,
+# which decodes all existing HTML entities in the database. After that migration, this filter
+# becomes a no-op since new data is stored without HTML encoding.
+def decode_html_entities(value: str) -> str:
+    """Decode HTML entities in strings for display.
+
+    This filter handles legacy data that was stored with HTML entities.
+    New data is stored without encoding, but this ensures old records display correctly.
+
+    TEMPORARY: Can be removed after c1c2c3c4c5c6 migration has been applied to all deployments.
+
+    Args:
+        value: String that may contain HTML entities
+
+    Returns:
+        String with HTML entities decoded to their original characters
+    """
+    if not value:
+        return value
+
+    return html.unescape(value)
+
+
+jinja_env.filters["decode_html"] = decode_html_entities
+
 templates = Jinja2Templates(env=jinja_env)
 if not settings.templates_auto_reload:
     logger.info("🎨 Template auto-reload disabled (production mode)")

@@ -21,7 +21,7 @@ import orjson
 # First-Party
 from mcpgateway.utils.redis_client import get_redis_client
 
-if TYPE_CHECKING:
+if TYPE_CHECKING:  # pragma: no cover
     # Third-Party
     from redis.asyncio import Redis
 

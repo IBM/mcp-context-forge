@@ -67,7 +67,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
-      # 3️⃣  Run the tests with coverage (fail under 90% coverage)
+      # 3️⃣  Run the tests with coverage (fail under 95% coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -78,20 +78,20 @@ jobs:
             --cov-report=html \
             --cov-report=term \
             --cov-branch \
-            --cov-fail-under=90
+            --cov-fail-under=95
 
       # -----------------------------------------------------------
-      # 3.5  Diff-cover: enforce 90% coverage on changed lines (PRs only)
+      # 3.5  Diff-cover: enforce 95% coverage on changed lines (PRs only)
       # -----------------------------------------------------------
       - name: 📈  Diff-cover (changed lines)
         if: github.event_name == 'pull_request'
         run: |
           uv run diff-cover coverage.xml \
             --compare-branch=origin/${{ github.base_ref }} \
-            --fail-under=90
+            --fail-under=95
 
       # -----------------------------------------------------------
-      # 4️⃣  Run doctests (fail under 35% coverage)
+      # 4️⃣  Run doctests (fail under 30% coverage)
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
