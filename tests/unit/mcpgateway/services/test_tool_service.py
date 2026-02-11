@@ -125,7 +125,7 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     test_db.query = Mock(return_value=mock_query_result)
 
 
-class TestToolServiceHelpers:
+class TestToolServiceHelpersExtended:
     """Tests for helper utilities in tool_service."""
 
     def test_get_validator_class_and_check_fallback_success(self, monkeypatch):
@@ -2475,13 +2475,17 @@ class TestToolService:
                 mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_aggregate_metrics(self, tool_service):
+    async def test_aggregate_metrics(self, tool_service, monkeypatch):
         """Test aggregating metrics across all tools using combined raw + rollup query."""
         # Standard
         from unittest.mock import patch
 
         # First-Party
+        from mcpgateway.cache import metrics_cache as cache_module
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        cache_module.metrics_cache.invalidate("tools")
+        monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
 
         # Mock database
         mock_db = MagicMock()
@@ -2515,13 +2519,17 @@ class TestToolService:
         }
 
     @pytest.mark.asyncio
-    async def test_aggregate_metrics_no_data(self, tool_service):
+    async def test_aggregate_metrics_no_data(self, tool_service, monkeypatch):
         """Test aggregating metrics when no data exists."""
         # Standard
         from unittest.mock import patch
 
         # First-Party
+        from mcpgateway.cache import metrics_cache as cache_module
         from mcpgateway.services.metrics_query_service import AggregatedMetrics
+
+        cache_module.metrics_cache.invalidate("tools")
+        monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
 
         # Mock database
         mock_db = MagicMock()
@@ -2648,8 +2656,15 @@ class TestToolService:
             assert event["data"]["id"] == mock_tool.id
 
     @pytest.mark.asyncio
-    async def test_get_top_tools(self, tool_service, test_db):
+    async def test_get_top_tools(self, tool_service, test_db, monkeypatch):
         """Test get_top_tools method."""
+        # First-Party
+        from mcpgateway.cache import metrics_cache as cache_module
+
+        # Ensure this test does not read pre-populated cache entries from other tests.
+        cache_module.metrics_cache.invalidate_prefix("top_tools:")
+        monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: False)
+
         # Mock the combined query results (TopPerformerResult objects)
         mock_performer1 = MagicMock()
         mock_performer1.id = "1"

@@ -623,6 +623,11 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' && \
+		export PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' && \
+		export DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' && \
+		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
+		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
 			--durations=120 --doctest-modules mcpgateway/ --cov-report=term \
@@ -630,6 +635,11 @@ coverage:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export BASIC_AUTH_PASSWORD='TestCoveragePassw0rd!42' && \
+		export PLATFORM_ADMIN_PASSWORD='TestCoveragePassw0rd!42' && \
+		export DEFAULT_USER_PASSWORD='TestCoveragePassw0rd!42' && \
+		export JWT_SECRET_KEY='coverage-test-jwt-secret-key-1234567890' && \
+		export AUTH_ENCRYPTION_SECRET='coverage-test-auth-encryption-1234567890' && \
 		python3 -m pytest -p pytest_cov --reruns=1 --reruns-delay 30 \
 			--dist loadgroup -n 8 -rA --cov-append --capture=fd -v \
 			--durations=120 --cov-report=term --cov=mcpgateway \

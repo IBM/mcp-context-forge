@@ -95,14 +95,19 @@ def create_user_context(email: str, is_admin: bool = False, TestSessionLocal=Non
     """Create a mock user context for testing."""
     async def mock_user_with_permissions():
         """Mock user context for RBAC."""
-        return {
-            "email": email,
-            "full_name": f"Test User {email}",
-            "is_admin": is_admin,
-            "ip_address": "127.0.0.1",
-            "user_agent": "test-client",
-            "db": TestSessionLocal() if TestSessionLocal else None,
-        }
+        db_session = TestSessionLocal() if TestSessionLocal else None
+        try:
+            yield {
+                "email": email,
+                "full_name": f"Test User {email}",
+                "is_admin": is_admin,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": db_session,
+            }
+        finally:
+            if db_session is not None:
+                db_session.close()
     return mock_user_with_permissions
 
 
@@ -438,15 +443,19 @@ class TestTeamIdFallbackHTTP:
         mock_user.email = "team-user@example.com"
 
         async def mock_user_with_team():
-            return {
-                "email": "team-user@example.com",
-                "full_name": "Team User",
-                "is_admin": False,
-                "ip_address": "127.0.0.1",
-                "user_agent": "test-client",
-                "db": TestSessionLocal(),
-                "team_id": "team-X",  # Team ID from JWT token
-            }
+            db_session = TestSessionLocal()
+            try:
+                yield {
+                    "email": "team-user@example.com",
+                    "full_name": "Team User",
+                    "is_admin": False,
+                    "ip_address": "127.0.0.1",
+                    "user_agent": "test-client",
+                    "db": db_session,
+                    "team_id": "team-X",  # Team ID from JWT token
+                }
+            finally:
+                db_session.close()
 
         app.dependency_overrides[require_auth] = lambda: "team-user@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
@@ -502,15 +511,19 @@ class TestTeamIdFallbackHTTP:
         mock_user.email = "team-user@example.com"
 
         async def mock_user_with_team():
-            return {
-                "email": "team-user@example.com",
-                "full_name": "Team User",
-                "is_admin": False,
-                "ip_address": "127.0.0.1",
-                "user_agent": "test-client",
-                "db": TestSessionLocal(),
-                "team_id": "team-X",  # Token is scoped to team X
-            }
+            db_session = TestSessionLocal()
+            try:
+                yield {
+                    "email": "team-user@example.com",
+                    "full_name": "Team User",
+                    "is_admin": False,
+                    "ip_address": "127.0.0.1",
+                    "user_agent": "test-client",
+                    "db": db_session,
+                    "team_id": "team-X",  # Token is scoped to team X
+                }
+            finally:
+                db_session.close()
 
         app.dependency_overrides[require_auth] = lambda: "team-user@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user
@@ -559,15 +572,19 @@ class TestTeamIdFallbackHTTP:
         mock_user.email = "team-user@example.com"
 
         async def mock_user_with_team():
-            return {
-                "email": "team-user@example.com",
-                "full_name": "Team User",
-                "is_admin": False,
-                "ip_address": "127.0.0.1",
-                "user_agent": "test-client",
-                "db": TestSessionLocal(),
-                "team_id": "team-servers",  # Team ID from JWT token
-            }
+            db_session = TestSessionLocal()
+            try:
+                yield {
+                    "email": "team-user@example.com",
+                    "full_name": "Team User",
+                    "is_admin": False,
+                    "ip_address": "127.0.0.1",
+                    "user_agent": "test-client",
+                    "db": db_session,
+                    "team_id": "team-servers",  # Team ID from JWT token
+                }
+            finally:
+                db_session.close()
 
         app.dependency_overrides[require_auth] = lambda: "team-user@example.com"
         app.dependency_overrides[get_current_user] = lambda: mock_user

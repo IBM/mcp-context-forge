@@ -10,6 +10,7 @@ These tests spawn a real gRPC server subprocess and test actual communication.
 
 # Standard
 import os
+from pathlib import Path
 import socket
 import subprocess
 import sys
@@ -269,19 +270,23 @@ async def test_grpc_client_over_uds(grpc_server_proc_uds):
 # PluginManager Integration Tests
 # =============================================================================
 
-# Fixed port for PluginManager tests (matches valid_grpc_external_plugin_manager.yaml)
-PLUGIN_MANAGER_GRPC_PORT = 50151
-
-
 @pytest.fixture
-def grpc_server_proc_for_manager():
-    """Start a gRPC plugin server on the fixed port for PluginManager tests."""
+def grpc_server_proc_for_manager(tmp_path):
+    """Start a gRPC plugin server and return a matching PluginManager config file."""
     current_env = os.environ.copy()
+    port = _get_free_port()
     current_env["PLUGINS_CONFIG_PATH"] = "tests/unit/mcpgateway/plugins/fixtures/configs/valid_single_plugin.yaml"
     current_env["PYTHONPATH"] = "."
     current_env["PLUGINS_TRANSPORT"] = "grpc"
     current_env["PLUGINS_GRPC_SERVER_HOST"] = "127.0.0.1"
-    current_env["PLUGINS_GRPC_SERVER_PORT"] = str(PLUGIN_MANAGER_GRPC_PORT)
+    current_env["PLUGINS_GRPC_SERVER_PORT"] = str(port)
+
+    template_config = Path("tests/unit/mcpgateway/plugins/fixtures/configs/valid_grpc_external_plugin_manager.yaml")
+    dynamic_config = tmp_path / "valid_grpc_external_plugin_manager.dynamic.yaml"
+    dynamic_config.write_text(
+        template_config.read_text(encoding="utf-8").replace("127.0.0.1:50151", f"127.0.0.1:{port}"),
+        encoding="utf-8",
+    )
 
     try:
         with subprocess.Popen(
@@ -290,8 +295,8 @@ def grpc_server_proc_for_manager():
             stderr=subprocess.STDOUT,
             env=current_env,
         ) as server_proc:
-            _wait_for_port("127.0.0.1", PLUGIN_MANAGER_GRPC_PORT, proc=server_proc)
-            yield server_proc
+            _wait_for_port("127.0.0.1", port, proc=server_proc)
+            yield server_proc, str(dynamic_config)
             server_proc.terminate()
             server_proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
@@ -302,15 +307,13 @@ def grpc_server_proc_for_manager():
 @pytest.mark.asyncio
 async def test_grpc_plugin_manager_invoke_hook(grpc_server_proc_for_manager):
     """Test PluginManager can invoke hooks through gRPC external plugin."""
-    server_proc = grpc_server_proc_for_manager
+    server_proc, config_path = grpc_server_proc_for_manager
     assert not server_proc.poll(), "Server failed to start"
 
     # Reset PluginManager singleton state
     PluginManager.reset()
 
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_grpc_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config=config_path)
 
     try:
         await plugin_manager.initialize()
@@ -339,13 +342,11 @@ async def test_grpc_plugin_manager_invoke_hook(grpc_server_proc_for_manager):
 @pytest.mark.asyncio
 async def test_grpc_plugin_manager_multiple_hooks(grpc_server_proc_for_manager):
     """Test PluginManager can invoke multiple hook types through gRPC."""
-    server_proc = grpc_server_proc_for_manager
+    server_proc, config_path = grpc_server_proc_for_manager
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_grpc_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config=config_path)
 
     try:
         await plugin_manager.initialize()
@@ -380,13 +381,11 @@ async def test_grpc_plugin_manager_multiple_hooks(grpc_server_proc_for_manager):
 @pytest.mark.asyncio
 async def test_grpc_plugin_manager_context_persistence(grpc_server_proc_for_manager):
     """Test that context is maintained across multiple PluginManager calls."""
-    server_proc = grpc_server_proc_for_manager
+    server_proc, config_path = grpc_server_proc_for_manager
     assert not server_proc.poll(), "Server failed to start"
 
     PluginManager.reset()
-    plugin_manager = PluginManager(
-        config="tests/unit/mcpgateway/plugins/fixtures/configs/valid_grpc_external_plugin_manager.yaml"
-    )
+    plugin_manager = PluginManager(config=config_path)
 
     try:
         await plugin_manager.initialize()

@@ -198,6 +198,24 @@ async def test_initialize_adds_default_roots(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_initialize_continues_when_default_root_fails(monkeypatch):
+    monkeypatch.setattr(settings, "default_roots", ["http://a.com"])
+    service = RootService()
+
+    async def _raise(_root_uri, _name=None):
+        raise RootServiceError("bad root")
+
+    monkeypatch.setattr(service, "add_root", _raise)
+
+    # Should handle RootServiceError internally and continue.
+    await service.initialize()
+
+    assert await service.list_roots() == []
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_subscribe_changes_receives_events():
     service = RootService()
     events = []
