@@ -11,7 +11,7 @@
     - query_params: optional dict of additional query parameters
 -->
 
-<div x-data="{
+<div data-base-url="{{ base_url }}" x-data="{
   currentPage: {{ pagination.page }},
   perPage: {{ pagination.per_page }},
   totalItems: {{ pagination.total_items }},
@@ -21,9 +21,11 @@
   targetSelector: '{{ hx_target|default('#tools-table') }}',
   swapStyle: '{{ hx_swap|default('innerHTML') }}',
   tableName: '{{ table_name|default('') }}',
+  baseUrl: '',
 
-  // Initialize from URL parameters (namespaced per table)
+  // Initialize from data attributes and URL parameters (namespaced per table)
   init() {
+    this.baseUrl = $el.dataset.baseUrl || '';
     if (!this.tableName) return;
     const urlParams = new URLSearchParams(window.location.search);
     const prefix = this.tableName + '_';
@@ -162,10 +164,11 @@
 
   <!-- Page Info -->
   <div class="text-sm text-gray-700 dark:text-gray-300">
-    <span x-text="`Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"></span>
+    <span x-text="totalItems === 0 ? 'No items found' : `Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"></span>
   </div>
 
-  <!-- Page Navigation -->
+  <!-- Page Navigation (hidden when there are no pages) -->
+  <template x-if="totalPages > 0">
   <div class="flex items-center gap-2">
     <!-- First Page Button -->
     <button
@@ -270,6 +273,7 @@
       ⏭️
     </button>
   </div>
+  </template>
 
   <!-- Keyboard Shortcuts Helper (Optional) -->
   <div class="hidden sm:block text-xs text-gray-500 dark:text-gray-500">

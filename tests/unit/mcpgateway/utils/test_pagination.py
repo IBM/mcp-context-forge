@@ -393,6 +393,92 @@ class TestOffsetPagination:
         assert "pagination" in result
 
     @pytest.mark.asyncio
+    async def test_offset_paginate_clamps_page_to_total_pages(self, db_session):
+        """When page exceeds total_pages, it should be clamped to total_pages."""
+        for i in range(30):
+            tool = Tool(
+                id=f"tool-{i}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+
+        # 30 items / 20 per_page = 2 total_pages; requesting page=10 should clamp to 2
+        result = await offset_paginate(
+            db=db_session,
+            query=query,
+            page=10,
+            per_page=20,
+            base_url="/admin/tools",
+        )
+
+        pagination = result["pagination"]
+        assert pagination.page == 2
+        assert pagination.total_pages == 2
+        assert pagination.has_next is False
+        assert pagination.has_prev is True
+        assert len(result["data"]) == 10  # Last page has 10 items
+
+    @pytest.mark.asyncio
+    async def test_offset_paginate_page_stays_1_when_no_items(self, db_session):
+        """When there are no items, page should stay at 1 regardless of input."""
+        query = select(Tool).where(Tool.enabled.is_(True))
+
+        result = await offset_paginate(
+            db=db_session,
+            query=query,
+            page=5,
+            per_page=20,
+            base_url="/admin/tools",
+        )
+
+        pagination = result["pagination"]
+        assert pagination.page == 5  # No clamping when total_pages=0 (keeps page >= 1)
+        assert pagination.total_pages == 0
+        assert pagination.total_items == 0
+
+    @pytest.mark.asyncio
+    async def test_offset_paginate_exact_last_page_not_changed(self, db_session):
+        """When page equals total_pages exactly, it should not be changed."""
+        for i in range(40):
+            tool = Tool(
+                id=f"tool-{i}",
+                original_name=f"Tool {i}",
+                custom_name=f"Tool {i}",
+                url=f"http://test.com/tool{i}",
+                description=f"Test tool {i}",
+                input_schema={"type": "object"},
+                enabled=True,
+            )
+            db_session.add(tool)
+        db_session.commit()
+
+        query = select(Tool).where(Tool.enabled.is_(True))
+
+        # 40 items / 20 per_page = 2 total_pages; requesting page=2 should stay at 2
+        result = await offset_paginate(
+            db=db_session,
+            query=query,
+            page=2,
+            per_page=20,
+            base_url="/admin/tools",
+        )
+
+        pagination = result["pagination"]
+        assert pagination.page == 2
+        assert pagination.total_pages == 2
+        assert pagination.has_next is False
+        assert pagination.has_prev is True
+        assert len(result["data"]) == 20
+
+    @pytest.mark.asyncio
     async def test_offset_paginate_clamps_offset_to_max(self, db_session, monkeypatch, caplog):
         """When page would produce an offset larger than pagination_max_offset, clamp it."""
         for i in range(30):
