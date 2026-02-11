@@ -117,6 +117,15 @@ _normalize_env_list_vars()
 FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 
 
+def get_default_require_strong_secrets() -> bool:
+    """
+    Dynamically determine the default for REQUIRE_STRONG_SECRETS.
+    Returns True if ENVIRONMENT is 'production', otherwise False.
+    Required by US-1 for environment-aware security enforcement.
+    """
+    return os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+
 class Settings(BaseSettings):
     """
     MCP Gateway configuration settings.
@@ -602,7 +611,10 @@ class Settings(BaseSettings):
     # Security validation thresholds
     min_secret_length: int = 32
     min_password_length: int = 12
-    require_strong_secrets: bool = False  # Default to False for backward compatibility, will be enforced in 1.0.0
+    require_strong_secrets: bool = Field(
+        default_factory=get_default_require_strong_secrets,
+        description="Enforces strong secret validation. Defaults to True in production, False in development for ease of testing. When enabled, secrets are checked against a list of weak values and must meet minimum length and entropy requirements.",
+    )
 
     llmchat_enabled: bool = Field(default=False, description="Enable LLM Chat feature")
     toolops_enabled: bool = Field(default=False, description="Enable ToolOps feature")
