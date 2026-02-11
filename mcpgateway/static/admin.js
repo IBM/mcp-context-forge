@@ -21890,8 +21890,8 @@ function initializeAddMembersForms(root = document) {
 function getTeamsCurrentPaginationState() {
     const urlParams = new URLSearchParams(window.location.search);
     return {
-        page: urlParams.get('teams_page') || '1',
-        perPage: urlParams.get('teams_size') || '10'
+        page: urlParams.get("teams_page") || "1",
+        perPage: urlParams.get("teams_size") || "10",
     };
 }
 
