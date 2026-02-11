@@ -199,7 +199,8 @@ class BenchmarkSuite:
         data_size = len(data_str.encode("utf-8"))
 
         # Python benchmark
-        py_time = self.measure_time(self.python_detector.process_nested, data, "", iterations=iterations)
+        py_time, py_latencies = self.measure_time(self.python_detector.process_nested, data, "", iterations=iterations)
+        py_latencies_ms = [l * 1000 for l in py_latencies]
         py_result = BenchmarkResult(
             name=f"{name}_nested_python",
             implementation="Python",
@@ -207,12 +208,20 @@ class BenchmarkSuite:
             throughput_mb_s=(data_size / py_time) / (1024 * 1024),
             operations=iterations,
             text_size_bytes=data_size,
+            min_ms=min(py_latencies_ms),
+            max_ms=max(py_latencies_ms),
+            median_ms=statistics.median(py_latencies_ms),
+            p95_ms=statistics.quantiles(py_latencies_ms, n=20)[18] if len(py_latencies_ms) > 20 else max(py_latencies_ms),
+            p99_ms=statistics.quantiles(py_latencies_ms, n=100)[98] if len(py_latencies_ms) > 100 else max(py_latencies_ms),
+            stddev_ms=statistics.stdev(py_latencies_ms) if len(py_latencies_ms) > 1 else 0.0,
+            ops_per_sec=1.0 / py_time,
         )
         self.results.append(py_result)
 
         # Rust benchmark
         if self.rust_detector:
-            rust_time = self.measure_time(self.rust_detector.process_nested, data, "", iterations=iterations)
+            rust_time, rust_latencies = self.measure_time(self.rust_detector.process_nested, data, "", iterations=iterations)
+            rust_latencies_ms = [l * 1000 for l in rust_latencies]
             rust_result = BenchmarkResult(
                 name=f"{name}_nested_rust",
                 implementation="Rust",
@@ -220,6 +229,13 @@ class BenchmarkSuite:
                 throughput_mb_s=(data_size / rust_time) / (1024 * 1024),
                 operations=iterations,
                 text_size_bytes=data_size,
+                min_ms=min(rust_latencies_ms),
+                max_ms=max(rust_latencies_ms),
+                median_ms=statistics.median(rust_latencies_ms),
+                p95_ms=statistics.quantiles(rust_latencies_ms, n=20)[18] if len(rust_latencies_ms) > 20 else max(rust_latencies_ms),
+                p99_ms=statistics.quantiles(rust_latencies_ms, n=100)[98] if len(rust_latencies_ms) > 100 else max(rust_latencies_ms),
+                stddev_ms=statistics.stdev(rust_latencies_ms) if len(rust_latencies_ms) > 1 else 0.0,
+                ops_per_sec=1.0 / rust_time,
             )
             self.results.append(rust_result)
 

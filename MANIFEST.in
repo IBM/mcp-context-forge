@@ -100,6 +100,7 @@ recursive-include plugins_rust *.toml
 recursive-include plugins_rust *.md
 recursive-include plugins_rust *.py
 include plugins_rust/Makefile
+include plugins_rust/pii_filter/Makefile
 prune plugins_rust/target
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist

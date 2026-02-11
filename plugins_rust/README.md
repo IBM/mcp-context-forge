@@ -173,8 +173,7 @@ make test             # Verify tests pass
 ## 📚 Resources
 
 - [QUICKSTART.md](QUICKSTART.md) - Quick start guide
-- [pii_filter/benchmarks/README.md](pii_filter/benchmarks/README.md) - Benchmarking guide
-- [pii_filter/docs/](pii_filter/docs/) - Implementation docs
+- [pii_filter/README.md](pii_filter/README.md) - PII Filter subcrate documentation
 
 ## 🤝 Contributing
 

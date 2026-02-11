@@ -28,10 +28,31 @@ pub fn detect_pii(
 
         for capture in pattern.regex.captures_iter(text) {
             if let Some(mat) = capture.get(0) {
+                let start = mat.start();
+                let end = mat.end();
+                let match_text = &text[start..end];
+
+                // Check whitelist
+                if patterns.whitelist.iter().any(|wp| wp.is_match(match_text)) {
+                    continue;
+                }
+
+                // Check for overlaps with existing detections
+                let has_overlap = detections.values().any(|items: &Vec<Detection>| {
+                    items.iter().any(|det| {
+                        (start >= det.start && start < det.end)
+                            || (end > det.start && end <= det.end)
+                            || (start <= det.start && end >= det.end)
+                    })
+                });
+                if has_overlap {
+                    continue;
+                }
+
                 let detection = Detection {
-                    value: mat.as_str().to_string(),
-                    start: mat.start(),
-                    end: mat.end(),
+                    value: match_text.to_string(),
+                    start,
+                    end,
                     mask_strategy: pattern.mask_strategy,
                 };
 
