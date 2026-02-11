@@ -60,11 +60,11 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.transports.rust_streamable_bridge import RustStreamableHTTPTransportBridge
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.transports.rust_streamable_bridge import RustStreamableHTTPTransportBridge
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_credentials
 
@@ -1673,7 +1673,7 @@ class SessionManagerWrapper:
             rust_handled = await self.rust_bridge.handle_request(scope, receive, send)
             if rust_handled:
                 return
-                
+
         request_headers_var.set(context.headers or headers)
         server_id_var.set(context.server_id)
 
@@ -1681,7 +1681,7 @@ class SessionManagerWrapper:
             rust_handled = await self.rust_bridge.handle_request(scope, receive, send)
             if rust_handled:
                 return
-                
+
             await self.session_manager.handle_request(scope, receive, send)
         except anyio.ClosedResourceError:
             # Expected when client closes one side of the stream (normal lifecycle)

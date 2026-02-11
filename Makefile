@@ -1773,7 +1773,7 @@ load-test-compare:                         ## Compare two Locust CSV runs (basel
 		exit 1; \
 	fi
 	@python3 tests/loadtest/compare_locust_runs.py --baseline "$(BASELINE_CSV)" --candidate "$(CANDIDATE_CSV)"
-	
+
 # --- Baseline Load Tests (individual components without gateway) ---
 # help: load-test-baseline     - Baseline test: Fast Time Server REST API (1000 users, 3min)
 # help: load-test-baseline-ui  - Baseline test with Locust Web UI
@@ -6910,7 +6910,7 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
-	
+
 # Experimental Rust Streamable HTTP transport scaffold
 # help: rust-transport-build    - Build experimental Rust streamable HTTP transport wheel
 # help: rust-transport-dev      - Build/install experimental Rust streamable HTTP transport in development mode
