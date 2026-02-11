@@ -332,6 +332,7 @@ services:
     environment:
       - PLUGINS_ENABLED=true
       - PLUGIN_CONFIG_FILE=/app/plugins/config.yaml
+      - PLUGINS_CONFIG_FILE=/app/plugins/config.yaml
     volumes:
       - ./plugins/config.yaml:/app/plugins/config.yaml
       - ./certs:/app/certs
@@ -454,6 +455,7 @@ plugins:
 cd gateway
 PLUGINS_ENABLED=true \
   PLUGIN_CONFIG_FILE=plugins/config.yaml \
+  PLUGINS_CONFIG_FILE=plugins/config.yaml \
   make dev
 ```
 

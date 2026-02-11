@@ -271,29 +271,6 @@ class MCPTransportTLSConfigBase(BaseModel):
             raise ValueError("keyfile requires certfile to be specified")
         return self
 
-    @staticmethod
-    def _parse_bool(value: Optional[str]) -> Optional[bool]:
-        """Convert a string environment value to boolean.
-
-        Args:
-            value: String value to parse as boolean.
-
-        Returns:
-            Boolean value or None if value is None.
-
-        Raises:
-            ValueError: If value is not a valid boolean string.
-        """
-
-        if value is None:
-            return None
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"Invalid boolean value: {value}")
-
 
 class MCPClientTLSConfig(MCPTransportTLSConfigBase):
     """Client-side TLS configuration (gateway connecting to plugin).
@@ -313,26 +290,24 @@ class MCPClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPClientTLSConfig instance or None if no environment variables are set.
         """
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
 
-        env = os.environ
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("PLUGINS_CLIENT_MTLS_CERTFILE"):
-            data["certfile"] = env["PLUGINS_CLIENT_MTLS_CERTFILE"]
-        if env.get("PLUGINS_CLIENT_MTLS_KEYFILE"):
-            data["keyfile"] = env["PLUGINS_CLIENT_MTLS_KEYFILE"]
-        if env.get("PLUGINS_CLIENT_MTLS_CA_BUNDLE"):
-            data["ca_bundle"] = env["PLUGINS_CLIENT_MTLS_CA_BUNDLE"]
-        if env.get("PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD") is not None:
-            data["keyfile_password"] = env["PLUGINS_CLIENT_MTLS_KEYFILE_PASSWORD"]
-
-        verify_val = cls._parse_bool(env.get("PLUGINS_CLIENT_MTLS_VERIFY"))
-        if verify_val is not None:
-            data["verify"] = verify_val
-
-        check_hostname_val = cls._parse_bool(env.get("PLUGINS_CLIENT_MTLS_CHECK_HOSTNAME"))
-        if check_hostname_val is not None:
-            data["check_hostname"] = check_hostname_val
+        if s.client_mtls_certfile:
+            data["certfile"] = s.client_mtls_certfile
+        if s.client_mtls_keyfile:
+            data["keyfile"] = s.client_mtls_keyfile
+        if s.client_mtls_ca_bundle:
+            data["ca_bundle"] = s.client_mtls_ca_bundle
+        if s.client_mtls_keyfile_password is not None:
+            data["keyfile_password"] = s.client_mtls_keyfile_password
+        if s.client_mtls_verify is not None:
+            data["verify"] = s.client_mtls_verify
+        if s.client_mtls_check_hostname is not None:
+            data["check_hostname"] = s.client_mtls_check_hostname
 
         if not data:
             return None
@@ -355,28 +330,23 @@ class MCPServerTLSConfig(MCPTransportTLSConfigBase):
 
         Returns:
             MCPServerTLSConfig instance or None if no environment variables are set.
-
-        Raises:
-            ValueError: If PLUGINS_SERVER_SSL_CERT_REQS is not a valid integer.
         """
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
 
-        env = os.environ
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("PLUGINS_SERVER_SSL_KEYFILE"):
-            data["keyfile"] = env["PLUGINS_SERVER_SSL_KEYFILE"]
-        if env.get("PLUGINS_SERVER_SSL_CERTFILE"):
-            data["certfile"] = env["PLUGINS_SERVER_SSL_CERTFILE"]
-        if env.get("PLUGINS_SERVER_SSL_CA_CERTS"):
-            data["ca_bundle"] = env["PLUGINS_SERVER_SSL_CA_CERTS"]
-        if env.get("PLUGINS_SERVER_SSL_KEYFILE_PASSWORD") is not None:
-            data["keyfile_password"] = env["PLUGINS_SERVER_SSL_KEYFILE_PASSWORD"]
-
-        if env.get("PLUGINS_SERVER_SSL_CERT_REQS"):
-            try:
-                data["ssl_cert_reqs"] = int(env["PLUGINS_SERVER_SSL_CERT_REQS"])
-            except ValueError:
-                raise ValueError(f"Invalid PLUGINS_SERVER_SSL_CERT_REQS: {env['PLUGINS_SERVER_SSL_CERT_REQS']}")
+        if s.server_ssl_keyfile:
+            data["keyfile"] = s.server_ssl_keyfile
+        if s.server_ssl_certfile:
+            data["certfile"] = s.server_ssl_certfile
+        if s.server_ssl_ca_certs:
+            data["ca_bundle"] = s.server_ssl_ca_certs
+        if s.server_ssl_keyfile_password is not None:
+            data["keyfile_password"] = s.server_ssl_keyfile_password
+        if s.server_ssl_cert_reqs is not None:
+            data["ssl_cert_reqs"] = s.server_ssl_cert_reqs
 
         if not data:
             return None
@@ -454,57 +424,28 @@ class MCPServerConfig(BaseModel):
             raise ValueError("TLS configuration is not supported for Unix domain sockets.")
         return self
 
-    @staticmethod
-    def _parse_bool(value: Optional[str]) -> Optional[bool]:
-        """Convert a string environment value to boolean.
-
-        Args:
-            value: String value to parse as boolean.
-
-        Returns:
-            Boolean value or None if value is None.
-
-        Raises:
-            ValueError: If value is not a valid boolean string.
-        """
-
-        if value is None:
-            return None
-        normalized = value.strip().lower()
-        if normalized in {"1", "true", "yes", "on"}:
-            return True
-        if normalized in {"0", "false", "no", "off"}:
-            return False
-        raise ValueError(f"Invalid boolean value: {value}")
-
     @classmethod
     def from_env(cls) -> Optional["MCPServerConfig"]:
         """Construct server configuration from PLUGINS_SERVER_* environment variables.
 
         Returns:
             MCPServerConfig instance or None if no environment variables are set.
-
-        Raises:
-            ValueError: If PLUGINS_SERVER_PORT is not a valid integer.
         """
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
 
-        env = os.environ
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("PLUGINS_SERVER_HOST"):
-            data["host"] = env["PLUGINS_SERVER_HOST"]
-        if env.get("PLUGINS_SERVER_PORT"):
-            try:
-                data["port"] = int(env["PLUGINS_SERVER_PORT"])
-            except ValueError:
-                raise ValueError(f"Invalid PLUGINS_SERVER_PORT: {env['PLUGINS_SERVER_PORT']}")
-        if env.get("PLUGINS_SERVER_UDS"):
-            data["uds"] = env["PLUGINS_SERVER_UDS"]
+        if s.server_host:
+            data["host"] = s.server_host
+        if s.server_port is not None:
+            data["port"] = s.server_port
+        if s.server_uds:
+            data["uds"] = s.server_uds
 
         # Check if SSL/TLS is enabled
-        ssl_enabled = cls._parse_bool(env.get("PLUGINS_SERVER_SSL_ENABLED"))
-        if ssl_enabled:
-            # Load TLS configuration
+        if s.server_ssl_enabled:
             tls_config = MCPServerTLSConfig.from_env()
             if tls_config:
                 data["tls"] = tls_config
@@ -743,21 +684,22 @@ class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCClientTLSConfig instance or None if no environment variables are set.
         """
-        env = os.environ
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
+
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("PLUGINS_GRPC_CLIENT_MTLS_CERTFILE"):
-            data["certfile"] = env["PLUGINS_GRPC_CLIENT_MTLS_CERTFILE"]
-        if env.get("PLUGINS_GRPC_CLIENT_MTLS_KEYFILE"):
-            data["keyfile"] = env["PLUGINS_GRPC_CLIENT_MTLS_KEYFILE"]
-        if env.get("PLUGINS_GRPC_CLIENT_MTLS_CA_BUNDLE"):
-            data["ca_bundle"] = env["PLUGINS_GRPC_CLIENT_MTLS_CA_BUNDLE"]
-        if env.get("PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD") is not None:
-            data["keyfile_password"] = env["PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD"]
-
-        verify_val = cls._parse_bool(env.get("PLUGINS_GRPC_CLIENT_MTLS_VERIFY"))
-        if verify_val is not None:
-            data["verify"] = verify_val
+        if s.grpc_client_mtls_certfile:
+            data["certfile"] = s.grpc_client_mtls_certfile
+        if s.grpc_client_mtls_keyfile:
+            data["keyfile"] = s.grpc_client_mtls_keyfile
+        if s.grpc_client_mtls_ca_bundle:
+            data["ca_bundle"] = s.grpc_client_mtls_ca_bundle
+        if s.grpc_client_mtls_keyfile_password is not None:
+            data["keyfile_password"] = s.grpc_client_mtls_keyfile_password
+        if s.grpc_client_mtls_verify is not None:
+            data["verify"] = s.grpc_client_mtls_verify
 
         if not data:
             return None
@@ -800,19 +742,22 @@ class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCServerTLSConfig instance or None if no environment variables are set.
         """
-        env = os.environ
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
+
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("PLUGINS_GRPC_SERVER_SSL_KEYFILE"):
-            data["keyfile"] = env["PLUGINS_GRPC_SERVER_SSL_KEYFILE"]
-        if env.get("PLUGINS_GRPC_SERVER_SSL_CERTFILE"):
-            data["certfile"] = env["PLUGINS_GRPC_SERVER_SSL_CERTFILE"]
-        if env.get("PLUGINS_GRPC_SERVER_SSL_CA_CERTS"):
-            data["ca_bundle"] = env["PLUGINS_GRPC_SERVER_SSL_CA_CERTS"]
-        if env.get("PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD") is not None:
-            data["keyfile_password"] = env["PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD"]
-        if env.get("PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH"):
-            data["client_auth"] = env["PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH"]
+        if s.grpc_server_ssl_keyfile:
+            data["keyfile"] = s.grpc_server_ssl_keyfile
+        if s.grpc_server_ssl_certfile:
+            data["certfile"] = s.grpc_server_ssl_certfile
+        if s.grpc_server_ssl_ca_certs:
+            data["ca_bundle"] = s.grpc_server_ssl_ca_certs
+        if s.grpc_server_ssl_keyfile_password is not None:
+            data["keyfile_password"] = s.grpc_server_ssl_keyfile_password
+        if s.grpc_server_ssl_client_auth:
+            data["client_auth"] = s.grpc_server_ssl_client_auth
 
         if not data:
             return None
@@ -1033,26 +978,22 @@ class GRPCServerConfig(BaseModel):
 
         Returns:
             GRPCServerConfig instance or None if no environment variables are set.
-
-        Raises:
-            ValueError: If PLUGINS_GRPC_SERVER_PORT is not a valid integer.
         """
-        env = os.environ
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
+
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("PLUGINS_GRPC_SERVER_HOST"):
-            data["host"] = env["PLUGINS_GRPC_SERVER_HOST"]
-        if env.get("PLUGINS_GRPC_SERVER_PORT"):
-            try:
-                data["port"] = int(env["PLUGINS_GRPC_SERVER_PORT"])
-            except ValueError:
-                raise ValueError(f"Invalid PLUGINS_GRPC_SERVER_PORT: {env['PLUGINS_GRPC_SERVER_PORT']}")
-        if env.get("PLUGINS_GRPC_SERVER_UDS"):
-            data["uds"] = env["PLUGINS_GRPC_SERVER_UDS"]
+        if s.grpc_server_host:
+            data["host"] = s.grpc_server_host
+        if s.grpc_server_port is not None:
+            data["port"] = s.grpc_server_port
+        if s.grpc_server_uds:
+            data["uds"] = s.grpc_server_uds
 
         # Check if SSL/TLS is enabled
-        ssl_enabled_str = env.get("PLUGINS_GRPC_SERVER_SSL_ENABLED", "").lower()
-        if ssl_enabled_str in {"1", "true", "yes", "on"}:
+        if s.grpc_server_ssl_enabled:
             tls_config = GRPCServerTLSConfig.from_env()
             if tls_config:
                 data["tls"] = tls_config
@@ -1127,11 +1068,14 @@ class UnixSocketServerConfig(BaseModel):
         Returns:
             UnixSocketServerConfig instance or None if no environment variables are set.
         """
-        env = os.environ
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
+
+        s = PluginsSettings()
         data: dict[str, Any] = {}
 
-        if env.get("UNIX_SOCKET_PATH"):
-            data["path"] = env["UNIX_SOCKET_PATH"]
+        if s.unix_socket_path:
+            data["path"] = s.unix_socket_path
 
         if not data:
             return None

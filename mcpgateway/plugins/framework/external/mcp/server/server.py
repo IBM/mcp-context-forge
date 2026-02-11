@@ -96,7 +96,10 @@ class ExternalPluginServer:
             >>> server is not None
             True
         """
-        self._config_path = config_path or os.environ.get("PLUGINS_CONFIG_PATH", os.path.join(".", "resources", "plugins", "config.yaml"))
+        # First-Party
+        from mcpgateway.plugins.framework.settings import PluginsSettings
+
+        self._config_path = config_path or PluginsSettings().config_path or os.path.join(".", "resources", "plugins", "config.yaml")
         self._config = ConfigLoader.load_config(self._config_path, use_jinja=False)
         self._plugin_manager = PluginManager(self._config_path)
 
