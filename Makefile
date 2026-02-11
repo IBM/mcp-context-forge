@@ -593,7 +593,7 @@ test-verbose:
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
 		export ARGON2ID_MEMORY_COST=1024 && \
-		uv run --active pytest --maxfail=1 -v --tb=short --ignore=tests/fuzz"
+		uv run --active pytest --maxfail=0 -v --tb=short --instafail --ignore=tests/fuzz"
 
 test-altk:
 	@echo "🧪 Running tests with ALTK (agent-lifecycle-toolkit)..."
