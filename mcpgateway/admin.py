@@ -1826,6 +1826,11 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+
+                # Handle credentials location (body or header)
+                oauth_credentials_location = str(form.get("oauth_credentials_location", ""))
+                if oauth_credentials_location in ("body", "header"):
+                    oauth_config["credentials_location"] = oauth_credentials_location
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -2000,6 +2005,11 @@ async def admin_edit_server(
                     oauth_config["scopes_supported"] = scopes_str.split()
                 if token_endpoint:
                     oauth_config["token_endpoint"] = token_endpoint
+
+                # Handle credentials location (body or header)
+                oauth_credentials_location = str(form.get("oauth_credentials_location", ""))
+                if oauth_credentials_location in ("body", "header"):
+                    oauth_config["credentials_location"] = oauth_credentials_location
             else:
                 # Invalid or incomplete OAuth configuration; disable OAuth to avoid inconsistent state
                 LOGGER.warning(
@@ -9580,6 +9590,11 @@ async def admin_edit_gateway(
                     scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
                     if scopes:
                         oauth_config["scopes"] = scopes
+
+                # Handle credentials location (body or header)
+                oauth_credentials_location = str(form.get("oauth_credentials_location", ""))
+                if oauth_credentials_location in ("body", "header"):
+                    oauth_config["credentials_location"] = oauth_credentials_location
 
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
 
