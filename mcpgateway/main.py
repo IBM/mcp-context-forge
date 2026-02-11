@@ -814,6 +814,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         elif settings.metrics_aggregation_enabled:
             logger.info("Metrics aggregation auto-start disabled; performance metrics will be generated on-demand when requested.")
 
+        # Initialize SIEM export for policy audit if enabled
+        if settings.policy_audit_enabled and settings.siem_enabled:
+            try:
+                from mcpgateway.services.siem_export_service import create_siem_service  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
+
+                _siem_processor = create_siem_service(settings)
+                if _siem_processor:
+                    await _siem_processor.start()
+                    policy_decision_service.set_siem_processor(_siem_processor)
+                    app.state.siem_processor = _siem_processor
+                    logger.info("SIEM export service started for policy audit")
+            except Exception as e:
+                logger.warning(f"Failed to start SIEM export service: {e}")
+
         yield
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}")
@@ -852,6 +867,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await cache_invalidation_subscriber.stop()
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
+
+        # Stop SIEM processor if running (flush remaining records)
+        _siem = getattr(app.state, "siem_processor", None)
+        if _siem:
+            try:
+                await _siem.stop()
+                logger.info("SIEM export service stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping SIEM export service: {e}")
 
         logger.info("Shutting down MCP Gateway services")
         # await stop_streamablehttp()
@@ -7179,6 +7203,17 @@ if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
 
     app.include_router(metrics_maintenance_router)
     logger.info("Metrics maintenance router included - cleanup/rollup API endpoints enabled")
+
+# Conditionally include policy decisions router if policy audit is enabled
+if settings.policy_audit_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.policy_decisions_api import router as policy_decisions_router  # noqa: E402
+
+        app.include_router(policy_decisions_router)
+        logger.info("Policy decisions router included - policy audit enabled")
+    except ImportError as e:
+        logger.warning(f"Failed to import policy decisions router: {e}")
 
 # Conditionally include A2A router if A2A features are enabled
 if settings.mcpgateway_a2a_enabled:

@@ -638,6 +638,27 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                         check_any_team=check_any_team,
                     )
 
+            # Log policy decision if enabled
+            if settings.policy_audit_enabled:
+                try:
+                    # First-Party
+                    from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
+
+                    policy_decision_service.log_decision(
+                        action=permission,
+                        decision="allow" if granted else "deny",
+                        subject_id=user_context.get("email"),
+                        subject_email=user_context.get("email"),
+                        resource_type=resource_type,
+                        ip_address=user_context.get("ip_address"),
+                        user_agent=user_context.get("user_agent"),
+                        request_id=user_context.get("request_id"),
+                        policy_engines_used=["rbac"],
+                        severity="info" if granted else "warning",
+                    )
+                except Exception as audit_err:
+                    logger.debug(f"Policy decision logging failed: {audit_err}")
+
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Insufficient permissions. Required: {permission}")
