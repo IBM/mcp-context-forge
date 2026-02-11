@@ -30,11 +30,13 @@ from sqlalchemy.orm import selectinload, Session
 
 # First-Party
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
-from mcpgateway.cache.auth_cache import auth_cache
+from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.redis_client import get_redis_client
 
 # Initialize logging
 logging_service = LoggingService()
@@ -205,8 +207,6 @@ class TeamManagementService:
                 max_members = getattr(settings, "max_members_per_team", 100)
 
             # Check for existing inactive team with same name
-            # First-Party
-            from mcpgateway.utils.create_slug import slugify  # pylint: disable=import-outside-toplevel
 
             potential_slug = slugify(name)
             existing_inactive_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(False)).first()
@@ -975,9 +975,6 @@ class TeamManagementService:
             AuthCache instance or None if unavailable.
         """
         try:
-            # First-Party
-            from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-
             return get_auth_cache()
         except ImportError:
             return None
@@ -1631,11 +1628,7 @@ class TeamManagementService:
         if not cache_enabled:
             return self.get_member_counts_batch(team_ids)
 
-        # Import Redis client lazily
         try:
-            # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
-
             redis_client = await get_redis_client()
         except Exception:
             redis_client = None
@@ -1708,9 +1701,6 @@ class TeamManagementService:
             return
 
         try:
-            # First-Party
-            from mcpgateway.utils.redis_client import get_redis_client  # pylint: disable=import-outside-toplevel
-
             redis_client = await get_redis_client()
             if redis_client:
                 await redis_client.delete(self._get_member_count_cache_key(team_id))

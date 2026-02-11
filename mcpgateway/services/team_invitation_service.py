@@ -26,6 +26,7 @@ from typing import Any, List, Optional
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -340,9 +341,6 @@ class TeamInvitationService:
 
             # Invalidate auth cache for user's team membership
             try:
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
                 self._fire_and_forget(auth_cache.invalidate_team(invitation.email))
                 self._fire_and_forget(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
                 self._fire_and_forget(auth_cache.invalidate_user_teams(invitation.email))
