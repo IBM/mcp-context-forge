@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
+    _adjust_pagination_for_conversion_failures,
     _generate_unified_teams_view,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
@@ -14358,3 +14359,40 @@ class TestGetUserTeamRolesWrapper:
 
             mock_auth_fn.assert_called_once_with(mock_db, "user@example.com")
             assert result == {"team-1": "owner"}
+
+
+class TestAdjustPaginationForConversionFailures:
+    """Tests for _adjust_pagination_for_conversion_failures."""
+
+    def _make_pagination(self, total_items: int = 100) -> PaginationMeta:
+        return PaginationMeta(page=1, per_page=20, total_items=total_items, total_pages=5, has_next=True, has_prev=False)
+
+    def test_decrements_total_items_by_failed_count(self):
+        pagination = self._make_pagination(total_items=100)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
+        assert pagination.total_items == 97
+
+    def test_zero_failures_leaves_total_unchanged(self):
+        pagination = self._make_pagination(total_items=50)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=0)
+        assert pagination.total_items == 50
+
+    def test_floors_at_zero_when_failures_exceed_total(self):
+        pagination = self._make_pagination(total_items=2)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=5)
+        assert pagination.total_items == 0
+
+    def test_exact_match_results_in_zero(self):
+        pagination = self._make_pagination(total_items=10)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=10)
+        assert pagination.total_items == 0
+
+    def test_total_items_already_zero(self):
+        pagination = self._make_pagination(total_items=0)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
+        assert pagination.total_items == 0
+
+    def test_single_failure(self):
+        pagination = self._make_pagination(total_items=1)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=1)
+        assert pagination.total_items == 0
