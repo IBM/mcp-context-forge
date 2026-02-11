@@ -1,6 +1,5 @@
 <!-- htmlhint doctype-first:false -->
-<div id="tokens-table">
-  {% for token in data %}
+{% for token in data %}
   <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
     <div class="flex justify-between items-start">
       <div class="flex-1">
@@ -75,11 +74,10 @@
       </div>
     </div>
   </div>
-  {% endfor %}
-  {% if not data %}
-  <p class="text-gray-500 dark:text-gray-400">No tokens found. Create your first token above.</p>
-  {% endif %}
-</div>
+{% endfor %}
+{% if not data %}
+<p class="text-gray-500 dark:text-gray-400">No tokens found. Create your first token above.</p>
+{% endif %}
 
 <!-- Out-of-band swap for pagination controls -->
 <div id="tokens-pagination-controls" hx-swap-oob="true">

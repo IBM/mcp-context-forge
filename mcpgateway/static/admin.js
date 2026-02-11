@@ -20169,7 +20169,12 @@ async function loadTokensList(resetToFirstPage) {
         );
     }
 
-    htmx.ajax("GET", url, { target: "#tokens-table", swap: "outerHTML" });
+    // Update hx-get on the element and trigger an element-based HTMX request.
+    // This ensures OOB swaps (pagination controls) are properly processed,
+    // unlike htmx.ajax() which can silently skip OOB handling.
+    tokensTable.setAttribute("hx-get", url);
+    htmx.process(tokensTable);
+    htmx.trigger(tokensTable, "refreshTokens");
 }
 
 /**
@@ -20679,7 +20684,6 @@ async function createToken(form) {
         const result = await response.json();
         showTokenCreatedModal(result);
         form.reset();
-        loadTokensList(true);
 
         // Show appropriate success message
         const tokenType = currentTeamId ? "team-scoped" : "public-only";
@@ -20705,7 +20709,7 @@ function showTokenCreatedModal(tokenData) {
             <div class="mt-3">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Created Successfully</h3>
-                    <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                    <button data-dismiss-token-modal class="text-gray-400 hover:text-gray-600">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
@@ -20758,7 +20762,7 @@ function showTokenCreatedModal(tokenData) {
 
                 <div class="flex justify-end">
                     <button
-                        onclick="this.closest('.fixed').remove()"
+                        data-dismiss-token-modal
                         class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     >
                         I've Saved It
@@ -20769,6 +20773,14 @@ function showTokenCreatedModal(tokenData) {
     `;
 
     document.body.appendChild(modal);
+
+    // Close handlers: remove modal then refresh the token list
+    modal.querySelectorAll("[data-dismiss-token-modal]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            modal.remove();
+            loadTokensList(true);
+        });
+    });
 
     // Focus the token input for easy selection
     const tokenInput = modal.querySelector("#new-token-value");
