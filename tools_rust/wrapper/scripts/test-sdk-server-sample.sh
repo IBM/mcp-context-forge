@@ -9,10 +9,10 @@ set -ueo pipefail
 rm -f out.log
 
 EXE=(
-	mcp_stdio_wrapper
-	--url "http://localhost:8000/mcp"
-	--log-level debug
-	--log-file out.log
+    mcp_stdio_wrapper
+    --url "http://localhost:8000/mcp"
+    --log-level debug
+    --log-file out.log
 )
 
 INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test-client","version":"1.0"}}}'
@@ -33,11 +33,11 @@ CALL='{
 }'
 
 (
-	echo "$INIT"
-	sleep 0.2
-	echo "$NOTIFY"
-	sleep 0.2
-	echo "$LIST"
-	sleep 0.2
-	echo "$CALL" | yq -o json -M -I 0
+    echo "$INIT"
+    sleep 0.2
+    echo "$NOTIFY"
+    sleep 0.2
+    echo "$LIST"
+    sleep 0.2
+    echo "$CALL" | yq -o json -M -I 0
 ) | "${EXE[@]}"

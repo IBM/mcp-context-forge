@@ -41,4 +41,3 @@ def test_get_counts_double_checked_lock_returns_refreshed_cache(monkeypatch: pyt
     assert result == refreshed
     assert cache._hit_count == 1
     db.execute.assert_not_called()
-
