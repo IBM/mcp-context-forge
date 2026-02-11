@@ -433,6 +433,20 @@ export const updateEditToolUrl = function () {
 };
 
 /**
+ * Format timestamp for display
+ */
+export const formatTimestamp = function (timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+};
+
+/**
  * Handle keydown event when Enter or Space key is pressed
  *
  * @param {KeyboardEvent} event - the keyboard event triggered
