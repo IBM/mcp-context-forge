@@ -391,27 +391,191 @@ class TestTokenScopingMiddleware:
             "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
             "POST",
             [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == True, "POST /servers/{id}/mcp should NOT require servers.create"
+        ) == False, "POST /servers/{id}/mcp should require servers.use, not servers.read"
 
         assert middleware._check_permission_restrictions(
             "/servers/abc123/sse",
-            "POST",
+            "GET",
+            [Permissions.SERVERS_USE]
+        ) == True, "GET /servers/{id}/sse should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/servers/abc123/sse",
+            "GET",
             [Permissions.SERVERS_READ]
-        ) == True, "POST /servers/{id}/sse should NOT require servers.create"
+        ) == False, "GET /servers/{id}/sse should NOT accept servers.read"
 
         # Other Virtual MCP Server endpoints should also not require servers.create
         assert middleware._check_permission_restrictions(
             "/servers/test-server/mcp/",
             "POST",
             [Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == True, "POST /servers/{id}/mcp/ should NOT require servers.create"
+        ) == False, "POST /servers/{id}/mcp/ should require servers.use"
 
         # Verify that servers.create works for Virtual MCP Server too (backward compatibility)
         assert middleware._check_permission_restrictions(
             "/servers/3d7c7ab6a5264dadb8c7f4e04758295b/mcp",
             "POST",
-            [Permissions.SERVERS_CREATE, Permissions.SERVERS_READ, Permissions.TOOLS_READ]
-        ) == True, "POST /servers/{id}/mcp should still work with servers.create (backward compat)"
+            [Permissions.SERVERS_CREATE, Permissions.SERVERS_USE, Permissions.SERVERS_READ, Permissions.TOOLS_READ]
+        ) == True, "POST /servers/{id}/mcp should succeed when servers.use is present"
+
+    @pytest.mark.asyncio
+    async def test_tools_create_pattern_exact_match(self, middleware):
+        """Test that tools.create is only required for exact POST /tools, not sub-paths."""
+        # POST /tools requires tools.create
+        assert middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tools/", "POST", [Permissions.TOOLS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/tools", "POST", [Permissions.TOOLS_READ]) is False
+
+        # POST /tools/{id}/state requires tools.update, NOT tools.create
+        assert middleware._check_permission_restrictions(
+            "/tools/tool-123/state", "POST", [Permissions.TOOLS_UPDATE]
+        ) is True, "POST /tools/{id}/state should require tools.update"
+        assert middleware._check_permission_restrictions(
+            "/tools/tool-123/state", "POST", [Permissions.TOOLS_CREATE]
+        ) is False, "POST /tools/{id}/state should NOT accept tools.create"
+
+        # POST /tools/{id}/toggle requires tools.update
+        assert middleware._check_permission_restrictions(
+            "/tools/tool-123/toggle", "POST", [Permissions.TOOLS_UPDATE]
+        ) is True, "POST /tools/{id}/toggle should require tools.update"
+        assert middleware._check_permission_restrictions(
+            "/tools/tool-123/toggle", "POST", [Permissions.TOOLS_CREATE]
+        ) is False, "POST /tools/{id}/toggle should NOT accept tools.create"
+
+    @pytest.mark.asyncio
+    async def test_resources_create_pattern_exact_match(self, middleware):
+        """Test that resources.create is only required for exact POST /resources, not sub-paths."""
+        # POST /resources requires resources.create
+        assert middleware._check_permission_restrictions("/resources", "POST", [Permissions.RESOURCES_CREATE]) is True
+        assert middleware._check_permission_restrictions("/resources/", "POST", [Permissions.RESOURCES_CREATE]) is True
+        assert middleware._check_permission_restrictions("/resources", "POST", [Permissions.RESOURCES_READ]) is False
+
+        # POST /resources/{id}/state requires resources.update, NOT resources.create
+        assert middleware._check_permission_restrictions(
+            "/resources/res-123/state", "POST", [Permissions.RESOURCES_UPDATE]
+        ) is True, "POST /resources/{id}/state should require resources.update"
+        assert middleware._check_permission_restrictions(
+            "/resources/res-123/state", "POST", [Permissions.RESOURCES_CREATE]
+        ) is False, "POST /resources/{id}/state should NOT accept resources.create"
+
+        # POST /resources/{id}/toggle requires resources.update
+        assert middleware._check_permission_restrictions(
+            "/resources/res-123/toggle", "POST", [Permissions.RESOURCES_UPDATE]
+        ) is True, "POST /resources/{id}/toggle should require resources.update"
+
+        # POST /resources/subscribe requires resources.read (SSE subscription)
+        assert middleware._check_permission_restrictions(
+            "/resources/subscribe", "POST", [Permissions.RESOURCES_READ]
+        ) is True, "POST /resources/subscribe should require resources.read"
+        assert middleware._check_permission_restrictions(
+            "/resources/subscribe", "POST", [Permissions.RESOURCES_CREATE]
+        ) is False, "POST /resources/subscribe should NOT accept resources.create"
+
+    @pytest.mark.asyncio
+    async def test_prompts_create_pattern_exact_match(self, middleware):
+        """Test that prompts.create is only required for exact POST /prompts, not sub-paths."""
+        # POST /prompts requires prompts.create
+        assert middleware._check_permission_restrictions("/prompts", "POST", [Permissions.PROMPTS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/prompts/", "POST", [Permissions.PROMPTS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/prompts", "POST", [Permissions.PROMPTS_READ]) is False
+
+        # POST /prompts/{id}/state requires prompts.update, NOT prompts.create
+        assert middleware._check_permission_restrictions(
+            "/prompts/prompt-123/state", "POST", [Permissions.PROMPTS_UPDATE]
+        ) is True, "POST /prompts/{id}/state should require prompts.update"
+        assert middleware._check_permission_restrictions(
+            "/prompts/prompt-123/state", "POST", [Permissions.PROMPTS_CREATE]
+        ) is False, "POST /prompts/{id}/state should NOT accept prompts.create"
+
+        # POST /prompts/{id}/toggle requires prompts.update
+        assert middleware._check_permission_restrictions(
+            "/prompts/prompt-123/toggle", "POST", [Permissions.PROMPTS_UPDATE]
+        ) is True, "POST /prompts/{id}/toggle should require prompts.update"
+
+        # POST /prompts/{id} (MCP spec retrieval) requires prompts.read
+        assert middleware._check_permission_restrictions(
+            "/prompts/prompt-123", "POST", [Permissions.PROMPTS_READ]
+        ) is True, "POST /prompts/{id} (MCP spec) should require prompts.read"
+        assert middleware._check_permission_restrictions(
+            "/prompts/prompt-123", "POST", [Permissions.PROMPTS_CREATE]
+        ) is False, "POST /prompts/{id} (MCP spec) should NOT accept prompts.create"
+
+    @pytest.mark.asyncio
+    async def test_servers_subresource_permission_patterns(self, middleware):
+        """Test that server sub-paths distinguish management (update) from access (read) endpoints."""
+        # POST /servers/{id}/state requires servers.update (management)
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/state", "POST", [Permissions.SERVERS_UPDATE]
+        ) is True, "POST /servers/{id}/state should require servers.update"
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/state", "POST", [Permissions.SERVERS_CREATE]
+        ) is False, "POST /servers/{id}/state should NOT accept servers.create"
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/state", "POST", [Permissions.SERVERS_READ]
+        ) is False, "POST /servers/{id}/state should NOT accept servers.read"
+
+        # POST /servers/{id}/toggle requires servers.update (management)
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/toggle", "POST", [Permissions.SERVERS_UPDATE]
+        ) is True, "POST /servers/{id}/toggle should require servers.update"
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/toggle", "POST", [Permissions.SERVERS_CREATE]
+        ) is False, "POST /servers/{id}/toggle should NOT accept servers.create"
+
+        # POST /servers/{id}/mcp requires servers.use (access endpoint)
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/mcp", "POST", [Permissions.SERVERS_USE]
+        ) is True, "POST /servers/{id}/mcp should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/mcp", "POST", [Permissions.SERVERS_READ]
+        ) is False, "POST /servers/{id}/mcp should NOT accept servers.read"
+
+        # GET /servers/{id}/sse requires servers.use (access endpoint)
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/sse", "GET", [Permissions.SERVERS_USE]
+        ) is True, "GET /servers/{id}/sse should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/sse", "GET", [Permissions.SERVERS_READ]
+        ) is False, "GET /servers/{id}/sse should NOT accept servers.read"
+
+        # POST /servers/{id}/message requires servers.use (access endpoint)
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/message", "POST", [Permissions.SERVERS_USE]
+        ) is True, "POST /servers/{id}/message should require servers.use"
+        assert middleware._check_permission_restrictions(
+            "/servers/srv-123/message", "POST", [Permissions.SERVERS_READ]
+        ) is False, "POST /servers/{id}/message should NOT accept servers.read"
+
+    @pytest.mark.asyncio
+    async def test_permission_pattern_consistency(self, middleware):
+        """Verify all resource types use consistent create-vs-subresource patterns (gateways convention)."""
+        resource_types = [
+            ("tools", Permissions.TOOLS_CREATE, Permissions.TOOLS_UPDATE),
+            ("resources", Permissions.RESOURCES_CREATE, Permissions.RESOURCES_UPDATE),
+            ("prompts", Permissions.PROMPTS_CREATE, Permissions.PROMPTS_UPDATE),
+            ("servers", Permissions.SERVERS_CREATE, Permissions.SERVERS_UPDATE),
+            ("gateways", Permissions.GATEWAYS_CREATE, Permissions.GATEWAYS_UPDATE),
+        ]
+
+        for resource, create_perm, update_perm in resource_types:
+            # Exact POST requires create permission
+            assert middleware._check_permission_restrictions(
+                f"/{resource}", "POST", [create_perm]
+            ) is True, f"POST /{resource} should accept {create_perm}"
+
+            # Exact POST rejects read-only
+            assert middleware._check_permission_restrictions(
+                f"/{resource}", "POST", ["read.only"]
+            ) is False, f"POST /{resource} should reject non-create permission"
+
+            # Sub-path POST should NOT require create permission (except servers which uses default-allow)
+            if update_perm:
+                assert middleware._check_permission_restrictions(
+                    f"/{resource}/item-123/state", "POST", [update_perm]
+                ) is True, f"POST /{resource}/item-123/state should accept {update_perm}"
+                assert middleware._check_permission_restrictions(
+                    f"/{resource}/item-123/state", "POST", [create_perm]
+                ) is False, f"POST /{resource}/item-123/state should reject {create_perm}"
 
     @pytest.mark.asyncio
     async def test_regex_pattern_segment_boundaries(self, middleware):
