@@ -155,10 +155,12 @@ class TeamPage(BasePage):
         team_card = self.get_team_card(team_name)
         expect(team_card).to_be_visible(timeout=timeout)
 
-    def wait_for_team_hidden(self, team_name: str) -> None:
+    def wait_for_team_hidden(self, team_name: str, timeout: int = 30000) -> None:
         """Wait for a team to be hidden from the list.
 
         Args:
             team_name: The name of the team
+            timeout: Maximum time to wait in milliseconds
         """
-        expect(self.page.locator(f"text={team_name}")).to_be_hidden()
+        team_card = self.get_team_card(team_name)
+        expect(team_card).to_be_hidden(timeout=timeout)

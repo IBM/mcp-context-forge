@@ -21890,8 +21890,8 @@ function initializeAddMembersForms(root = document) {
 function getTeamsCurrentPaginationState() {
     const urlParams = new URLSearchParams(window.location.search);
     return {
-        page: urlParams.get("teams_page") || "1",
-        perPage: urlParams.get("teams_size") || "10",
+        page: Math.max(1, parseInt(urlParams.get("teams_page"), 10) || 1),
+        perPage: Math.max(1, parseInt(urlParams.get("teams_size"), 10) || 10),
     };
 }
 
@@ -31457,6 +31457,15 @@ async function performTeamSearch(searchTerm) {
     params.set("page", "1");
     params.set("per_page", getTeamsPerPage().toString());
 
+    // Sync URL state so CRUD refresh reads the correct page
+    const currentUrl = new URL(window.location.href);
+    const urlParams = new URLSearchParams(currentUrl.searchParams);
+    urlParams.set("teams_page", "1");
+    urlParams.set("teams_size", getTeamsPerPage().toString());
+    const newUrl =
+        currentUrl.pathname + "?" + urlParams.toString() + currentUrl.hash;
+    window.safeReplaceState({}, "", newUrl);
+
     if (searchTerm && searchTerm.trim() !== "") {
         params.set("q", searchTerm.trim());
     }
@@ -31668,6 +31677,7 @@ window.filterByRelationship = filterByRelationship;
 window.filterTeams = filterTeams;
 window.searchTeamSelector = searchTeamSelector;
 window.selectTeamFromSelector = selectTeamFromSelector;
+window.getTeamsCurrentPaginationState = getTeamsCurrentPaginationState;
 
 /**
  * Handle keydown event when Enter or Space key is pressed

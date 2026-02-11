@@ -30,84 +30,102 @@ describe("getTeamsCurrentPaginationState", () => {
     const getPaginationState = () => win.getTeamsCurrentPaginationState;
 
     test("returns default values when URL params are missing", () => {
-        // No URL params set
         const state = getPaginationState()();
         expect(state).toEqual({
-            page: '1',
-            perPage: '10'
+            page: 1,
+            perPage: 10
         });
     });
 
     test("returns page from teams_page URL parameter", () => {
-        // Set URL with teams_page parameter
         win.history.replaceState({}, '', '/admin?teams_page=3&teams_size=10');
         const state = getPaginationState()();
-        expect(state.page).toBe('3');
-        expect(state.perPage).toBe('10');
+        expect(state.page).toBe(3);
+        expect(state.perPage).toBe(10);
     });
 
     test("returns perPage from teams_size URL parameter", () => {
-        // Set URL with teams_size parameter
         win.history.replaceState({}, '', '/admin?teams_page=1&teams_size=25');
         const state = getPaginationState()();
-        expect(state.page).toBe('1');
-        expect(state.perPage).toBe('25');
+        expect(state.page).toBe(1);
+        expect(state.perPage).toBe(25);
     });
 
     test("returns both page and perPage from URL parameters", () => {
-        // Set URL with both parameters
         win.history.replaceState({}, '', '/admin?teams_page=5&teams_size=50');
         const state = getPaginationState()();
         expect(state).toEqual({
-            page: '5',
-            perPage: '50'
+            page: 5,
+            perPage: 50
         });
     });
 
     test("returns defaults when only teams_page is present", () => {
-        // Only teams_page in URL
         win.history.replaceState({}, '', '/admin?teams_page=2');
         const state = getPaginationState()();
-        expect(state.page).toBe('2');
-        expect(state.perPage).toBe('10'); // default
+        expect(state.page).toBe(2);
+        expect(state.perPage).toBe(10);
     });
 
     test("returns defaults when only teams_size is present", () => {
-        // Only teams_size in URL
         win.history.replaceState({}, '', '/admin?teams_size=20');
         const state = getPaginationState()();
-        expect(state.page).toBe('1'); // default
-        expect(state.perPage).toBe('20');
+        expect(state.page).toBe(1);
+        expect(state.perPage).toBe(20);
     });
 
     test("ignores other URL parameters", () => {
-        // URL with other parameters
         win.history.replaceState({}, '', '/admin?teams_page=4&teams_size=15&other=value&foo=bar');
         const state = getPaginationState()();
         expect(state).toEqual({
-            page: '4',
-            perPage: '15'
+            page: 4,
+            perPage: 15
         });
     });
 
     test("handles URL with hash fragment", () => {
-        // URL with hash
         win.history.replaceState({}, '', '/admin?teams_page=2&teams_size=20#teams');
         const state = getPaginationState()();
         expect(state).toEqual({
-            page: '2',
-            perPage: '20'
+            page: 2,
+            perPage: 20
         });
     });
 
     test("handles empty string values in URL params", () => {
-        // Empty string values should fall back to defaults
         win.history.replaceState({}, '', '/admin?teams_page=&teams_size=');
         const state = getPaginationState()();
         expect(state).toEqual({
-            page: '1',
-            perPage: '10'
+            page: 1,
+            perPage: 10
         });
+    });
+
+    test("handles non-numeric values in URL params", () => {
+        win.history.replaceState({}, '', '/admin?teams_page=abc&teams_size=xyz');
+        const state = getPaginationState()();
+        expect(state).toEqual({
+            page: 1,
+            perPage: 10
+        });
+    });
+
+    test("clamps negative page to 1", () => {
+        win.history.replaceState({}, '', '/admin?teams_page=-1&teams_size=10');
+        const state = getPaginationState()();
+        expect(state.page).toBe(1);
+    });
+
+    test("clamps negative perPage to 1", () => {
+        win.history.replaceState({}, '', '/admin?teams_page=1&teams_size=-5');
+        const state = getPaginationState()();
+        expect(state.perPage).toBe(1);
+    });
+
+    test("clamps zero page to 1", () => {
+        win.history.replaceState({}, '', '/admin?teams_page=0&teams_size=10');
+        const state = getPaginationState()();
+        expect(state.page).toBe(1);
     });
 });
 
@@ -137,10 +155,8 @@ describe("handleAdminTeamAction pagination preservation", () => {
     });
 
     test("preserves pagination state when refreshing teams list", async () => {
-        // Set URL with pagination state
         win.history.replaceState({}, '', '/admin?teams_page=3&teams_size=25#teams');
 
-        // Trigger team action event
         const event = new win.CustomEvent('adminTeamAction', {
             detail: {
                 refreshUnifiedTeamsList: true,
@@ -153,14 +169,12 @@ describe("handleAdminTeamAction pagination preservation", () => {
         // Wait for setTimeout to complete
         await new Promise(resolve => setTimeout(resolve, 10));
 
-        // Verify the HTMX call preserved pagination
         expect(win._lastHtmxUrl).toBeDefined();
         expect(win._lastHtmxUrl).toContain('page=3');
         expect(win._lastHtmxUrl).toContain('per_page=25');
     });
 
     test("uses default pagination when URL params are missing", async () => {
-        // No pagination params in URL
         win.history.replaceState({}, '', '/admin#teams');
 
         const event = new win.CustomEvent('adminTeamAction', {
@@ -175,14 +189,12 @@ describe("handleAdminTeamAction pagination preservation", () => {
         // Wait for setTimeout to complete
         await new Promise(resolve => setTimeout(resolve, 10));
 
-        // Verify defaults are used
         expect(win._lastHtmxUrl).toBeDefined();
         expect(win._lastHtmxUrl).toContain('page=1');
         expect(win._lastHtmxUrl).toContain('per_page=10');
     });
 
     test("preserves search query along with pagination", async () => {
-        // Set URL with pagination and add search query
         win.history.replaceState({}, '', '/admin?teams_page=2&teams_size=20#teams');
         const searchInput = doc.getElementById('team-search');
         searchInput.value = 'test team query';
@@ -199,14 +211,43 @@ describe("handleAdminTeamAction pagination preservation", () => {
         // Wait for setTimeout to complete
         await new Promise(resolve => setTimeout(resolve, 10));
 
-        // Verify both pagination and search are preserved
         expect(win._lastHtmxUrl).toBeDefined();
         expect(win._lastHtmxUrl).toContain('page=2');
         expect(win._lastHtmxUrl).toContain('per_page=20');
         // Accept both URL encodings for space: %20 or +
-
-        console.log(win._lastHtmxUrl)
-
         expect(win._lastHtmxUrl).toMatch(/q=test(\+|%20)team(\+|%20)query/);
+    });
+
+    test("uses page 1 after search resets pagination, not stale URL state", async () => {
+        // Simulate: user was on page 3, then searched (which resets to page 1),
+        // then triggers a CRUD action. The CRUD refresh should use page 1, not
+        // the stale teams_page=3 from the URL.
+        win.history.replaceState({}, '', '/admin?teams_page=3&teams_size=25#teams');
+
+        // Simulate performTeamSearch syncing URL to page 1
+        if (typeof win.performTeamSearch === 'function') {
+            await win.performTeamSearch('test query');
+        }
+
+        // Verify URL was synced to page 1
+        const urlAfterSearch = new URL(win.location.href);
+        expect(urlAfterSearch.searchParams.get('teams_page')).toBe('1');
+
+        // Now trigger a CRUD action
+        const event = new win.CustomEvent('adminTeamAction', {
+            detail: {
+                refreshUnifiedTeamsList: true,
+                delayMs: 0
+            }
+        });
+
+        win.handleAdminTeamAction(event);
+
+        await new Promise(resolve => setTimeout(resolve, 10));
+
+        // CRUD refresh should use page 1, not stale page 3
+        expect(win._lastHtmxUrl).toBeDefined();
+        expect(win._lastHtmxUrl).toContain('page=1');
+        expect(win._lastHtmxUrl).not.toContain('page=3');
     });
 });

@@ -80,8 +80,8 @@
         const urlParams = new URLSearchParams(window.location.search);
         const prefix = tableName + '_';
         return {
-          page: parseInt(urlParams.get(prefix + 'page') || '1', 10),
-          perPage: parseInt(urlParams.get(prefix + 'size') || '10', 10),
+          page: Math.max(1, parseInt(urlParams.get(prefix + 'page'), 10) || 1),
+          perPage: Math.max(1, parseInt(urlParams.get(prefix + 'size'), 10) || 10),
           includeInactive: urlParams.get(prefix + 'inactive')
         };
       }
@@ -14762,16 +14762,18 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const activeFilterBtn = document.querySelector('.filter-btn.active');
         const relationship = activeFilterBtn ? activeFilterBtn.getAttribute('data-filter') : 'all';
 
-        // Preserve current pagination state
-        const paginationState = window.getTeamsCurrentPaginationState();
-
-        let url = window.ROOT_PATH + '/admin/teams/partial?page=' + paginationState.page + '&per_page=' + paginationState.perPage;
+        // Preserve current pagination state (use inline getPaginationParams)
+        const paginationState = getPaginationParams('teams');
+        const params = new URLSearchParams();
+        params.set('page', paginationState.page);
+        params.set('per_page', paginationState.perPage);
         if (searchQuery) {
-          url += '&q=' + encodeURIComponent(searchQuery);
+          params.set('q', searchQuery);
         }
         if (relationship && relationship !== 'all') {
-          url += '&relationship=' + encodeURIComponent(relationship);
+          params.set('relationship', relationship);
         }
+        const url = window.ROOT_PATH + '/admin/teams/partial?' + params.toString();
 
         htmx.ajax('GET', url, {
           target: '#unified-teams-list',
