@@ -45,7 +45,8 @@ class TestAPIIntegration:
 
         # Wait for tool test modal and dynamic form field generation
         expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
-        page.wait_for_timeout(1000)
+        # Wait for dynamic form fields to be generated from schema
+        page.wait_for_selector("#tool-test-form-fields", state="visible", timeout=10000)
 
         # Fill any dynamically generated form fields (schema-based)
         form_fields = page.locator("#tool-test-form-fields input")

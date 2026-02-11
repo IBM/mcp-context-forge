@@ -32,15 +32,13 @@ class TestTeams:
         response = response_info.value
         assert response.status < 400
 
-        # Workaround: Auto-refresh doesn't work, so wait and reload the page
-        team_page.page.wait_for_timeout(2000)
-        team_page.page.reload()
-        team_page.page.wait_for_timeout(1000)
+        # Workaround: Auto-refresh doesn't work, so reload the page
+        team_page.page.wait_for_load_state("domcontentloaded")
+        team_page.page.reload(wait_until="domcontentloaded")
 
         # Search for the team to bring it into view (handles pagination)
         team_search = team_page.page.locator("#team-search")
         team_search.fill(team_name)
-        team_page.page.wait_for_timeout(1000)
 
         # Wait for team to be visible in the list after search
         team_page.wait_for_team_visible(team_name)
@@ -49,7 +47,6 @@ class TestTeams:
         team_page.delete_team(team_name)
 
         # Verify it's gone
-        team_page.page.wait_for_timeout(1000)
         team_page.wait_for_team_hidden(team_name)
 
     def test_manage_members_button(self, team_page):
@@ -61,15 +58,13 @@ class TestTeams:
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
-        # Wait and reload to see the new team
-        team_page.page.wait_for_timeout(2000)
-        team_page.page.reload()
-        team_page.page.wait_for_timeout(1000)
+        # Reload to see the new team
+        team_page.page.wait_for_load_state("domcontentloaded")
+        team_page.page.reload(wait_until="domcontentloaded")
 
         # Search for the team
         team_search = team_page.page.locator("#team-search")
         team_search.fill(team_name)
-        team_page.page.wait_for_timeout(1000)
 
         # Verify team is visible
         team_page.wait_for_team_visible(team_name)
@@ -95,12 +90,11 @@ class TestTeams:
         if close_btn.count() > 0:
             close_btn.first.click()
         else:
-            # Alternative: click the X button or backdrop
+            # Alternative: close via JavaScript
             team_page.page.evaluate("document.getElementById('team-edit-modal').classList.add('hidden')")
 
         # Cleanup
         team_page.delete_team(team_name)
-        team_page.page.wait_for_timeout(1000)
 
     def test_edit_settings_button(self, team_page):
         """Test Edit Settings button opens team settings editor."""
@@ -111,15 +105,13 @@ class TestTeams:
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
-        # Wait and reload to see the new team
-        team_page.page.wait_for_timeout(2000)
-        team_page.page.reload()
-        team_page.page.wait_for_timeout(1000)
+        # Reload to see the new team
+        team_page.page.wait_for_load_state("domcontentloaded")
+        team_page.page.reload(wait_until="domcontentloaded")
 
         # Search for the team
         team_search = team_page.page.locator("#team-search")
         team_search.fill(team_name)
-        team_page.page.wait_for_timeout(1000)
 
         # Verify team is visible
         team_page.wait_for_team_visible(team_name)
@@ -156,7 +148,6 @@ class TestTeams:
 
         # Cleanup
         team_page.delete_team(team_name)
-        team_page.page.wait_for_timeout(1000)
 
     def test_delete_team_button_in_card(self, team_page):
         """Test Delete Team button in team card with confirmation."""
@@ -167,15 +158,13 @@ class TestTeams:
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
-        # Wait and reload to see the new team
-        team_page.page.wait_for_timeout(2000)
-        team_page.page.reload()
-        team_page.page.wait_for_timeout(1000)
+        # Reload to see the new team
+        team_page.page.wait_for_load_state("domcontentloaded")
+        team_page.page.reload(wait_until="domcontentloaded")
 
         # Search for the team
         team_search = team_page.page.locator("#team-search")
         team_search.fill(team_name)
-        team_page.page.wait_for_timeout(1000)
 
         # Verify team is visible
         team_page.wait_for_team_visible(team_name)
@@ -184,17 +173,12 @@ class TestTeams:
         team_page.delete_team(team_name)
 
         # Verify team is deleted
-        team_page.page.wait_for_timeout(1000)
         team_page.wait_for_team_hidden(team_name)
 
 
 class TestTokens:
     """Tests for API Token management features."""
 
-    @pytest.mark.xfail(
-        reason="Server bug: RBAC _derive_team_from_payload crashes on TokenCreateRequest " "named 'request' (AttributeError: 'TokenCreateRequest' has no attribute 'headers')",
-        strict=False,
-    )
     def test_create_and_revoke_token(self, tokens_page):
         """Test creating and revoking an API token."""
         # Go to Tokens tab
