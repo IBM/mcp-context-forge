@@ -56,3 +56,24 @@ def test_proceed_development_mode():
     # Validation status should be SUCCESS to allow development flow
     status = cfg.get_security_status()
     assert status["status"] == "SUCCESS"
+
+
+def test_environment_aware_default_production(monkeypatch):
+    """US-1: Verify that REQUIRE_STRONG_SECRETS defaults to True in production."""
+    # Simulate production environment via env var
+    monkeypatch.setenv("ENVIRONMENT", "production")
+
+    # In production, even without passing require_strong_secrets, it should be True
+    with pytest.raises(SystemExit) as cm:
+        get_settings(jwt_secret_key="weak-key")
+    assert cm.value.code == 1
+
+
+def test_environment_aware_default_development(monkeypatch):
+    """US-1: Verify that REQUIRE_STRONG_SECRETS defaults to False in development."""
+    # Simulate development environment
+    monkeypatch.setenv("ENVIRONMENT", "development")
+
+    # In development, it should proceed despite the weak key
+    cfg = get_settings(jwt_secret_key="weak-key")
+    assert cfg.require_strong_secrets is False
