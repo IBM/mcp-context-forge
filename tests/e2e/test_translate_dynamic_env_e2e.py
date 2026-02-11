@@ -210,8 +210,8 @@ if __name__ == "__main__":
                     # Single iteration - read endpoint, send request, read response
                     async for line in sse_response.aiter_lines():
                         # Get endpoint URL
-                        if line.startswith("data: ") and endpoint_url is None:
-                            endpoint_url = line[6:].strip()
+                        if line.startswith("data:") and endpoint_url is None:
+                            endpoint_url = line[5:].strip()
                             continue
 
                         # Once we have endpoint, send request
@@ -223,8 +223,10 @@ if __name__ == "__main__":
                             continue
 
                         # Read JSON-RPC response from SSE stream
-                        if request_sent and line.startswith("data: "):
-                            data = line[6:]
+                        if request_sent and line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             try:
                                 result = json.loads(data)
                                 if result.get("id") == 1 and "result" in result:
@@ -259,8 +261,8 @@ if __name__ == "__main__":
                     request_sent = False
 
                     async for line in sse_response.aiter_lines():
-                        if line.startswith("data: ") and endpoint_url is None:
-                            endpoint_url = line[6:].strip()
+                        if line.startswith("data:") and endpoint_url is None:
+                            endpoint_url = line[5:].strip()
                             continue
 
                         if endpoint_url and not request_sent:
@@ -270,8 +272,10 @@ if __name__ == "__main__":
                             request_sent = True
                             continue
 
-                        if request_sent and line.startswith("data: "):
-                            data = line[6:]
+                        if request_sent and line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             try:
                                 result = json.loads(data)
                                 if result.get("id") == 1 and "result" in result:
@@ -290,8 +294,8 @@ if __name__ == "__main__":
                     request_sent = False
 
                     async for line in sse_response.aiter_lines():
-                        if line.startswith("data: ") and endpoint_url is None:
-                            endpoint_url = line[6:].strip()
+                        if line.startswith("data:") and endpoint_url is None:
+                            endpoint_url = line[5:].strip()
                             continue
 
                         if endpoint_url and not request_sent:
@@ -301,8 +305,10 @@ if __name__ == "__main__":
                             request_sent = True
                             continue
 
-                        if request_sent and line.startswith("data: "):
-                            data = line[6:]
+                        if request_sent and line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             try:
                                 result = json.loads(data)
                                 if result.get("id") == 2 and "result" in result:
@@ -340,8 +346,8 @@ if __name__ == "__main__":
                     request_sent = False
 
                     async for line in sse_response.aiter_lines():
-                        if line.startswith("data: ") and endpoint_url is None:
-                            endpoint_url = line[6:].strip()
+                        if line.startswith("data:") and endpoint_url is None:
+                            endpoint_url = line[5:].strip()
                             continue
 
                         if endpoint_url and not request_sent:
@@ -351,8 +357,10 @@ if __name__ == "__main__":
                             request_sent = True
                             continue
 
-                        if request_sent and line.startswith("data: "):
-                            data = line[6:]
+                        if request_sent and line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             try:
                                 result = json.loads(data)
                                 if result.get("id") == 1 and "result" in result:
@@ -389,8 +397,8 @@ if __name__ == "__main__":
                 request_sent = False
 
                 async for line in sse_response.aiter_lines():
-                    if line.startswith("data: ") and endpoint_url is None:
-                        endpoint_url = line[6:].strip()
+                    if line.startswith("data:") and endpoint_url is None:
+                        endpoint_url = line[5:].strip()
                         continue
 
                     if endpoint_url and not request_sent:
@@ -400,8 +408,10 @@ if __name__ == "__main__":
                         request_sent = True
                         continue
 
-                    if request_sent and line.startswith("data: "):
-                        data = line[6:]
+                    if request_sent and line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         try:
                             result = json.loads(data)
                             if result.get("id") == 1 and "result" in result:
@@ -431,8 +441,8 @@ if __name__ == "__main__":
                 request_sent = False
 
                 async for line in sse_response.aiter_lines():
-                    if line.startswith("data: ") and endpoint_url is None:
-                        endpoint_url = line[6:].strip()
+                    if line.startswith("data:") and endpoint_url is None:
+                        endpoint_url = line[5:].strip()
                         continue
 
                     if endpoint_url and not request_sent:
@@ -442,8 +452,10 @@ if __name__ == "__main__":
                         request_sent = True
                         continue
 
-                    if request_sent and line.startswith("data: "):
-                        data = line[6:]
+                    if request_sent and line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         try:
                             result = json.loads(data)
                             if result.get("id") == 1 and "result" in result:
@@ -475,8 +487,8 @@ if __name__ == "__main__":
 
                 async for line in sse_response.aiter_lines():
                     # Get endpoint URL
-                    if line.startswith("data: ") and endpoint_url is None:
-                        endpoint_url = line[6:].strip()
+                    if line.startswith("data:") and endpoint_url is None:
+                        endpoint_url = line[5:].strip()
                         continue
 
                     # Send initialize request
@@ -493,8 +505,10 @@ if __name__ == "__main__":
                         continue
 
                     # Read responses
-                    if line.startswith("data: "):
-                        data = line[6:]
+                    if line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         try:
                             result = json.loads(data)
                             if result.get("id") in [1, 2] and "result" in result:
@@ -547,8 +561,8 @@ if __name__ == "__main__":
                 request_sent = False
 
                 async for line in sse_response.aiter_lines():
-                    if line.startswith("data: ") and endpoint_url is None:
-                        endpoint_url = line[6:].strip()
+                    if line.startswith("data:") and endpoint_url is None:
+                        endpoint_url = line[5:].strip()
                         continue
 
                     if endpoint_url and not request_sent:
@@ -558,8 +572,10 @@ if __name__ == "__main__":
                         request_sent = True
                         continue
 
-                    if request_sent and line.startswith("data: "):
-                        data = line[6:]
+                    if request_sent and line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         try:
                             result = json.loads(data)
                             if result.get("id") == 1 and "result" in result:
@@ -589,8 +605,8 @@ if __name__ == "__main__":
                 request_sent = False
 
                 async for line in sse_response.aiter_lines():
-                    if line.startswith("data: ") and endpoint_url is None:
-                        endpoint_url = line[6:].strip()
+                    if line.startswith("data:") and endpoint_url is None:
+                        endpoint_url = line[5:].strip()
                         continue
 
                     if endpoint_url and not request_sent:
@@ -600,8 +616,10 @@ if __name__ == "__main__":
                         request_sent = True
                         continue
 
-                    if request_sent and line.startswith("data: "):
-                        data = line[6:]
+                    if request_sent and line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         try:
                             result = json.loads(data)
                             if result.get("id") == 1 and "result" in result:
