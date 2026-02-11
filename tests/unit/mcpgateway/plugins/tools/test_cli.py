@@ -123,6 +123,21 @@ def test_bootstrap_calls_copier_when_git_available(monkeypatch, tmp_path):
     run_copy.assert_called_once()
 
 
+def test_bootstrap_logs_copy_exception(monkeypatch, tmp_path):
+    run_copy = MagicMock(side_effect=RuntimeError("copy failed"))
+    monkeypatch.setitem(sys.modules, "copier", SimpleNamespace(run_copy=run_copy))
+    monkeypatch.setattr(cli, "command_exists", lambda _name: True)
+    monkeypatch.setattr(cli, "git_user_name", lambda: "Alice")
+    monkeypatch.setattr(cli, "git_user_email", lambda: "alice@example.com")
+    mock_logger = MagicMock()
+    monkeypatch.setattr(cli, "logger", mock_logger)
+
+    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", defaults=True, dry_run=True)
+
+    run_copy.assert_called_once()
+    mock_logger.exception.assert_called_once()
+
+
 def test_main_calls_typer_app(monkeypatch):
     called = {}
 

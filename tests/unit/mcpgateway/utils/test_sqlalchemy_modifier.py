@@ -228,14 +228,17 @@ def test_json_contains_tag_expr_no_bind_collision(mock_session: Any):
 
     # Compile with SQLite to verify params don't collide
     engine = create_engine("sqlite:///:memory:")
-    compiled = combined.compile(engine)
+    try:
+        compiled = combined.compile(engine)
 
-    # All 4 params should be present (2 for each column)
-    assert len(compiled.params) == 4
+        # All 4 params should be present (2 for each column)
+        assert len(compiled.params) == 4
 
-    # Verify all values are present (order doesn't matter due to unique counters)
-    values = set(compiled.params.values())
-    assert values == {"tag1", "tag2", "cat1", "cat2"}
+        # Verify all values are present (order doesn't matter due to unique counters)
+        values = set(compiled.params.values())
+        assert values == {"tag1", "tag2", "cat1", "cat2"}
+    finally:
+        engine.dispose()
 
 
 def test_json_contains_tag_expr_mysql_match_any(mock_session: Any):
@@ -304,11 +307,14 @@ def test_json_contains_tag_expr_same_column_no_collision(mock_session: Any):
 
     combined = and_(expr1, expr2)
     engine = create_engine("sqlite:///:memory:")
-    compiled = combined.compile(engine)
+    try:
+        compiled = combined.compile(engine)
 
-    # Both params should be present with unique names
-    assert len(compiled.params) == 2
-    assert set(compiled.params.values()) == {"tag1", "tag2"}
+        # Both params should be present with unique names
+        assert len(compiled.params) == 2
+        assert set(compiled.params.values()) == {"tag1", "tag2"}
+    finally:
+        engine.dispose()
 
 
 # --- Tests for template functions ---

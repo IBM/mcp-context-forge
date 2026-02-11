@@ -139,9 +139,12 @@ def test_engine(test_db_url):
 
     db_mod.Base.metadata.create_all(bind=engine)
     yield engine
-    db_mod.Base.metadata.drop_all(bind=engine)
-    if os.path.exists("./test.db"):
-        os.remove("./test.db")
+    try:
+        db_mod.Base.metadata.drop_all(bind=engine)
+    finally:
+        engine.dispose()
+        if os.path.exists("./test.db"):
+            os.remove("./test.db")
 
 
 @pytest.fixture
