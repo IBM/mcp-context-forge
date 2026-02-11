@@ -344,9 +344,9 @@ class PluginExecutor:
                     },
                 )
                 return result
-            else:
-                # No active trace or no observability provider, execute without instrumentation
-                return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+
+            # No active trace or no observability provider, execute without instrumentation
+            return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
 
         except Exception as e:
             # If observability setup fails, continue without instrumentation
