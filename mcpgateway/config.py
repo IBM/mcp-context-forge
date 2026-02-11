@@ -2234,7 +2234,11 @@ class LazySettingsWrapper:
 
     @property
     def plugins(self) -> "PluginsSettings":
-        """Access plugin framework settings via ``settings.plugins``."""
+        """Access plugin framework settings via ``settings.plugins``.
+
+        Returns:
+            PluginsSettings: The plugin framework settings instance.
+        """
         # First-Party
         from mcpgateway.plugins.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
 
