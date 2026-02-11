@@ -1,0 +1,129 @@
+# docker-compose.override.lite.yml
+#
+# Docker Compose override file for "lite" configuration (resource-constrained environments).
+# This file extends docker-compose.yml with reduced resource limits and replica counts.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.override.lite.yml up -d
+#   docker compose -f docker-compose.yml -f docker-compose.override.lite.yml down
+#
+# Makefile integration:
+#   make compose-lite-up    # Applies this override
+#   make compose-lite-down  # Applies this override
+#
+# Key differences from base docker-compose.yml:
+#   - Gateway: 2 replicas (vs 3), reduced CPU/memory
+#   - Nginx: Reduced CPU/memory limits
+#   - Postgres: Reduced CPU/memory limits
+#   - Redis: Reduced CPU/memory limits
+#   - Monitoring: Uses "monitoring-lite" profile with reduced resources
+
+services:
+  # Reduce nginx resources for lite mode
+  nginx:
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
+  # Reduce gateway replicas and resources for lite mode
+  gateway:
+    deploy:
+      mode: replicated
+      replicas: 2
+      resources:
+        limits:
+          cpus: '3.5'
+          memory: 3G
+        reservations:
+          cpus: '2'
+          memory: 2.5G
+
+  # Reduce postgres resources for lite mode
+  postgres:
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 4G
+        reservations:
+          cpus: '1'
+          memory: 2G
+
+  # Reduce redis resources for lite mode
+  redis:
+    deploy:
+      resources:
+        limits:
+          cpus: '1.5'
+          memory: 1.5G
+        reservations:
+          cpus: '0.75'
+          memory: 0.75G
+
+  # Add monitoring-lite profile to exporters (reduced resource footprint)
+  postgres_exporter:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.125'
+          memory: 64M
+    profiles: ["monitoring", "monitoring-lite"]
+
+  redis_exporter:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.125'
+          memory: 64M
+    profiles: ["monitoring", "monitoring-lite"]
+
+  pgbouncer_exporter:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.125'
+          memory: 64M
+    profiles: ["monitoring", "monitoring-lite"]
+
+  nginx_exporter:
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 128M
+        reservations:
+          cpus: '0.125'
+          memory: 64M
+    profiles: ["monitoring", "monitoring-lite"]
+
+  cadvisor:
+    profiles: ["monitoring", "monitoring-lite"]
+
+  prometheus:
+    profiles: ["monitoring", "monitoring-lite"]
+
+  loki:
+    profiles: ["monitoring", "monitoring-lite"]
+
+  tempo:
+    profiles: ["monitoring", "monitoring-lite"]
+
+  promtail:
+    profiles: ["monitoring", "monitoring-lite"]
+
+  grafana:
+    profiles: ["monitoring", "monitoring-lite"]

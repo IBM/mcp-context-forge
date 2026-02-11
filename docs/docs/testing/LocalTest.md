@@ -197,27 +197,31 @@ Grand Total: 8.75 CPU / 9.625GB ✅ (87.5% utilization, 1.25 CPU headroom)
 
 | Configuration             | RPS     | Users | Failure Rate |
 | ------------------------- | ------- | ----- | ------------ |
-| compose-lite (2 replicas) | 200-250 | 400   | <2%          |
-| compose (3 replicas)      | 300-350 | 500+  | <2%          |
+| compose-lite (2 replicas) | 400-500 | 800   | ~0%          |
 
 **Note:** Database (PostgreSQL max_connections=800) is the bottleneck, not CPU.
 
-### Actual Resource Usage During Load Test (400 users, 24 ramp rate)
+### Load test summary(800 users, 100 ramp rate, 10minutes)
 
-**Idle:**
+**Overall Metrics:**
 
-- Total: ~0.4 CPU (4% of 10 CPU), ~1.7GB (9% of 18GB)
+- Total Requests: 266,151
+- Total Failures: 2 (0.00%)
+- Requests/sec (RPS): 444.86
 
-**Peak Load:**
+**Response Times (ms):**
 
-- Gateway(2×): 1.8 CPU
-- PostgreSQL: 2.0 CPU
-- Redis: 0.3 CPU
-- Nginx: 0.2 CPU
-- Monitoring: 0.3 CPU
-- **Total: 4.6 CPU (46% utilization) | 5.25GB (29%)**
+- Average: 25.60
+- Min: 0.92
+- Max: 30011.87
+- Median (p50): 8.00
+- p90: 26.00
+- p95: 60.00
+- p99: 220.00
 
-**Headroom:** 5.4 CPU / 12.75GB available for bursting
+# Lite local load test
+
+![Local lite load test result](lite-load-testing.png)
 
 ---
 
@@ -237,8 +241,6 @@ Grand Total: 8.75 CPU / 9.625GB ✅ (87.5% utilization, 1.25 CPU headroom)
 | **nginx_exporter**     | ✅              | ✅              | Proxy metrics (both have)                         |
 | **pgAdmin**            | ❌              | ✅              | Admin UI - excluded from lite for resource saving |
 | **redis_commander**    | ❌              | ✅              | Admin UI - excluded from lite for resource saving |
-| **CPU Reserved**       | 9.375 CPU       | 10.125+ CPU     | monitoring-lite saves 0.75 CPU                    |
-| **Memory Reserved**    | 9.92GB          | 10.3GB          | monitoring-lite saves 384MB                       |
 
 **When to use each:**
 
@@ -249,6 +251,6 @@ Grand Total: 8.75 CPU / 9.625GB ✅ (87.5% utilization, 1.25 CPU headroom)
 
 ## Files Modified
 
-- ✅ `docker-compose-lite.yml` - Lightweight 2-replica stack with monitoring-lite profile
+- ✅ `docker-compose.override.lite.yml` - Lightweight 2-replica stack with monitoring-lite profile
 - ✅ `Makefile` - Added compose-lite-up, compose-lite-down, monitoring-lite-up, monitoring-lite-down targets
 - ✅ `LocalTest.md` - This file, documenting lite setup for local load testing

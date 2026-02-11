@@ -4476,13 +4476,13 @@ compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
-compose-lite-up: ## 💻 Start lite stack (docker-compose-lite.yml)
-	@if [ ! -f "docker-compose-lite.yml" ]; then \
-		echo "❌ Compose file not found: docker-compose-lite.yml"; \
+compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
+	@if [ ! -f "docker-compose.override.lite.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.override.lite.yml"; \
 		exit 1; \
 	fi
-	@echo "🚀  Starting lite stack..."
-	IMAGE_LOCAL=$(call get_image_name) docker compose -f docker-compose-lite.yml up -d
+	@echo "🚀  Starting lite stack (with override)..."
+	IMAGE_LOCAL=$(call get_image_name) docker compose -f docker-compose.yml -f docker-compose.override.lite.yml up -d
 
 compose-restart:
 	@echo "🔄  Restarting stack..."
@@ -4511,14 +4511,14 @@ compose-stop:
 compose-down:
 	$(COMPOSE) down --remove-orphans
 
-compose-lite-down: ## 💻 Stop lite stack (docker-compose-lite.yml)
+compose-lite-down: ## 💻 Stop lite stack (docker-compose.yml + docker-compose.override.lite.yml)
 	@echo "🛑  Stopping lite stack..."
-	@docker compose -f docker-compose-lite.yml stop -t 10 2>/dev/null || true
-	docker compose -f docker-compose-lite.yml down --remove-orphans
+	@docker compose -f docker-compose.yml -f docker-compose.override.lite.yml stop -t 10 2>/dev/null || true
+	docker compose -f docker-compose.yml -f docker-compose.override.lite.yml down --remove-orphans
 	@echo "✅ Lite stack stopped."
 
 monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, Grafana, exporters - excludes pgAdmin, Redis CLI)
-	@echo "📊 Starting lite monitoring stack (docker-compose-lite.yml)..."
+	@echo "📊 Starting lite monitoring stack (docker-compose.yml + docker-compose.override.lite.yml)..."
 	@echo "🔎 Preflight: checking host port 8080 (nginx)"
 	@if command -v ss >/dev/null 2>&1; then \
 		if ss -H -ltn 'sport = :8080' | grep -q .; then \
@@ -4541,7 +4541,7 @@ monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, G
 	OTEL_ENABLE_OBSERVABILITY=true \
 	OTEL_TRACES_EXPORTER=otlp \
 	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
-	docker compose -f docker-compose-lite.yml --profile monitoring-lite up -d
+	docker compose -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite up -d
 	@echo "⏳ Waiting for Grafana to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10; do \
 		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
@@ -4557,8 +4557,8 @@ monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, G
 
 monitoring-lite-down: ## 📊 Stop lite monitoring stack
 	@echo "📊 Stopping lite monitoring stack..."
-	@docker compose -f docker-compose-lite.yml --profile monitoring-lite stop -t 10 2>/dev/null || true
-	docker compose -f docker-compose-lite.yml --profile monitoring-lite down --remove-orphans
+	@docker compose -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite stop -t 10 2>/dev/null || true
+	docker compose -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite down --remove-orphans
 	@echo "✅ Lite monitoring stack stopped."
 
 compose-rm:
