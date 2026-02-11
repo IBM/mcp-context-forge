@@ -167,12 +167,15 @@ class TestToolServiceLocking:
         mock_tool_lookup_cache.invalidate = AsyncMock()
         mock_admin_stats = MagicMock()
         mock_admin_stats.invalidate_tags = AsyncMock()
+        mock_metrics_cache = MagicMock()
+        mock_metrics_cache.invalidate_prefix_async = AsyncMock()
+        mock_metrics_cache.invalidate_async = AsyncMock()
 
         with patch.object(service, "_notify_tool_deleted", return_value=None):
             with patch("mcpgateway.services.tool_service._get_registry_cache", return_value=mock_registry_cache):
                 with patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=mock_tool_lookup_cache):
                     with patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", mock_admin_stats):
-                        with patch("mcpgateway.cache.metrics_cache.metrics_cache"):
+                        with patch("mcpgateway.cache.metrics_cache.metrics_cache", mock_metrics_cache):
                             await service.delete_tool(db, "tool-id")
 
         # Verify db.get was called for initial lookup (not get_for_update)

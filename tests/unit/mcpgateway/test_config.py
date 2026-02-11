@@ -179,8 +179,10 @@ def test_supports_transport_properties():
 # --------------------------------------------------------------------------- #
 #                          Response Compression                               #
 # --------------------------------------------------------------------------- #
-def test_compression_default_values():
+def test_compression_default_values(monkeypatch):
     """Test that compression settings have correct defaults."""
+    # Clear any environment variable that might override the default
+    monkeypatch.delenv("COMPRESSION_ENABLED", raising=False)
     s = Settings(_env_file=None)
     assert s.compression_enabled is True
     assert s.compression_minimum_size == 500

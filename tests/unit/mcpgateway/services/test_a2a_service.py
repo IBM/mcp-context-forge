@@ -2233,7 +2233,7 @@ class TestAggregateMetricsEdgeCases:
 
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", SimpleNamespace(
-            get=MagicMock(return_value=cached_metrics),
+            get_async=AsyncMock(return_value=cached_metrics),
         ))
 
         result = await service.aggregate_metrics(mock_db)
@@ -2250,8 +2250,8 @@ class TestAggregateMetricsEdgeCases:
         )
 
         mock_cache = MagicMock()
-        mock_cache.get.return_value = None  # cache miss
-        mock_cache.set = MagicMock()
+        mock_cache.get_async = AsyncMock(return_value=None)  # cache miss
+        mock_cache.set_async = AsyncMock()
 
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.is_cache_enabled", lambda: True)
         monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", mock_cache)
@@ -2265,4 +2265,4 @@ class TestAggregateMetricsEdgeCases:
 
         result = await service.aggregate_metrics(mock_db)
         assert result["total_agents"] == 3
-        mock_cache.set.assert_called_once()
+        mock_cache.set_async.assert_called_once()

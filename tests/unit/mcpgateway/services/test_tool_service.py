@@ -233,7 +233,7 @@ class TestToolServiceHelpersExtended:
         cached = [SimpleNamespace(id="tool-1")]
 
         monkeypatch.setattr(cache_module, "is_cache_enabled", lambda: True)
-        cache_module.metrics_cache.get = MagicMock(return_value=cached)
+        cache_module.metrics_cache.get_async = AsyncMock(return_value=cached)
 
         mock_combined = MagicMock()
         monkeypatch.setattr("mcpgateway.services.tool_service.get_top_performers_combined", mock_combined)

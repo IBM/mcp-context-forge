@@ -834,6 +834,14 @@ class TestMemberCountsCachedEdge:
         mock_redis = AsyncMock()
         mock_redis.mget = AsyncMock(return_value=[b"5"])
 
+        # Mock DB query to return empty (no cache misses)
+        mock_query = MagicMock()
+        mock_filter = MagicMock()
+        mock_filter.group_by = MagicMock(return_value=mock_filter)
+        mock_filter.all = MagicMock(return_value=[])  # No DB results since cache hit
+        mock_query.filter = MagicMock(return_value=mock_filter)
+        db.query = MagicMock(return_value=mock_query)
+
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
              patch("mcpgateway.services.team_management_service.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True

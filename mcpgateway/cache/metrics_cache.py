@@ -362,8 +362,8 @@ class MetricsCache:
         if self.use_redis and not self._sync_method_warned:
             logger.warning(
                 "Sync methods (get/set/invalidate) called with Redis backend active. "
-                "Only local cache will be used. Use async methods for Redis support. "
-                "This warning will only be shown once."
+                + "Only local cache will be used. Use async methods for Redis support. "
+                + "This warning will only be shown once."
             )
             self._sync_method_warned = True
 

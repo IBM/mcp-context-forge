@@ -1666,7 +1666,7 @@ class TestServerService:
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
             patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
         ):
-            mock_cache.get.return_value = cached
+            mock_cache.get_async = AsyncMock(return_value=cached)
             result = await server_service.get_top_servers(MagicMock(), limit=5)
         assert result == cached
 
@@ -1679,10 +1679,11 @@ class TestServerService:
             patch("mcpgateway.services.metrics_query_service.get_top_performers_combined", return_value=[]),
             patch("mcpgateway.services.server_service.build_top_performers", return_value=[]),
         ):
-            mock_cache.get.return_value = None
+            mock_cache.get_async = AsyncMock(return_value=None)
+            mock_cache.set_async = AsyncMock()
             result = await server_service.get_top_servers(MagicMock(), limit=3)
         assert result == []
-        mock_cache.set.assert_called_once()
+        mock_cache.set_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_top_servers_cache_disabled(self, server_service):
@@ -1713,7 +1714,7 @@ class TestServerService:
             patch("mcpgateway.cache.metrics_cache.is_cache_enabled", return_value=True),
             patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
         ):
-            mock_cache.get.return_value = cached
+            mock_cache.get_async = AsyncMock(return_value=cached)
             result = await server_service.aggregate_metrics(MagicMock())
         assert result.total_executions == 10
         assert result.failed_executions == 2
@@ -1735,10 +1736,11 @@ class TestServerService:
             patch("mcpgateway.cache.metrics_cache.metrics_cache") as mock_cache,
             patch("mcpgateway.services.metrics_query_service.aggregate_metrics_combined", return_value=mock_result),
         ):
-            mock_cache.get.return_value = None
+            mock_cache.get_async = AsyncMock(return_value=None)
+            mock_cache.set_async = AsyncMock()
             result = await server_service.aggregate_metrics(MagicMock())
         assert result.total_executions == 5
-        mock_cache.set.assert_called_once()
+        mock_cache.set_async.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_aggregate_metrics_cache_disabled(self, server_service):
@@ -2574,6 +2576,8 @@ class TestDeleteServerPermission:
             mock_cache = AsyncMock()
             mock_cache_fn.return_value = mock_cache
             mock_admin_cache.invalidate_tags = AsyncMock()
+            mock_metrics_cache.invalidate_prefix_async = AsyncMock()
+            mock_metrics_cache.invalidate_async = AsyncMock()
 
             await server_service.delete_server(test_db, "srv-1", user_email="owner@test.com")
 
