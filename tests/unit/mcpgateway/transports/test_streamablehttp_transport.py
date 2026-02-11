@@ -36,6 +36,7 @@ from starlette.types import Scope
 # Import module under test - we only need the specific classes / functions
 # ---------------------------------------------------------------------------
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
+from mcpgateway.transports.rust_streamable_bridge import RustStreamableRequestContext
 
 InMemoryEventStore = tr.InMemoryEventStore  # alias
 streamable_http_auth = tr.streamable_http_auth
@@ -1422,7 +1423,7 @@ async def test_session_manager_wrapper_prefers_rust_handler_when_request_handled
 
     class DummyRustBridge:
         async def prepare_request_context(self, _scope):
-            return tr.RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
+            return RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
 
         async def handle_request(self, _scope, _receive, _send):
             return True
@@ -1464,7 +1465,7 @@ async def test_session_manager_wrapper_falls_back_when_rust_handler_returns_fals
 
     class DummyRustBridge:
         async def prepare_request_context(self, _scope):
-            return tr.RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
+            return RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
 
         async def handle_request(self, _scope, _receive, _send):
             return False
@@ -1513,7 +1514,7 @@ async def test_session_manager_wrapper_preserves_error_envelope_on_python_fallba
 
     class DummyRustBridge:
         async def prepare_request_context(self, _scope):
-            return tr.RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
+            return RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
 
         async def handle_request(self, _scope, _receive, _send):
             return False
@@ -1527,7 +1528,8 @@ async def test_session_manager_wrapper_preserves_error_envelope_on_python_fallba
     await wrapper.shutdown()
 
     assert sent[0]["body"].decode("utf-8") == '{"jsonrpc":"2.0","id":"1","error":{"code":-32603,"message":"internal"}}'
-    
+
+
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypatch, caplog):
     """Test handle_streamable_http logs and raises on exception."""
