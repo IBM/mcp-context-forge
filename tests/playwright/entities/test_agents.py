@@ -150,7 +150,7 @@ class TestAgentsEntity:
 
         # Select OAuth to reveal grant type field
         agents_page.set_auth_type("oauth")
-        agents_page.page.wait_for_timeout(500)
+        agents_page.wait_for_visible(agents_page.auth_oauth_fields)
 
         # Get grant type options
         options = agents_page.oauth_grant_type_select.locator("option")
@@ -228,7 +228,7 @@ class TestAgentsEntity:
 
         # Select basic auth
         agents_page.set_auth_type("basic")
-        agents_page.page.wait_for_timeout(500)
+        agents_page.wait_for_visible(agents_page.auth_basic_fields)
 
         # Verify username field
         username_name = agents_page.auth_username_input.get_attribute("name")
@@ -247,7 +247,7 @@ class TestAgentsEntity:
 
         # Select bearer auth
         agents_page.set_auth_type("bearer")
-        agents_page.page.wait_for_timeout(500)
+        agents_page.wait_for_visible(agents_page.auth_bearer_fields)
 
         # Verify token field
         token_name = agents_page.auth_token_input.get_attribute("name")
@@ -262,7 +262,7 @@ class TestAgentsEntity:
 
         # Select query param auth
         agents_page.set_auth_type("query_param")
-        agents_page.page.wait_for_timeout(500)
+        agents_page.wait_for_visible(agents_page.auth_query_param_fields)
 
         # Verify security warning is visible
         warning = agents_page.auth_query_param_fields.locator("text=Security Warning")
@@ -282,9 +282,10 @@ class TestAgentsEntity:
         # Navigate to agents tab
         agents_page.navigate_to_agents_tab()
 
-        # Select auth type
+        # Select auth type and wait for fields to appear
         agents_page.set_auth_type(auth_type)
-        agents_page.page.wait_for_timeout(500)
+        auth_fields_map = {"basic": agents_page.auth_basic_fields, "bearer": agents_page.auth_bearer_fields, "query_param": agents_page.auth_query_param_fields}
+        agents_page.wait_for_visible(auth_fields_map[auth_type])
 
         # Verify expected fields are present - scope to agents panel to avoid strict mode violations
         # (multiple forms on page with same field names)

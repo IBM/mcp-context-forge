@@ -9,7 +9,6 @@ Shared utility functions for admin page interactions.
 
 # Standard
 import logging
-import time
 
 # Third-Party
 from playwright.sync_api import Page
@@ -45,8 +44,8 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
         Entity dict if found, None otherwise
     """
     headers = _get_auth_headers(page)
-    for _ in range(retries):
-        cache_bust = str(int(time.time() * 1000))
+    for attempt in range(retries):
+        cache_bust = str(attempt)
         url = f"/admin/{endpoint}?per_page=500&cache_bust={cache_bust}"
         response = page.request.get(url, headers=headers)
         if response.ok:
@@ -61,7 +60,7 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
                     return item
         else:
             logger.warning("find_entity_by_name: %s returned status=%d: %s", endpoint, response.status, response.text()[:200])
-        time.sleep(0.5)
+        page.wait_for_timeout(500)
     return None
 
 
