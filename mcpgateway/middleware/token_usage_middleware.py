@@ -24,6 +24,7 @@ import time
 
 # Third-Party
 from starlette.datastructures import Headers
+from starlette.requests import Request
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 # First-Party
@@ -91,7 +92,11 @@ class TokenUsageMiddleware:
         status_code = 200  # Default
 
         async def send_wrapper(message: dict) -> None:
-            """Wrap send to capture response status."""
+            """Wrap send to capture response status.
+            
+            Args:
+                message: ASGI message dict containing response data
+            """
             nonlocal status_code
             if message["type"] == "http.response.start":
                 status_code = message["status"]
@@ -128,9 +133,6 @@ class TokenUsageMiddleware:
 
                 # Decode token to get JTI and user email
                 # Note: We need to create a minimal Request-like object
-                # Third-Party
-                from starlette.requests import Request
-
                 request = Request(scope, receive)
                 try:
                     payload = await verify_jwt_token_cached(token, request)

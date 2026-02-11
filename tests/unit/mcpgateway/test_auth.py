@@ -734,12 +734,10 @@ class TestUpdateApiTokenLastUsed:
         mock_redis_client = MagicMock()
         mock_redis_client.get.return_value = "1234567890.0"  # Last update timestamp
 
-        with patch("mcpgateway.auth.settings") as mock_settings, \
-             patch("redis.from_url", return_value=mock_redis_client), \
+        with patch("mcpgateway.auth._get_sync_redis_client", return_value=mock_redis_client), \
+             patch("mcpgateway.auth.settings") as mock_settings, \
              patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
              patch("time.time", return_value=1234567890.0):  # Same time (no elapsed time)
-            mock_settings.redis_url = "redis://localhost:6379/0"
-            mock_settings.cache_type = "redis"
             mock_settings.token_last_used_update_interval_minutes = 5
 
             _update_api_token_last_used_sync("jti-123")
@@ -767,13 +765,11 @@ class TestUpdateApiTokenLastUsed:
         # Last update was 400 seconds ago (> 5 minutes)
         mock_redis_client.get.return_value = "1234567490.0"
 
-        with patch("mcpgateway.auth.settings") as mock_settings, \
-             patch("redis.from_url", return_value=mock_redis_client), \
+        with patch("mcpgateway.auth._get_sync_redis_client", return_value=mock_redis_client), \
+             patch("mcpgateway.auth.settings") as mock_settings, \
              patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session, \
              patch("time.time", return_value=1234567890.0), \
              patch("mcpgateway.db.utc_now") as mock_utc_now:
-            mock_settings.redis_url = "redis://localhost:6379/0"
-            mock_settings.cache_type = "redis"
             mock_settings.token_last_used_update_interval_minutes = 5
             mock_fresh_session.return_value.__enter__.return_value = mock_db
             mock_fresh_session.return_value.__exit__.return_value = None

@@ -35,8 +35,8 @@ from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 security = HTTPBearer(auto_error=False)
 
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
-_sync_redis_client = None
-_sync_redis_lock = threading.Lock()
+_SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
+_SYNC_REDIS_LOCK = threading.Lock()
 
 
 def _log_auth_event(
@@ -477,37 +477,37 @@ def _get_sync_redis_client():
     Returns:
         Redis client or None if Redis is unavailable/disabled.
     """
-    global _sync_redis_client
+    global _SYNC_REDIS_CLIENT  # pylint: disable=global-statement
 
     # Standard
-    import logging as log  # pylint: disable=import-outside-toplevel
+    import logging as log  # pylint: disable=import-outside-toplevel,reimported
 
     # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
 
     # Quick check without lock
-    if _sync_redis_client is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
-        return _sync_redis_client
+    if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
+        return _SYNC_REDIS_CLIENT
 
     # Lazy initialization with lock
-    with _sync_redis_lock:
+    with _SYNC_REDIS_LOCK:
         # Double-check after acquiring lock
-        if _sync_redis_client is not None:
-            return _sync_redis_client
+        if _SYNC_REDIS_CLIENT is not None:
+            return _SYNC_REDIS_CLIENT
 
         try:
             # Third-Party
             import redis  # pylint: disable=import-outside-toplevel
 
-            _sync_redis_client = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+            _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
             # Test connection
-            _sync_redis_client.ping()
+            _SYNC_REDIS_CLIENT.ping()
             log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
         except Exception as e:
             log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
-            _sync_redis_client = None
+            _SYNC_REDIS_CLIENT = None
 
-    return _sync_redis_client
+    return _SYNC_REDIS_CLIENT
 
 
 def _update_api_token_last_used_sync(jti: str) -> None:
@@ -531,7 +531,7 @@ def _update_api_token_last_used_sync(jti: str) -> None:
     import time  # pylint: disable=import-outside-toplevel,redefined-outer-name
 
     # First-Party
-    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel
+    from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
 
     # Rate-limiting cache key
     cache_key = f"api_token_last_used:{jti}"
