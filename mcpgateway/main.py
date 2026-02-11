@@ -6262,7 +6262,7 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
-            except (ValueError, Exception):
+            except Exception:
                 # Log error and return invalid method
                 logger.error(f"Method not found: {method}")
                 raise JSONRPCError(-32000, "Invalid method", params)
