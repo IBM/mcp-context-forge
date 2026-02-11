@@ -5,6 +5,7 @@ from __future__ import annotations
 
 # Standard
 from dataclasses import dataclass
+import inspect
 import os
 import re
 from typing import Any, Awaitable, Callable, Dict, Optional
@@ -94,7 +95,7 @@ class RustStreamableHTTPTransportBridge:
             logger.warning("Rust streamable HTTP context prep failed, using Python fallback: %s", exc)
             return context
 
-     async def handle_request(self, scope: Dict[str, Any], receive: Any, send: Any) -> bool:
+    async def handle_request(self, scope: Dict[str, Any], receive: Any, send: Any) -> bool:
         """Attempt Rust-native request handling and return whether request was handled.
         Returns False whenever the Rust backend is disabled, unavailable, or fails.
         """
@@ -103,7 +104,7 @@ class RustStreamableHTTPTransportBridge:
 
         try:
             result = self._request_handler_fn(scope, receive, send)
-            if hasattr(result, "__await__"):
+            if inspect.isawaitable(result):
                 result = await result
             return bool(result)
         except Exception as exc:

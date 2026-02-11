@@ -114,3 +114,22 @@ async def test_bridge_handle_request_fallback_on_handler_error(monkeypatch):
     handled = await bridge.handle_request({}, None, None)
 
     assert handled is False
+
+@pytest.mark.asyncio
+async def test_bridge_handle_request_supports_sync_handlers(monkeypatch):
+    monkeypatch.setenv("MCP_USE_RUST_TRANSPORT", "1")
+
+    def fake_prepare(_scope):
+        return {"path": "/mcp", "headers": {}, "is_mcp_path": True}
+
+    def fake_start(_scope, _receive, _send):
+        return True
+
+    fake_module = types.SimpleNamespace(prepare_streamable_http_context=fake_prepare)
+    fake_module.start_streamable_http_transport = fake_start
+    monkeypatch.setitem(sys.modules, "mcpgateway_transport_rs", fake_module)
+
+    bridge = RustStreamableHTTPTransportBridge.from_env()
+    handled = await bridge.handle_request({}, None, None)
+
+    assert handled is True
