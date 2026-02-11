@@ -145,7 +145,7 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.pagination import paginate_query
+from mcpgateway.utils.pagination import paginate_query, escape_like_wildcards
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
@@ -464,20 +464,19 @@ def rate_limit(requests_per_minute: Optional[int] = None):
     return decorator
 
 
-def escape_like_wildcards(search_term: str) -> str:
-    """Escape SQL LIKE wildcard characters in search terms.
+# `escape_like_wildcards` is provided by mcpgateway.utils.pagination
 
-    Escapes % and _ characters to prevent unexpected wildcard matching
-    when users search for literal percent or underscore characters.
 
-    Args:
-        search_term: The raw search term from user input.
+def sanitize_search_term(search_term: str | None, max_len: int = 200) -> str | None:
+    """Sanitise user-provided search terms for safe logging.
 
-    Returns:
-        str: Search term with % and _ characters escaped.
+    - Replace newlines with spaces
+    - Truncate to `max_len` characters
+    - Return None if input is None
     """
-    # Escape backslash first, then wildcards
-    return search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    if search_term is None:
+        return None
+    return re.sub(r"[\r\n]+", " ", search_term)[:max_len]
 
 
 def apply_search_filter(query, search_term: str, fields: list):
@@ -1585,7 +1584,7 @@ async def admin_servers_partial_html(
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    tag_search: Optional[str] = Query(None, description="Search across name, description, tags, owner, and team"),
+    search_term: Optional[str] = Query(None, max_length=200, description="Search across name, description, tags, owner, and team"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -1605,7 +1604,7 @@ async def admin_servers_partial_html(
         include_inactive (bool): If True, include inactive servers in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
-        tag_search (Optional[str]): Search filter for name, description, tags, owner, team.
+        search_term (Optional[str]): Search filter for name, description, tags, owner, team.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -1666,10 +1665,10 @@ async def admin_servers_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search and isinstance(tag_search, str):
+    if search_term and isinstance(search_term, str):
         query = apply_search_filter(
             query,
-            tag_search,
+            search_term,
             [
                 (DbServer.id, False, False),
                 (DbServer.name, False, False),
@@ -1679,7 +1678,8 @@ async def admin_servers_partial_html(
                 (DbServer.federation_source, True, False),
             ],
         )
-        LOGGER.info(f"🔍 Servers search filter applied: {tag_search}")
+        _san = sanitize_search_term(search_term, max_len=200)
+        LOGGER.debug(f"🔍 Servers search filter applied: {_san}")
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -1690,8 +1690,8 @@ async def admin_servers_partial_html(
         query_params["include_inactive"] = "true"
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search and isinstance(tag_search, str):
-        query_params["tag_search"] = tag_search
+    if search_term and isinstance(search_term, str):
+        query_params["search_term"] = search_term
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -7045,7 +7045,7 @@ async def admin_tools_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    tag_search: Optional[str] = Query(None, description="Search across name, description, tags, owner, and team"),
+    search_term: Optional[str] = Query(None, max_length=200, description="Search across name, description, tags, owner, and team"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7062,7 +7062,7 @@ async def admin_tools_partial_html(
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        tag_search (Optional[str]): Search filter for name, description, tags, owner, team.
+        search_term (Optional[str]): Search filter for name, description, tags, owner, team.
         render (str): Render mode - 'controls' returns only pagination controls.
         db (Session): Database session dependency.
         user (str): Authenticated user dependency.
@@ -7137,10 +7137,10 @@ async def admin_tools_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search and isinstance(tag_search, str):
+    if search_term and isinstance(search_term, str):
         query = apply_search_filter(
             query,
-            tag_search,
+            search_term,
             [
                 (DbTool.id, False, False),
                 (DbTool.original_name, False, False),
@@ -7151,7 +7151,8 @@ async def admin_tools_partial_html(
                 (DbTool.federation_source, True, False),
             ],
         )
-        LOGGER.info(f"🔍 Tools search filter applied: {tag_search}")
+        _san = sanitize_search_term(search_term, max_len=200)
+        LOGGER.debug(f"🔍 Tools search filter applied: {_san}")
 
     # Apply sorting: alphabetical by URL, then name, then ID (for UI display)
     # Different from JSON endpoint which uses created_at DESC
@@ -7167,8 +7168,8 @@ async def admin_tools_partial_html(
         query_params_dict["gateway_id"] = gateway_id
     if team_id:
         query_params_dict["team_id"] = team_id
-    if tag_search and isinstance(tag_search, str):
-        query_params_dict["tag_search"] = tag_search
+    if search_term and isinstance(search_term, str):
+        query_params_dict["search_term"] = search_term
 
     paginated_result = await paginate_query(
         db=db,
@@ -7605,7 +7606,7 @@ async def admin_prompts_partial_html(
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    tag_search: Optional[str] = Query(None, description="Search across name, description, tags, owner, and team"),
+    search_term: Optional[str] = Query(None, max_length=200, description="Search across name, description, tags, owner, and team"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -7626,7 +7627,7 @@ async def admin_prompts_partial_html(
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        tag_search (Optional[str]): Search filter for name, description, tags, owner, team.
+        search_term (Optional[str]): Search filter for name, description, tags, owner, team.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -7698,10 +7699,10 @@ async def admin_prompts_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search and isinstance(tag_search, str):
+    if search_term and isinstance(search_term, str):
         query = apply_search_filter(
             query,
-            tag_search,
+            search_term,
             [
                 (DbPrompt.id, False, False),
                 (DbPrompt.name, False, False),
@@ -7711,7 +7712,8 @@ async def admin_prompts_partial_html(
                 (DbPrompt.federation_source, True, False),
             ],
         )
-        LOGGER.info(f"🔍 Prompts search filter applied: {tag_search}")
+        _san = sanitize_search_term(search_term, max_len=200)
+        LOGGER.debug(f"🔍 Prompts search filter applied: {_san}")
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
@@ -7724,8 +7726,8 @@ async def admin_prompts_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search and isinstance(tag_search, str):
-        query_params["tag_search"] = tag_search
+    if search_term and isinstance(search_term, str):
+        query_params["search_term"] = search_term
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -8332,7 +8334,7 @@ async def admin_resources_partial_html(
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    tag_search: Optional[str] = Query(None, description="Search across name, description, tags, owner, and team"),
+    search_term: Optional[str] = Query(None, max_length=200, description="Search across name, description, tags, owner, and team"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -8352,7 +8354,7 @@ async def admin_resources_partial_html(
             items used by infinite scroll selectors.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        tag_search (Optional[str]): Search filter for name, description, tags, owner, team.
+        search_term (Optional[str]): Search filter for name, description, tags, owner, team.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -8428,10 +8430,10 @@ async def admin_resources_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search and isinstance(tag_search, str):
+    if search_term and isinstance(search_term, str):
         query = apply_search_filter(
             query,
-            tag_search,
+            search_term,
             [
                 (DbResource.id, False, False),
                 (DbResource.name, False, False),
@@ -8442,7 +8444,8 @@ async def admin_resources_partial_html(
                 (DbResource.federation_source, True, False),
             ],
         )
-        LOGGER.info(f"🔍 Resources search filter applied: {tag_search}")
+        _san = sanitize_search_term(search_term, max_len=200)
+        LOGGER.debug(f"🔍 Resources search filter applied: {_san}")
 
     # Add sorting for consistent pagination
     query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
@@ -8455,8 +8458,8 @@ async def admin_resources_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search and isinstance(tag_search, str):
-        query_params["tag_search"] = tag_search
+    if search_term and isinstance(search_term, str):
+        query_params["search_term"] = search_term
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -9215,7 +9218,7 @@ async def admin_a2a_partial_html(
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
     team_id: Optional[str] = Depends(_validated_team_id_param),
-    tag_search: Optional[str] = Query(None, description="Search across name, description, tags, owner, and team"),
+    search_term: Optional[str] = Query(None, max_length=200, description="Search across name, description, tags, owner, and team"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -9236,7 +9239,7 @@ async def admin_a2a_partial_html(
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
-        tag_search (Optional[str]): Search filter for name, description, tags, owner, team.
+        search_term (Optional[str]): Search filter for name, description, tags, owner, team.
         db (Session): Database session (dependency-injected).
         user: Authenticated user object from dependency injection.
 
@@ -9295,10 +9298,10 @@ async def admin_a2a_partial_html(
         query = query.where(or_(*access_conditions))
 
     # Apply search filter if provided (searches across multiple fields)
-    if tag_search and isinstance(tag_search, str):
+    if search_term and isinstance(search_term, str):
         query = apply_search_filter(
             query,
-            tag_search,
+            search_term,
             [
                 (DbA2AAgent.id, False, False),
                 (DbA2AAgent.name, False, False),
@@ -9309,7 +9312,8 @@ async def admin_a2a_partial_html(
                 (DbA2AAgent.federation_source, True, False),
             ],
         )
-        LOGGER.info(f"🔍 A2A Agents search filter applied: {tag_search}")
+        _san = sanitize_search_term(search_term, max_len=200)
+        LOGGER.debug(f"🔍 A2A Agents search filter applied: {_san}")
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
@@ -9322,8 +9326,8 @@ async def admin_a2a_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if tag_search and isinstance(tag_search, str):
-        query_params["tag_search"] = tag_search
+    if search_term and isinstance(search_term, str):
+        query_params["search_term"] = search_term
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")

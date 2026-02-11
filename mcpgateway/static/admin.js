@@ -17491,7 +17491,7 @@ function performServerSideSearch(entityType, searchTerm) {
 
     // Add search term (empty string clears the filter)
     if (searchTerm && searchTerm.trim()) {
-        url.searchParams.set('tag_search', searchTerm.trim());
+        url.searchParams.set("tag_search", searchTerm.trim());
     }
 
     // Get team_id from URL if present

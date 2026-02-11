@@ -57,6 +57,22 @@ from mcpgateway.schemas import PaginationLinks, PaginationMeta
 logger = logging.getLogger(__name__)
 
 
+def escape_like_wildcards(search_term: str) -> str:
+    """Escape SQL LIKE wildcard characters in search terms.
+
+    Escapes backslash first, then % and _ so user input is matched literally
+    in SQL LIKE expressions using an escape character.
+
+    Args:
+        search_term: Raw user input
+
+    Returns:
+        Escaped search term
+    """
+    # Keep signature simple (str) to match callers elsewhere in the codebase
+    return search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
 def encode_cursor(data: Dict[str, Any]) -> str:
     """Encode pagination cursor data to base64.
 
