@@ -1671,11 +1671,9 @@ class TestRPCEndpoints:
         assert "Missing resource URI" in body["error"]["message"]
 
     @patch("mcpgateway.main.resource_service.read_resource", new_callable=AsyncMock)
-    @patch("mcpgateway.main.gateway_service.forward_request", new_callable=AsyncMock)
-    def test_rpc_resources_read_fallback(self, mock_forward, mock_read, test_client, auth_headers):
-        """Test resources/read fallback to gateway when local content missing."""
+    def test_rpc_resources_read_missing_resource_error(self, mock_read, test_client, auth_headers):
+        """Test resources/read returns error when local content missing (gateway forwarding removed)."""
         mock_read.side_effect = ValueError("no local content")
-        mock_forward.return_value = {"contents": [{"uri": "res://remote", "text": "ok"}]}
 
         req = {
             "jsonrpc": "2.0",
@@ -1686,9 +1684,10 @@ class TestRPCEndpoints:
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
-        body = response.json()["result"]
-        assert body["contents"][0]["uri"] == "res://remote"
-        mock_forward.assert_called_once()
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32002
+        assert "Resource not found" in body["error"]["message"]
 
     @patch("mcpgateway.main.get_user_email", return_value="user_1")
     @patch("mcpgateway.main.resource_service.subscribe_resource", new_callable=AsyncMock)
@@ -1813,12 +1812,10 @@ class TestRPCEndpoints:
         mock_cancel_run.assert_called_once_with("123", reason="user")
         mock_notify.assert_called_once()
 
-    @patch("mcpgateway.main.gateway_service.forward_request", new_callable=AsyncMock)
     @patch("mcpgateway.main.tool_service.invoke_tool", new_callable=AsyncMock)
-    def test_rpc_tools_call_fallback_to_gateway(self, mock_invoke, mock_forward, test_client, auth_headers):
-        """Test tools/call fallback to gateway when tool invocation fails."""
+    def test_rpc_tools_call_missing_tool_error(self, mock_invoke, test_client, auth_headers):
+        """Test tools/call raises error when tool not found (gateway forwarding removed)."""
         mock_invoke.side_effect = ValueError("no local tool")
-        mock_forward.return_value = {"content": [{"type": "text", "text": "fallback"}]}
 
         req = {
             "jsonrpc": "2.0",
@@ -1829,9 +1826,9 @@ class TestRPCEndpoints:
         response = test_client.post("/rpc/", json=req, headers=auth_headers)
 
         assert response.status_code == 200
-        body = response.json()["result"]
-        assert body["content"][0]["text"] == "fallback"
-        mock_forward.assert_called_once()
+        body = response.json()
+        assert "error" in body
+        assert body["error"]["code"] == -32601  # Method not found (Tool not found)
 
     def test_rpc_elicitation_disabled(self, test_client, auth_headers, monkeypatch):
         """Test elicitation/create JSON-RPC when feature disabled."""
