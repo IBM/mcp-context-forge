@@ -201,6 +201,27 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         raise
 
 
+def _ensure_page_ready(page: Page, base_url: str, request) -> None:
+    """Helper to ensure page is ready with authentication.
+    
+    This centralizes the common pattern used by all page fixtures:
+    - If test has @pytest.mark.no_auth: perform fresh login
+    - Otherwise: navigate to admin and wait for it to load (auth state already loaded)
+    
+    Args:
+        page: The Playwright page instance
+        base_url: The base URL for the application
+        request: The pytest request object to check for markers
+    """
+    if request.node.get_closest_marker("no_auth"):
+        # Test needs fresh login without saved auth state
+        _ensure_admin_logged_in(page, base_url)
+    else:
+        # Auth state is already loaded from storage_state, just navigate
+        page.goto("/admin")
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+
+
 def pytest_configure(config):
     """Pytest hook to perform global authentication setup before tests run."""
     # Create .auth directory if it doesn't exist
@@ -270,7 +291,7 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
     request_context.dispose()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def browser_context_args(
     pytestconfig,
     playwright: Playwright,
@@ -278,8 +299,15 @@ def browser_context_args(
     base_url: Optional[str],
     _pw_artifacts_folder,
     authenticated_state: Path,
+    request,
 ) -> Dict:
-    """Customize Playwright browser context for artifacts + video quality + auth state."""
+    """Customize Playwright browser context for artifacts + video quality + auth state.
+    
+    This fixture integrates with pytest-playwright's built-in context fixture to ensure
+    proper artifact collection (screenshots on failure, video recording, traces).
+    
+    Tests can use @pytest.mark.no_auth to get a fresh context without saved auth state.
+    """
     context_args: Dict = {}
     if device:
         context_args.update(playwright.devices[device])
@@ -296,28 +324,23 @@ def browser_context_args(
     if VIEWPORT_SIZE and not device:
         context_args["viewport"] = VIEWPORT_SIZE
     
-    # Use saved authentication state for all tests by default
-    # Tests that need fresh login (like test_auth.py) can override this
-    context_args["storage_state"] = str(authenticated_state)
+    # Always set ignore_https_errors for local development
+    context_args["ignore_https_errors"] = True
+    
+    # Use saved authentication state by default, unless test is marked with no_auth
+    # Tests marked with @pytest.mark.no_auth (like authentication tests) will get
+    # a fresh context without saved authentication state
+    if not request.node.get_closest_marker("no_auth"):
+        context_args["storage_state"] = str(authenticated_state)
 
     return context_args
 
 
-@pytest.fixture
-def context(browser, request, browser_context_args) -> BrowserContext:
-    """Create a browser context using pytest-playwright hooks for artifacts.
-    
-    Tests can use @pytest.mark.no_auth to get a fresh context without saved auth state.
-    """
-    # Check if test is marked with no_auth (for authentication tests)
-    if request.node.get_closest_marker("no_auth"):
-        # Create context without storage_state for auth tests
-        context_args = browser_context_args.copy()
-        context_args.pop('storage_state', None)
-        return browser.new_context(**context_args, ignore_https_errors=True)
-    
-    # Use default context with storage_state
-    return browser.new_context(**browser_context_args, ignore_https_errors=True)
+# Note: We don't override the 'context' fixture here because pytest-playwright's
+# built-in context fixture handles artifact collection (screenshots, videos, traces).
+# Instead, we customize context creation through browser_context_args fixture above.
+# For tests that need fresh auth (no storage_state), we handle this in browser_context_args
+# by checking for the no_auth marker.
 
 
 # Fixture if you need the default page fixture name
@@ -334,135 +357,84 @@ def admin_page(page: Page, base_url: str, request) -> AdminPage:
     Uses saved authentication state by default. Tests marked with @pytest.mark.no_auth
     will perform a fresh login.
     """
-    # Only perform login if test is marked with no_auth
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        # Just navigate to admin page - auth state is already loaded
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
-    
+    _ensure_page_ready(page, base_url, request)
     return AdminPage(page, base_url)
 
 
 @pytest.fixture
 def team_page(page: Page, base_url: str, request) -> TeamPage:
     """Provide a logged-in TeamPage instance for team tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return TeamPage(page)
 
 
 @pytest.fixture
 def tokens_page(page: Page, base_url: str, request) -> TokensPage:
     """Provide a logged-in TokensPage instance for token tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return TokensPage(page)
 
 
 @pytest.fixture
 def metrics_page(page: Page, base_url: str, request) -> MetricsPage:
     """Provide a logged-in MetricsPage instance for metrics tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return MetricsPage(page)
 
 
 @pytest.fixture
 def tools_page(page: Page, base_url: str, request) -> ToolsPage:
     """Provide a logged-in ToolsPage instance for tool tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return ToolsPage(page)
 
 
 @pytest.fixture
 def resources_page(page: Page, base_url: str, request) -> ResourcesPage:
     """Provide a logged-in ResourcesPage instance for resource tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return ResourcesPage(page)
 
 
 @pytest.fixture
 def prompts_page(page: Page, base_url: str, request) -> PromptsPage:
     """Provide a logged-in PromptsPage instance for prompt tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return PromptsPage(page)
 
 
 @pytest.fixture
 def agents_page(page: Page, base_url: str, request) -> AgentsPage:
     """Provide a logged-in AgentsPage instance for A2A agent tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return AgentsPage(page)
 
 
 @pytest.fixture
 def gateways_page(page: Page, base_url: str, request) -> GatewaysPage:
     """Provide a logged-in GatewaysPage instance for gateway tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return GatewaysPage(page)
 
 
 @pytest.fixture
 def servers_page(page: Page, base_url: str, request) -> ServersPage:
     """Provide a logged-in ServersPage instance for virtual server tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return ServersPage(page)
 
 
 @pytest.fixture
 def version_page(page: Page, base_url: str, request) -> VersionPage:
     """Provide a logged-in VersionPage instance for version info tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return VersionPage(page)
 
 
 @pytest.fixture
 def mcp_registry_page(page: Page, base_url: str, request) -> MCPRegistryPage:
     """Provide a logged-in MCPRegistryPage instance for MCP Registry tests."""
-    if request.node.get_closest_marker("no_auth"):
-        _ensure_admin_logged_in(page, base_url)
-    else:
-        page.goto("/admin")
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+    _ensure_page_ready(page, base_url, request)
     return MCPRegistryPage(page)
 
 
