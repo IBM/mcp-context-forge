@@ -36,7 +36,6 @@ import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
-import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Union
 from uuid import uuid4
 
@@ -1614,11 +1613,11 @@ class SessionManagerWrapper:
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
-        if match:
-            server_id = match.group("server_id")
-            server_id_var.set(server_id)
-        else:
-            server_id_var.set(None)
+        context = await self.rust_bridge.prepare_request_context(scope)
+
+        # Store headers in context for tool invocations
+        request_headers_var.set(context.headers or headers)
+        server_id_var.set(context.server_id)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK

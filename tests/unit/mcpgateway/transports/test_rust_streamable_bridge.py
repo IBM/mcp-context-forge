@@ -18,28 +18,52 @@ from mcpgateway.transports.rust_streamable_bridge import RustStreamableHTTPTrans
 async def test_bridge_disabled_when_flag_unset(monkeypatch):
     monkeypatch.delenv("MCP_USE_RUST_TRANSPORT", raising=False)
     bridge = RustStreamableHTTPTransportBridge.from_env()
+    context = await bridge.prepare_request_context({"modified_path": "/servers/abc/mcp", "headers_dict": {"x-a": "1"}})
+
     assert bridge.enabled is False
-    assert await bridge.handle_request({}, None, None) is False
+    assert context.path == "/servers/abc/mcp"
+    assert context.headers == {"x-a": "1"}
+    assert context.server_id == "abc"
+    assert context.is_mcp_path is True
 
 
 @pytest.mark.asyncio
 async def test_bridge_enabled_when_module_present(monkeypatch):
     monkeypatch.setenv("MCP_USE_RUST_TRANSPORT", "1")
-    fake_module = types.SimpleNamespace(start_streamable_http_transport=lambda _scope: False)
+
+    def fake_prepare(_scope):
+        return {
+            "path": "/servers/uuid/mcp",
+            "headers": {"authorization": "Bearer abc"},
+            "server_id": "uuid",
+            "is_mcp_path": True,
+        }
+
+    fake_module = types.SimpleNamespace(prepare_streamable_http_context=fake_prepare)
     monkeypatch.setitem(sys.modules, "mcpgateway_transport_rs", fake_module)
 
     bridge = RustStreamableHTTPTransportBridge.from_env()
+    context = await bridge.prepare_request_context({"path": "/x"})
 
     assert bridge.enabled is True
-    assert await bridge.handle_request({"path": "/mcp"}, None, None) is False
+    assert context.server_id == "uuid"
+    assert context.is_mcp_path is True
+    assert context.headers["authorization"] == "Bearer abc"
 
 
 @pytest.mark.asyncio
-async def test_bridge_falls_back_when_module_missing(monkeypatch):
+async def test_bridge_falls_back_when_rust_context_fails(monkeypatch):
     monkeypatch.setenv("MCP_USE_RUST_TRANSPORT", "1")
-    monkeypatch.delitem(sys.modules, "mcpgateway_transport_rs", raising=False)
+
+    def fake_prepare(_scope):
+        raise RuntimeError("boom")
+
+    fake_module = types.SimpleNamespace(prepare_streamable_http_context=fake_prepare)
+    monkeypatch.setitem(sys.modules, "mcpgateway_transport_rs", fake_module)
 
     bridge = RustStreamableHTTPTransportBridge.from_env()
+    context = await bridge.prepare_request_context({"modified_path": "/mcp", "headers_dict": {"X-Test": "ok"}})
 
-    assert bridge.enabled is False
-    assert await bridge.handle_request({}, None, None) is False
+    assert context.path == "/mcp"
+    assert context.is_mcp_path is True
+    assert context.headers == {"x-test": "ok"}

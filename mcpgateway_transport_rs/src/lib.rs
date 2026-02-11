@@ -4,19 +4,76 @@ mod http {
 }
 
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 #[pyfunction]
-fn start_streamable_http_transport(scope: Bound<'_, PyAny>) -> PyResult<bool> {
-    let scope_json = scope
-        .repr()?
-        .extract::<String>()
-        .map_err(|_| error::runtime_error("failed to serialize scope for rust transport scaffold"))?;
+fn prepare_streamable_http_context(py: Python<'_>, scope: Bound<'_, PyAny>) -> PyResult<Py<PyDict>> {
+    let scope_dict = scope.downcast::<PyDict>()?;
 
-    Ok(http::streamable::start_streamable_http_transport(&scope_json))
+    let modified_path = scope_dict
+        .get_item("modified_path")?
+        .and_then(|v| v.extract::<String>().ok());
+    let raw_path = scope_dict
+        .get_item("path")?
+        .and_then(|v| v.extract::<String>().ok());
+    let path = modified_path.or(raw_path).unwrap_or_default();
+
+    let headers_obj = scope_dict.get_item("headers")?;
+    let mut headers_pairs: Vec<(String, String)> = Vec::new();
+
+    if let Some(headers) = headers_obj {
+        if let Ok(header_list) = headers.downcast::<PyList>() {
+            for item in header_list {
+                if let Ok(tuple) = item.downcast::<PyTuple>() {
+                    if tuple.len() == 2 {
+                        let key = tuple
+                            .get_item(0)?
+                            .downcast::<PyBytes>()?
+                            .as_bytes()
+                            .to_vec();
+                        let value = tuple
+                            .get_item(1)?
+                            .downcast::<PyBytes>()?
+                            .as_bytes()
+                            .to_vec();
+
+                        let key_str = String::from_utf8_lossy(&key).to_string();
+                        let value_str = String::from_utf8_lossy(&value).to_string();
+                        headers_pairs.push((key_str, value_str));
+                    }
+                }
+            }
+        }
+    }
+
+    let normalized_headers = http::streamable::normalize_headers(headers_pairs);
+    let server_id = http::streamable::extract_server_id(&path);
+    let is_mcp_path = http::streamable::is_mcp_path(&path);
+
+    let result = PyDict::new(py);
+    result.set_item("path", path)?;
+    result.set_item("server_id", server_id)?;
+    result.set_item("is_mcp_path", is_mcp_path)?;
+
+    let py_headers = PyDict::new(py);
+    for (k, v) in normalized_headers {
+        py_headers.set_item(k, v)?;
+    }
+    result.set_item("headers", py_headers)?;
+
+    Ok(result.unbind())
+}
+
+#[pyfunction]
+fn start_streamable_http_transport(_scope: Bound<'_, PyAny>) -> PyResult<bool> {
+    Err(error::runtime_error(
+        "start_streamable_http_transport is not implemented yet; use prepare_streamable_http_context",
+    ))
 }
 
 #[pymodule]
 fn mcpgateway_transport_rs(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_function(wrap_pyfunction!(prepare_streamable_http_context, m)?)?;
     m.add_function(wrap_pyfunction!(start_streamable_http_transport, m)?)?;
     Ok(())
 }
