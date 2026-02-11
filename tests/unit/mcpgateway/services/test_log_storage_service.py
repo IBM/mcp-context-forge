@@ -317,9 +317,10 @@ async def test_get_logs_time_range():
         await service.add_log(level=LogLevel.INFO, message="Current log")
 
         # Filter by time range (should only include current log)
-        # Use now + 1 day to ensure the current log falls within the range
-        future_time = now + timedelta(days=1)
-        result = await service.get_logs(start_time=datetime(2024, 6, 1, tzinfo=timezone.utc), end_time=future_time)
+        result = await service.get_logs(
+            start_time=now - timedelta(minutes=1),
+            end_time=now + timedelta(minutes=1),
+        )
         assert len(result) == 1
         assert result[0]["message"] == "Current log"
 
