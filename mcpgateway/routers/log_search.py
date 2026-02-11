@@ -126,8 +126,8 @@ def _aggregate_custom_windows(
     if sample_row:
         sample_start, sample_end = sample_row
         if sample_start is not None and sample_end is not None:
-            start_utc = sample_start if sample_start.tzinfo else sample_start.replace(tzinfo=timezone.utc)
-            end_utc = sample_end if sample_end.tzinfo else sample_end.replace(tzinfo=timezone.utc)
+            start_utc = sample_start if sample_start.tzinfo else datetime.fromtimestamp(sample_start.timestamp(), tz=timezone.utc)
+            end_utc = sample_end if sample_end.tzinfo else datetime.fromtimestamp(sample_end.timestamp(), tz=timezone.utc)
             duration = int((end_utc - start_utc).total_seconds())
             if duration != window_duration_seconds:
                 needs_rebuild = True
@@ -145,14 +145,14 @@ def _aggregate_custom_windows(
         max_existing = db.execute(select(sa_func.max(PerformanceMetric.window_start)).where(PerformanceMetric.window_duration_seconds == window_duration_seconds)).scalar()
 
     if max_existing:
-        current_start = max_existing if max_existing.tzinfo else max_existing.replace(tzinfo=timezone.utc)
+        current_start = max_existing if max_existing.tzinfo else datetime.fromtimestamp(max_existing.timestamp(), tz=timezone.utc)
         current_start = current_start + window_delta
     else:
         earliest_log = db.execute(select(sa_func.min(StructuredLogEntry.timestamp))).scalar()
         if not earliest_log:
             return
         if earliest_log.tzinfo is None:
-            earliest_log = earliest_log.replace(tzinfo=timezone.utc)
+            earliest_log = datetime.fromtimestamp(earliest_log.timestamp(), tz=timezone.utc)
         current_start = _align_to_window(earliest_log, window_minutes)
 
     reference_end = datetime.now(timezone.utc)

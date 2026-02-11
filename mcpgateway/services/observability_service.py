@@ -75,8 +75,9 @@ def ensure_timezone_aware(dt: datetime) -> datetime:
         Timezone-aware datetime in UTC
     """
     if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
+        # Interpret naive datetimes as local time and convert to UTC
+        return datetime.fromtimestamp(dt.timestamp(), tz=timezone.utc)
+    return dt.astimezone(timezone.utc)
 
 
 def parse_traceparent(traceparent: str) -> Optional[Tuple[str, str, str]]:

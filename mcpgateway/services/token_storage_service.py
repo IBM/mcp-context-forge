@@ -332,7 +332,8 @@ class TokenStorageService:
             return False
         expires_at = token_record.expires_at
         if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            # Interpret naive datetimes as local time and convert to UTC
+            expires_at = datetime.fromtimestamp(expires_at.timestamp(), tz=timezone.utc)
         return datetime.now(timezone.utc) + timedelta(seconds=threshold_seconds) >= expires_at
 
     async def get_token_info(self, gateway_id: str, app_user_email: str) -> Optional[Dict[str, Any]]:

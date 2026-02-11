@@ -12234,6 +12234,26 @@ class TestSearchWithSpecialCharacters:
 class TestPromptResourceUsageErrors:
     """Tests for prompt/resource usage and errors observability endpoints."""
 
+
+def _make_obs_session(monkeypatch, rows):
+    """Helper to create a mocked observability DB session for admin observability tests.
+
+    The helper sets `mcpgateway.admin.get_db` to yield the mock session so handler
+    functions can call `next(get_db())` as they do in production.
+    """
+    mock_session = MagicMock()
+    mock_bind = MagicMock()
+    mock_bind.dialect.name = "sqlite"
+    mock_session.get_bind.return_value = mock_bind
+
+    # Default query chain used by get_prompt_usage/get_resource_usage
+    mock_session.query.return_value.filter.return_value.group_by.return_value.all.return_value = rows
+    mock_session.commit = MagicMock()
+    mock_session.close = MagicMock()
+
+    monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
+    return mock_session
+
     @pytest.mark.asyncio
     async def test_get_prompt_usage_success(self, monkeypatch, allow_permission):
         row = SimpleNamespace(prompt_id="p1", count=5)

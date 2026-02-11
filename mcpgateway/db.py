@@ -1821,11 +1821,11 @@ class EmailTeamInvitation(Base):
         now = utc_now()
         expires_at = self.expires_at
 
-        # Handle timezone awareness mismatch
+        # Handle timezone awareness mismatch: interpret naive datetimes as local time
         if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
+            expires_at = datetime.fromtimestamp(expires_at.timestamp(), tz=timezone.utc)
         elif now.tzinfo is None and expires_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
+            now = datetime.fromtimestamp(now.timestamp(), tz=timezone.utc)
 
         return now > expires_at
 
@@ -1921,7 +1921,8 @@ class EmailTeamJoinRequest(Base):
             local_tz = datetime.now(timezone.utc).astimezone().tzinfo
             expires_at = expires_at.replace(tzinfo=local_tz).astimezone(timezone.utc)
         elif now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
+            # Interpret naive 'now' as local time and convert to UTC
+            now = datetime.fromtimestamp(now.timestamp(), tz=timezone.utc)
 
         return now > expires_at
 
@@ -2015,7 +2016,8 @@ class PendingUserApproval(Base):
             local_tz = datetime.now(timezone.utc).astimezone().tzinfo
             expires_at = expires_at.replace(tzinfo=local_tz).astimezone(timezone.utc)
         elif now.tzinfo is None:
-            now = now.replace(tzinfo=timezone.utc)
+            # Interpret naive 'now' as local time and convert to UTC
+            now = datetime.fromtimestamp(now.timestamp(), tz=timezone.utc)
 
         return now > expires_at
 
@@ -5292,7 +5294,8 @@ class SSOAuthSession(Base):
             expires = expires.replace(tzinfo=local_tz).astimezone(timezone.utc)
         elif now.tzinfo is None:
             # now is timezone-naive (shouldn't happen with utc_now, but just in case)
-            now = now.replace(tzinfo=timezone.utc)
+            # Interpret naive 'now' as local time and convert to UTC
+            now = datetime.fromtimestamp(now.timestamp(), tz=timezone.utc)
 
         return now > expires
 
