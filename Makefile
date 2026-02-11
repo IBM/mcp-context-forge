@@ -582,7 +582,7 @@ test:
 		export DATABASE_URL='sqlite:///:memory:' && \
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export ARGON2ID_TIME_COST=1 && \
-		export ARGON2ID_MEMORY_COST=1024 && \
+		export ARGON2ID_MEMORY_COST=1024 && \nstafail --i
 		uv run --active pytest -n 16 --maxfail=0 -v --ignore=tests/fuzz"
 
 test-verbose:
