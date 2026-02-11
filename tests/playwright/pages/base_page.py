@@ -98,6 +98,25 @@ class BasePage:
         """Wait for API response."""
         return self.page.wait_for_response(url_pattern)
 
+    # ==================== Search/Filter Utilities ====================
+
+    def wait_for_count_change(self, locator: Locator, previous_count: int, timeout: int | None = None) -> int:
+        """Wait for a locator's element count to differ from a previous value.
+
+        Useful after search/filter operations where the row count should change.
+        Falls back to a short delay if the count doesn't change (e.g., empty results).
+
+        Returns:
+            The new count.
+        """
+        deadline = (timeout or self.timeout) // 100
+        for _ in range(deadline):
+            current = locator.count()
+            if current != previous_count:
+                return current
+            self.page.wait_for_timeout(100)
+        return locator.count()
+
     # ==================== Screenshot ====================
 
     def take_screenshot(self, name: str) -> None:

@@ -25,18 +25,11 @@ class TestToolsCRUD:
         # Go to the Global Tools tab
         tools_page.navigate_to_tools_tab()
 
-        # Add a small delay to ensure the UI has time to update
-        tools_page.page.wait_for_timeout(500)
-
         # Fill the form using Page Object properties
         tools_page.fill_locator(tools_page.tool_name_input, test_tool_data["name"])
-        tools_page.page.wait_for_timeout(300)
         tools_page.fill_locator(tools_page.tool_url_input, test_tool_data["url"])
-        tools_page.page.wait_for_timeout(300)
         tools_page.fill_locator(tools_page.tool_description_input, test_tool_data["description"])
-        tools_page.page.wait_for_timeout(300)
         tools_page.tool_integration_type_select.select_option(test_tool_data["integrationType"])
-        tools_page.page.wait_for_timeout(300)
 
         # Submit the form and assert success response
         with tools_page.page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
@@ -57,13 +50,9 @@ class TestToolsCRUD:
 
         # Create tool first using Page Object properties
         tools_page.fill_locator(tools_page.tool_name_input, test_tool_data["name"])
-        tools_page.page.wait_for_timeout(300)
         tools_page.fill_locator(tools_page.tool_url_input, test_tool_data["url"])
-        tools_page.page.wait_for_timeout(300)
         tools_page.fill_locator(tools_page.tool_description_input, test_tool_data["description"])
-        tools_page.page.wait_for_timeout(300)
         tools_page.tool_integration_type_select.select_option(test_tool_data["integrationType"])
-        tools_page.page.wait_for_timeout(300)
         with tools_page.page.expect_response(lambda response: "/admin/tools" in response.url and response.request.method == "POST") as response_info:
             tools_page.click_locator(tools_page.add_tool_btn)
         response = response_info.value
