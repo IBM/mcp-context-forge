@@ -77,6 +77,9 @@ def main() -> None:
             f.write("# Generated via: python -m mcpgateway.scripts.init_secrets\n")
             f.write(output_content)
 
+        # Set restrictive permissions (read/write only for the owner)
+        os.chmod(args.output, 0o600)
+
         print(f"Secrets written to {args.output}")
         print("\nHow to use this file:")
         print(f"1. Review the generated secrets in {args.output}")
