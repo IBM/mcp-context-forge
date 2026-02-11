@@ -1,47 +1,10 @@
 [run]
-branch = False
+branch = True
 omit =
-    mcpgateway/alembic/*
-    */__init__.py
-    mcpgateway/tools/builder/common.py
-    mcpgateway/tools/builder/dagger_deploy.py
-    mcpgateway/tools/builder/python_deploy.py
-    mcpgateway/auth.py
-    mcpgateway/common/models.py
-    mcpgateway/db.py
-    mcpgateway/handlers/sampling.py
-    mcpgateway/main.py
-    mcpgateway/observability.py
-    mcpgateway/plugins/framework/external/mcp/server/server.py
-    mcpgateway/plugins/framework/external/unix/client.py
-    mcpgateway/plugins/framework/external/unix/server/server.py
-    mcpgateway/plugins/framework/manager.py
-    mcpgateway/plugins/framework/models.py
-    mcpgateway/plugins/framework/utils.py
-    mcpgateway/routers/llmchat_router.py
-    mcpgateway/routers/sso.py
-    mcpgateway/routers/tokens.py
-    mcpgateway/routers/well_known.py
-    mcpgateway/schemas.py
-    mcpgateway/services/elicitation_service.py
-    mcpgateway/services/email_auth_service.py
-    mcpgateway/services/gateway_service.py
-    mcpgateway/services/grpc_service.py
-    mcpgateway/services/log_aggregator.py
-    mcpgateway/services/logging_service.py
-    mcpgateway/services/mcp_client_chat_service.py
-    mcpgateway/services/metrics_buffer_service.py
-    mcpgateway/services/notification_service.py
-    mcpgateway/services/performance_service.py
-    mcpgateway/services/prompt_service.py
-    mcpgateway/services/role_service.py
-    mcpgateway/services/sso_service.py
-    mcpgateway/services/structured_logger.py
-    mcpgateway/services/team_invitation_service.py
-    mcpgateway/services/team_management_service.py
-    mcpgateway/services/token_storage_service.py
-    mcpgateway/services/tool_service.py
-    mcpgateway/translate.py
+    */tests/*
+    */test_*.py
+    # Generated protobuf files - auto-generated, not hand-written code
+    mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py
 
 [report]
 exclude_lines =

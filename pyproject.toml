@@ -722,13 +722,6 @@ source = ["mcpgateway"]
 omit = [
     "*/tests/*",
     "*/test_*.py",
-    "*/__init__.py",
-    "*/alembic/*",
-    "*/version.py",
-    # Builder deployment files - require external tools (docker, kubectl, templates)
-    "mcpgateway/tools/builder/common.py",
-    "mcpgateway/tools/builder/dagger_deploy.py",
-    "mcpgateway/tools/builder/python_deploy.py",
     # Generated protobuf files - auto-generated, not hand-written code
     "mcpgateway/plugins/framework/external/grpc/proto/*_pb2*.py",
 ]
