@@ -11,7 +11,9 @@
     - query_params: optional dict of additional query parameters
 -->
 
-<div x-data="{
+<div
+  data-base-url="{{ base_url }}"
+  x-data="{
   currentPage: {{ pagination.page }},
   perPage: {{ pagination.per_page }},
   totalItems: {{ pagination.total_items }},
@@ -21,9 +23,11 @@
   targetSelector: '{{ hx_target|default('#tools-table') }}',
   swapStyle: '{{ hx_swap|default('innerHTML') }}',
   tableName: '{{ table_name|default('') }}',
+  baseUrl: '',
 
-  // Initialize from URL parameters (namespaced per table)
+  // Initialize from data attributes and URL parameters (namespaced per table)
   init() {
+    this.baseUrl = $el.dataset.baseUrl || '';
     if (!this.tableName) return;
     const urlParams = new URLSearchParams(window.location.search);
     const prefix = this.tableName + '_';
@@ -83,7 +87,7 @@
 
   // Load page via HTMX
   loadPage(page) {
-    const url = new URL('{{ base_url }}', window.location.origin);
+    const url = new URL(this.baseUrl, window.location.origin);
     url.searchParams.set('page', page);
     url.searchParams.set('per_page', this.perPage);
 
@@ -140,8 +144,9 @@
       indicator: '{{ hx_indicator|default('#loading') }}'
     });
   }
-}" class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700">
-
+}"
+  class="flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700"
+>
   <!-- Page Size Selector -->
   <div class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
     <span>Show:</span>
@@ -162,121 +167,131 @@
 
   <!-- Page Info -->
   <div class="text-sm text-gray-700 dark:text-gray-300">
-    <span x-text="`Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"></span>
+    <span
+      x-text="totalItems === 0 ? 'No items found' : `Showing ${Math.min((currentPage - 1) * perPage + 1, totalItems)} - ${Math.min(currentPage * perPage, totalItems)} of ${totalItems.toLocaleString()} items`"
+    ></span>
   </div>
 
-  <!-- Page Navigation -->
-  <div class="flex items-center gap-2">
-    <!-- First Page Button -->
-    <button
-      @click="goToPage(1)"
-      :disabled="!hasPrev"
-      :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
-      class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
-      title="First Page"
-    >
-      ⏮️
-    </button>
-
-    <!-- Previous Page Button -->
-    <button
-      @click="prevPage()"
-      :disabled="!hasPrev"
-      :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
-      class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
-      title="Previous Page"
-    >
-      ◀️ Prev
-    </button>
-
-    <!-- Page Number Display -->
-    <div class="flex items-center gap-1">
-      <!-- Show first page if not near start -->
-      <template x-if="currentPage > 3">
-        <button
-          @click="goToPage(1)"
-          class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
-        >
-          1
-        </button>
-      </template>
-
-      <!-- Ellipsis if needed -->
-      <template x-if="currentPage > 4">
-        <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
-      </template>
-
-      <!-- Show 2 pages before current -->
-      <template x-for="i in [currentPage - 2, currentPage - 1]" :key="i">
-        <button
-          x-show="i >= 1"
-          @click="goToPage(i)"
-          class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
-          x-text="i"
-        ></button>
-      </template>
-
-      <!-- Current Page (highlighted) -->
+  <!-- Page Navigation (hidden when there are no pages) -->
+  <template x-if="totalPages > 0">
+    <div class="flex items-center gap-2">
+      <!-- First Page Button -->
       <button
-        class="px-3 py-1 rounded-md border-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 font-semibold text-indigo-700 dark:text-indigo-300"
-        disabled
-        x-text="currentPage"
-      ></button>
+        @click="goToPage(1)"
+        :disabled="!hasPrev"
+        :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+        title="First Page"
+      >
+        ⏮️
+      </button>
 
-      <!-- Show 2 pages after current -->
-      <template x-for="i in [currentPage + 1, currentPage + 2]" :key="i">
+      <!-- Previous Page Button -->
+      <button
+        @click="prevPage()"
+        :disabled="!hasPrev"
+        :class="hasPrev ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+        title="Previous Page"
+      >
+        ◀️ Prev
+      </button>
+
+      <!-- Page Number Display -->
+      <div class="flex items-center gap-1">
+        <!-- Show first page if not near start -->
+        <template x-if="currentPage > 3">
+          <button
+            @click="goToPage(1)"
+            class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+          >
+            1
+          </button>
+        </template>
+
+        <!-- Ellipsis if needed -->
+        <template x-if="currentPage > 4">
+          <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
+        </template>
+
+        <!-- Show 2 pages before current -->
+        <template x-for="i in [currentPage - 2, currentPage - 1]" :key="i">
+          <button
+            x-show="i >= 1"
+            @click="goToPage(i)"
+            class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+            x-text="i"
+          ></button>
+        </template>
+
+        <!-- Current Page (highlighted) -->
         <button
-          x-show="i <= totalPages"
-          @click="goToPage(i)"
-          class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
-          x-text="i"
+          class="px-3 py-1 rounded-md border-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 font-semibold text-indigo-700 dark:text-indigo-300"
+          disabled
+          x-text="currentPage"
         ></button>
-      </template>
 
-      <!-- Ellipsis if needed -->
-      <template x-if="currentPage < totalPages - 3">
-        <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
-      </template>
+        <!-- Show 2 pages after current -->
+        <template x-for="i in [currentPage + 1, currentPage + 2]" :key="i">
+          <button
+            x-show="i <= totalPages"
+            @click="goToPage(i)"
+            class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+            x-text="i"
+          ></button>
+        </template>
 
-      <!-- Show last page if not near end -->
-      <template x-if="currentPage < totalPages - 2">
-        <button
-          @click="goToPage(totalPages)"
-          class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
-          x-text="totalPages"
-        ></button>
-      </template>
+        <!-- Ellipsis if needed -->
+        <template x-if="currentPage < totalPages - 3">
+          <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
+        </template>
+
+        <!-- Show last page if not near end -->
+        <template x-if="currentPage < totalPages - 2">
+          <button
+            @click="goToPage(totalPages)"
+            class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-300"
+            x-text="totalPages"
+          ></button>
+        </template>
+      </div>
+
+      <!-- Next Page Button -->
+      <button
+        @click="nextPage()"
+        :disabled="!hasNext"
+        :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+        title="Next Page"
+      >
+        Next ▶️
+      </button>
+
+      <!-- Last Page Button -->
+      <button
+        @click="goToPage(totalPages)"
+        :disabled="!hasNext"
+        :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
+        class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
+        title="Last Page"
+      >
+        ⏭️
+      </button>
     </div>
-
-    <!-- Next Page Button -->
-    <button
-      @click="nextPage()"
-      :disabled="!hasNext"
-      :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
-      class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
-      title="Next Page"
-    >
-      Next ▶️
-    </button>
-
-    <!-- Last Page Button -->
-    <button
-      @click="goToPage(totalPages)"
-      :disabled="!hasNext"
-      :class="hasNext ? 'text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20' : 'text-gray-400 dark:text-gray-600 cursor-not-allowed'"
-      class="px-3 py-1 rounded-md border border-gray-300 dark:border-gray-600 disabled:opacity-50 transition-colors"
-      title="Last Page"
-    >
-      ⏭️
-    </button>
-  </div>
+  </template>
 
   <!-- Keyboard Shortcuts Helper (Optional) -->
   <div class="hidden sm:block text-xs text-gray-500 dark:text-gray-500">
     <span class="inline-flex items-center gap-1">
-      <kbd class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded">←</kbd>
+      <kbd
+        class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded"
+        >←</kbd
+      >
       <span>/</span>
-      <kbd class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded">→</kbd>
+      <kbd
+        class="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded"
+        >→</kbd
+      >
       <span>to navigate</span>
     </span>
   </div>
@@ -284,18 +299,19 @@
 
 <!-- Keyboard Navigation Support -->
 <script>
-  document.addEventListener('alpine:init', () => {
+  document.addEventListener("alpine:init", () => {
     // Add keyboard shortcuts for pagination
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener("keydown", (e) => {
       // Only handle if not in an input field
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")
+        return;
 
-      if (e.key === 'ArrowLeft') {
+      if (e.key === "ArrowLeft") {
         e.preventDefault();
         // Trigger previous page - the Alpine.js component will check hasPrev
         const prevBtn = document.querySelector('[\\@click="prevPage()"]');
         if (prevBtn && !prevBtn.disabled) prevBtn.click();
-      } else if (e.key === 'ArrowRight') {
+      } else if (e.key === "ArrowRight") {
         e.preventDefault();
         // Trigger next page - the Alpine.js component will check hasNext
         const nextBtn = document.querySelector('[\\@click="nextPage()"]');

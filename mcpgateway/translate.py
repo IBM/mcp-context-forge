@@ -1696,8 +1696,10 @@ async def _run_streamable_http_to_stdio(
                     retry_delay = initial_retry_delay
 
                     async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            data = line[6:]  # Remove "data: " prefix
+                        if line.startswith("data:"):
+                            data = line[5:]
+                            if data.startswith(" "):
+                                data = data[1:]
                             if data and process.stdin:
                                 process.stdin.write((data + "\n").encode())
                                 await process.stdin.drain()
@@ -1769,8 +1771,10 @@ async def _simple_streamable_http_pump(client: "Any", url: str, max_retries: int
                 retry_delay = initial_retry_delay
 
                 async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]  # Remove "data: " prefix
+                    if line.startswith("data:"):
+                        data = line[5:]
+                        if data.startswith(" "):
+                            data = data[1:]
                         if data:
                             print(data)
                             LOGGER.debug(f"Received: {data}")

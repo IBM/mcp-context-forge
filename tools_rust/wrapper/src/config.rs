@@ -20,10 +20,10 @@ pub struct Config {
     pub concurrency: usize,
 
     #[arg(
-	   long="log-level", 
-	   default_value_t = String::from(DEFAULT_LOG_LEVEL),
-	   env="LOG_LEVEL"
-	)]
+       long="log-level",
+       default_value_t = String::from(DEFAULT_LOG_LEVEL),
+       env="LOG_LEVEL"
+    )]
     pub mcp_wrapper_log_level: String,
 
     #[arg(short, long = "log-file", env = "MCP_LOG_FILE")]

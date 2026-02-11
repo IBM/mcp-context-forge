@@ -2,6 +2,7 @@
 """Coverage tests for mcpgateway.services.team_management_service — missing branches."""
 
 # Standard
+import asyncio
 import base64
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
@@ -31,6 +32,13 @@ def _clear_caches():
     except (ImportError, Exception):
         pass
     yield
+
+
+@pytest.fixture(autouse=True)
+async def _drain_fire_and_forget_tasks():
+    """Allow scheduled cache invalidation tasks to run before fixture teardown."""
+    yield
+    await asyncio.sleep(0)
 
 
 @pytest.fixture
@@ -69,6 +77,34 @@ def _mock_membership(**overrides):
     m.is_active = overrides.get("is_active", True)
     m.joined_at = datetime.now(timezone.utc)
     return m
+
+
+# ===========================================================================
+# _fire_and_forget helper
+# ===========================================================================
+
+
+class TestFireAndForgetHelper:
+    def test_create_task_success(self, svc):
+        coro = MagicMock()
+        coro.close = MagicMock()
+        task = MagicMock()
+
+        with patch("mcpgateway.services.team_management_service.asyncio.create_task", return_value=task) as mock_create_task:
+            svc._fire_and_forget(coro)
+
+        mock_create_task.assert_called_once_with(coro)
+        coro.close.assert_not_called()
+
+    def test_create_task_failure_closes_coroutine(self, svc):
+        coro = MagicMock()
+        coro.close = MagicMock()
+
+        with patch("mcpgateway.services.team_management_service.asyncio.create_task", side_effect=RuntimeError("no loop")):
+            with pytest.raises(RuntimeError, match="no loop"):
+                svc._fire_and_forget(coro)
+
+        coro.close.assert_called_once()
 
 
 # ===========================================================================
@@ -504,7 +540,7 @@ class TestGetTeamMembersEdge:
 class TestCacheGetters:
     def test_auth_cache_import_error(self, svc):
         """ImportError in _get_auth_cache returns None."""
-        with patch.dict("sys.modules", {"mcpgateway.cache.auth_cache": None}):
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", side_effect=ImportError("mocked")):
             result = svc._get_auth_cache()
         assert result is None
 
@@ -738,7 +774,7 @@ class TestMemberCountsCachedEdge:
         mock_redis.mget = AsyncMock(return_value=[b"5"])
 
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings, \
-             patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=mock_redis)):
+             patch("mcpgateway.services.team_management_service.get_redis_client", AsyncMock(return_value=mock_redis)):
             mock_settings.team_member_count_cache_enabled = True
             mock_settings.team_member_count_cache_ttl = 300
             mock_settings.cache_prefix = "test:"

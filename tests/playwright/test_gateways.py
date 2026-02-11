@@ -73,7 +73,7 @@ class TestGatewaysPage:
         initial_count = gateways_page.get_gateway_count()
         if initial_count > 0:
             gateways_page.search_gateways("nonexistent-gateway-xyz")
-            gateways_page.page.wait_for_timeout(500)
+            # search_gateways already dispatches events and waits 500ms internally
             search_count = gateways_page.get_gateway_count()
             assert search_count <= initial_count
 
@@ -300,33 +300,28 @@ class TestGatewayCreation:
         return response
 
     @staticmethod
-    def _verify_gateway_in_table(gateways_page: GatewaysPage, gateway_name: str):
+    def _verify_gateway_in_table(gateways_page: GatewaysPage, gateway_name: str, max_retries: int = 3):
         """Reload, search, and assert gateway exists in the table.
 
         After gateway creation, the JS handler redirects to /admin#gateways.
         We reload to ensure the DB commit (which runs after the POST response
         is sent) has completed, then navigate to the gateways tab and search.
         """
-        # Wait for the DB commit to complete (runs after POST response is sent)
-        gateways_page.page.wait_for_timeout(2000)
+        for attempt in range(max_retries):
+            # Wait progressively longer on retries for DB commit to complete
+            gateways_page.page.wait_for_timeout(1000 * (attempt + 1))
 
-        # Reload to get fresh data and explicitly navigate to gateways tab
-        gateways_page.page.reload(wait_until="domcontentloaded")
-        gateways_page.navigate_to_gateways_tab()
-        gateways_page.wait_for_gateways_table_loaded()
-        gateways_page.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=20000)
-        gateways_page.search_gateways(gateway_name)
-        gateways_page.page.wait_for_timeout(1000)
-
-        if not gateways_page.gateway_exists(gateway_name):
-            # Retry once: reload again in case the first load raced with db.commit()
-            logger.warning("Gateway '%s' not found on first attempt, retrying after reload", gateway_name)
             gateways_page.page.reload(wait_until="domcontentloaded")
             gateways_page.navigate_to_gateways_tab()
             gateways_page.wait_for_gateways_table_loaded()
             gateways_page.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=20000)
             gateways_page.search_gateways(gateway_name)
-            gateways_page.page.wait_for_timeout(1000)
+
+            if gateways_page.gateway_exists(gateway_name):
+                return
+
+            if attempt < max_retries - 1:
+                logger.warning("Gateway '%s' not found on attempt %d, retrying", gateway_name, attempt + 1)
 
         assert gateways_page.gateway_exists(gateway_name), f"Gateway '{gateway_name}' was not found in the table after creation"
 
@@ -784,9 +779,8 @@ class TestGatewaySearch:
         first_row = gateways_page.get_gateway_row(0)
         gateway_name = first_row.locator("td").nth(2).text_content().strip()
 
-        # Search for it
+        # Search for it (search_gateways dispatches events and waits internally)
         gateways_page.search_gateways(gateway_name)
-        gateways_page.page.wait_for_timeout(500)
 
         # Should still be visible
         assert gateways_page.gateway_exists(gateway_name)
@@ -798,11 +792,10 @@ class TestGatewaySearch:
 
         initial_count = gateways_page.get_gateway_count()
 
-        # Perform a search
+        # Perform a search (search_gateways waits internally)
         gateways_page.search_gateways("test-search-query")
-        gateways_page.page.wait_for_timeout(500)
 
-        # Clear search
+        # Clear search and wait for table to restore
         gateways_page.clear_search()
         gateways_page.page.wait_for_timeout(500)
 

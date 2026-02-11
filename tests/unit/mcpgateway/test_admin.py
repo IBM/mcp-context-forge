@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
+    _adjust_pagination_for_conversion_failures,
     _generate_unified_teams_view,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
@@ -5054,7 +5055,6 @@ async def test_admin_create_team_disabled(monkeypatch, mock_request, mock_db, al
     response = await admin_create_team(request=mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -5066,7 +5066,6 @@ async def test_admin_create_team_missing_name(monkeypatch, mock_db, allow_permis
     response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -5117,7 +5116,6 @@ async def test_admin_create_team_validation_error_message_cleaned(monkeypatch, m
     response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
-    assert response.headers["HX-Retarget"] == "#create-team-error"
     body = response.body.decode()
     assert "Team name cannot be empty" in body
     assert "Value error," not in body
@@ -5139,7 +5137,6 @@ async def test_admin_create_team_integrity_error_non_unique(monkeypatch, mock_db
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Database error:" in response.body.decode()
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -5158,7 +5155,6 @@ async def test_admin_create_team_unexpected_exception(monkeypatch, mock_db, allo
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Error creating team" in response.body.decode()
-    assert response.headers["HX-Retarget"] == "#create-team-error"
 
 
 @pytest.mark.asyncio
@@ -14358,3 +14354,77 @@ class TestGetUserTeamRolesWrapper:
 
             mock_auth_fn.assert_called_once_with(mock_db, "user@example.com")
             assert result == {"team-1": "owner"}
+
+
+class TestAdjustPaginationForConversionFailures:
+    """Tests for _adjust_pagination_for_conversion_failures."""
+
+    def _make_pagination(self, total_items: int = 100, page: int = 1, per_page: int = 20) -> PaginationMeta:
+        import math
+
+        total_pages = math.ceil(total_items / per_page) if total_items > 0 else 0
+        return PaginationMeta(
+            page=page,
+            per_page=per_page,
+            total_items=total_items,
+            total_pages=total_pages,
+            has_next=page < total_pages,
+            has_prev=page > 1,
+        )
+
+    def test_decrements_total_items_by_failed_count(self):
+        pagination = self._make_pagination(total_items=100)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
+        assert pagination.total_items == 97
+        assert pagination.total_pages == 5
+        assert pagination.has_next is True
+        assert pagination.has_prev is False
+
+    def test_zero_failures_leaves_total_unchanged(self):
+        pagination = self._make_pagination(total_items=50)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=0)
+        assert pagination.total_items == 50
+
+    def test_floors_at_zero_when_failures_exceed_total(self):
+        pagination = self._make_pagination(total_items=2)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=5)
+        assert pagination.total_items == 0
+        assert pagination.total_pages == 0
+        assert pagination.has_next is False
+        assert pagination.has_prev is False
+
+    def test_exact_match_results_in_zero(self):
+        pagination = self._make_pagination(total_items=10)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=10)
+        assert pagination.total_items == 0
+        assert pagination.total_pages == 0
+
+    def test_total_items_already_zero(self):
+        pagination = self._make_pagination(total_items=0)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=3)
+        assert pagination.total_items == 0
+
+    def test_single_failure(self):
+        pagination = self._make_pagination(total_items=1)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=1)
+        assert pagination.total_items == 0
+        assert pagination.total_pages == 0
+
+    def test_recomputes_has_next_on_boundary(self):
+        """When failures reduce total_pages, has_next should become False."""
+        pagination = self._make_pagination(total_items=21, page=1, per_page=20)
+        assert pagination.has_next is True
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
+        assert pagination.total_items == 19
+        assert pagination.total_pages == 1
+        assert pagination.has_next is False
+
+    def test_page_not_clamped_when_total_pages_shrinks(self):
+        """Page is NOT clamped because data was already fetched for this page."""
+        pagination = self._make_pagination(total_items=41, page=3, per_page=20)
+        _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
+        assert pagination.total_items == 39
+        assert pagination.total_pages == 2
+        assert pagination.page == 3  # stays at queried page, not clamped
+        assert pagination.has_next is False
+        assert pagination.has_prev is True

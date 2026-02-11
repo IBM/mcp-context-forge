@@ -60,7 +60,9 @@ class TestAdminUI:
 
         # Search for non-existent server
         admin_page.search_servers("nonexistentserver123")
-        admin_page.page.wait_for_timeout(500)
+
+        # Wait for filtering to take effect
+        admin_page.wait_for_count_change(admin_page.server_items, initial_count, timeout=5000)
 
         # Should show no results or fewer results
         search_count = admin_page.get_server_count()

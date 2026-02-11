@@ -55,6 +55,7 @@ from httpx import AsyncClient
 import jwt
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -76,8 +77,14 @@ with mock_patch("mcpgateway.bootstrap_db.main"):
 
 
 TEST_USER = "testuser"
-JWT_SECRET = "my-test-key"  # Must match mcpgateway.config.Settings.jwt_secret_key
+JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"  # Must match mcpgateway.config.Settings.jwt_secret_key
 JWT_ALGORITHM = "HS256"  # Must match mcpgateway.config.Settings.jwt_algorithm
+
+# Ensure test tokens use a strong signing key to avoid weak-key warnings.
+if hasattr(settings.jwt_secret_key, "get_secret_value") and callable(getattr(settings.jwt_secret_key, "get_secret_value", None)):
+    settings.jwt_secret_key = SecretStr(JWT_SECRET)
+else:
+    settings.jwt_secret_key = JWT_SECRET
 
 
 def generate_test_jwt():
@@ -86,7 +93,9 @@ def generate_test_jwt():
         "exp": int(time.time()) + 3600,
         "teams": [],  # Empty teams list allows access to public resources and own private resources
     }
-    secret = settings.jwt_secret_key.get_secret_value()
+    secret = settings.jwt_secret_key
+    if hasattr(secret, "get_secret_value") and callable(getattr(secret, "get_secret_value", None)):
+        secret = secret.get_secret_value()
     algorithm = settings.jwt_algorithm
     return jwt.encode(payload, secret, algorithm=algorithm)
 
@@ -184,7 +193,8 @@ async def temp_db():
 
     # Create custom user context with real database session
     test_user_context = create_mock_user_context(email="testuser@example.com", full_name="Test User", is_admin=True)
-    test_user_context["db"] = TestSessionLocal()  # Use real database session from this fixture
+    test_user_context_db = TestSessionLocal()
+    test_user_context["db"] = test_user_context_db  # Use real database session from this fixture
 
     # Create a simple mock function for get_current_user_with_permissions
     async def simple_mock_user_with_permissions():
@@ -223,7 +233,9 @@ async def temp_db():
 
     # Cleanup
     sec_patcher.stop()
+    test_user_context_db.close()
     app.dependency_overrides.clear()
+    engine.dispose()
     os.close(db_fd)
     os.unlink(db_path)
 
