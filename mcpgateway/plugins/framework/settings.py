@@ -27,7 +27,7 @@ class PluginsSettings(BaseSettings):
     """
 
     enabled: bool = Field(default=False, description="Enable the plugin framework")
-    config_file: str = Field(default="plugins/config.yaml", description="Path to main plugin configuration file", validation_alias=AliasChoices("PLUGIN_CONFIG_FILE", "PLUGINS_CONFIG_FILE"))
+    config_file: str = Field(default="plugins/config.yaml", description="Path to main plugins configuration file", validation_alias=AliasChoices("PLUGIN_CONFIG_FILE", "PLUGINS_CONFIG_FILE"))
     plugin_timeout: int = Field(default=30, description="Plugin execution timeout in seconds")
     log_level: str = Field(default="INFO", description="Logging level for plugin framework components")
     skip_ssl_verify: bool = Field(

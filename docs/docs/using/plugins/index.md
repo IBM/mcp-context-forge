@@ -26,20 +26,18 @@ Enable the plugin framework in your `.env` file:
 # Enable plugin framework
 PLUGINS_ENABLED=true
 
-# Optional: Custom plugin config path (gateway reads PLUGIN_CONFIG_FILE;
-# plugin framework reads PLUGINS_CONFIG_FILE)
-PLUGIN_CONFIG_FILE=plugins/config.yaml
+# Optional: Custom plugin config path
 PLUGINS_CONFIG_FILE=plugins/config.yaml
 ```
 
 If deploying the gateway as a container, set these environment variables in your compose file or in the container's `run` command.
 
-!!! note "Plugin Framework Standalone Settings"
-    The plugin framework has its own `pydantic-settings` configuration with a `PLUGINS_` env var
-    prefix. `PLUGINS_ENABLED` and `PLUGINS_CLI_*` are shared — the same env var is read by both the
-    gateway and the plugin framework. The plugin framework also has its own HTTP client and SSL
-    settings (e.g., `PLUGINS_HTTPX_CONNECT_TIMEOUT`, `PLUGINS_SKIP_SSL_VERIFY`) that are independent
-    of the gateway's. See [Configuration Reference](../../manage/configuration.md#plugin-framework-standalone-settings)
+!!! note "Plugin Framework Settings"
+    The plugin framework has its own pydantic settings configuration with a `PLUGINS_` env var
+    prefix. `PLUGINS_ENABLED`, `PLUGINS_CONFIG_FILE`, and `PLUGINS_CLI_*` are shared — the same env var
+    is read by both the gateway and the plugin framework. The plugin framework also has its own HTTP client
+    and SSL settings (e.g., `PLUGINS_HTTPX_CONNECT_TIMEOUT`, `PLUGINS_SKIP_SSL_VERIFY`) that are independent
+    of the gateway's. See [Configuration Reference](../../manage/configuration.md#plugins-configuration)
     for the full list.
 
 ## Architecture
@@ -276,7 +274,7 @@ plugin_settings:
   plugin_health_check_interval: 60
 ```
 
-2. Ensure `.env` contains: `PLUGINS_ENABLED=true`, `PLUGIN_CONFIG_FILE=plugins/config.yaml`, and `PLUGINS_CONFIG_FILE=plugins/config.yaml`.
+2. Ensure `.env` contains: `PLUGINS_ENABLED=true` and `PLUGINS_CONFIG_FILE=plugins/config.yaml`.
 3. Start the gateway: `make dev` (or `make serve`).
 
 That's it — the gateway now runs the enabled plugins at the selected hook points.
