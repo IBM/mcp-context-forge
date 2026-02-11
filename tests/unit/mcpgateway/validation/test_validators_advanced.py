@@ -1070,6 +1070,11 @@ class TestValidateTemplateSsti:
         with pytest.raises(ValueError, match="potentially dangerous"):
             SecurityValidator.validate_template("{% set x = __class__ %}")
 
+    def test_ssti_dangerous_operator_in_block_tag(self):
+        """Operators like '+' in {% %} blocks should be rejected (line 815)."""
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{% set x = 1 + 1 %}")
+
     def test_ssti_simple_template_dollar(self):
         with pytest.raises(ValueError, match="potentially dangerous"):
             SecurityValidator.validate_template("${evil}")
@@ -1117,6 +1122,53 @@ class TestValidateUrlSecurity:
         """data: protocol patterns in URL (line 1011)."""
         with pytest.raises(ValueError):
             SecurityValidator.validate_url("https://example.com?r=data:text/html,<script>")
+
+    def test_protocol_relative_url_blocked_even_if_allowed_schemes_misconfigured(self, monkeypatch):
+        """Protocol-relative URLs must be blocked even if // is (incorrectly) whitelisted (line 1019)."""
+        monkeypatch.setattr(SecurityValidator, "ALLOWED_URL_SCHEMES", ["//", "http://", "https://", "ws://", "wss://"])
+        with pytest.raises(ValueError, match="protocol-relative"):
+            SecurityValidator.validate_url("//example.com", "URL")
+
+    def test_ipv6_double_check_netloc_brackets(self):
+        """Defensive netloc bracket check after urlparse (line 1037)."""
+        from types import SimpleNamespace
+
+        stub = SimpleNamespace(scheme="https", netloc="[::1]", path="", hostname=None, port=None, username=None, password=None)
+        with patch("mcpgateway.common.validators.urlparse", return_value=stub):
+            with pytest.raises(ValueError, match="IPv6"):
+                SecurityValidator.validate_url("https://example.com", "URL")
+
+    def test_ssrf_skipped_when_disabled(self, monkeypatch):
+        """SSRF protection can be disabled via settings (branch 1047->1051)."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        assert SecurityValidator.validate_url("https://example.com", "URL") == "https://example.com"
+
+    def test_script_patterns_in_url(self, monkeypatch):
+        """Script patterns (non-protocol) should be blocked (line 1064)."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_url("https://example.com/?q=onload=alert(1)", "URL")
+
+    def test_urlparse_exception_raises_valueerror(self, monkeypatch):
+        """Non-ValueError exceptions are converted to a generic validation error (lines 1069-1070)."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        with patch("mcpgateway.common.validators.urlparse", side_effect=RuntimeError("boom")):
+            with pytest.raises(ValueError, match="not a valid URL"):
+                SecurityValidator.validate_url("https://example.com", "URL")
+
+    def test_hostname_missing_still_runs_port_validation(self, monkeypatch):
+        """Cover hostname=None branch (1041->1051) without accepting an invalid port."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url("http://:99999", "URL")
 
 
 # --------------------------------------------------------------------------- #
@@ -1181,3 +1233,24 @@ class TestValidateSsrf:
             with patch("socket.getaddrinfo", return_value=[]):
                 with pytest.raises(ValueError, match="no addresses"):
                     SecurityValidator._validate_ssrf("weird.host.example", "URL")
+
+    def test_invalid_dns_address_fail_open(self, ssrf_settings):
+        """DNS returns unparseable addresses: skip invalid entries and fail-open if configured (lines 1153-1165)."""
+        ssrf_settings.ssrf_dns_fail_closed = False
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+
+        bad_addrinfo = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0)),
+        ]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", return_value=bad_addrinfo):
+                SecurityValidator._validate_ssrf("weird.host.example", "URL")  # Should not raise
+
+    def test_private_network_check_skips_loopback(self, ssrf_settings):
+        """When localhost allowed but private networks blocked, loopback should not trip the private-range check (branch 1188->1168)."""
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = False
+        ssrf_settings.ssrf_dns_fail_closed = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("127.0.0.1", "URL")  # Should not raise

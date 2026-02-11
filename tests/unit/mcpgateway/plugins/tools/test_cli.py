@@ -121,3 +121,18 @@ def test_bootstrap_calls_copier_when_git_available(monkeypatch, tmp_path):
 
     cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", defaults=True, dry_run=True)
     run_copy.assert_called_once()
+
+
+def test_main_calls_typer_app(monkeypatch):
+    called = {}
+
+    def _fake_app(*args, **kwargs):  # noqa: ANN002, ANN003
+        called["args"] = args
+        called["kwargs"] = kwargs
+
+    monkeypatch.setattr(cli, "app", _fake_app)
+
+    cli.main()
+
+    assert called["args"] == ()
+    assert called["kwargs"] == {}

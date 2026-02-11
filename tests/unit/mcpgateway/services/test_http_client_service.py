@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ssl
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,6 +64,33 @@ async def test_get_instance_creates_singleton():
         assert instance is instance2
 
         await instance.close()
+
+
+@pytest.mark.asyncio
+async def test_get_instance_concurrent_second_check_skips_reinitialize(monkeypatch):
+    """Cover concurrent path where second caller sees already initialized instance inside lock."""
+    started = asyncio.Event()
+    allow_finish = asyncio.Event()
+    init_calls = 0
+
+    async def _fake_initialize(self):
+        nonlocal init_calls
+        init_calls += 1
+        started.set()
+        await allow_finish.wait()
+        self._client = MagicMock()
+        self._initialized = True
+
+    monkeypatch.setattr(SharedHttpClient, "_initialize", _fake_initialize)
+
+    task1 = asyncio.create_task(SharedHttpClient.get_instance())
+    await started.wait()
+    task2 = asyncio.create_task(SharedHttpClient.get_instance())
+    allow_finish.set()
+
+    inst1, inst2 = await asyncio.gather(task1, task2)
+    assert inst1 is inst2
+    assert init_calls == 1
 
 
 @pytest.mark.asyncio

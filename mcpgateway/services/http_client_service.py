@@ -46,13 +46,10 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import ssl
-from typing import AsyncIterator, Optional, TYPE_CHECKING
+from typing import AsyncIterator, Optional
 
 # Third-Party
 import httpx
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

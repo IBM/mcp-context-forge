@@ -42,6 +42,21 @@ def test_get_trace_with_and_without_spans(mock_db):
     assert service.get_trace(mock_db, "tid", include_spans=True) is not None
 
 
+def test_get_trace_with_spans_executes_options_chain(mock_db):
+    service = ObservabilityService()
+
+    class _Joinedload:
+        def joinedload(self, *_args, **_kwargs):
+            return self
+
+    with (
+        patch("mcpgateway.services.observability_service.ObservabilityTrace", MagicMock()),
+        patch("mcpgateway.services.observability_service.ObservabilitySpan", MagicMock()),
+        patch("mcpgateway.services.observability_service.joinedload", lambda *_args, **_kwargs: _Joinedload()),
+    ):
+        assert service.get_trace_with_spans(mock_db, "tid") is not None
+
+
 @patch("mcpgateway.services.observability_service.ObservabilityEvent", MagicMock())
 def test_add_event_commits(mock_db):
     service = ObservabilityService()
@@ -161,6 +176,22 @@ def test_start_trace_with_parent_and_resources(mock_db):
     mock_db.add.assert_called()
 
 
+def test_start_trace_with_explicit_trace_id_and_no_parent(mock_db):
+    """Cover branches where trace_id is provided and parent_span_id is not set."""
+    service = ObservabilityService()
+    tid = service.start_trace(
+        mock_db,
+        "GET /explicit",
+        trace_id="trace-explicit",
+        parent_span_id=None,
+        attributes={"a": 1},
+    )
+    assert tid == "trace-explicit"
+    trace_obj = mock_db.add.call_args[0][0]
+    assert trace_obj.trace_id == "trace-explicit"
+    assert "parent_span_id" not in (trace_obj.attributes or {})
+
+
 def test_end_trace_missing_trace_warns(mock_db, caplog):
     service = ObservabilityService()
     mock_db.query.return_value.filter_by.return_value.first.return_value = None
@@ -175,6 +206,18 @@ def test_end_trace_merges_attributes(mock_db):
     trace.attributes = {"x": 1}
     mock_db.query.return_value.filter_by.return_value.first.return_value = trace
     service.end_trace(mock_db, "tid", status="ok", attributes={"y": 2}, http_status_code=200)
+    mock_db.commit.assert_called()
+
+
+def test_end_trace_without_attributes_does_not_merge(mock_db):
+    """Cover end_trace branch where no attributes are provided."""
+    service = ObservabilityService()
+    trace = MagicMock()
+    trace.start_time = datetime.now(timezone.utc)
+    trace.attributes = {"x": 1}
+    mock_db.query.return_value.filter_by.return_value.first.return_value = trace
+    service.end_trace(mock_db, "tid", status="ok", http_status_code=200)
+    assert trace.attributes == {"x": 1}
     mock_db.commit.assert_called()
 
 
@@ -198,6 +241,18 @@ def test_trace_span_exception(mock_ctid, mock_db):
             raise RuntimeError("boom")
 
 
+def test_trace_span_success_calls_end_span_ok(mock_db):
+    """Cover trace_span success path (observability_service.py:486)."""
+    service = ObservabilityService()
+    service.start_span = MagicMock(return_value="span123")
+    service.end_span = MagicMock()
+
+    with service.trace_span(mock_db, "traceid", "ok-span") as span_id:
+        assert span_id == "span123"
+
+    service.end_span.assert_called_once_with(mock_db, "span123", status="ok")
+
+
 @patch("mcpgateway.services.observability_service.current_trace_id")
 def test_record_token_usage_computed_cost(mock_ctid, mock_db):
     service = ObservabilityService()
@@ -206,6 +261,27 @@ def test_record_token_usage_computed_cost(mock_ctid, mock_db):
     # missing total_tokens and cost
     service.record_token_usage(mock_db, model="gpt-4o-mini", input_tokens=10, output_tokens=5, provider="openai")
     service.record_metric.assert_called()
+
+
+def test_record_token_usage_explicit_trace_id_total_and_cost_skip_autocalc(mock_db):
+    """Cover record_token_usage branches skipping trace lookup, total token calc, cost estimate, and missing span."""
+    service = ObservabilityService()
+    service.record_metric = MagicMock()
+
+    # span_id provided but span not found -> branch to metrics recording
+    mock_db.query.return_value.filter_by.return_value.first.return_value = None
+
+    service.record_token_usage(
+        mock_db,
+        span_id="sid",
+        trace_id="traceid",
+        model="gpt-4",
+        input_tokens=1,
+        output_tokens=2,
+        total_tokens=3,
+        estimated_cost_usd=0.01,
+    )
+    assert service.record_metric.called
 
 
 def test_trace_a2a_request_success(mock_db):
@@ -218,6 +294,21 @@ def test_trace_a2a_request_success(mock_db):
         mock_db.commit.assert_called()
 
 
+def test_trace_a2a_request_no_request_data_skips_sanitization(mock_db):
+    """Cover request_data falsy branch in trace_a2a_request (observability_service.py:837->841)."""
+    service = ObservabilityService()
+    with patch("mcpgateway.services.observability_service.current_trace_id") as mock_ctid:
+        mock_ctid.get.return_value = "tid"
+        service.start_span = MagicMock(return_value="span123")
+        service.end_span = MagicMock()
+
+        with service.trace_a2a_request(mock_db, "agent-1", "AgentName", "ping", request_data=None) as (sid, result):
+            result["ok"] = True
+
+        attrs = service.start_span.call_args.kwargs["attributes"]
+        assert attrs["a2a.request_data"] == {}
+
+
 def test_record_transport_activity_full_branches(mock_db):
     service = ObservabilityService()
     service.record_metric = MagicMock()
@@ -225,6 +316,16 @@ def test_record_transport_activity_full_branches(mock_db):
                                       message_count=1, bytes_sent=100, bytes_received=50, connection_id="conn1")
     assert service.record_metric.call_count >= 3
 
+
+def test_record_transport_activity_bytes_sent_zero_skips_metric(mock_db):
+    """Cover bytes_sent falsy branch in record_transport_activity (observability_service.py:939->955)."""
+    service = ObservabilityService()
+    service.record_metric = MagicMock()
+    service.record_transport_activity(mock_db, "sse", "receive", message_count=1, bytes_sent=0, bytes_received=5)
+
+    # Ensure we didn't emit bytes_sent metric
+    metric_names = [call.kwargs["name"] for call in service.record_metric.mock_calls if "name" in call.kwargs]
+    assert not any(name.endswith(".bytes_sent") for name in metric_names)
 
 def test_record_metric_exists(mock_db):
     service = ObservabilityService()
@@ -375,6 +476,79 @@ def test_query_traces_applies_filters(mock_db):
     assert query.order_by.called
     query.limit.assert_called_with(5)
     query.offset.assert_called_with(2)
+
+
+def test_query_traces_default_order_and_no_filters(mock_db):
+    """Cover query_traces false-branch filters and default ordering (start_time_desc)."""
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["trace"]
+    mock_db.query.return_value = query
+
+    with patch("mcpgateway.services.observability_service.ObservabilityTrace") as mock_trace, patch("mcpgateway.services.observability_service.desc", lambda _col: MagicMock()):
+        mock_trace.start_time = MagicMock()
+        mock_trace.duration_ms = MagicMock()
+        assert service.query_traces(mock_db) == ["trace"]
+
+
+def test_query_traces_order_by_start_time_asc(mock_db):
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["trace"]
+    mock_db.query.return_value = query
+
+    with patch("mcpgateway.services.observability_service.ObservabilityTrace") as mock_trace:
+        mock_trace.start_time = MagicMock()
+        mock_trace.duration_ms = MagicMock()
+        assert service.query_traces(mock_db, order_by="start_time_asc") == ["trace"]
+
+
+def test_query_traces_order_by_duration_asc(mock_db):
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["trace"]
+    mock_db.query.return_value = query
+
+    with patch("mcpgateway.services.observability_service.ObservabilityTrace") as mock_trace:
+        mock_trace.start_time = MagicMock()
+        mock_trace.duration_ms = MagicMock()
+        assert service.query_traces(mock_db, order_by="duration_asc") == ["trace"]
+
+
+def test_query_traces_attribute_filters_or_truthy_empty_mapping(mock_db):
+    """Cover inner or_conditions empty branch (observability_service.py:1202->1206)."""
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["trace"]
+    mock_db.query.return_value = query
+
+    class _TruthyEmptyMapping(dict):
+        def __bool__(self):
+            return True
+
+        def items(self):
+            return []
+
+    with patch("mcpgateway.services.observability_service.ObservabilityTrace") as mock_trace, patch("mcpgateway.services.observability_service.desc", lambda _col: MagicMock()):
+        mock_trace.start_time = MagicMock()
+        mock_trace.duration_ms = MagicMock()
+        assert service.query_traces(mock_db, attribute_filters_or=_TruthyEmptyMapping()) == ["trace"]
 
 
 def test_query_traces_invalid_limit_and_order(mock_db):
@@ -597,6 +771,55 @@ def test_query_spans_applies_filters(mock_db):
     assert query.order_by.called
     query.limit.assert_called_with(5)
     query.offset.assert_called_with(2)
+
+
+def test_query_spans_default_order_and_no_filters(mock_db):
+    """Cover query_spans false-branch filters and default ordering (start_time_desc)."""
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["span"]
+    mock_db.query.return_value = query
+
+    with patch("mcpgateway.services.observability_service.ObservabilitySpan") as mock_span, patch("mcpgateway.services.observability_service.desc", lambda _col: MagicMock()):
+        mock_span.start_time = MagicMock()
+        mock_span.duration_ms = MagicMock()
+        assert service.query_spans(mock_db) == ["span"]
+
+
+def test_query_spans_order_by_start_time_asc(mock_db):
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["span"]
+    mock_db.query.return_value = query
+
+    with patch("mcpgateway.services.observability_service.ObservabilitySpan") as mock_span:
+        mock_span.start_time = MagicMock()
+        mock_span.duration_ms = MagicMock()
+        assert service.query_spans(mock_db, order_by="start_time_asc") == ["span"]
+
+
+def test_query_spans_order_by_duration_asc(mock_db):
+    service = ObservabilityService()
+    query = MagicMock()
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+    query.offset.return_value = query
+    query.all.return_value = ["span"]
+    mock_db.query.return_value = query
+
+    with patch("mcpgateway.services.observability_service.ObservabilitySpan") as mock_span:
+        mock_span.start_time = MagicMock()
+        mock_span.duration_ms = MagicMock()
+        assert service.query_spans(mock_db, order_by="duration_asc") == ["span"]
 
 
 def test_query_spans_invalid_limit_and_order(mock_db):
