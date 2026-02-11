@@ -483,7 +483,10 @@ async def run() -> None:
 
     # Determine transport type from environment variable or auto-detect
     # Auto-detect: if stdin is not a TTY (i.e., it's being piped), use stdio mode
-    transport = os.environ.get("PLUGINS_TRANSPORT", None)
+    # First-Party
+    from mcpgateway.plugins.framework.settings import PluginsSettings
+
+    transport = PluginsSettings().transport
     if transport is None:
         # Auto-detect based on stdin
         if not sys.stdin.isatty():

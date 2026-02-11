@@ -18,7 +18,6 @@ It handles:
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
-import os
 from string import Formatter
 import time
 from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
@@ -202,15 +201,7 @@ class PromptService:
         self._event_service = EventService(channel_name="mcpgateway:prompt_events")
         # Use the module-level singleton for template caching
         self._jinja_env = _get_jinja_env()
-        # Initialize plugin manager with env overrides for testability
-        env_flag = os.getenv("PLUGINS_ENABLED")
-        if env_flag is not None:
-            env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
-            plugins_enabled = env_enabled
-        else:
-            plugins_enabled = settings.plugins_enabled
-        config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-        self._plugin_manager: PluginManager | None = PluginManager(config_file) if plugins_enabled else None
+        self._plugin_manager: PluginManager | None = PluginManager(settings.plugins.config_file) if settings.plugins.enabled else None
 
     async def initialize(self) -> None:
         """Initialize the service."""
