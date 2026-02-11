@@ -158,7 +158,6 @@ CACHE_TYPE=redis|memory|database
 
 # Plugin system
 PLUGINS_ENABLED=true
-PLUGIN_CONFIG_FILE=plugins/config.yaml
 PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Transport protocols
