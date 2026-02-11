@@ -14424,12 +14424,12 @@ class TestAdjustPaginationForConversionFailures:
         assert pagination.total_pages == 1
         assert pagination.has_next is False
 
-    def test_clamps_page_when_total_pages_shrinks(self):
-        """When failures shrink total_pages below current page, page is clamped."""
+    def test_page_not_clamped_when_total_pages_shrinks(self):
+        """Page is NOT clamped because data was already fetched for this page."""
         pagination = self._make_pagination(total_items=41, page=3, per_page=20)
         _adjust_pagination_for_conversion_failures(pagination, failed_count=2)
         assert pagination.total_items == 39
         assert pagination.total_pages == 2
-        assert pagination.page == 2
+        assert pagination.page == 3  # stays at queried page, not clamped
         assert pagination.has_next is False
         assert pagination.has_prev is True

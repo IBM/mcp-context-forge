@@ -544,8 +544,8 @@ def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", fai
     if failed_count > 0:
         pagination.total_items = max(0, pagination.total_items - failed_count)
         pagination.total_pages = math.ceil(pagination.total_items / pagination.per_page) if pagination.total_items > 0 else 0
-        if pagination.total_pages > 0:
-            pagination.page = min(pagination.page, pagination.total_pages)
+        # Do NOT clamp pagination.page — data was already fetched for this page,
+        # so the page number must match the displayed data.
         pagination.has_next = pagination.page < pagination.total_pages
         pagination.has_prev = pagination.page > 1
 
@@ -6840,7 +6840,7 @@ async def admin_tool_ops_partial(
         page=page,
         per_page=per_page,
         cursor=None,
-        base_url=f"{settings.app_root_path}/admin/tool-ops/partial",
+        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
         query_params={
             "include_inactive": "true" if include_inactive else "false",
             "gateway_id": gateway_id or "",
