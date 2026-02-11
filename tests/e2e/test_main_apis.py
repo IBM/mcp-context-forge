@@ -291,6 +291,14 @@ def basic_auth_header(username: str, password: str) -> dict:
     return {"Authorization": f"Basic {token}"}
 
 
+def docs_basic_auth_header() -> dict:
+    """Build Basic Auth header for docs endpoints using current runtime settings."""
+    password = settings.basic_auth_password
+    if hasattr(password, "get_secret_value") and callable(getattr(password, "get_secret_value", None)):
+        password = password.get_secret_value()
+    return basic_auth_header(settings.basic_auth_user, password)
+
+
 # -------------------------
 # Test Utility APIs
 # -------------------------
@@ -317,7 +325,7 @@ class TestDocsAndRedoc:
         settings.docs_allow_basic_auth = True
 
         """Test /docs endpoint with Basic Auth (should return 200 if credentials are valid)."""
-        headers = basic_auth_header("admin", "changeme")
+        headers = docs_basic_auth_header()
         response = await client.get("/docs", headers=headers)
         assert response.status_code == 200
 
@@ -326,7 +334,7 @@ class TestDocsAndRedoc:
         # Ensure Basic Auth for docs is allowed
         settings.docs_allow_basic_auth = True
 
-        headers = basic_auth_header("admin", "changeme")
+        headers = docs_basic_auth_header()
         response = await client.get("/redoc", headers=headers)
         assert response.status_code == 200
 
