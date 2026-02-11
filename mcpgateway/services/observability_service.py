@@ -1217,7 +1217,7 @@ class ObservabilityService:
             query = query.order_by(ObservabilityTrace.start_time)
         elif order_by == "duration_desc":
             query = query.order_by(desc(ObservabilityTrace.duration_ms))
-        elif order_by == "duration_asc":
+        else:  # duration_asc (validated above)
             query = query.order_by(ObservabilityTrace.duration_ms)
 
         # Apply pagination
@@ -1384,7 +1384,7 @@ class ObservabilityService:
             query = query.order_by(ObservabilitySpan.start_time)
         elif order_by == "duration_desc":
             query = query.order_by(desc(ObservabilitySpan.duration_ms))
-        elif order_by == "duration_asc":
+        else:  # duration_asc (validated above)
             query = query.order_by(ObservabilitySpan.duration_ms)
 
         # Apply pagination

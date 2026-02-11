@@ -352,6 +352,12 @@ def test_parse_allowed_roots_json():
     assert s.allowed_roots == ["/api", "/v2"]
 
 
+def test_parse_allowed_roots_json_non_list_falls_back_to_csv():
+    """Valid JSON that is not a list should fall back to comma-splitting (config.py:648->654)."""
+    s = Settings(allowed_roots='{"root": "/api"}', _env_file=None)
+    assert s.allowed_roots == ['{"root": "/api"}']
+
+
 def test_parse_allowed_roots_csv():
     """CSV string should be parsed into list."""
     s = Settings(allowed_roots="/api, /v2", _env_file=None)
@@ -392,6 +398,17 @@ def test_validate_secrets_low_entropy_warns():
     assert s.jwt_secret_key.get_secret_value() == "aaaa"
 
 
+def test_validate_secrets_direct_call_non_secretstr_value():
+    """Cover validate_secrets branch where v is not a SecretStr (config.py:691)."""
+    class _Info:
+        field_name = "jwt_secret_key"
+        data = {"client_mode": True}
+
+    out = Settings.validate_secrets("plain-secret", _Info())
+    assert isinstance(out, SecretStr)
+    assert out.get_secret_value() == "plain-secret"
+
+
 # --------------------------------------------------------------------------- #
 #                      validate_admin_password branches                        #
 # --------------------------------------------------------------------------- #
@@ -420,6 +437,16 @@ def test_validate_admin_password_low_complexity():
     assert s.basic_auth_password.get_secret_value() == "alllower"
 
 
+def test_validate_admin_password_direct_call_plain_string():
+    """Cover validate_admin_password branch where v is not a SecretStr (config.py:726)."""
+    class _Info:
+        data = {"client_mode": True}
+
+    out = Settings.validate_admin_password("plain", _Info())
+    assert isinstance(out, SecretStr)
+    assert out.get_secret_value() == "plain"
+
+
 # --------------------------------------------------------------------------- #
 #                      validate_cors_origins                                   #
 # --------------------------------------------------------------------------- #
@@ -446,6 +473,25 @@ def test_validate_cors_origins_invalid_format_warns():
     """Origin without http:// or https:// should trigger warning."""
     s = Settings(allowed_origins={"example.com"}, _env_file=None)
     assert "example.com" in s.allowed_origins
+
+
+def test_validate_cors_origins_none_passthrough_direct_call():
+    """Directly cover the validator branch returning None (config.py:767)."""
+    # This branch is not reachable through Settings() because _parse_allowed_origins
+    # turns inputs into a set, but we still want to keep the validator logic covered.
+    class _Info:
+        data = {"client_mode": True}
+
+    assert Settings.validate_cors_origins(None, _Info()) is None
+
+
+def test_validate_cors_origins_invalid_type_direct_call():
+    """Directly cover the validator raising ValueError for invalid types (config.py:769)."""
+    class _Info:
+        data = {"client_mode": True}
+
+    with pytest.raises(ValueError, match="allowed_origins must be a set or list of strings"):
+        Settings.validate_cors_origins(123, _Info())
 
 
 # --------------------------------------------------------------------------- #
@@ -706,6 +752,15 @@ def test_auto_enable_security_txt_empty():
     assert s.well_known_security_txt_enabled is False
 
 
+def test_auto_enable_security_txt_falls_back_to_bool_value_direct_call():
+    """Directly cover fallback branch when well_known_security_txt is missing from validator context (config.py:1699)."""
+    class _Info:
+        data = {}
+
+    assert Settings._auto_enable_security_txt(True, _Info()) is True
+    assert Settings._auto_enable_security_txt(False, _Info()) is False
+
+
 # --------------------------------------------------------------------------- #
 #                    _parse_list_from_env                                       #
 # --------------------------------------------------------------------------- #
@@ -746,6 +801,15 @@ def test_init_passthrough_headers_json():
     with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '["X-Custom", "X-Other"]'}, clear=False):
         s = Settings(_env_file=None)
         assert s.default_passthrough_headers == ["X-Custom", "X-Other"]
+
+
+def test_init_passthrough_headers_json_not_array_falls_back_to_csv():
+    """Non-array JSON should fall back to comma-splitting (config.py:2124-2128)."""
+    with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '{"a": 1}'}, clear=False):
+        # Pass an explicit list to bypass pydantic_settings' eager env JSON parsing
+        # (it would otherwise fail validation before our __init__ fallback executes).
+        s = Settings(default_passthrough_headers=["X-Tenant-Id"], _env_file=None)
+        assert s.default_passthrough_headers == ['{"a": 1}']
 
 
 def test_init_passthrough_headers_default():
@@ -846,4 +910,20 @@ def test_derive_ed25519_public_key():
 def test_derive_ed25519_invalid_key_warns():
     """Invalid PEM data should log warning but not raise."""
     s = Settings(ed25519_private_key="not-a-valid-pem-key", _env_file=None)
+    assert s.ed25519_public_key is None
+
+
+def test_derive_ed25519_non_ed25519_key_is_ignored():
+    """Non-Ed25519 keys should be ignored by the derive_public_keys model validator (config.py:2074)."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    s = Settings(ed25519_private_key=pem, _env_file=None)
     assert s.ed25519_public_key is None

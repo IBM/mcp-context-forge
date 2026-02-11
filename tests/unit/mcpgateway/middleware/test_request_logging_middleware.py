@@ -398,6 +398,158 @@ async def test_sampling_rate_one_logs_all(dummy_logger, mock_structured_logger, 
     # With sample rate 1.0, detailed logging should occur
     assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
 
+@pytest.mark.asyncio
+async def test_sampling_rate_half_keeps_logging_when_random_below_rate(
+    dummy_logger, mock_structured_logger, dummy_call_next, monkeypatch
+):
+    """Sample rate <1.0 should keep detailed logging when random value is below rate."""
+    monkeypatch.setattr("mcpgateway.middleware.request_logging_middleware.secrets.randbelow", lambda _n: 0)
+
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=False,
+        log_detailed_requests=True,
+        log_detailed_sample_rate=0.5,
+    )
+    request = make_request(body=b'{"data": "test"}')
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    assert any("📩 Incoming request" in msg for _, msg in dummy_logger.logged)
+
+
+@pytest.mark.asyncio
+async def test_request_start_and_completion_logging_failures_warn(
+    dummy_logger, mock_structured_logger, dummy_call_next
+):
+    """Structured logging failures should be caught and warn."""
+    mock_structured_logger.log.side_effect = Exception("structured log boom")
+
+    middleware = RequestLoggingMiddleware(
+        app=None,
+        enable_gateway_logging=True,
+        log_detailed_requests=False,
+        log_request_start=True,
+    )
+
+    scope: Scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/test",
+        "headers": [],
+        "query_string": b"",
+    }
+
+    async def receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    request = Request(scope, receive=receive)
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    assert any("Failed to log request start" in msg for msg in dummy_logger.warnings)
+    assert any("Failed to log request completion" in msg for msg in dummy_logger.warnings)
+
+
+@pytest.mark.asyncio
+async def test_large_body_fast_path_exception_no_boundary_skips_structured_logging(
+    dummy_logger, mock_structured_logger
+):
+    """Large body fast path should not attempt boundary logging when disabled."""
+
+    async def _call_next(_request):
+        raise RuntimeError("boom")
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True, max_body_size=100)
+    request = make_request_with_headers(body=b"x" * 500, headers={"content-length": "500"})
+
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    mock_structured_logger.log.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_large_body_fast_path_exception_structured_logging_failure_warns(
+    dummy_logger, mock_structured_logger
+):
+    """Large body fast path should warn if boundary failure logging fails."""
+
+    async def _call_next(_request):
+        raise RuntimeError("boom")
+
+    mock_structured_logger.log.side_effect = Exception("structured log boom")
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=100)
+    request = make_request_with_headers(body=b"x" * 500, headers={"content-length": "500"})
+
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    assert any("Failed to log request failure" in msg for msg in dummy_logger.warnings)
+
+
+@pytest.mark.asyncio
+async def test_large_body_fast_path_completion_structured_logging_failure_warns(
+    dummy_logger, mock_structured_logger, dummy_call_next
+):
+    """Large body fast path should warn if boundary completion logging fails."""
+    mock_structured_logger.log.side_effect = Exception("structured log boom")
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True, max_body_size=100)
+    request = make_request_with_headers(body=b"x" * 500, headers={"content-length": "500"})
+    response = await middleware.dispatch(request, dummy_call_next)
+    assert response.status_code == 200
+    assert any("Failed to log request completion" in msg for msg in dummy_logger.warnings)
+
+
+@pytest.mark.asyncio
+async def test_receive_recreates_request_body_for_downstream(dummy_logger, mock_structured_logger):
+    """Downstream handlers should be able to read the body after middleware reads it."""
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    original_body = b'{"data": "downstream"}'
+    request = make_request(body=original_body)
+
+    async def _call_next(req):
+        assert await req.body() == original_body
+        return Response(content="OK", status_code=200)
+
+    response = await middleware.dispatch(request, _call_next)
+    assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_call_next_exception_structured_logging_failure_warns(
+    dummy_logger, mock_structured_logger
+):
+    """If downstream errors and structured logging fails, it should warn and re-raise."""
+    mock_structured_logger.log.side_effect = Exception("structured log boom")
+
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=True, log_detailed_requests=True)
+    request = make_request(body=b'{"data": "test"}')
+
+    async def _call_next(_request):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    assert any("Failed to log request failure" in msg for msg in dummy_logger.warnings)
+
+
+@pytest.mark.asyncio
+async def test_call_next_exception_no_boundary_does_not_attempt_structured_logging(
+    dummy_logger, mock_structured_logger
+):
+    """If boundary logging is disabled, downstream errors should not trigger structured logging."""
+    middleware = RequestLoggingMiddleware(app=None, enable_gateway_logging=False, log_detailed_requests=True)
+    request = make_request(body=b'{"data": "test"}')
+
+    async def _call_next(_request):
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError):
+        await middleware.dispatch(request, _call_next)
+
+    mock_structured_logger.log.assert_not_called()
 
 # --- User identity resolution gating tests ---
 

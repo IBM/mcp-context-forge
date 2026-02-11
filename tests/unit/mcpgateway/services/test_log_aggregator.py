@@ -808,7 +808,7 @@ class TestAggregateCustomWindowsFallback:
         assert mock_aggregator.aggregate_all_components.call_count > 0
 
 
-class TestAggregatePerformanceMetrics:
+class TestAggregatePerformanceMetricsAdditional:
     """Tests for aggregate_performance_metrics and related helpers."""
 
     def test_aggregate_performance_metrics_success(self):

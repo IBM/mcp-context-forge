@@ -11,6 +11,7 @@ Unit tests for config and plugin loaders.
 from unittest.mock import MagicMock, patch
 
 # Third-Party
+from pydantic import ValidationError
 import pytest
 
 # First-Party
@@ -18,6 +19,9 @@ from mcpgateway.common.models import Message, PromptResult, Role, TextContent
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework import GlobalContext, PluginContext, PluginMode, PromptPosthookPayload, PromptPrehookPayload
+from mcpgateway.plugins.framework.constants import EXTERNAL_PLUGIN_TYPE
+from mcpgateway.plugins.framework.external.mcp.client import ExternalPlugin
+from mcpgateway.plugins.framework.models import PluginConfig
 from plugins.regex_filter.search_replace import SearchReplaceConfig, SearchReplacePlugin
 
 def test_config_loader_load():
@@ -223,3 +227,76 @@ async def test_plugin_loader_registration_branch_coverage():
     assert len(loader._plugin_types) == 1  # Still only one type registered
 
     await loader.shutdown()
+
+
+def test_register_external_plugin_type_branch():
+    """Cover EXTERNAL_PLUGIN_TYPE registration branch."""
+    loader = PluginLoader()
+
+    loader._PluginLoader__register_plugin_type(EXTERNAL_PLUGIN_TYPE)
+
+    assert loader._plugin_types[EXTERNAL_PLUGIN_TYPE] is ExternalPlugin
+
+
+def test_register_plugin_type_noop_when_already_registered():
+    """Cover no-op branch when plugin type already registered."""
+    loader = PluginLoader()
+    loader._plugin_types["existing.kind.Plugin"] = SearchReplacePlugin
+
+    loader._PluginLoader__register_plugin_type("existing.kind.Plugin")
+
+    assert loader._plugin_types["existing.kind.Plugin"] is SearchReplacePlugin
+
+
+@pytest.mark.asyncio
+async def test_external_plugin_requires_transport():
+    """External plugin config validation rejects missing transport details."""
+    with pytest.raises(ValidationError, match="must have 'mcp', 'grpc', or 'unix_socket'"):
+        PluginConfig(
+            name="ExternalNoTransport",
+            description="Missing transport",
+            author="Test",
+            version="1.0",
+            tags=[],
+            kind=EXTERNAL_PLUGIN_TYPE,
+            hooks=["prompt_pre_fetch"],
+            config={},
+            mcp=None,
+            grpc=None,
+            unix_socket=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_external_plugin_mcp_transport_path(monkeypatch):
+    """Cover ExternalPlugin MCP transport instantiation and return path."""
+
+    class DummyExternalPlugin:
+        def __init__(self, config):
+            self.config = config
+            self.initialized = False
+
+        async def initialize(self):
+            self.initialized = True
+
+    monkeypatch.setattr("mcpgateway.plugins.framework.loader.plugin.ExternalPlugin", DummyExternalPlugin)
+
+    cfg = PluginConfig(
+        name="ExternalMcpPlugin",
+        description="External MCP plugin",
+        author="Test",
+        version="1.0",
+        tags=[],
+        kind=EXTERNAL_PLUGIN_TYPE,
+        hooks=["prompt_pre_fetch"],
+        config=None,
+        mcp={"proto": "SSE", "url": "http://example.com/mcp"},
+        grpc=None,
+        unix_socket=None,
+    )
+
+    loader = PluginLoader()
+    plugin = await loader.load_and_instantiate_plugin(cfg)
+
+    assert isinstance(plugin, DummyExternalPlugin)
+    assert plugin.initialized is True

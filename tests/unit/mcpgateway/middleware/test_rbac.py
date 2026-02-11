@@ -1648,3 +1648,130 @@ class TestMultiTeamSessionTokenDerivation:
         # For mutate with no team context, team_id should be None (fail-closed for team grants)
         assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_session_token_no_db_skips_derivation_and_uses_fresh_db(self, monkeypatch):
+        """Session token with no DB available should skip derivation and use fresh DB session."""
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        mock_user = {"email": "user@test.com", "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        @contextmanager
+        def fake_fresh_db_session():
+            yield MagicMock()
+
+        monkeypatch.setattr(rbac, "fresh_db_session", fake_fresh_db_session)
+
+        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("tools.read")(dummy_func)
+            result = await decorated(user=mock_user)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
+class TestMultiTeamSessionTokenDerivationAnyPermission:
+    """Tests for multi-team session token team derivation in require_any_permission."""
+
+    @pytest.mark.asyncio
+    async def test_session_token_any_permission_check_any_team(self, monkeypatch):
+        async def dummy_func(user=None, db=None):
+            return "any-ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
+             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_token_any_permission_no_db_session_skips_derivation(self, monkeypatch):
+        """When db session is unavailable, derivation is skipped and fresh DB is used."""
+
+        async def dummy_func(user=None):
+            return "any-ok"
+
+        mock_user = {"email": "user@test.com", "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        @contextmanager
+        def fake_fresh_db_session():
+            yield MagicMock()
+
+        monkeypatch.setattr(rbac, "fresh_db_session", fake_fresh_db_session)
+
+        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
+            result = await decorated(user=mock_user)
+
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_token_any_permission_with_derived_team_skips_payload(self, monkeypatch):
+        """When team_id is derived, payload derivation and check_any_team logic are skipped."""
+
+        async def dummy_func(user=None, db=None, tool_id=None):
+            return "any-ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), \
+             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_any_permission(["tools.execute"])(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db, tool_id="tool-1")
+
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-derived"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_session_token_any_permission_all_mutating_no_team_does_not_check_any_team(self, monkeypatch):
+        """All-mutating permissions with no team context should not enable check_any_team."""
+
+        async def dummy_func(user=None, db=None):
+            return "any-ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
+             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_any_permission(["tools.execute", "tools.create"])(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+
+def test_get_resource_param_to_model_builds_mapping():
+    """_get_resource_param_to_model should import models and build the mapping."""
+    rbac._get_resource_param_to_model.cache_clear()
+    mapping = rbac._get_resource_param_to_model()
+    assert mapping["tool_id"].__name__ == "Tool"
+    assert mapping["server_id"].__name__ == "Server"

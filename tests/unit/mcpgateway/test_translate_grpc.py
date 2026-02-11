@@ -831,6 +831,153 @@ async def test_discover_service_details_success(monkeypatch):
     assert endpoint._services["pkg.TestService"]["methods"][0]["name"] == "Ping"
 
 
+@pytest.mark.asyncio
+async def test_discover_services_ignores_non_list_services_response(monkeypatch):
+    """HasField(False) responses should be ignored without attempting detail discovery."""
+    import mcpgateway.translate_grpc as tg
+
+    endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
+    endpoint._target = "localhost:50051"
+    endpoint._channel = "chan"
+    endpoint._services = {}
+
+    mock_stub = MagicMock()
+    mock_response = MagicMock()
+    mock_response.HasField.return_value = False
+    mock_stub.ServerReflectionInfo.return_value = [mock_response]
+
+    monkeypatch.setattr(tg, "reflection_pb2_grpc", SimpleNamespace(ServerReflectionStub=lambda _chan: mock_stub))
+    monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+
+    endpoint._discover_service_details = AsyncMock()
+    await tg.GrpcEndpoint._discover_services(endpoint)
+    endpoint._discover_service_details.assert_not_called()
+    assert endpoint._services == {}
+
+
+@pytest.mark.asyncio
+async def test_discover_service_details_ignores_non_descriptor_response(monkeypatch):
+    """HasField(False) responses should not mutate the services map."""
+    import mcpgateway.translate_grpc as tg
+
+    endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
+    endpoint._services = {}
+    endpoint._descriptors = {}
+    endpoint._pool = MagicMock()
+
+    class DummyResponse:
+        def HasField(self, _name):
+            return False
+
+    class DummyStub:
+        def ServerReflectionInfo(self, _request_iter):
+            return [DummyResponse()]
+
+    monkeypatch.setattr(tg, "reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+
+    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    assert endpoint._services == {}
+
+
+@pytest.mark.asyncio
+async def test_discover_service_details_pool_add_error_is_swallowed(monkeypatch):
+    """pool.Add exceptions are swallowed as 'already in pool'."""
+    import mcpgateway.translate_grpc as tg
+
+    endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
+    endpoint._services = {}
+    endpoint._descriptors = {}
+    endpoint._pool = MagicMock()
+    endpoint._pool.Add.side_effect = Exception("duplicate")
+
+    class DummyMethod:
+        def __init__(self, name, input_type, output_type):
+            self.name = name
+            self.input_type = input_type
+            self.output_type = output_type
+            self.client_streaming = False
+            self.server_streaming = False
+
+    class DummyService:
+        def __init__(self, name):
+            self.name = name
+            self.method = [DummyMethod("Ping", ".Input", ".Output")]
+
+    class DummyFileDesc:
+        def __init__(self):
+            self.package = "pkg"
+            self.service = [DummyService("TestService")]
+
+        def ParseFromString(self, _data):
+            return None
+
+    class DummyResponse:
+        def __init__(self):
+            self.file_descriptor_response = SimpleNamespace(file_descriptor_proto=[b"blob"])
+
+        def HasField(self, name):
+            return name == "file_descriptor_response"
+
+    class DummyStub:
+        def ServerReflectionInfo(self, _request_iter):
+            return [DummyResponse()]
+
+    monkeypatch.setattr("mcpgateway.translate_grpc.FileDescriptorProto", DummyFileDesc)
+    monkeypatch.setattr("mcpgateway.translate_grpc.reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+
+    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    assert "pkg.TestService" in endpoint._services
+
+
+@pytest.mark.asyncio
+async def test_discover_service_details_skips_unrelated_service(monkeypatch):
+    """Services that don't match the requested name are ignored."""
+    import mcpgateway.translate_grpc as tg
+
+    endpoint = tg.GrpcEndpoint.__new__(tg.GrpcEndpoint)
+    endpoint._services = {}
+    endpoint._descriptors = {}
+    endpoint._pool = MagicMock()
+
+    class DummyMethod:
+        def __init__(self, name, input_type, output_type):
+            self.name = name
+            self.input_type = input_type
+            self.output_type = output_type
+            self.client_streaming = False
+            self.server_streaming = False
+
+    class DummyService:
+        def __init__(self, name):
+            self.name = name
+            self.method = [DummyMethod("Ping", ".Input", ".Output")]
+
+    class DummyFileDesc:
+        def __init__(self):
+            self.package = "pkg"
+            self.service = [DummyService("OtherService")]
+
+        def ParseFromString(self, _data):
+            return None
+
+    class DummyResponse:
+        def __init__(self):
+            self.file_descriptor_response = SimpleNamespace(file_descriptor_proto=[b"blob"])
+
+        def HasField(self, name):
+            return name == "file_descriptor_response"
+
+    class DummyStub:
+        def ServerReflectionInfo(self, _request_iter):
+            return [DummyResponse()]
+
+    monkeypatch.setattr("mcpgateway.translate_grpc.FileDescriptorProto", DummyFileDesc)
+    monkeypatch.setattr("mcpgateway.translate_grpc.reflection_pb2", SimpleNamespace(ServerReflectionRequest=lambda **_kwargs: MagicMock()))
+
+    await tg.GrpcEndpoint._discover_service_details(endpoint, DummyStub(), "pkg.TestService")
+    assert endpoint._services == {}
+
+
 def test_translator_methods_fallback_schema():
     endpoint = SimpleNamespace(
         _services={"svc": {"methods": [{"name": "Ping", "input_type": ".Missing", "output_type": ".Output"}]}},
@@ -840,3 +987,42 @@ def test_translator_methods_fallback_schema():
     translator = GrpcToMcpTranslator(endpoint=endpoint)
     tools = translator.grpc_methods_to_mcp_tools("svc")
     assert tools[0]["inputSchema"]["properties"] == {}
+
+
+def test_translator_methods_returns_empty_when_service_missing():
+    endpoint = SimpleNamespace(_services={}, _pool=None)
+    translator = GrpcToMcpTranslator(endpoint=endpoint)
+    assert translator.grpc_methods_to_mcp_tools("missing") == []
+
+
+def test_translator_methods_input_schema_success():
+    dummy_desc = object()
+    endpoint = SimpleNamespace(
+        _services={"svc": {"methods": [{"name": "Ping", "input_type": ".Input", "output_type": ".Output"}]}},
+        _pool=SimpleNamespace(FindMessageTypeByName=lambda _name: dummy_desc),
+    )
+    translator = GrpcToMcpTranslator(endpoint=endpoint)
+    translator.protobuf_to_json_schema = MagicMock(return_value={"type": "object"})
+    tools = translator.grpc_methods_to_mcp_tools("svc")
+    assert tools[0]["inputSchema"] == {"type": "object"}
+
+
+def test_import_fallback_sets_grpc_unavailable(monkeypatch):
+    """ImportError branch sets GRPC_AVAILABLE False and placeholders to None."""
+    # Standard
+    import builtins
+    import runpy
+
+    import mcpgateway.translate_grpc as tg
+
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002 - signature matches builtin
+        if name == "grpc":
+            raise ImportError("forced missing grpc")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    ns = runpy.run_path(tg.__file__, run_name="__translate_grpc_import_fallback_test__")
+    assert ns["GRPC_AVAILABLE"] is False
+    assert ns["grpc"] is None

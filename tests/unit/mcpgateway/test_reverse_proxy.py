@@ -9,8 +9,11 @@ Unit tests for the MCP reverse proxy module.
 
 # Standard
 import asyncio
+import builtins
 import json
+import runpy
 import signal
+import types
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -211,6 +214,11 @@ class TestStdioProcess:
         assert handler in self.stdio._message_handlers
 
     @pytest.mark.asyncio
+    async def test_read_stdout_no_process_returns(self):
+        """_read_stdout returns early when process/stdout is not set."""
+        await self.stdio._read_stdout()
+
+    @pytest.mark.asyncio
     async def test_read_stdout_messages(self):
         """Test reading messages from stdout."""
         with patch("asyncio.create_subprocess_exec") as mock_create:
@@ -325,6 +333,58 @@ class TestStdioProcess:
             # Stop should cancel the reader task
             await self.stdio.stop()
 
+    @pytest.mark.asyncio
+    async def test_read_stdout_skips_empty_messages(self):
+        """Empty/whitespace-only lines are ignored."""
+        lines = iter([b"\n", b"  \n", b"hello\n", b""])
+
+        async def readline_func():
+            return next(lines)
+
+        process = MagicMock()
+        process.stdout = Mock()
+        process.stdout.readline = readline_func
+        self.stdio.process = process
+
+        received: list[str] = []
+
+        async def handler(msg: str) -> None:
+            received.append(msg)
+
+        self.stdio.add_message_handler(handler)
+        await self.stdio._read_stdout()
+
+        assert received == ["hello"]
+
+    @pytest.mark.asyncio
+    async def test_read_stdout_generic_exception_is_swallowed(self):
+        """Non-cancel exceptions inside _read_stdout are logged and swallowed."""
+
+        async def boom():
+            raise RuntimeError("boom")
+
+        process = MagicMock()
+        process.stdout = Mock()
+        process.stdout.readline = boom
+        self.stdio.process = process
+
+        await self.stdio._read_stdout()
+
+    @pytest.mark.asyncio
+    async def test_read_stdout_cancelled_error_is_reraised(self):
+        """CancelledError inside _read_stdout is reraised (task cancellation semantics)."""
+
+        async def cancelled():
+            raise asyncio.CancelledError()
+
+        process = MagicMock()
+        process.stdout = Mock()
+        process.stdout.readline = cancelled
+        self.stdio.process = process
+
+        with pytest.raises(asyncio.CancelledError):
+            await self.stdio._read_stdout()
+
 
 class TestReverseProxyClient:
     """Test cases for ReverseProxyClient class."""
@@ -373,6 +433,21 @@ class TestReverseProxyClient:
         assert client.max_retries == 10
         assert client.keepalive_interval == 60
 
+    def test_import_fallbacks_set_packages_to_none(self, monkeypatch):
+        """ImportError fallbacks set optional deps to None (import-time branches)."""
+        real_import = builtins.__import__
+
+        def fake_import(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002 - shadow builtin in signature
+            if name in {"httpx", "websockets", "yaml"}:
+                raise ImportError("forced missing dep")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        ns = runpy.run_module("mcpgateway.reverse_proxy", run_name="__reverse_proxy_import_test__")
+        assert ns["httpx"] is None
+        assert ns["websockets"] is None
+        assert ns["yaml"] is None
+
     @pytest.mark.asyncio
     async def test_connect_already_connected(self):
         """Test connecting when already connected."""
@@ -391,8 +466,12 @@ class TestReverseProxyClient:
             with patch.object(self.client.stdio_process, "start", new_callable=AsyncMock):
                 with patch.object(self.client, "_register", new_callable=AsyncMock):
                     with patch("asyncio.create_task") as mock_create_task:
-                        mock_task = MagicMock()  # create_task returns a Task (sync object)
-                        mock_create_task.return_value = mock_task
+                        def _create_task(coro, *args, **kwargs):
+                            # Prevent unawaited coroutine warnings in tests.
+                            coro.close()
+                            return MagicMock()
+
+                        mock_create_task.side_effect = _create_task
                         await self.client.connect()
 
             assert self.client.state == ConnectionState.CONNECTED
@@ -414,6 +493,26 @@ class TestReverseProxyClient:
             assert self.client.state == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
+    async def test_connect_sse_path_calls_connect_sse(self):
+        """connect() calls the SSE path when use_websocket is False."""
+        client = ReverseProxyClient(gateway_url="tcp://gateway.example.com", local_command="echo test", token=None)
+        assert client.use_websocket is False
+
+        with patch.object(client.stdio_process, "start", new_callable=AsyncMock):
+            with patch.object(client, "_connect_sse", new_callable=AsyncMock) as mock_connect_sse:
+                with patch.object(client, "_register", new_callable=AsyncMock):
+                    with patch("asyncio.create_task") as mock_create_task:
+                        def _create_task(coro, *args, **kwargs):
+                            coro.close()
+                            return MagicMock()
+
+                        mock_create_task.side_effect = _create_task
+                        await client.connect()
+
+        mock_connect_sse.assert_awaited_once()
+        assert client.state == ConnectionState.CONNECTED
+
+    @pytest.mark.asyncio
     async def test_connect_websocket_no_websockets_module(self):
         """Test WebSocket connection when websockets module not available."""
         with patch("mcpgateway.reverse_proxy.websockets", None):
@@ -431,6 +530,42 @@ class TestReverseProxyClient:
         with patch("mcpgateway.reverse_proxy.httpx", MagicMock()):
             with pytest.raises(NotImplementedError, match="SSE transport not yet implemented"):
                 await self.client._connect_sse()
+
+    @pytest.mark.asyncio
+    async def test_connect_websocket_prefixes_wss_when_missing_scheme(self):
+        """Gateway URLs without scheme are prefixed with wss://."""
+        client = ReverseProxyClient(gateway_url="gateway.example.com", local_command="echo test", token=None)
+
+        with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
+            mock_ws.connect = AsyncMock(return_value=AsyncMock())
+            with patch("asyncio.create_task") as mock_create_task:
+                def _create_task(coro, *args, **kwargs):
+                    coro.close()
+                    return MagicMock()
+
+                mock_create_task.side_effect = _create_task
+                await client._connect_websocket()
+
+        called_url = mock_ws.connect.call_args[0][0]
+        assert called_url.startswith("wss://")
+
+    @pytest.mark.asyncio
+    async def test_connect_websocket_does_not_duplicate_reverse_proxy_path(self):
+        """If /reverse-proxy is already present, urljoin isn't applied again."""
+        client = ReverseProxyClient(gateway_url="https://gateway.example.com/reverse-proxy/ws", local_command="echo test", token=None)
+
+        with patch("mcpgateway.reverse_proxy.websockets") as mock_ws:
+            mock_ws.connect = AsyncMock(return_value=AsyncMock())
+            with patch("asyncio.create_task") as mock_create_task:
+                def _create_task(coro, *args, **kwargs):
+                    coro.close()
+                    return MagicMock()
+
+                mock_create_task.side_effect = _create_task
+                await client._connect_websocket()
+
+        called_url = mock_ws.connect.call_args[0][0]
+        assert "/reverse-proxy" in called_url
 
     @pytest.mark.asyncio
     async def test_send_to_gateway_websocket(self):
@@ -593,6 +728,25 @@ class TestReverseProxyClient:
         self.client.state = ConnectionState.CONNECTED
 
         await self.client._receive_websocket()
+        assert self.client.state == ConnectionState.DISCONNECTED
+
+    @pytest.mark.asyncio
+    async def test_receive_websocket_generic_error_logs_error(self):
+        """Non-ConnectionClosed exceptions are treated as receive errors."""
+
+        class DummyWs:  # pragma: no cover - structure only, behavior is covered
+            class exceptions:
+                class ConnectionClosed(Exception):
+                    pass
+
+        mock_connection = AsyncMock()
+        mock_connection.__aiter__.side_effect = ValueError("boom")
+        self.client.connection = mock_connection
+        self.client.state = ConnectionState.CONNECTED
+
+        with patch("mcpgateway.reverse_proxy.websockets", DummyWs):
+            await self.client._receive_websocket()
+
         assert self.client.state == ConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
@@ -775,6 +929,41 @@ class TestReverseProxyClient:
         assert delays[0] == 2.0  # 1 * 2^1
         assert delays[1] == 4.0  # 1 * 2^2
 
+    @pytest.mark.asyncio
+    async def test_disconnect_without_connection_skips_gateway_cleanup(self):
+        """disconnect() handles missing connection without raising."""
+        self.client.state = ConnectionState.CONNECTED
+        self.client.connection = None
+
+        with patch.object(self.client.stdio_process, "stop", new_callable=AsyncMock) as mock_stop:
+            await self.client.disconnect()
+
+        mock_stop.assert_awaited_once()
+        assert self.client.state == ConnectionState.DISCONNECTED
+
+    @pytest.mark.asyncio
+    async def test_run_with_reconnect_breaks_immediately_when_shutting_down(self):
+        """run_with_reconnect exits quickly if already shutting down."""
+        self.client.state = ConnectionState.SHUTTING_DOWN
+        await self.client.run_with_reconnect()
+
+    @pytest.mark.asyncio
+    async def test_run_with_reconnect_waits_while_connected(self):
+        """While CONNECTED, run_with_reconnect sleeps in the wait loop."""
+        self.client.max_retries = 1
+
+        async def mock_connect():
+            self.client.state = ConnectionState.CONNECTED
+
+        async def fast_sleep(delay: float):
+            if delay == 1:
+                self.client.state = ConnectionState.DISCONNECTED
+            return None
+
+        with patch.object(self.client, "connect", side_effect=mock_connect):
+            with patch("asyncio.sleep", side_effect=fast_sleep):
+                await self.client.run_with_reconnect()
+
 
 class TestParseArgs:
     """Test argument parsing."""
@@ -861,8 +1050,18 @@ reconnect_delay: 3.0
     def test_parse_config_file_no_yaml(self):
         """Test config file parsing when PyYAML not available."""
         with patch("mcpgateway.reverse_proxy.yaml", None):
-            with pytest.raises(SystemExit):
-                parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
+            with patch.dict("os.environ", {ENV_GATEWAY: "https://config.example.com"}):
+                with pytest.raises(SystemExit):
+                    parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
+
+    def test_parse_config_file_not_dict(self):
+        """Top-level config must be an object/dict."""
+        with patch("builtins.open", mock_open(read_data="- item\n")):
+            with patch("mcpgateway.reverse_proxy.yaml") as mock_yaml:
+                mock_yaml.safe_load.return_value = ["not-a-dict"]
+                with patch.dict("os.environ", {ENV_GATEWAY: "https://config.example.com"}):
+                    with pytest.raises(SystemExit):
+                        parse_args(["--local-stdio", "echo test", "--config", "config.yaml"])
 
     def test_parse_command_line_overrides_config(self):
         """Test command line arguments override config file."""
@@ -931,6 +1130,42 @@ class TestMainAndRun:
                         await main(["--local-stdio", "echo test"])
 
                         mock_client.disconnect.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_main_signal_handler_executes(self, monkeypatch):
+        """Calling the captured signal handler triggers shutdown."""
+        captured_handlers: list[callable] = []
+        loop = asyncio.get_running_loop()
+
+        def capture_handler(_sig, handler):
+            captured_handlers.append(handler)
+
+        monkeypatch.setattr(loop, "add_signal_handler", capture_handler)
+
+        mock_args = Mock()
+        mock_args.log_level = "INFO"
+        mock_args.gateway = "wss://example.com"
+        mock_args.local_stdio = "echo test"
+        mock_args.token = None
+        mock_args.reconnect_delay = 1.0
+        mock_args.max_retries = 0
+        mock_args.keepalive = 30
+
+        async def run_forever():
+            await asyncio.Future()
+
+        mock_client = types.SimpleNamespace(run_with_reconnect=run_forever, disconnect=AsyncMock())
+
+        with patch("mcpgateway.reverse_proxy.parse_args", return_value=mock_args):
+            with patch("mcpgateway.reverse_proxy.ReverseProxyClient", return_value=mock_client):
+                with patch("logging.basicConfig"):
+                    task = asyncio.create_task(main())
+                    await asyncio.sleep(0)
+                    assert captured_handlers
+                    captured_handlers[0]()
+                    await task
+
+        mock_client.disconnect.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_main_signal_handling(self):

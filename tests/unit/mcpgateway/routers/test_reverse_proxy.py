@@ -534,6 +534,32 @@ class TestWebSocketAuthentication:
         mock_websocket.accept.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_websocket_accepts_with_valid_query_token(self, mock_websocket):
+        """Test WebSocket accepts connection with valid JWT token from query params."""
+        mock_websocket.headers = {"X-Session-ID": "test-session"}  # No Authorization header
+        mock_websocket.query_params = {"token": "valid-token"}
+        mock_websocket.receive_text.side_effect = asyncio.CancelledError()
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch("mcpgateway.routers.reverse_proxy.settings") as mock_settings:
+            mock_settings.auth_required = True
+            mock_settings.mcp_client_auth_enabled = False
+            mock_settings.trust_proxy_auth = False
+
+            with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.verify_jwt_token") as mock_verify:
+                mock_get_db.return_value = Mock()
+                mock_verify.return_value = {"sub": "test-user", "email": "test@example.com"}
+
+                try:
+                    await websocket_endpoint(mock_websocket, Mock())
+                except asyncio.CancelledError:
+                    pass
+
+        mock_websocket.accept.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_websocket_accepts_proxy_auth(self, mock_websocket):
         """Test WebSocket accepts proxy authentication."""
         mock_websocket.headers = {"X-Session-ID": "test-session", "X-Authenticated-User": "proxy-user"}
@@ -697,7 +723,7 @@ class TestHTTPEndpoints:
             # Clean up
             manager.sessions.clear()
 
-    def test_sse_endpoint_success(self, client, mock_websocket):
+    def test_sse_endpoint_success(self, mock_websocket):
         """Test SSE endpoint with existing session."""
         # Add a test session
         session = ReverseProxySession("test-session", mock_websocket, "test-user")
@@ -705,10 +731,65 @@ class TestHTTPEndpoints:
         manager.sessions["test-session"] = session
 
         try:
-            # Skip this test for now due to SSE streaming complexity
-            pytest.skip("SSE endpoint test requires complex streaming response mocking")
+            # This test does not use TestClient streaming; it validates the underlying
+            # async generator behavior directly to avoid hanging on keepalive sleeps.
+            from mcpgateway.routers.reverse_proxy import sse_endpoint
+
+            class DummyRequest:
+                def __init__(self):
+                    self._calls = 0
+
+                async def is_disconnected(self):
+                    self._calls += 1
+                    # First check: connected (run one keepalive). Second: disconnected.
+                    return self._calls >= 2
+
+            dummy_request = DummyRequest()
+
+            async def _run():
+                response = await sse_endpoint("test-session", dummy_request, credentials="test-user")
+                agen = response.body_iterator
+                first = await agen.__anext__()
+                second = await agen.__anext__()
+                with pytest.raises(StopAsyncIteration):
+                    await agen.__anext__()
+                return first, second
+
+            with patch("mcpgateway.routers.reverse_proxy.asyncio.sleep", new=AsyncMock()):
+                connected, keepalive = asyncio.run(_run())
+
+            assert connected["event"] == "connected"
+            assert keepalive["event"] == "keepalive"
         finally:
             # Clean up
+            manager.sessions.clear()
+
+    def test_sse_endpoint_handles_cancelled_error(self, mock_websocket):
+        """SSE generator should swallow CancelledError and stop."""
+        session = ReverseProxySession("test-session", mock_websocket, "test-user")
+        session.server_info = {"name": "test-server"}
+        manager.sessions["test-session"] = session
+
+        try:
+            from mcpgateway.routers.reverse_proxy import sse_endpoint
+
+            class DummyRequest:
+                async def is_disconnected(self):
+                    return False
+
+            async def _run():
+                response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")
+                agen = response.body_iterator
+                first = await agen.__anext__()
+                with pytest.raises(StopAsyncIteration):
+                    await agen.__anext__()
+                return first
+
+            with patch("mcpgateway.routers.reverse_proxy.asyncio.sleep", new=AsyncMock(side_effect=asyncio.CancelledError())):
+                connected = asyncio.run(_run())
+
+            assert connected["event"] == "connected"
+        finally:
             manager.sessions.clear()
 
     def test_sse_endpoint_not_found(self, client):
