@@ -16,6 +16,7 @@ Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 
 # Standard
 import os
+import platform
 
 # First-Party
 # Import Pydantic Settings singleton
@@ -33,7 +34,13 @@ max_requests = 100000  # The maximum number of requests a worker will process be
 max_requests_jitter = 100  # The maximum jitter to add to the max_requests setting.
 
 # Optimization https://docs.gunicorn.org/en/stable/settings.html#preload-app
-preload_app = True  # Load application code before the worker processes are forked.
+# Disable preload on macOS due to fork-safety issues with async libraries
+# On macOS, fork is unsafe with many async frameworks (SQLAlchemy, uvicorn, etc.)
+preload_app = platform.system() != "Darwin"
+
+# Worker class - use uvicorn for ASGI support
+worker_class = "uvicorn.workers.UvicornWorker"
+
 reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 
 
@@ -93,8 +100,8 @@ def on_starting(server):
             # Update the keyfile setting to use the decrypted temporary file
             # This is a bit of a hack, but Gunicorn doesn't provide a better way
             # to modify the keyfile after it's been set via command line
-            if hasattr(server, 'cfg'):
-                server.cfg.set('keyfile', _prepared_key_file)
+            if hasattr(server, "cfg"):
+                server.cfg.set("keyfile", _prepared_key_file)
 
         except Exception as e:
             server.log.error(f"Failed to prepare SSL key: {e}")
@@ -112,6 +119,7 @@ def post_fork(server, worker):
     # in the master process, but each forked worker needs its own event loop
     try:
         from mcpgateway.utils.redis_client import _reset_client
+
         _reset_client()
     except ImportError:
         pass

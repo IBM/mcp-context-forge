@@ -250,7 +250,12 @@ GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-100000}
 GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100}
 
 # Preload application before forking workers (saves memory but slower reload)
-GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-true}
+# On macOS, disable preload by default due to fork-safety issues with async libraries
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-false}
+else
+    GUNICORN_PRELOAD_APP=${GUNICORN_PRELOAD_APP:-true}
+fi
 
 # Developer mode with hot reload (disables preload, enables file watching)
 GUNICORN_DEV_MODE=${GUNICORN_DEV_MODE:-false}
