@@ -122,18 +122,15 @@ class TestRPCBackwardCompatibility:
                     # Simulate tool not found
                     mock_invoke.side_effect = ValueError("Tool not found")
 
-                    with patch("mcpgateway.main.gateway_service.forward_request", new_callable=AsyncMock) as mock_forward:
-                        # Simulate gateway forward also failing
-                        mock_forward.side_effect = ValueError("Not a gateway method")
+                    # Gateway forwarding has been removed, so just expect error from tool failure
+                    request_body = {"jsonrpc": "2.0", "method": "completely_invalid_method", "params": {}, "id": 999}
 
-                        request_body = {"jsonrpc": "2.0", "method": "completely_invalid_method", "params": {}, "id": 999}
+                    response = client.post("/rpc", json=request_body)
 
-                        response = client.post("/rpc", json=request_body)
-
-                        assert response.status_code == 200
-                        result = response.json()
-                        assert result["jsonrpc"] == "2.0"
-                        assert "error" in result
-                        assert result["error"]["code"] == -32000
-                        assert result["error"]["message"] == "Invalid method"
-                        assert result["id"] == 999
+                    assert response.status_code == 200
+                    result = response.json()
+                    assert result["jsonrpc"] == "2.0"
+                    assert "error" in result
+                    assert result["error"]["code"] == -32000
+                    assert result["error"]["message"] == "Invalid method"
+                    assert result["id"] == 999

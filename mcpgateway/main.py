@@ -5873,10 +5873,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                 else:
                     result = {"contents": [result]}
             except ValueError:
-                # Resource has no local content, forward to upstream MCP server
-                result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
-                if hasattr(result, "model_dump"):
-                    result = result.model_dump(by_alias=True, exclude_none=True)
+                # Resource not found in the gateway
+                logger.error(f"Resource not found: {uri}")
+                raise JSONRPCError(-32002, f"Resource not found: {uri}", {"uri": uri})
             # Release transaction after resources/read completes
             db.commit()
             db.close()
@@ -6015,6 +6014,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
 
                     Returns:
                         The tool invocation result or gateway forwarding result.
+
+                    Raises:
+                        JSONRPCError: If the tool is not found.
                     """
                     try:
                         return await tool_service.invoke_tool(
@@ -6031,8 +6033,9 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                             meta_data=meta_data,
                         )
                     except ValueError:
-                        # Fallback to gateway forwarding
-                        return await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
+                        # Tool not found log error and raise JSONRPCError
+                        logger.error(f"Tool not found: {name}")
+                        raise JSONRPCError(-32601, f"Tool not found: {name}", None)
 
                 tool_task = asyncio.create_task(execute_tool())
 
@@ -6259,15 +6262,10 @@ async def handle_rpc(request: Request, db: Session = Depends(get_db), user=Depen
                     result = result.model_dump(by_alias=True, exclude_none=True)
             except (PluginError, PluginViolationError):
                 raise
-            except (ValueError, Exception):
-                # If not a tool, try forwarding to gateway
-                try:
-                    result = await gateway_service.forward_request(db, method, params, app_user_email=oauth_user_email, user_email=auth_user_email, token_teams=auth_token_teams)
-                    if hasattr(result, "model_dump"):
-                        result = result.model_dump(by_alias=True, exclude_none=True)
-                except Exception:
-                    # If all else fails, return invalid method error
-                    raise JSONRPCError(-32000, "Invalid method", params)
+            except Exception:
+                # Log error and return invalid method
+                logger.error(f"Method not found: {method}")
+                raise JSONRPCError(-32000, "Invalid method", params)
 
         return {"jsonrpc": "2.0", "result": result, "id": req_id}
 
