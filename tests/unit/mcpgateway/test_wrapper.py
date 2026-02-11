@@ -215,6 +215,49 @@ async def test_ndjson_lines_breaks_on_shutdown():
     lines = [l async for l in wrapper.ndjson_lines(resp)]
     assert lines == [b'{"a":1}']
 
+@pytest.mark.asyncio
+async def test_ndjson_lines_handles_split_delimiter_chunks():
+    wrapper._shutdown.clear()
+
+    async def fake_iter_bytes():
+        # Newline appears across chunk boundaries
+        yield b'{"a":1}'
+        yield b'\n{"b":2}\n{"c":'
+        yield b'3}\n'
+
+    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes, aiter_lines=None)
+    lines = [l async for l in wrapper.ndjson_lines(resp)]
+    assert lines == [b'{"a":1}', b'{"b":2}', b'{"c":3}']
+
+
+@pytest.mark.asyncio
+async def test_sse_events_ignores_comments_and_handles_multi_data_lines():
+    wrapper._shutdown.clear()
+
+    async def fake_iter_bytes():
+        yield b':keepalive\n'
+        yield b'data: first\n'
+        yield b'data: second\n\n'
+        yield b'data: final\n\n'
+
+    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes)
+    events = [e async for e in wrapper.sse_events(resp)]
+    assert events == [b'first\nsecond', b'final']
+
+
+@pytest.mark.asyncio
+async def test_ndjson_lines_stops_on_shutdown_mid_stream():
+    wrapper._shutdown.clear()
+
+    async def fake_iter_bytes():
+        yield b'{"a":1}\n'
+        wrapper._mark_shutdown()
+        yield b'{"b":2}\n'
+
+    resp = types.SimpleNamespace(aiter_bytes=fake_iter_bytes, aiter_lines=None)
+    lines = [l async for l in wrapper.ndjson_lines(resp)]
+    assert lines == [b'{"a":1}']
+    wrapper._shutdown.clear()
 
 @pytest.mark.asyncio
 async def test_sse_events_basic_and_tail():
@@ -1066,3 +1109,35 @@ def test_main_runs_with_logging_disabled(monkeypatch):
     monkeypatch.setattr(wrapper.asyncio, "set_event_loop", lambda _loop: None)
 
     wrapper.main()
+
+@pytest.mark.asyncio
+async def test_forward_once_concurrent_requests_keep_outputs_isolated(monkeypatch):
+    wrapper._shutdown.clear()
+    captured = []
+    monkeypatch.setattr(wrapper, "send_to_stdout", lambda obj: captured.append(obj))
+
+    class EchoResp(DummyResp):
+        pass
+
+    async def run_one(i: int):
+        payload = f'{{"id":{i},"result":{{"ok":true}}}}'.encode()
+        client = DummyClient(EchoResp(200, "application/json", payload))
+        await wrapper.forward_once(client, wrapper.Settings("x", None), {"id": i})
+
+    await asyncio.gather(*(run_one(i) for i in range(10)))
+
+    returned_ids = sorted(obj.get("id") for obj in captured if isinstance(obj, dict) and "id" in obj)
+    assert returned_ids == list(range(10))
+
+
+@pytest.mark.asyncio
+async def test_forward_once_sse_invalid_json_maps_to_parse_error(monkeypatch):
+    wrapper._shutdown.clear()
+    captured = []
+    monkeypatch.setattr(wrapper, "send_to_stdout", lambda obj: captured.append(obj))
+
+    sse_chunk = b'data: {not-json}\n\n'
+    client = DummyClient(DummyResp(200, "text/event-stream", sse_chunk))
+    await wrapper.forward_once(client, wrapper.Settings("x", None), {"w": 4})
+
+    assert any(isinstance(d, dict) and d.get("error", {}).get("code") == wrapper.JSONRPC_PARSE_ERROR for d in captured)
