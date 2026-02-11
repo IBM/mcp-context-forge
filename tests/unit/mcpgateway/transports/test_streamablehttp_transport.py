@@ -23,6 +23,7 @@ from __future__ import annotations
 
 # Standard
 from contextlib import asynccontextmanager
+import types
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -1396,7 +1397,89 @@ async def test_session_manager_wrapper_handle_streamable_http_no_server_id(monke
     assert sent[0]["type"] == "http.response.start"
     assert sent[1]["type"] == "http.response.body"
 
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_prefers_rust_handler_when_request_handled(monkeypatch):
+    """When Rust handler returns True, Python session manager is not called."""
+    # Standard
+    from contextlib import asynccontextmanager
 
+    class DummySessionManager:
+        def __init__(self):
+            self.called = False
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send):
+            self.called = True
+
+    class DummyRustBridge:
+        async def prepare_request_context(self, _scope):
+            return tr.RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
+
+        async def handle_request(self, _scope, _receive, _send):
+            return True
+
+    session_manager = DummySessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: session_manager)
+    monkeypatch.setattr(tr, "RustStreamableHTTPTransportBridge", types.SimpleNamespace(from_env=lambda: DummyRustBridge()))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    await wrapper.handle_streamable_http(_make_scope("/servers/123/mcp"), None, lambda _: None)
+    await wrapper.shutdown()
+
+    assert session_manager.called is False
+
+
+@pytest.mark.asyncio
+async def test_session_manager_wrapper_falls_back_when_rust_handler_returns_false(monkeypatch):
+    """When Rust handler returns False, Python session manager handles the request."""
+    # Standard
+    from contextlib import asynccontextmanager
+
+    class DummySessionManager:
+        def __init__(self):
+            self.called = False
+
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def handle_request(self, scope, receive, send):
+            self.called = True
+
+    class DummyRustBridge:
+        async def prepare_request_context(self, _scope):
+            return tr.RustStreamableRequestContext(path="/servers/123/mcp", headers={}, server_id="123", is_mcp_path=True)
+
+        async def handle_request(self, _scope, _receive, _send):
+            return False
+
+    session_manager = DummySessionManager()
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: session_manager)
+    monkeypatch.setattr(tr, "RustStreamableHTTPTransportBridge", types.SimpleNamespace(from_env=lambda: DummyRustBridge()))
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    await wrapper.handle_streamable_http(_make_scope("/servers/123/mcp"), None, lambda _: None)
+    await wrapper.shutdown()
+
+    assert session_manager.called is True
+    
 @pytest.mark.asyncio
 async def test_session_manager_wrapper_handle_streamable_http_exception(monkeypatch, caplog):
     """Test handle_streamable_http logs and raises on exception."""

@@ -7,7 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import re
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -40,34 +40,38 @@ class RustStreamableHTTPTransportBridge:
     ASGI scope data for streamable HTTP request handling.
     """
 
-    def __init__(self, enabled: bool, context_fn: Callable[[Dict[str, Any]], Dict[str, Any]] | None) -> None:
+    def __init__(
+        self,
+        enabled: bool,
+        context_fn: Callable[[Dict[str, Any]], Dict[str, Any]] | None,
+        request_handler_fn: Callable[[Dict[str, Any], Any, Any], Awaitable[bool] | bool] | None,
+    ) -> None:
         self.enabled = enabled
         self._context_fn = context_fn
+        self._request_handler_fn = request_handler_fn
 
     @classmethod
     def from_env(cls) -> "RustStreamableHTTPTransportBridge":
         """Create bridge based on MCP_USE_RUST_TRANSPORT feature toggle."""
         enabled = os.getenv("MCP_USE_RUST_TRANSPORT", "0").strip().lower() in {"1", "true", "yes", "on"}
         if not enabled:
-            return cls(enabled=False, context_fn=None)
+            return cls(enabled=False, context_fn=None, request_handler_fn=None)
 
         try:
             # First-Party
             from mcpgateway_transport_rs import prepare_streamable_http_context  # type: ignore[import-not-found]
+            from mcpgateway_transport_rs import start_streamable_http_transport
 
             logger.info("🦀 Experimental Rust streamable HTTP transport enabled")
-            return cls(enabled=True, context_fn=prepare_streamable_http_context)
+            return cls(enabled=True, context_fn=prepare_streamable_http_context, request_handler_fn=start_streamable_http_transport)
         except Exception as exc:  # pragma: no cover - env specific import behavior
             logger.warning("Rust transport requested but unavailable, using Python streamable HTTP context: %s", exc)
-            return cls(enabled=False, context_fn=None)
+            return cls(enabled=False, context_fn=None, request_handler_fn=None)
 
     async def prepare_request_context(self, scope: Dict[str, Any]) -> RustStreamableRequestContext:
         """Build normalized request context from Rust or Python fallback."""
         fallback_path = str(scope.get("modified_path") or scope.get("path") or "")
-        fallback_headers = {
-            str(k).lower(): str(v)
-            for k, v in dict(scope.get("headers_dict") or {}).items()
-        }
+        fallback_headers = {str(k).lower(): str(v) for k, v in dict(scope.get("headers_dict") or {}).items()}
         context = RustStreamableRequestContext(
             path=fallback_path,
             headers=fallback_headers,
@@ -90,5 +94,20 @@ class RustStreamableHTTPTransportBridge:
             logger.warning("Rust streamable HTTP context prep failed, using Python fallback: %s", exc)
             return context
 
+     async def handle_request(self, scope: Dict[str, Any], receive: Any, send: Any) -> bool:
+        """Attempt Rust-native request handling and return whether request was handled.
+        Returns False whenever the Rust backend is disabled, unavailable, or fails.
+        """
+        if not self.enabled or self._request_handler_fn is None:
+            return False
+
+        try:
+            result = self._request_handler_fn(scope, receive, send)
+            if hasattr(result, "__await__"):
+                result = await result
+            return bool(result)
+        except Exception as exc:
+            logger.warning("Rust streamable HTTP request handler failed, using Python fallback: %s", exc)
+            return False
 
 __all__ = ["RustStreamableHTTPTransportBridge", "RustStreamableRequestContext"]

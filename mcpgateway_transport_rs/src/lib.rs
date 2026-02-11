@@ -7,7 +7,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 #[pyfunction]
-fn prepare_streamable_http_context(py: Python<'_>, scope: Bound<'_, PyAny>) -> PyResult<Py<PyDict>> {
+fn prepare_streamable_http_context(
+    py: Python<'_>,
+    scope: Bound<'_, PyAny>,
+) -> PyResult<Py<PyDict>> {
     let scope_dict = scope.downcast::<PyDict>()?;
 
     let modified_path = scope_dict
@@ -65,10 +68,12 @@ fn prepare_streamable_http_context(py: Python<'_>, scope: Bound<'_, PyAny>) -> P
 }
 
 #[pyfunction]
-fn start_streamable_http_transport(_scope: Bound<'_, PyAny>) -> PyResult<bool> {
-    Err(error::runtime_error(
-        "start_streamable_http_transport is not implemented yet; use prepare_streamable_http_context",
-    ))
+fn start_streamable_http_transport(
+    _scope: Bound<'_, PyAny>,
+    _receive: Bound<'_, PyAny>,
+    _send: Bound<'_, PyAny>,
+) -> PyResult<bool> {
+    Ok(false)
 }
 
 #[pymodule]
