@@ -403,7 +403,7 @@
     <div
       class="server-card bg-white rounded-lg shadow-lg p-6 hover:shadow-xl transition-shadow dark:bg-gray-800"
       data-name="{{ server.name | lower }}"
-      data-description="{{ server.description | lower }}"
+      data-description="{{ server.description | decode_html | lower }}"
       data-provider="{{ server.provider | lower }}"
       data-category="{{ server.category }}"
       data-auth-type="{{ server.auth_type }}"
@@ -455,7 +455,7 @@
 
       <!-- Description -->
       <p class="text-sm text-gray-600 dark:text-gray-300 mb-4 line-clamp-2">
-        {{ server.description[:100] }}{% if server.description|length > 100
+        {% set sdesc = (server.description or "") | decode_html %}{{ sdesc[:100] }}{% if sdesc|length > 100
         %}...{% endif %}
       </p>
 
