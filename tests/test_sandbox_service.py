@@ -19,20 +19,23 @@ Related to Issue #2226: Policy testing and simulation sandbox
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
+# Third-Party
+import pytest
+
 # First-Party
-from plugins.unified_pdp.pdp_models import (
-    Context,
-    Decision,
-    Resource,
-    Subject,
-)
-from mcpgateway.schemas.sandbox import (
+from mcpgateway.schemas import (
     BatchSimulationResult,
     RegressionReport,
     SimulationResult,
     TestCase,
 )
 from mcpgateway.services.sandbox_service import SandboxService
+from plugins.unified_pdp.pdp_models import (
+    Context,
+    Decision,
+    Resource,
+    Subject,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures

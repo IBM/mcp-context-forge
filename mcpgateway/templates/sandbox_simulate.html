@@ -33,8 +33,9 @@
     
     <form
       id="simulationForm"
-      hx-post="{{ root_path }}/sandbox/simulate"
+      hx-post="{{ root_path }}/admin/sandbox/simulate"
       hx-target="#simulationResults"
+      hx-swap="innerHTML"
       hx-indicator="#loadingIndicator"
       class="p-6 space-y-6"
     >

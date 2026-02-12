@@ -4,7 +4,6 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 Authors: Mihai Criveti
 
-from uuid import uuid4
 MCP Gateway Schema Definitions.
 This module provides Pydantic models for request/response validation in the MCP Gateway.
 It implements schemas for:
@@ -28,6 +27,7 @@ import logging
 import re
 from typing import Any, Dict, List, Literal, Optional, Pattern, Self, Union
 from urllib.parse import urlparse
+from uuid import uuid4
 
 # Third-Party
 import orjson
@@ -39,12 +39,12 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
-from plugins.unified_pdp.pdp_models import AccessDecision, CombinationMode, Context, Decision, DecisionExplanation, EngineDecision, EngineType, Resource, Subject
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
+from plugins.unified_pdp.pdp_models import AccessDecision, CombinationMode, Context, Decision, DecisionExplanation, EngineDecision, EngineType, Resource, Subject
 
 logger = logging.getLogger(__name__)
 
@@ -7664,9 +7664,11 @@ class PerformanceHistoryResponse(BaseModel):
     period_type: str = Field(..., description="Aggregation period type")
     total_count: int = Field(0, description="Total matching records")
 
+
 # ============================================================================
 # Sandbox Testing Schemas (Issue #2226)
 # ============================================================================
+
 
 class TestCase(BaseModel):
     """Single test case for policy simulation.
@@ -7828,7 +7830,7 @@ class BatchSimulationResult(BaseModel):
                 "total_tests": 50,
                 "passed": 48,
                 "failed": 2,
-                "pass_rate": 96.0,
+                "pass_rate": 96.0,  # nosec B105
                 "total_duration_ms": 2500.0,
                 "avg_duration_ms": 50.0,
                 "results": [],

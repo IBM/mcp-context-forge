@@ -1,3 +1,18 @@
+{% if error %}
+<!-- Error State -->
+<div class="bg-red-50 dark:bg-red-900/30 border-l-4 border-red-400 p-4 rounded-md">
+  <div class="flex">
+    <svg class="h-5 w-5 text-red-400 mr-3 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
+    <div>
+      <h3 class="text-sm font-medium text-red-800 dark:text-red-200">Simulation Failed</h3>
+      <p class="mt-1 text-sm text-red-700 dark:text-red-300">{{ error }}</p>
+    </div>
+  </div>
+</div>
+
+{% elif result %}
 <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
     <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
         <h3 class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -74,3 +89,4 @@
         {% endif %}
     </div>
 </div>
+{% endif %}

@@ -21,9 +21,11 @@ from typing import Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
-from mcpgateway.auth import get_current_user
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
+
+# First-Party
+from mcpgateway.auth import get_current_user
 
 # Local
 from ..db import get_db
@@ -32,9 +34,6 @@ from ..schemas import (
     BatchSimulationResult,
     RegressionReport,
     RegressionTestRequest,
-    SimulateRequest,
-    SimulationResult,
-    TestCase,
     TestSuite,
 )
 from ..services.sandbox_service import get_sandbox_service, SandboxService
@@ -56,7 +55,7 @@ router = APIRouter(
 # Core Simulation Endpoints
 # ---------------------------------------------------------------------------
 
-# 
+#
 # @router.post(
 #     "/simulate",
 #     response_model=SimulationResult,
@@ -64,13 +63,13 @@ router = APIRouter(
 #     summary="Simulate single test case",
 #     description="""
 #     Simulate a single test case against a policy draft.
-#     
+#
 #     This endpoint creates an isolated PDP instance with the draft policy,
 #     evaluates the test case, and returns detailed results including whether
 #     the test passed and a full explanation of the decision.
-#     
+#
 #     **Use case**: Test a specific access scenario before deploying a policy change.
-#     
+#
 #     **Example**:
 #     ```json
 #     {
@@ -91,14 +90,14 @@ router = APIRouter(
 #     sandbox: SandboxService = Depends(get_sandbox_service),
 # ) -> SimulationResult:
 #     """Simulate a single test case against a policy draft.
-# 
+#
 #     Args:
 #         request: Simulation request containing policy draft ID and test case
 #         sandbox: Injected sandbox service
-# 
+#
 #     Returns:
 #         SimulationResult with actual vs expected decision, timing, and explanation
-# 
+#
 #     Raises:
 #         HTTPException: 404 if policy draft not found, 500 on evaluation error
 #     """
@@ -106,37 +105,38 @@ router = APIRouter(
 #         "Simulating single test case against policy draft %s",
 #         request.policy_draft_id,
 #     )
-# 
+#
 #     try:
 #         result = await sandbox.simulate_single(
 #             policy_draft_id=request.policy_draft_id,
 #             test_case=request.test_case,
 #             include_explanation=request.include_explanation,
 #         )
-# 
+#
 #         logger.info(
 #             "Simulation complete: test_case=%s, passed=%s, duration=%.1fms",
 #             result.test_case_id,
 #             result.passed,
 #             result.execution_time_ms,
 #         )
-# 
+#
 #         return result
-# 
+#
 #     except ValueError as e:
 #         logger.error("Policy draft not found: %s", e)
 #         raise HTTPException(
 #             status_code=status.HTTP_404_NOT_FOUND,
 #             detail=f"Policy draft not found: {request.policy_draft_id}",
 #         ) from e
-# 
+#
 #     except Exception as e:
 #         logger.error("Simulation failed: %s", e, exc_info=True)
 #         raise HTTPException(
 #             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
 #             detail=f"Simulation failed: {str(e)}",
 #         ) from e
-# 
+#
+
 
 @router.post(
     "/batch",
@@ -530,8 +530,8 @@ async def simulate_form_submit(
 
         # Create test case from form data
         # First-Party
-        from plugins.unified_pdp.pdp_models import Context, Decision, Resource, Subject
         from mcpgateway.schemas.sandbox import TestCase
+        from plugins.unified_pdp.pdp_models import Context, Decision, Resource, Subject
 
         test_case = TestCase(
             subject=Subject(
@@ -558,17 +558,8 @@ async def simulate_form_submit(
         )
 
         # Render template response with auto-escaping
-        return request.app.state.templates.TemplateResponse(
-            request,
-            "sandbox_simulate_results.html",
-            {"result": result}
-        )
+        return request.app.state.templates.TemplateResponse(request, "sandbox_simulate_results.html", {"result": result})
 
     except Exception as e:
         logger.exception("Error running simulation")
-        return request.app.state.templates.TemplateResponse(
-            request,
-            "sandbox_simulate_error.html",
-            {"error_message": str(e)},
-            status_code=500
-        )
+        return request.app.state.templates.TemplateResponse(request, "sandbox_simulate_error.html", {"error_message": str(e)}, status_code=500)
