@@ -714,7 +714,7 @@
     - ⏳ [**#2668**](https://github.com/IBM/mcp-context-forge/issues/2668) - [BUG]: Follow-up: Rate limiter — incorrect HTTP status, missing headers, and feature gaps (refs #2397)
     - ⏳ [**#2671**](https://github.com/IBM/mcp-context-forge/issues/2671) - [BUG]: ASGI protocol violation in streamable_http: response emitted after completion causing ClosedResourceError
     - ⏳ [**#2672**](https://github.com/IBM/mcp-context-forge/issues/2672) - [BUG]:  MCP Agent rejects valid A2A request as malformed (UAT agent only)
-    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - [BUG]: (X-exchange) - UI: “Failed to load plugin details: Not Found” when opening/enabling plugins in Admin Panel
+    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - [BUG]: (X-exchange) - UI: "Failed to load plugin details: Not Found" when opening/enabling plugins in Admin Panel
     - ⏳ [**#2689**](https://github.com/IBM/mcp-context-forge/issues/2689) - [BUG]: MCP Servers/Virtual Servers/Tools - Double loading spinner on refresh
     - ⏳ [**#2691**](https://github.com/IBM/mcp-context-forge/issues/2691) - [BUG]: Teams - Team visibility updates are not reflected until the page is refreshed
     - ⏳ [**#2697**](https://github.com/IBM/mcp-context-forge/issues/2697) - [BUG][SECURITY]: Virtual MCP Server incorrectly requires servers.create permission
@@ -898,7 +898,7 @@
     - ✅ [**#2082**](https://github.com/IBM/mcp-context-forge/issues/2082) - Optimize Cedar plugin - Replace synchronous requests with async
     - ✅ [**#2518**](https://github.com/IBM/mcp-context-forge/issues/2518) - [DATABASE]: DB sessions held during external HTTP calls cause connection pool exhaustion
 
-???+ check "🐛 Bugs - Completed (67)"
+???+ check "🐛 Bugs - Completed (68)"
 
     - ✅ [**#1430**](https://github.com/IBM/mcp-context-forge/issues/1430) - Tools - Add Tool from REST API with incorrect input schema breaks GET tools
     - ✅ [**#1528**](https://github.com/IBM/mcp-context-forge/issues/1528) - Ignores proxy-based authentication configuration and still requires token
@@ -967,10 +967,7 @@
     - ✅ [**#2805**](https://github.com/IBM/mcp-context-forge/issues/2805) - The error message from API on updating a user is not displayed
     - ✅ [**#2806**](https://github.com/IBM/mcp-context-forge/issues/2806) - Admin login redirect loop behind reverse proxy without path rewriting
     - ✅ [**#2821**](https://github.com/IBM/mcp-context-forge/issues/2821) - RBAC middleware crashes on token creation
-
-???+ info "🐛 Bugs - Remaining (1)"
-
-    - ⏳ [**#2870**](https://github.com/IBM/mcp-context-forge/issues/2870) - API Call - Tokens - Can no longer create tokens - 403 error
+    - ✅ [**#2870**](https://github.com/IBM/mcp-context-forge/issues/2870) - API Call - Tokens - Can no longer create tokens - 403 error
 
 ???+ check "🔒 Security - Completed (3)"
 
