@@ -7670,6 +7670,20 @@ function showTab(tabName) {
                     }
                 }
 
+                if (tabName === "sandbox") {
+                    const sandboxPanel = safeGetElement("sandbox-panel");
+                    if (sandboxPanel) {
+                        const hasLoadingMessage = sandboxPanel.innerHTML.includes("Loading sandbox");
+                        const needsLoad = hasLoadingMessage || sandboxPanel.getAttribute("data-loaded") !== "true";
+                        if (needsLoad) {
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(sandboxPanel, "revealed");
+                                sandboxPanel.setAttribute("data-loaded", "true");
+                            }
+                        }
+                    }
+                }
+
                 if (tabName === "tokens") {
                     // Load Tokens list and set up form handling
                     const tokensList = safeGetElement("tokens-list");
