@@ -56,6 +56,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from urllib.parse import urlparse
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -2144,8 +2145,9 @@ Disallow: /
                     f"http://127.0.0.1:{self.port}",
                 }
             else:
-                # Production origins - construct from app_domain
-                self.allowed_origins = {f"https://{self.app_domain}", f"https://app.{self.app_domain}", f"https://admin.{self.app_domain}"}
+                # Production origins - construct from app_domain (extract hostname from HttpUrl)
+                app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
+                self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:
