@@ -46,6 +46,7 @@ from mcpgateway.plugins.framework.external.grpc.server.server import GrpcHealthS
 from mcpgateway.plugins.framework.external.grpc.tls_utils import create_server_credentials
 from mcpgateway.plugins.framework.external.mcp.server.server import ExternalPluginServer
 from mcpgateway.plugins.framework.models import GRPCServerConfig
+from mcpgateway.plugins.framework.settings import PluginsSettings
 
 logger = logging.getLogger(__name__)
 
@@ -295,9 +296,6 @@ Examples:
     )
 
     # Run the server
-    # First-Party
-    from mcpgateway.plugins.framework.settings import PluginsSettings
-
     config_path = args.config or PluginsSettings().config_path
     try:
         asyncio.run(
