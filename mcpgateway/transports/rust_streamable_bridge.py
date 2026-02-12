@@ -75,8 +75,6 @@ class RustStreamableHTTPTransportBridge:
             transport_module = importlib.import_module("mcpgateway_transport_rs")
             prepare_streamable_http_context = getattr(transport_module, "prepare_streamable_http_context")
             start_streamable_http_transport = getattr(transport_module, "start_streamable_http_transport")
-
-
             logger.info("🦀 Experimental Rust streamable HTTP transport enabled")
             return cls(enabled=True, context_fn=prepare_streamable_http_context, request_handler_fn=start_streamable_http_transport)
         except Exception as exc:  # pragma: no cover - env specific import behavior
