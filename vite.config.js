@@ -7,7 +7,7 @@ function cleanOldBundles() {
   return {
     name: 'clean-old-bundles',
     buildStart() {
-      const outDir = path.resolve(__dirname, 'mcpgateway/static');
+      const outDir = path.resolve(__dirname, 'mcpgateway/admin_ui');
       if (fs.existsSync(outDir)) {
         const files = fs.readdirSync(outDir);
         for (const file of files) {
@@ -40,7 +40,7 @@ export default defineConfig({
     manifest: true,
     // Use standard build mode instead of lib mode for direct script inclusion
     rollupOptions: {
-      input: path.resolve(__dirname, 'mcpgateway/static/js/index.js'),
+      input: path.resolve(__dirname, 'mcpgateway/admin_ui/index.js'),
       output: {
         // Add content hash to filename for cache busting
         entryFileNames: 'bundle-[hash].js',
