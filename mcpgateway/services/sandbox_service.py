@@ -30,7 +30,7 @@ from typing import List, Optional
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
-# Local
+# First-Party
 from mcpgateway.db import get_db
 from plugins.unified_pdp.pdp import PolicyDecisionPoint
 from plugins.unified_pdp.pdp_models import (
@@ -45,6 +45,8 @@ from plugins.unified_pdp.pdp_models import (
     Resource,
     Subject,
 )
+
+# Local
 from ..schemas import (
     BatchSimulationResult,
     DecisionComparison,
@@ -52,7 +54,6 @@ from ..schemas import (
     RegressionReport,
     SimulationResult,
     TestCase,
-    TestSuite,
 )
 
 logger = logging.getLogger(__name__)
