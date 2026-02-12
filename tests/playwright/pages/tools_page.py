@@ -7,6 +7,9 @@ Authors: Mihai Criveti
 Tools page object for Tool management features.
 """
 
+# Standard Library
+import re
+
 # Third-Party
 from playwright.sync_api import expect, Locator
 
@@ -146,10 +149,19 @@ class ToolsPage(BasePage):
         """
         self.page.wait_for_selector("#tools-panel:not(.hidden)", timeout=timeout)
         try:
-            self.wait_for_attached(self.tools_table_body, timeout=timeout)
+            # Use shorter timeout for initial check so we retry quickly on HTMX race
+            self.wait_for_attached(self.tools_table_body, timeout=15000)
         except AssertionError:
-            # Alpine.js x-init / HTMX load race: reload to re-run the sequence
+            # Alpine.js x-init / HTMX load race: reload to re-run the sequence.
+            # showTab() does NOT set location.hash, so after reload the page
+            # defaults to the gateways tab. We must wait for JS init and then
+            # re-navigate to the tools tab.
             self.page.reload(wait_until="domcontentloaded")
+            self.page.wait_for_function(
+                "typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'",
+                timeout=30000,
+            )
+            self.sidebar.click_tools_tab()
             self.page.wait_for_selector("#tools-panel:not(.hidden)", timeout=timeout)
             self.wait_for_attached(self.tools_table_body, timeout=timeout)
 
@@ -210,6 +222,28 @@ class ToolsPage(BasePage):
 
     # ==================== Tool Modal Interactions ====================
 
+    def _click_and_wait_for_tool_fetch(self, button: Locator, modal_id: str) -> None:
+        """Click a button that triggers an async tool API fetch, then wait for the modal.
+
+        editTool(), testTool(), and viewTool() all fetch /admin/tools/{id}
+        before opening their respective modals.  If the API returns an error
+        (e.g., RBAC 403), the JS catch block shows an error toast but never
+        calls openModal(), so waiting for the modal selector would hang until
+        timeout.  This method intercepts the API response and raises early.
+        """
+        with self.page.expect_response(
+            lambda resp: (
+                re.search(r"/admin/tools/[0-9a-f]", resp.url) is not None and "/partial" not in resp.url and "/search" not in resp.url and "/ids" not in resp.url and resp.request.method == "GET"
+            ),
+            timeout=30000,
+        ) as response_info:
+            self.click_locator(button)
+        response = response_info.value
+        if response.status >= 400:
+            raise AssertionError(f"Tool API fetch failed with HTTP {response.status} for {response.url}")
+        # API succeeded — wait for the JS to open the modal
+        self.page.wait_for_selector(f"#{modal_id}:not(.hidden)", state="visible", timeout=30000)
+
     def open_tool_view_modal(self, tool_index: int = 0) -> None:
         """Open the tool view modal for a specific tool.
 
@@ -218,9 +252,7 @@ class ToolsPage(BasePage):
         """
         tool_row = self.tool_rows.nth(tool_index)
         view_btn = tool_row.locator('button:has-text("View")')
-        self.click_locator(view_btn)
-        # Wait for modal to open
-        self.page.wait_for_selector("#tool-modal:not(.hidden)", state="visible", timeout=30000)
+        self._click_and_wait_for_tool_fetch(view_btn, "tool-modal")
         self.wait_for_visible(self.tool_modal)
 
     def close_tool_modal(self) -> None:
@@ -237,9 +269,7 @@ class ToolsPage(BasePage):
         """
         tool_row = self.tool_rows.nth(tool_index)
         edit_btn = tool_row.locator('button:has-text("Edit")')
-        self.click_locator(edit_btn)
-        # Wait for modal to open
-        self.page.wait_for_selector("#tool-edit-modal:not(.hidden)", state="visible", timeout=30000)
+        self._click_and_wait_for_tool_fetch(edit_btn, "tool-edit-modal")
         self.wait_for_visible(self.tool_edit_modal)
 
     def edit_tool_name(self, new_name: str) -> None:
@@ -270,9 +300,7 @@ class ToolsPage(BasePage):
         """
         tool_row = self.tool_rows.nth(tool_index)
         test_btn = tool_row.locator('button:has-text("Test")')
-        self.click_locator(test_btn)
-        # Wait for modal to open
-        self.page.wait_for_selector("#tool-test-modal:not(.hidden)", state="visible", timeout=30000)
+        self._click_and_wait_for_tool_fetch(test_btn, "tool-test-modal")
         self.wait_for_visible(self.tool_test_modal)
 
     def run_tool_test(self, params: dict = None) -> None:
