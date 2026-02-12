@@ -186,6 +186,127 @@ except ImportError:
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
 
+UI_HIDABLE_SECTIONS: frozenset[str] = frozenset(
+    {
+        "servers",
+        "gateways",
+        "tools",
+        "prompts",
+        "resources",
+        "teams",
+        "users",
+        "agents",
+        "tokens",
+        "settings",
+    }
+)
+UI_HIDABLE_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector", "user_identity", "theme_toggle"})
+UI_HIDE_SECTION_ALIASES: Dict[str, str] = {
+    "catalog": "servers",
+    "virtual_servers": "servers",
+    "a2a-agents": "agents",
+    "a2a": "agents",
+    "grpc-services": "agents",
+    "api_tokens": "tokens",
+    "llm-settings": "settings",
+}
+UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
+    "servers": ("catalog",),
+    "gateways": ("gateways",),
+    "tools": ("tools", "tool-ops"),
+    "prompts": ("prompts",),
+    "resources": ("resources",),
+    "teams": ("teams",),
+    "users": ("users",),
+    "agents": ("a2a-agents", "grpc-services"),
+    "tokens": ("tokens",),
+    "settings": ("llm-settings",),
+}
+UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
+UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
+
+
+def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
+    """Normalize UI hide values from CSV/list input into a validated set.
+
+    Args:
+        raw: Source value (CSV string, iterable, or ``None``).
+        valid_values: Allowed normalized values.
+        aliases: Optional alias mapping to canonical values.
+
+    Returns:
+        set[str]: Lowercase validated values with aliases resolved.
+    """
+    if raw is None:
+        return set()
+
+    tokens: list[str] = []
+    if isinstance(raw, str):
+        tokens = [item.strip() for item in raw.split(",")]
+    elif isinstance(raw, (list, tuple, set)):
+        tokens = [str(item).strip() for item in raw]
+    else:
+        return set()
+
+    normalized: set[str] = set()
+    for token in tokens:
+        if not token:
+            continue
+        item = token.lower()
+        if aliases:
+            item = aliases.get(item, item)
+        if item in valid_values:
+            normalized.add(item)
+    return normalized
+
+
+def get_ui_visibility_config(request: Request) -> Dict[str, Any]:
+    """Build final UI visibility settings for the current admin request.
+
+    Args:
+        request: Incoming FastAPI request.
+
+    Returns:
+        Dict[str, Any]: Hidden sections/header items/tabs plus cookie update intent.
+    """
+    hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
+    hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items", []), UI_HIDABLE_HEADER_ITEMS)
+
+    if bool(getattr(settings, "mcpgateway_ui_embedded", False)):
+        hidden_header_items.update(UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS)
+
+    query_ui_hide_raw = request.query_params.get("ui_hide")
+    query_ui_hide_values = _normalize_ui_hide_values(query_ui_hide_raw, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES) if query_ui_hide_raw is not None else set()
+
+    if query_ui_hide_raw is not None:
+        # Query override is additive and also becomes the persisted session value.
+        hidden_sections.update(query_ui_hide_values)
+    else:
+        cookie_ui_hide_raw = request.cookies.get(UI_HIDE_SECTIONS_COOKIE_NAME)
+        hidden_sections.update(_normalize_ui_hide_values(cookie_ui_hide_raw, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES))
+
+    hidden_tabs: set[str] = set()
+    for section in hidden_sections:
+        hidden_tabs.update(UI_SECTION_TO_TABS.get(section, ()))
+
+    cookie_action: Optional[str] = None
+    cookie_value: Optional[str] = None
+    if query_ui_hide_raw is not None:
+        # Empty query clears persisted overrides.
+        if query_ui_hide_values:
+            cookie_action = "set"
+            cookie_value = ",".join(sorted(query_ui_hide_values))
+        else:
+            cookie_action = "delete"
+
+    return {
+        "hidden_sections": sorted(hidden_sections),
+        "hidden_header_items": sorted(hidden_header_items),
+        "hidden_tabs": sorted(hidden_tabs),
+        "cookie_action": cookie_action,
+        "cookie_value": cookie_value,
+    }
+
 
 def set_logging_service(service: LoggingService):
     """Set the logging service instance to use.
@@ -2782,13 +2903,19 @@ async def admin_ui(
     """
     LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
+    ui_visibility_config = get_ui_visibility_config(request)
+    hidden_sections = set(ui_visibility_config["hidden_sections"])
+    hidden_header_items = set(ui_visibility_config["hidden_header_items"])
 
     # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id
     # --------------------------------------------------------------------------------
     user_teams = []
     team_service = None
-    if getattr(settings, "email_auth_enabled", False):
+    should_load_user_teams = getattr(settings, "email_auth_enabled", False) and (
+        team_id is not None or "teams" not in hidden_sections or "team_selector" not in hidden_header_items or "tokens" not in hidden_sections
+    )
+    if should_load_user_teams:
         try:
             team_service = TeamManagementService(db)
             if user_email and "@" in user_email:
@@ -2998,48 +3125,53 @@ async def admin_ui(
     # For each returned list, try to produce consistent "model_dump(by_alias=True)" dicts,
     # applying server-side filtering as a fallback if the service didn't accept team_id.
     # --------------------------------------------------------------------------------
-    try:
-        raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-        if isinstance(raw_tools, tuple):
-            raw_tools = raw_tools[0]
-    except Exception as e:
-        LOGGER.exception("Failed to load tools for user: %s", e)
-        raw_tools = []
+    raw_tools = []
+    if "tools" not in hidden_sections:
+        try:
+            raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+            if isinstance(raw_tools, tuple):
+                raw_tools = raw_tools[0]
+        except Exception as e:
+            LOGGER.exception("Failed to load tools for user: %s", e)
 
-    try:
-        raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-        # Handle tuple return (list, cursor)
-        if isinstance(raw_servers, tuple):
-            raw_servers = raw_servers[0]
-    except Exception as e:
-        LOGGER.exception("Failed to load servers for user: %s", e)
-        raw_servers = []
+    raw_servers = []
+    if "servers" not in hidden_sections:
+        try:
+            raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+            # Handle tuple return (list, cursor)
+            if isinstance(raw_servers, tuple):
+                raw_servers = raw_servers[0]
+        except Exception as e:
+            LOGGER.exception("Failed to load servers for user: %s", e)
 
-    try:
-        raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-        if isinstance(raw_resources, tuple):
-            raw_resources = raw_resources[0]
-    except Exception as e:
-        LOGGER.exception("Failed to load resources for user: %s", e)
-        raw_resources = []
+    raw_resources = []
+    if "resources" not in hidden_sections:
+        try:
+            raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+            if isinstance(raw_resources, tuple):
+                raw_resources = raw_resources[0]
+        except Exception as e:
+            LOGGER.exception("Failed to load resources for user: %s", e)
 
-    try:
-        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-        # Handle tuple return (list, cursor)
-        if isinstance(raw_prompts, tuple):
-            raw_prompts = raw_prompts[0]
-    except Exception as e:
-        LOGGER.exception("Failed to load prompts for user: %s", e)
-        raw_prompts = []
+    raw_prompts = []
+    if "prompts" not in hidden_sections:
+        try:
+            raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+            # Handle tuple return (list, cursor)
+            if isinstance(raw_prompts, tuple):
+                raw_prompts = raw_prompts[0]
+        except Exception as e:
+            LOGGER.exception("Failed to load prompts for user: %s", e)
 
-    try:
-        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-        # Handle tuple return (list, cursor)
-        if isinstance(gateways_raw, tuple):
-            gateways_raw = gateways_raw[0]
-    except Exception as e:
-        LOGGER.exception("Failed to load gateways: %s", e)
-        gateways_raw = []
+    gateways_raw = []
+    if "gateways" not in hidden_sections:
+        try:
+            gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+            # Handle tuple return (list, cursor)
+            if isinstance(gateways_raw, tuple):
+                gateways_raw = gateways_raw[0]
+        except Exception as e:
+            LOGGER.exception("Failed to load gateways: %s", e)
 
     # Convert models to dicts and filter as needed
     def _to_dict_and_filter(raw_list):
@@ -3115,7 +3247,7 @@ async def admin_ui(
 
     # Load A2A agents if enabled
     a2a_agents = []
-    if a2a_service and settings.mcpgateway_a2a_enabled:
+    if "agents" not in hidden_sections and a2a_service and settings.mcpgateway_a2a_enabled:
         a2a_agents_raw = await a2a_service.list_agents_for_user(
             db,
             user_info=user_email,
@@ -3127,7 +3259,7 @@ async def admin_ui(
     # Load gRPC services if enabled and available
     grpc_services = []
     try:
-        if GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
+        if "agents" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
             grpc_services_raw = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
@@ -3179,6 +3311,9 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "ui_hidden_sections": ui_visibility_config["hidden_sections"],
+            "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
+            "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             # Password policy flags for frontend templates
             "password_min_length": getattr(settings, "password_min_length", 8),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
@@ -3257,6 +3392,30 @@ async def admin_ui(
             LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
+
+    cookie_action = ui_visibility_config.get("cookie_action")
+    if cookie_action:
+        scope_root_path = request.scope.get("root_path", "") or ""
+        ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
+        use_secure = (settings.environment == "production") or settings.secure_cookies
+        samesite = settings.cookie_samesite
+        if cookie_action == "set":
+            response.set_cookie(
+                key=UI_HIDE_SECTIONS_COOKIE_NAME,
+                value=ui_visibility_config.get("cookie_value", ""),
+                path=ui_cookie_path,
+                httponly=True,
+                secure=use_secure,
+                samesite=samesite,
+            )
+        elif cookie_action == "delete":
+            response.delete_cookie(
+                key=UI_HIDE_SECTIONS_COOKIE_NAME,
+                path=ui_cookie_path,
+                secure=use_secure,
+                httponly=True,
+                samesite=samesite,
+            )
 
     return response
 

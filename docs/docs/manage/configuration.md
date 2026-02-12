@@ -252,10 +252,26 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
+| `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
+| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV/JSON list of UI sections to hide (servers, gateways, tools, prompts, resources, teams, users, agents, tokens, settings) | `[]` | CSV/JSON list |
+| `MCPGATEWAY_UI_HIDE_HEADER_ITEMS` | CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle) | `[]` | CSV/JSON list |
 | `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
 | `MCPGATEWAY_BULK_IMPORT_RATE_LIMIT` | Rate limit for bulk import endpoint (requests per minute) | `10` | int |
 | `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` | Tool test timeout in milliseconds for the admin UI | `60000` | int |
+
+!!! note "Per-Request UI Hiding"
+    For embedded contexts, you can also hide UI sections per-request by adding `?ui_hide=...` to the Admin UI URL.
+
+    Example:
+    ```text
+    /admin/?ui_hide=prompts,resources,teams
+    ```
+
+    The query value is stored in a cookie for the session. Clear it by visiting:
+    ```text
+    /admin/?ui_hide=
+    ```
 
 !!! tip "Production Settings"
     Set both UI and Admin API to `false` to disable management UI and APIs in production.
@@ -1058,6 +1074,11 @@ BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+# Embedded UI mode (hides logout + team selector by default)
+MCPGATEWAY_UI_EMBEDDED=false
+# CSV/JSON list of UI sections/header items to hide (optional)
+MCPGATEWAY_UI_HIDE_SECTIONS=
+MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
 ```
 
 ### Docker Compose with MySQL

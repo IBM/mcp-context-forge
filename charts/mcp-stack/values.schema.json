@@ -628,6 +628,22 @@
               "description": "Enable air-gapped mode for UI assets (serve vendored CSS/JS files locally)",
               "default": "false"
             },
+            "MCPGATEWAY_UI_EMBEDDED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable embedded UI mode (hides logout + team selector by default)",
+              "default": "false"
+            },
+            "MCPGATEWAY_UI_HIDE_SECTIONS": {
+              "type": "string",
+              "description": "CSV/JSON list of UI sections to hide (servers, gateways, tools, prompts, resources, teams, users, agents, tokens, settings)",
+              "default": ""
+            },
+            "MCPGATEWAY_UI_HIDE_HEADER_ITEMS": {
+              "type": "string",
+              "description": "CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle)",
+              "default": ""
+            },
             "MCPGATEWAY_ADMIN_API_ENABLED": {
               "type": "string",
               "enum": ["true", "false"],

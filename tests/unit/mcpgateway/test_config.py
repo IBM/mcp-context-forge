@@ -784,6 +784,24 @@ def test_parse_list_from_env_invalid_type():
         Settings(sso_entra_admin_groups=123, _env_file=None)
 
 
+def test_ui_hide_sections_csv_aliases_and_invalid_values():
+    """UI section hide list should normalize aliases and ignore invalid values."""
+    s = Settings(
+        mcpgateway_ui_hide_sections="prompts,CATALOG,a2a,invalid,prompts",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections == ["prompts", "servers", "agents"]
+
+
+def test_ui_hide_header_items_json_normalization():
+    """UI header hide list should normalize case and deduplicate values."""
+    s = Settings(
+        mcpgateway_ui_hide_header_items='["logout", "THEME_TOGGLE", "logout", "invalid"]',
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_header_items == ["logout", "theme_toggle"]
+
+
 # --------------------------------------------------------------------------- #
 #                    validate_database (non-sqlite)                            #
 # --------------------------------------------------------------------------- #
