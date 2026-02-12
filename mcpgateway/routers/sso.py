@@ -180,11 +180,12 @@ def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) ->
 
     # Check against app_domain (if configured)
     if hasattr(settings, "app_domain") and settings.app_domain:
-        # app_domain is typically just a hostname, allow both http and https
-        app_domain = settings.app_domain.lower()
-        if redirect_host == app_domain:
+        # app_domain is an HttpUrl - extract the hostname for comparison
+        app_domain_host = urlparse(str(settings.app_domain)).hostname or ""
+        app_domain_host = app_domain_host.lower()
+        if redirect_host == app_domain_host:
             # Only allow HTTPS in production, or HTTP for localhost
-            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain in ("localhost", "127.0.0.1")):
+            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain_host in ("localhost", "127.0.0.1")):
                 return True
 
     # Check against allowed_origins (full origin match including scheme and port)

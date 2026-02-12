@@ -898,7 +898,7 @@
     - ✅ [**#2082**](https://github.com/IBM/mcp-context-forge/issues/2082) - Optimize Cedar plugin - Replace synchronous requests with async
     - ✅ [**#2518**](https://github.com/IBM/mcp-context-forge/issues/2518) - [DATABASE]: DB sessions held during external HTTP calls cause connection pool exhaustion
 
-???+ check "🐛 Bugs - Completed (68)"
+???+ check "🐛 Bugs - Completed (69)"
 
     - ✅ [**#1430**](https://github.com/IBM/mcp-context-forge/issues/1430) - Tools - Add Tool from REST API with incorrect input schema breaks GET tools
     - ✅ [**#1528**](https://github.com/IBM/mcp-context-forge/issues/1528) - Ignores proxy-based authentication configuration and still requires token
@@ -968,6 +968,7 @@
     - ✅ [**#2806**](https://github.com/IBM/mcp-context-forge/issues/2806) - Admin login redirect loop behind reverse proxy without path rewriting
     - ✅ [**#2821**](https://github.com/IBM/mcp-context-forge/issues/2821) - RBAC middleware crashes on token creation
     - ✅ [**#2870**](https://github.com/IBM/mcp-context-forge/issues/2870) - API Call - Tokens - Can no longer create tokens - 403 error
+    - ✅ [**#2873**](https://github.com/IBM/mcp-context-forge/issues/2873) - Critical: SSO authentication blocked - AttributeError on app_domain breaks Azure Entra ID
 
 ???+ check "🔒 Security - Completed (3)"
 

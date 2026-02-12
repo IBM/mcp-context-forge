@@ -8,10 +8,10 @@
 
 ### Overview
 
-This release delivers **enterprise security hardening**, **comprehensive RBAC improvements**, and **production-quality enforcement** with **125 issues resolved** (15 features/epics, 68 bugs, 9 performance, 3 security, 18 chores, 11 testing, 1 docs):
+This release delivers **enterprise security hardening**, **comprehensive RBAC improvements**, and **production-quality enforcement** with **126 issues resolved** (15 features/epics, 69 bugs, 9 performance, 3 security, 18 chores, 11 testing, 1 docs):
 
 - **🔐 15 Features** - Enterprise security controls, unified policy decision point (Cedar/OPA), tool circuit breakers, session affinity, zero-config TLS
-- **🔧 68 Bug Fixes** - Authentication flows, RBAC, Admin UI, MCP protocol, team management, multi-tenancy, pre-commit hooks
+- **🔧 69 Bug Fixes** - Authentication flows, RBAC, Admin UI, MCP protocol, team management, multi-tenancy, pre-commit hooks
 - **🛡️ 3 Security Fixes** - ReDoS vulnerabilities in validators and plugins, WebSocket token validation
 - **⚡ 9 Performance** - Plugin regex precompilation, crypto threadpool offload, Cedar async, llm-guard optimization
 - **🧪 11 Testing** - 80%+ code coverage gate, JMeter baseline, Playwright improvements, manual test plans
@@ -151,6 +151,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Missing Default Role Assignment** ([#2694](https://github.com/IBM/mcp-context-forge/issues/2694), [#2741](https://github.com/IBM/mcp-context-forge/issues/2741)) - Users assigned correct RBAC roles to access Admin UI (see Breaking Changes: Mandatory Default Role Assignment)
 * **RBAC Token Creation Crash** ([#2821](https://github.com/IBM/mcp-context-forge/issues/2821)) - RBAC middleware no longer crashes during token creation
 * **API Tokens Cannot Manage Tokens** ([#2870](https://github.com/IBM/mcp-context-forge/issues/2870)) - Removed overly restrictive interactive session guard that blocked API tokens from creating, updating, or revoking tokens
+* **SSO AttributeError on app_domain** ([#2873](https://github.com/IBM/mcp-context-forge/issues/2873)) - Fixed `AttributeError` crash in SSO redirect validation where `app_domain` (an `HttpUrl` object) was incorrectly treated as a string, blocking Azure Entra ID and all SSO providers; also fixed production CORS origins construction producing malformed URLs
 * **JWT CLI/API Divergence** ([#2261](https://github.com/IBM/mcp-context-forge/issues/2261)) - Token creation consistent between CLI and API
 * **SSO Admin Role Revocation** ([#2331](https://github.com/IBM/mcp-context-forge/issues/2331)) - Admin role revoked when user removed from IdP admin group
 * **SSO Admin Token Bypass** ([#2386](https://github.com/IBM/mcp-context-forge/issues/2386)) - SSO admin tokens no longer include teams key that prevented admin bypass
