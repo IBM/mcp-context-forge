@@ -570,6 +570,60 @@ class TokenCatalogService:
         result = self.db.execute(query)
         return result.scalars().all()
 
+    async def list_user_and_team_tokens(self, user_email: str, include_inactive: bool = False, limit: int = 100, offset: int = 0) -> List[EmailApiToken]:
+        """List API tokens for a user plus team tokens where user is admin or owner.
+
+        This combines personal tokens (created by the user) with team-scoped tokens
+        from teams where the user has admin or owner role.
+
+        Args:
+            user_email: User's email address
+            include_inactive: Include inactive/expired tokens
+            limit: Maximum tokens to return
+            offset: Number of tokens to skip
+
+        Returns:
+            List[EmailApiToken]: Combined list of user's personal tokens and team tokens
+
+        Examples:
+            >>> service = TokenCatalogService(None)  # Would use real DB session
+            >>> # Returns List[EmailApiToken] including personal and team tokens
+        """
+        # First-Party
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        # Validate parameters
+        if limit <= 0 or limit > 1000:
+            limit = 50
+        offset = max(offset, 0)
+
+        # Get user's team memberships (admin or owner roles)
+        team_memberships = self.db.execute(
+            select(EmailTeamMember.team_id).where(
+                and_(
+                    EmailTeamMember.user_email == user_email,
+                    EmailTeamMember.role.in_(["owner", "admin"]),
+                    EmailTeamMember.is_active.is_(True),
+                )
+            )
+        ).all()
+        team_ids = [m.team_id for m in team_memberships]
+
+        # Build query: tokens created by user OR tokens in teams where user is admin/owner
+        conditions = [EmailApiToken.user_email == user_email]
+        if team_ids:
+            conditions.append(EmailApiToken.team_id.in_(team_ids))
+
+        query = select(EmailApiToken).where(or_(*conditions))
+
+        if not include_inactive:
+            query = query.where(and_(EmailApiToken.is_active.is_(True), or_(EmailApiToken.expires_at.is_(None), EmailApiToken.expires_at > utc_now())))
+
+        query = query.order_by(EmailApiToken.created_at.desc()).limit(limit).offset(offset)
+
+        result = self.db.execute(query)
+        return result.scalars().all()
+
     async def get_token(self, token_id: str, user_email: Optional[str] = None) -> Optional[EmailApiToken]:
         """Get a specific token by ID.
 
