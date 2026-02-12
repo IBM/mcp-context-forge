@@ -516,6 +516,38 @@ class GatewaysPage(BasePage):
         activate_btn = gateway_row.locator('button:has-text("Activate")')
         self.click_locator(activate_btn)
 
+    def _click_delete_and_wait(self, delete_btn, confirm: bool = True) -> None:
+        """Click a delete button, handle both confirmation dialogs, and wait for navigation.
+
+        handleDeleteSubmit shows TWO confirm() dialogs (delete + purge metrics).
+        form.submit() triggers a full page navigation (POST → 303 redirect).
+        We must use expect_navigation to detect the new page load, since
+        wait_for_load_state("domcontentloaded") returns immediately for the
+        already-loaded current page.
+
+        Args:
+            delete_btn: Locator for the delete button to click
+            confirm: Whether to accept or dismiss the dialogs
+        """
+
+        def _handle_dialog(dialog):
+            if confirm:
+                dialog.accept()
+            else:
+                dialog.dismiss()
+
+        self.page.on("dialog", _handle_dialog)
+
+        try:
+            if confirm:
+                with self.page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+                    delete_btn.click(force=True)
+            else:
+                delete_btn.click(force=True)
+                self.page.wait_for_timeout(1000)
+        finally:
+            self.page.remove_listener("dialog", _handle_dialog)
+
     def delete_gateway(self, gateway_index: int = 0, confirm: bool = True) -> None:
         """Delete a gateway with optional confirmation.
 
@@ -531,19 +563,14 @@ class GatewaysPage(BasePage):
 
         # Find the delete button within the row's action column
         delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-
-        # Set up dialog handler before clicking
-        if confirm:
-            self.page.once("dialog", lambda dialog: dialog.accept())
-        else:
-            self.page.once("dialog", lambda dialog: dialog.dismiss())
-
-        # Click with force to handle any overlay issues
-        delete_btn.click(force=True)
-        self.page.wait_for_timeout(1000)  # Wait for deletion to process
+        self._click_delete_and_wait(delete_btn, confirm)
 
     def delete_gateway_by_name(self, gateway_name: str, confirm: bool = True) -> bool:
-        """Delete a gateway by searching for its name.
+        """Delete a gateway by locating the matching row and clicking its delete button.
+
+        Unlike delete_gateway(index), this method targets the specific row by name,
+        avoiding the issue where client-side search filtering hides rows via CSS
+        but gateway_rows.nth(0) still returns the first DOM row (possibly hidden).
 
         Args:
             gateway_name: Name of the gateway to delete
@@ -552,22 +579,17 @@ class GatewaysPage(BasePage):
         Returns:
             True if gateway was found and deleted, False if not found
         """
-        # Search for the gateway
-        self.search_gateways(gateway_name)
-        self.page.wait_for_timeout(500)
-
         # Check if gateway exists
         if not self.gateway_exists(gateway_name):
-            self.clear_search()
             return False
 
-        # Delete the gateway
-        self.delete_gateway(0, confirm=confirm)
-        self.page.wait_for_timeout(1000)
-
-        # Clear search
-        self.clear_search()
+        # Find the specific row by name and click its delete button
+        gateway_row = self.get_gateway_row_by_name(gateway_name)
+        gateway_row.first.scroll_into_view_if_needed()
         self.page.wait_for_timeout(500)
+
+        delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
+        self._click_delete_and_wait(delete_btn, confirm)
 
         return True
 
@@ -606,19 +628,10 @@ class GatewaysPage(BasePage):
             except Exception:
                 gateway_name = "Unknown"
 
-            # Get the delete button
+            # Get the delete button and use shared delete+navigation helper
             try:
                 delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
-
-                # Set up dialog handler before clicking
-                if confirm:
-                    self.page.once("dialog", lambda dialog: dialog.accept())
-                else:
-                    self.page.once("dialog", lambda dialog: dialog.dismiss())
-
-                # Click delete button
-                delete_btn.click(force=True, timeout=5000)
-                self.page.wait_for_timeout(1000)
+                self._click_delete_and_wait(delete_btn, confirm)
 
                 logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
                 deleted_any = True

@@ -12,7 +12,6 @@ import uuid
 
 # Third-Party
 from playwright.sync_api import expect
-import pytest
 
 
 class TestTeams:
@@ -58,12 +57,15 @@ class TestTeams:
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
-        # Reload to see the new team
+        # Reload to see the new team — after reload, the default tab shows
+        # (not teams), so re-navigate to teams tab and wait for search field.
         team_page.page.wait_for_load_state("domcontentloaded")
         team_page.page.reload(wait_until="domcontentloaded")
+        team_page.navigate_to_teams_tab()
 
         # Search for the team
         team_search = team_page.page.locator("#team-search")
+        team_search.wait_for(state="visible", timeout=30000)
         team_search.fill(team_name)
 
         # Verify team is visible
@@ -105,12 +107,15 @@ class TestTeams:
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
-        # Reload to see the new team
+        # Reload to see the new team — after reload, the default tab shows
+        # (not teams), so re-navigate to teams tab and wait for search field.
         team_page.page.wait_for_load_state("domcontentloaded")
         team_page.page.reload(wait_until="domcontentloaded")
+        team_page.navigate_to_teams_tab()
 
         # Search for the team
         team_search = team_page.page.locator("#team-search")
+        team_search.wait_for(state="visible", timeout=30000)
         team_search.fill(team_name)
 
         # Verify team is visible
@@ -158,12 +163,15 @@ class TestTeams:
         with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
-        # Reload to see the new team
+        # Reload to see the new team — after reload, the default tab shows
+        # (not teams), so re-navigate to teams tab and wait for search field.
         team_page.page.wait_for_load_state("domcontentloaded")
         team_page.page.reload(wait_until="domcontentloaded")
+        team_page.navigate_to_teams_tab()
 
         # Search for the team
         team_search = team_page.page.locator("#team-search")
+        team_search.wait_for(state="visible", timeout=30000)
         team_search.fill(team_name)
 
         # Verify team is visible
