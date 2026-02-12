@@ -564,9 +564,10 @@ def _update_api_token_last_used_sync(jti: str) -> None:
                     # Update Redis cache with current timestamp
                     redis_client.setex(cache_key, update_interval_seconds * 2, str(time.time()))
             return
-        except Exception:
+        except Exception as exc:
             # Redis failed, fall through to in-memory cache
-            pass
+            logger = logging.getLogger(__name__)
+            logger.debug("Redis unavailable for API token rate-limiting, using in-memory fallback: %s", exc)
 
     # Fallback: In-memory cache (simple dict with threading.Lock for thread-safety)
     # Note: This is per-process and won't work in multi-worker deployments
