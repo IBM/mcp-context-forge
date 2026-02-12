@@ -13,10 +13,14 @@ import warnings
 
 
 def _pytest_cov_available() -> bool:
-    """Return True when pytest-cov is importable."""
+    """Return whether ``pytest-cov`` is importable in the current environment.
+
+    Returns:
+        ``True`` when ``pytest-cov`` can be imported, else ``False``.
+    """
     try:
         # Third-Party
-        import pytest_cov.plugin  # noqa: F401  # pylint: disable=unused-import
+        import pytest_cov.plugin  # noqa: F401  # pylint: disable=unused-import,import-outside-toplevel
 
         return True
     except Exception:
@@ -24,7 +28,11 @@ def _pytest_cov_available() -> bool:
 
 
 def pytest_addoption(parser) -> None:
-    """Register no-op coverage options when pytest-cov is unavailable."""
+    """Register no-op coverage options when ``pytest-cov`` is unavailable.
+
+    Args:
+        parser: Pytest parser used to register command-line options.
+    """
     if _pytest_cov_available():
         return
 
