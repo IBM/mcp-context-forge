@@ -354,7 +354,7 @@ class TestBootstrapDefaultRoles:
                     with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                         with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                             await bootstrap_default_roles(mock_conn)
-                            mock_logger.error.assert_any_call("Failed to assign platform_admin role: boom")
+                            mock_logger.error.assert_any_call(f"Failed to assign platform_admin role to {mock_admin_user.email}: boom. Admin UI routes using allow_admin_bypass=False will return 403.")
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_outer_exception_logged(self, mock_settings, mock_email_auth_service, mock_conn):
