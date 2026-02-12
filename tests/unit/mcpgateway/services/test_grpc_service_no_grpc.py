@@ -115,7 +115,7 @@ async def test_register_service_sets_metadata_and_handles_reflection_error(servi
             db,
             service_data,
             user_email="user@example.com",
-            metadata={"ip": "127.0.0.1", "via": "tests", "user_agent": "pytest"},
+            metadata={"created_from_ip": "127.0.0.1", "created_via": "tests", "created_user_agent": "pytest"},
         )
 
     assert result.name == "svc"
@@ -207,7 +207,7 @@ async def test_update_service_sets_metadata(service, db):
         "svc-1",
         GrpcServiceUpdate(description="updated"),
         user_email="user@example.com",
-        metadata={"ip": "10.0.0.1", "via": "tests", "user_agent": "pytest"},
+        metadata={"modified_from_ip": "10.0.0.1", "modified_via": "tests", "modified_user_agent": "pytest"},
     )
 
     assert result.description == "updated"
@@ -387,13 +387,7 @@ async def test_get_service_methods(service, db):
         reachable=True,
         service_count=0,
         method_count=0,
-        discovered_services={
-            "pkg.Service": {
-                "methods": [
-                    {"name": "Ping", "input_type": "PingReq", "output_type": "PingResp", "client_streaming": False, "server_streaming": False}
-                ]
-            }
-        },
+        discovered_services={"pkg.Service": {"methods": [{"name": "Ping", "input_type": "PingReq", "output_type": "PingResp", "client_streaming": False, "server_streaming": False}]}},
         last_reflection=None,
         tags=[],
         created_at=datetime.now(timezone.utc),
