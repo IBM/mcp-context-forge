@@ -1,4 +1,4 @@
-import { escapeHtml, parseErrorResponse } from "./security";
+import { escapeHtml, parseErrorResponse } from "./security.js";
 import {
   fetchWithTimeout,
   getCookie,

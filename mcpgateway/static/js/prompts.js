@@ -1,7 +1,7 @@
-import { AppState } from "./appState";
-import { getSelectedGatewayIds } from "./gateway";
+import { AppState } from "./appState.js";
+import { getSelectedGatewayIds } from "./gateway.js";
 import { openModal } from "./modals";
-import { escapeHtml } from "./security";
+import { escapeHtml } from "./security.js";
 import { getCurrentTeamId, safeGetElement, showErrorMessage } from "./utils";
 
 export const initPromptSelect = function (

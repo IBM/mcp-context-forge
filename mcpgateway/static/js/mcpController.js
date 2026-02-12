@@ -1,13 +1,12 @@
-/* global Admin */
-import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth";
-import { getCatalogUrl } from "./configExport";
+import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
+import { getCatalogUrl } from "./configExport.js";
 import { MASKED_AUTH_VALUE } from "./constants";
 import { updateEditToolRequestTypes } from "./formFieldHandlers";
-import { initGatewaySelect } from "./gateway";
+import { initGatewaySelect } from "./gateway.js";
 import { openModal } from "./modals";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
-import { validateInputName, validateJson, validateUrl } from "./security";
+import { validateInputName, validateJson, validateUrl } from "./security.js";
 import {
   safeGetElement,
   fetchWithTimeout,
@@ -1067,12 +1066,12 @@ export const openResourceTestModal = function (resource) {
         `;
   }
 
-  Admin.CurrentResourceUnderTest = resource;
+  window.Admin.CurrentResourceUnderTest = resource;
   openModal("resource-test-modal");
 };
 
 export const runResourceTest = async function () {
-  const resource = Admin.CurrentResourceUnderTest;
+  const resource = window.Admin.CurrentResourceUnderTest;
   if (!resource) {
     return;
   }
@@ -2860,8 +2859,8 @@ export const viewServer = async function (serverId) {
           toolBadge.className =
             "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
           toolBadge.textContent =
-            Admin.toolMapping && Admin.toolMapping[toolId]
-              ? Admin.toolMapping[toolId]
+            window.Admin.toolMapping && window.Admin.toolMapping[toolId]
+              ? window.Admin.toolMapping[toolId]
               : toolId;
 
           const toolIdSpan = document.createElement("span");
@@ -2918,8 +2917,8 @@ export const viewServer = async function (serverId) {
           resourceBadge.className =
             "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full dark:bg-blue-900 dark:text-blue-200";
           resourceBadge.textContent =
-            Admin.resourceMapping && Admin.resourceMapping[resourceId]
-              ? Admin.resourceMapping[resourceId]
+            window.Admin.resourceMapping && window.Admin.resourceMapping[resourceId]
+              ? window.Admin.resourceMapping[resourceId]
               : `Resource ${resourceId}`;
 
           const resourceIdSpan = document.createElement("span");
@@ -2976,8 +2975,8 @@ export const viewServer = async function (serverId) {
           promptBadge.className =
             "inline-block bg-purple-100 text-purple-800 text-xs px-2 py-1 rounded-full dark:bg-purple-900 dark:text-purple-200";
           promptBadge.textContent =
-            Admin.promptMapping && Admin.promptMapping[promptId]
-              ? Admin.promptMapping[promptId]
+            window.Admin.promptMapping && window.Admin.promptMapping[promptId]
+              ? window.Admin.promptMapping[promptId]
               : `Prompt ${promptId}`;
 
           const promptIdSpan = document.createElement("span");
@@ -3321,7 +3320,7 @@ export const editServer = async function (serverId) {
     }
 
     // Store server data for modal population
-    Admin.currentEditingServer = server;
+    window.Admin.currentEditingServer = server;
 
     // Set associated tools data attribute on the container for reference by initToolSelect
     const editToolsContainer = safeGetElement("edit-server-tools");
@@ -3398,9 +3397,9 @@ export const editServer = async function (serverId) {
 
       toolCheckboxes.forEach((checkbox) => {
         let isChecked = false;
-        if (server.associatedTools && Admin.toolMapping) {
+        if (server.associatedTools && window.Admin.toolMapping) {
           // Get the tool name for this checkbox UUID
-          const toolName = Admin.toolMapping[checkbox.value];
+          const toolName = window.Admin.toolMapping[checkbox.value];
 
           // Check if this tool name is in the associated tools array
           isChecked = toolName && server.associatedTools.includes(toolName);
@@ -3509,9 +3508,9 @@ export const setEditServerAssociations = function (server) {
 
   toolCheckboxes.forEach((checkbox) => {
     let isChecked = false;
-    if (server.associatedTools && Admin.toolMapping) {
+    if (server.associatedTools && window.Admin.toolMapping) {
       // Get the tool name for this checkbox UUID
-      const toolName = Admin.toolMapping[checkbox.value];
+      const toolName = window.Admin.toolMapping[checkbox.value];
 
       // Check if this tool name is in the associated tools array
       isChecked = toolName && server.associatedTools.includes(toolName);

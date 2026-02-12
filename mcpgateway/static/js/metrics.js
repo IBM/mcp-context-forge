@@ -1,4 +1,4 @@
-import { escapeHtml } from "./security";
+import { escapeHtml } from "./security.js";
 import { fetchWithTimeout, handleFetchError, safeGetElement } from "./utils";
 
 // ===================================================================

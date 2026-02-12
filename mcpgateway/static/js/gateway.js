@@ -1,4 +1,3 @@
-/* global Admin */
 // ===================================================================
 // GATEWAY SELECT (Associated MCP Servers) - search/select/clear
 // ===================================================================
@@ -6,7 +5,7 @@
 import { closeModal, openModal } from "./modals";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
-import { validateJson, validateUrl } from "./security";
+import { validateJson, validateUrl } from "./security.js";
 import { initToolSelect } from "./tools";
 import { fetchWithTimeout, getCurrentTeamId, safeGetElement, showErrorMessage } from "./utils";
 
@@ -609,7 +608,7 @@ const reloadAssociatedItems = function () {
           persistedResourceIds = Array.from(merged);
 
           // Update window fallback
-          Admin._selectedAssociatedResources = persistedResourceIds.slice();
+          window.Admin._selectedAssociatedResources = persistedResourceIds.slice();
         } catch (e) {
           console.error(
             "Error capturing current resource selections before reload:",
@@ -705,12 +704,12 @@ const reloadAssociatedItems = function () {
 
           // Merge with window fallback if it has additional selections
           if (
-            Array.isArray(Admin._selectedAssociatedResources) &&
-            Admin._selectedAssociatedResources.length > 0
+            Array.isArray(window.Admin._selectedAssociatedResources) &&
+            window.Admin._selectedAssociatedResources.length > 0
           ) {
             const merged = new Set([
               ...selectedIds,
-              ...Admin._selectedAssociatedResources,
+              ...window.Admin._selectedAssociatedResources,
             ]);
             const mergedArray = Array.from(merged);
             if (mergedArray.length > selectedIds.length) {
@@ -831,7 +830,7 @@ const reloadAssociatedItems = function () {
           ...(window._selectedAssociatedPrompts || []),
           ...currentCheckedPrompts,
         ]);
-        Admin._selectedAssociatedPrompts = Array.from(merged);
+        window.Admin._selectedAssociatedPrompts = Array.from(merged);
       }
     } catch (e) {
       console.error(
