@@ -1669,27 +1669,56 @@ class SessionManagerWrapper:
                         logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
                         logger.warning(f"Failed to register session ownership: {e}")
 
-        try:
-            rust_handled = await self.rust_bridge.handle_request(scope, receive, send)
-            if rust_handled:
-                return
-
+        # Store headers in context for tool invocations
         request_headers_var.set(context.headers or headers)
         server_id_var.set(context.server_id)
 
         try:
+            # 1️⃣ Try Rust transport first
             rust_handled = await self.rust_bridge.handle_request(scope, receive, send)
             if rust_handled:
                 return
 
-            await self.session_manager.handle_request(scope, receive, send)
+            # 2️⃣ Fallback to Python session manager
+            await self.session_manager.handle_request(scope, receive, send_with_capture)
+
+            logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
+
+            # 3️⃣ Register ownership (stateful + affinity only)
+            if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
+                session_to_register = captured_session_id or (
+                    mcp_session_id if mcp_session_id != "not-provided" else None
+                )
+
+                if session_to_register:
+                    try:
+                        from mcpgateway.services.mcp_session_pool import (
+                            get_mcp_session_pool,
+                            WORKER_ID,
+                        )
+
+                        pool = get_mcp_session_pool()
+                        await pool.register_pool_session_owner(session_to_register)
+
+                        logger.debug(
+                            f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | "
+                            f"Session {session_to_register[:8]}... | Registered ownership"
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to register session ownership: {e}")
+
         except anyio.ClosedResourceError:
-            # Expected when client closes one side of the stream (normal lifecycle)
+            # Normal lifecycle case
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
+
         except Exception as e:
-            logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
-            logger.exception(f"Error handling streamable HTTP request: {e}")
+            logger.error(
+                f"[STATEFUL] Streamable HTTP request failed | "
+                f"Session: {mcp_session_id} | Error: {e}"
+            )
+            logger.exception("Unhandled streamable HTTP error")
             raise
+
 
 
 # ------------------------- Authentication for /mcp routes ------------------------------
