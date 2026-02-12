@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "mcp_stdio_wrapper"
-version = "1.0.0-BETA-1"
+version = "1.0.0-RC-1"
 dependencies = [
  "actson",
  "arc-swap",

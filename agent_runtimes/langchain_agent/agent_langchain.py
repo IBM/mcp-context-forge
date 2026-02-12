@@ -6,11 +6,11 @@ from collections.abc import AsyncGenerator
 from typing import Any, Callable, Dict
 
 # Third-Party
-from langchain.agents import AgentExecutor, create_openai_functions_agent
+from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import BaseTool
+from langgraph.graph.state import CompiledStateGraph
 import orjson
 
 # LLM Provider imports
@@ -194,7 +194,7 @@ class LangchainMCPAgent:
             raise
 
         self.tools: list[MCPTool] = []
-        self.agent_executor: AgentExecutor | None = None
+        self.agent_graph: CompiledStateGraph | None = None
         self._initialized = False
 
     @classmethod
@@ -281,9 +281,8 @@ class LangchainMCPAgent:
             raise
 
     async def _create_agent(self):
-        """Create the Langchain agent executor"""
+        """Create the Langchain agent graph"""
         try:
-            # Define the system prompt
             system_prompt = """You are a helpful AI assistant with access to various tools through the MCP (Model Context Protocol) Gateway.
 
 Use the available tools to help answer questions and complete tasks. When using tools:
@@ -292,30 +291,13 @@ Use the available tools to help answer questions and complete tasks. When using 
 3. Interpret tool results and provide helpful responses to the user
 4. If a tool fails, try alternative approaches or explain the limitation
 
-Available tools: {tool_names}
-
 Always strive to be helpful, accurate, and honest in your responses."""
 
-            # Create prompt template
-            prompt = ChatPromptTemplate.from_messages(
-                [
-                    ("system", system_prompt),
-                    MessagesPlaceholder(variable_name="chat_history"),
-                    ("human", "{input}"),
-                    MessagesPlaceholder(variable_name="agent_scratchpad"),
-                ]
-            )
-
-            # Create the agent
-            agent = create_openai_functions_agent(llm=self.llm, tools=self.tools, prompt=prompt)
-
-            # Create agent executor
-            self.agent_executor = AgentExecutor(
-                agent=agent,
+            self.agent_graph = create_agent(
+                model=self.llm,
                 tools=self.tools,
-                max_iterations=self.config.max_iterations,
-                verbose=self.config.debug_mode,
-                return_intermediate_steps=True,
+                system_prompt=system_prompt,
+                debug=self.config.debug_mode,
             )
 
             logger.info("Langchain agent created successfully")
@@ -331,7 +313,7 @@ Always strive to be helpful, accurate, and honest in your responses."""
     async def check_readiness(self) -> bool:
         """Check if agent is ready to handle requests"""
         try:
-            return self._initialized and self.agent_executor is not None and len(self.tools) >= 0 and await self.test_gateway_connection()  # Allow 0 tools for testing
+            return self._initialized and self.agent_graph is not None and len(self.tools) >= 0 and await self.test_gateway_connection()  # Allow 0 tools for testing
         except Exception:
             return False
 
@@ -352,6 +334,20 @@ Always strive to be helpful, accurate, and honest in your responses."""
         except Exception:
             return []
 
+    def _convert_messages(self, messages: list[dict[str, str]]) -> list:
+        """Convert dict messages to langchain message objects."""
+        lc_messages = []
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+            if role == "user":
+                lc_messages.append(HumanMessage(content=content))
+            elif role == "assistant":
+                lc_messages.append(AIMessage(content=content))
+            elif role == "system":
+                lc_messages.append(SystemMessage(content=content))
+        return lc_messages
+
     async def run_async(
         self,
         messages: list[dict[str, str]],
@@ -365,27 +361,16 @@ Always strive to be helpful, accurate, and honest in your responses."""
             raise RuntimeError("Agent not initialized. Call initialize() first.")
 
         try:
-            # Convert messages to input format
-            if messages:
-                latest_message = messages[-1]
-                input_text = latest_message.get("content", "")
-            else:
-                input_text = ""
+            lc_messages = self._convert_messages(messages)
+            result = await self.agent_graph.ainvoke({"messages": lc_messages})
 
-            # Prepare chat history (all messages except the last one)
-            chat_history = []
-            for msg in messages[:-1]:
-                if msg["role"] == "user":
-                    chat_history.append(HumanMessage(content=msg["content"]))
-                elif msg["role"] == "assistant":
-                    chat_history.append(AIMessage(content=msg["content"]))
-                elif msg["role"] == "system":
-                    chat_history.append(SystemMessage(content=msg["content"]))
+            # Extract the last AI message from the result
+            output_messages = result.get("messages", [])
+            for msg in reversed(output_messages):
+                if isinstance(msg, AIMessage) and msg.content:
+                    return msg.content
 
-            # Run the agent
-            result = await self.agent_executor.ainvoke({"input": input_text, "chat_history": chat_history, "tool_names": [tool.name for tool in self.tools]})
-
-            return result["output"]
+            return ""
 
         except Exception as e:
             logger.error(f"Agent execution failed: {e}")
@@ -402,4 +387,16 @@ Always strive to be helpful, accurate, and honest in your responses."""
         """Stream agent response asynchronously"""
         if not self._initialized:
             raise RuntimeError("Agent not initialized. Call initialize() first.")
-        # Standard
+
+        try:
+            lc_messages = self._convert_messages(messages)
+            async for event in self.agent_graph.astream_events(
+                {"messages": lc_messages}, version="v2"
+            ):
+                if event["event"] == "on_chat_model_stream":
+                    chunk = event["data"].get("chunk")
+                    if chunk and hasattr(chunk, "content") and chunk.content:
+                        yield chunk.content
+        except Exception as e:
+            logger.error(f"Agent streaming failed: {e}")
+            yield f"I encountered an error while processing your request: {str(e)}"
