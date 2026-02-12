@@ -246,11 +246,3 @@ Grand Total: 8.75 CPU / 9.625GB ✅ (87.5% utilization, 1.25 CPU headroom)
 
 - **`make monitoring-lite-up`** - Local load testing on Colima/Docker Desktop (same observability stack, just excludes admin UIs)
 - **`make monitoring-up`** - Full monitoring including pgAdmin and redis_commander admin UIs (requires full docker-compose.yml)
-
----
-
-## Files Modified
-
-- ✅ `docker-compose.override.lite.yml` - Lightweight 2-replica stack with monitoring-lite profile
-- ✅ `Makefile` - Added compose-lite-up, compose-lite-down, monitoring-lite-up, monitoring-lite-down targets
-- ✅ `LocalTest.md` - This file, documenting lite setup for local load testing
