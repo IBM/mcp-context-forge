@@ -3214,13 +3214,25 @@ class ToolEmbedding(Base):
         passive_deletes=True,
     )
 
+    if backend == "postgresql":
+        __table_args__ = (
+            Index(
+                "idx_tool_embeddings_hnsw",
+                "embedding",
+                postgresql_using="hnsw",
+                postgresql_with={"m": settings.hnsw_m, "ef_construction": settings.hnsw_ef_construction},
+                postgresql_ops={"embedding": "vector_cosine_ops"},
+            ),
+        )
+
     def __repr__(self) -> str:
         return (
             f"<ToolEmbedding(id={self.id}, "
             f"tool_id={self.tool_id}, "
             f"model_name={self.model_name})>"
         )
-    
+
+
 class Resource(Base):
     """
     ORM model for a registered Resource.
