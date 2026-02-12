@@ -7617,24 +7617,22 @@ function getDefaultTabName() {
         return isTabAvailable(tabName);
     });
 
-    if (visibleTabs.includes("gateways")) {
-        return "gateways";
-    }
     if (visibleTabs.includes("overview")) {
         return "overview";
+    }
+    if (visibleTabs.includes("gateways")) {
+        return "gateways";
     }
     if (visibleTabs.length > 0) {
         return visibleTabs[0];
     }
 
-    // Fallback for unexpected DOM states.
-    if (safeGetElement("gateways-panel", true)) {
-        return "gateways";
-    }
-    if (safeGetElement("overview-panel", true)) {
+    // Backwards-compatible fallback for minimal DOM states (unit tests, etc).
+    // Previously, the presence of overview-panel alone controlled the default.
+    if (!isTabHidden("overview") && safeGetElement("overview-panel", true)) {
         return "overview";
     }
-    return null;
+    return "gateways";
 }
 
 function resolveTabForNavigation(tabName) {

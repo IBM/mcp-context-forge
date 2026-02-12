@@ -44,15 +44,16 @@ describe("showTab hidden tab fallback", () => {
     test("redirects hidden tab navigation to the default visible tab", () => {
         const { panel: gatewaysPanel } = createTab("gateways");
         const { panel: promptsPanel } = createTab("prompts");
-        createTab("overview");
+        const { panel: overviewPanel } = createTab("overview");
 
         win.UI_HIDDEN_TABS = ["prompts"];
 
         win.showTab("prompts");
 
-        expect(gatewaysPanel.classList.contains("hidden")).toBe(false);
+        expect(overviewPanel.classList.contains("hidden")).toBe(false);
+        expect(gatewaysPanel.classList.contains("hidden")).toBe(true);
         expect(promptsPanel.classList.contains("hidden")).toBe(true);
-        expect(win.location.hash).toBe("#gateways");
+        expect(win.location.hash).toBe("#overview");
     });
 });
 
@@ -60,32 +61,34 @@ describe("initializeTabState hidden hash handling", () => {
     test("maps an initial hidden hash to a visible default tab", () => {
         const { panel: gatewaysPanel } = createTab("gateways");
         const { panel: promptsPanel } = createTab("prompts");
-        createTab("overview");
+        const { panel: overviewPanel } = createTab("overview");
         win.UI_HIDDEN_TABS = ["prompts"];
 
         win.location.hash = "#prompts";
         win.initializeTabState();
 
-        expect(win.location.hash).toBe("#gateways");
-        expect(gatewaysPanel.classList.contains("hidden")).toBe(false);
+        expect(win.location.hash).toBe("#overview");
+        expect(overviewPanel.classList.contains("hidden")).toBe(false);
+        expect(gatewaysPanel.classList.contains("hidden")).toBe(true);
         expect(promptsPanel.classList.contains("hidden")).toBe(true);
     });
 
     test("blocks hashchange navigation to hidden tabs", () => {
         const { panel: gatewaysPanel } = createTab("gateways");
         const { panel: promptsPanel } = createTab("prompts");
-        createTab("overview");
+        const { panel: overviewPanel } = createTab("overview");
         win.UI_HIDDEN_TABS = ["prompts"];
 
-        win.location.hash = "#gateways";
+        win.location.hash = "#overview";
         win.initializeTabState();
-        expect(win.location.hash).toBe("#gateways");
+        expect(win.location.hash).toBe("#overview");
 
         win.location.hash = "#prompts";
         win.dispatchEvent(new win.HashChangeEvent("hashchange"));
 
-        expect(win.location.hash).toBe("#gateways");
-        expect(gatewaysPanel.classList.contains("hidden")).toBe(false);
+        expect(win.location.hash).toBe("#overview");
+        expect(overviewPanel.classList.contains("hidden")).toBe(false);
+        expect(gatewaysPanel.classList.contains("hidden")).toBe(true);
         expect(promptsPanel.classList.contains("hidden")).toBe(true);
     });
 });
