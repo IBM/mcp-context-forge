@@ -46,17 +46,17 @@ def _require_authenticated_session(current_user: dict) -> None:
 
     # Fail-secure: block if auth_method not set (indicates incomplete auth flow)
     if auth_method is None:
-        logger.warning("Token management blocked: auth_method not set. This indicates an auth code path that needs to set request.state.auth_method")
+        logger.warning("Token management blocked: auth_method not set. " "This indicates an auth code path that needs to set request.state.auth_method")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires authentication. Authentication method could not be determined.",
+            detail="Token management requires authentication. " "Authentication method could not be determined.",
         )
 
     # Block anonymous users (missing proxy header or unauthenticated)
     if auth_method == "anonymous":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires authentication. Anonymous access is not permitted.",
+            detail="Token management requires authentication. " "Anonymous access is not permitted.",
         )
 
 
@@ -202,7 +202,7 @@ async def list_tokens(
     _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
-    tokens = await service.list_user_and_team_tokens(
+    tokens = await service.list_user_tokens(
         user_email=current_user["email"],
         include_inactive=include_inactive,
         limit=limit,
