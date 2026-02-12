@@ -21886,6 +21886,15 @@ function initializeAddMembersForms(root = document) {
     allForms.forEach((form) => initializeAddMembersForm(form));
 }
 
+// Get current pagination state from URL parameters
+function getTeamsCurrentPaginationState() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return {
+        page: Math.max(1, parseInt(urlParams.get("teams_page"), 10) || 1),
+        perPage: Math.max(1, parseInt(urlParams.get("teams_size"), 10) || 10),
+    };
+}
+
 function handleAdminTeamAction(event) {
     const detail = event.detail || {};
     const delayMs = Number(detail.delayMs) || 0;
@@ -21913,11 +21922,10 @@ function handleAdminTeamAction(event) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
                 // Preserve current pagination/filter state on refresh
+                const paginationState = getTeamsCurrentPaginationState();
                 const params = new URLSearchParams();
-                params.set("page", "1"); // Reset to first page on action
-                if (typeof getTeamsPerPage === "function") {
-                    params.set("per_page", getTeamsPerPage().toString());
-                }
+                params.set("page", paginationState.page);
+                params.set("per_page", paginationState.perPage);
                 // Preserve search query from input field
                 const searchInput = document.getElementById("team-search");
                 if (searchInput && searchInput.value.trim()) {
@@ -31449,6 +31457,15 @@ async function performTeamSearch(searchTerm) {
     params.set("page", "1");
     params.set("per_page", getTeamsPerPage().toString());
 
+    // Sync URL state so CRUD refresh reads the correct page
+    const currentUrl = new URL(window.location.href);
+    const urlParams = new URLSearchParams(currentUrl.searchParams);
+    urlParams.set("teams_page", "1");
+    urlParams.set("teams_size", getTeamsPerPage().toString());
+    const newUrl =
+        currentUrl.pathname + "?" + urlParams.toString() + currentUrl.hash;
+    window.safeReplaceState({}, "", newUrl);
+
     if (searchTerm && searchTerm.trim() !== "") {
         params.set("q", searchTerm.trim());
     }
@@ -31660,6 +31677,7 @@ window.filterByRelationship = filterByRelationship;
 window.filterTeams = filterTeams;
 window.searchTeamSelector = searchTeamSelector;
 window.selectTeamFromSelector = selectTeamFromSelector;
+window.getTeamsCurrentPaginationState = getTeamsCurrentPaginationState;
 
 /**
  * Handle keydown event when Enter or Space key is pressed
