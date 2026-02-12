@@ -49,13 +49,63 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 
 > **Note**: Gateways without configured `auth_value` will send unauthenticated requests to remote servers. Configure per-gateway authentication for servers that require it.
 
+##### Cookie Authentication Rejected for API Requests
+* API endpoints now reject cookie-only authentication with HTTP 401
+* All API requests must use `Authorization` header (Bearer token, API key, or Basic auth if enabled)
+* Admin UI session cookies continue to work for `/admin/*` routes
+
 ##### SSO Redirect Validation
 * Redirect URI validation uses server-side allowlist
 * Validates against `ALLOWED_ORIGINS` and `APP_DOMAIN` settings
 
-##### Admin UI Menu Visibility
+#### **🔑 JWT Session Token Format Change** ([#2757](https://github.com/IBM/mcp-context-forge/issues/2757))
+
+**Action Required**: Session JWT tokens (login/SSO) no longer embed `teams` or `namespaces` claims.
+
+* Session tokens now use a `token_use: "session"` claim to signal server-side team resolution
+* Teams are resolved from the database/cache on each request instead of being embedded in the token
+* Reduces JWT cookie size to stay within browser 4KB limit for users with many team memberships
+
+> **Migration**: If your clients parse JWT session tokens to extract team membership, switch to the `/auth/email/me` endpoint or server-side team resolution. API tokens still embed `teams` claims as before.
+
+#### **📋 Strict JSON Schema Validation** ([#2348](https://github.com/IBM/mcp-context-forge/issues/2348))
+
+**Action Required**: Invalid JSON schemas are now rejected at registration time.
+
+* **JSON_SCHEMA_VALIDATION_STRICT** now defaults to `true` - Invalid JSON schemas rejected with HTTP 400
+* All schemas default to Draft 2020-12 validator if `$schema` field is missing
+* Affects `POST`/`PUT` on `/tools`, `/prompts`, `/resources` endpoints
+
+> **Migration**: Validate existing tool/prompt/resource schemas before upgrading. Set `JSON_SCHEMA_VALIDATION_STRICT=false` to temporarily restore permissive behavior while fixing schemas.
+
+#### **🛡️ SSRF Protection Enabled by Default** ([#2663](https://github.com/IBM/mcp-context-forge/issues/2663))
+
+**Action Required**: Gateway and tool URLs pointing to private/internal networks are now blocked.
+
+* **SSRF_PROTECTION_ENABLED** now defaults to `true`
+* Default blocklist includes cloud metadata endpoints (`169.254.169.254`), Kubernetes service IPs, and link-local addresses
+* Configurable via `SSRF_BLOCKED_NETWORKS` and `SSRF_BLOCKED_HOSTS`
+
+> **Migration**: If your gateways or tools connect to internal services, add them to the allowlist or set `SSRF_PROTECTION_ENABLED=false`. Review `SSRF_BLOCKED_NETWORKS` for your environment.
+
+#### **🔒 Admin Demotion Protection** ([#2763](https://github.com/IBM/mcp-context-forge/issues/2763))
+
+* **PROTECT_ALL_ADMINS** now defaults to `true` - Prevents any admin from being demoted, deactivated, or locked out via API/UI
+* Set `PROTECT_ALL_ADMINS=false` to allow demoting all-but-last-admin (previous behavior)
+
+#### **👥 Mandatory Default Role Assignment** ([#2694](https://github.com/IBM/mcp-context-forge/issues/2694), [#2741](https://github.com/IBM/mcp-context-forge/issues/2741))
+
+* All users now receive default RBAC roles upon creation or migration
+* Admin users: `platform_admin` (global) + `team_admin` (team scope)
+* Non-admin users: `platform_viewer` (global) + `team_admin` (team scope)
+* Database migration automatically assigns roles to existing users
+
+> **Migration**: Run `alembic upgrade head` to apply the role assignment migration. Review assigned roles in Admin UI after upgrade.
+
+#### **📊 Admin UI Behavior Changes**
 * Non-admin users no longer see admin-only menu entries ([#2675](https://github.com/IBM/mcp-context-forge/issues/2675))
 * Delete and Update buttons hidden for public MCP servers created by other users/teams ([#2760](https://github.com/IBM/mcp-context-forge/issues/2760))
+* Token-scoped filtering enforced on list endpoints - results filtered by token's team scope ([#2663](https://github.com/IBM/mcp-context-forge/issues/2663))
 
 ### Added
 
@@ -98,8 +148,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Admin Login Redirect Loop** ([#2806](https://github.com/IBM/mcp-context-forge/issues/2806)) - Fixed redirect loop behind reverse proxy without path rewriting
 * **SECURE_COOKIES Login Loop** ([#2539](https://github.com/IBM/mcp-context-forge/issues/2539)) - Fixed login loop when SECURE_COOKIES=true with HTTP access
 * **Non-Admin Login Blocked** ([#2590](https://github.com/IBM/mcp-context-forge/issues/2590)) - Users without admin privileges can now login via UI and API
-* **Missing Default Role Assignment** ([#2694](https://github.com/IBM/mcp-context-forge/issues/2694)) - Users assigned correct roles to access Admin UI
-* **Admin Privilege Assignment** ([#2741](https://github.com/IBM/mcp-context-forge/issues/2741)) - New administrator users now receive correct privileges
+* **Missing Default Role Assignment** ([#2694](https://github.com/IBM/mcp-context-forge/issues/2694), [#2741](https://github.com/IBM/mcp-context-forge/issues/2741)) - Users assigned correct RBAC roles to access Admin UI (see Breaking Changes: Mandatory Default Role Assignment)
 * **RBAC Token Creation Crash** ([#2821](https://github.com/IBM/mcp-context-forge/issues/2821)) - RBAC middleware no longer crashes during token creation
 * **JWT CLI/API Divergence** ([#2261](https://github.com/IBM/mcp-context-forge/issues/2261)) - Token creation consistent between CLI and API
 * **SSO Admin Role Revocation** ([#2331](https://github.com/IBM/mcp-context-forge/issues/2331)) - Admin role revoked when user removed from IdP admin group
@@ -111,7 +160,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 #### **👥 Multi-Tenancy & Teams**
 * **list_teams Null DB** ([#2608](https://github.com/IBM/mcp-context-forge/issues/2608)) - Fixed `current_user_ctx["db"]` always being None in list_teams
 * **Admin Team Visibility** ([#2673](https://github.com/IBM/mcp-context-forge/issues/2673)) - Admins can see all teams again
-* **JWT Cookie Size** ([#2757](https://github.com/IBM/mcp-context-forge/issues/2757)) - JWT cookie no longer exceeds browser 4KB limit with many team memberships
+* **JWT Cookie Size** ([#2757](https://github.com/IBM/mcp-context-forge/issues/2757)) - JWT cookie no longer exceeds browser 4KB limit with many team memberships (see Breaking Changes: JWT Session Token Format Change)
 * **Team Member Add** ([#2676](https://github.com/IBM/mcp-context-forge/issues/2676)) - Add Member button works for user role
 * **Team Member Role Switch** ([#2677](https://github.com/IBM/mcp-context-forge/issues/2677)) - Team owners can switch members between owner and member roles
 * **New Team Display** ([#2690](https://github.com/IBM/mcp-context-forge/issues/2690)) - Newly created teams display immediately without page refresh
@@ -135,7 +184,8 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **iFrame Embedding** ([#2777](https://github.com/IBM/mcp-context-forge/issues/2777)) - Admin UI works when embedded in an iframe
 
 #### **🔧 MCP Protocol & Tools**
-* **Tool Schema Validation** ([#1430](https://github.com/IBM/mcp-context-forge/issues/1430), [#2348](https://github.com/IBM/mcp-context-forge/issues/2348)) - REST API tools with incorrect schemas no longer break GET tools; schema validation behavior change handled
+* **Tool Schema Breakage** ([#1430](https://github.com/IBM/mcp-context-forge/issues/1430)) - REST API tools with incorrect input schema no longer break GET tools
+* **Schema Validation Strictness** ([#2348](https://github.com/IBM/mcp-context-forge/issues/2348)) - Schema validation now rejects invalid schemas at registration time (see Breaking Changes: Strict JSON Schema Validation)
 * **SSE Transport** ([#1595](https://github.com/IBM/mcp-context-forge/issues/1595)) - Fixed incorrect endpoint and data parsing in SSE transport
 * **OAuth Gateway Tool Loss** ([#2272](https://github.com/IBM/mcp-context-forge/issues/2272)) - Virtual servers using OAuth-authenticated gateways no longer lose tools
 * **Tag Filter 500** ([#2329](https://github.com/IBM/mcp-context-forge/issues/2329)) - Tag filter on tools list no longer returns 500
