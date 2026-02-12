@@ -52,7 +52,7 @@ prompt and resource registered in your Gateway.
     "run", "--rm", "--network=host", "-i",
     "-e", "MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1",
     "-e", "MCP_AUTH=<Bearer YOUR_JWT_TOKEN>",
-    "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2",
+    "ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1",
     "python3", "-m", "mcpgateway.wrapper"
   ]
 }
