@@ -177,8 +177,8 @@ else:
 
 # Initialize plugin manager as a singleton (honor env overrides for tests)
 _PLUGINS_ENABLED = settings.plugins.enabled
-_config_file = settings.plugins.config_file
-plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
+_CONFIG_FILE = settings.plugins.config_file
+plugin_manager: PluginManager | None = PluginManager(_CONFIG_FILE) if _PLUGINS_ENABLED else None
 
 
 # First-Party
