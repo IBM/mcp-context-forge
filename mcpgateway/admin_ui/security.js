@@ -4,24 +4,24 @@
  * ====================================================================
  */
 
-import { HEADER_NAME_REGEX, MAX_HEADER_VALUE_LENGTH } from './constants.js';
+import { HEADER_NAME_REGEX, MAX_HEADER_VALUE_LENGTH } from "./constants.js";
 
 // ===================================================================
 // SECURITY: HTML-escape function to prevent XSS attacks
 // ===================================================================
 
 export function escapeHtml(unsafe) {
-    if (unsafe === null || unsafe === undefined) {
-        return "";
-    }
-    return String(unsafe)
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#039;")
-        .replace(/`/g, "&#x60;")
-        .replace(/\//g, "&#x2F;"); // Extra protection against script injection
+  if (unsafe === null || unsafe === undefined) {
+    return "";
+  }
+  return String(unsafe)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;")
+    .replace(/`/g, "&#x60;")
+    .replace(/\//g, "&#x2F;"); // Extra protection against script injection
 }
 
 /**
@@ -32,19 +32,17 @@ export function escapeHtml(unsafe) {
  * @returns {string} Human-readable error message
  */
 export function extractApiError(error, fallback = "An error occurred") {
-    if (!error || (!error.detail && !error.message)) {
-        return fallback;
-    }
-    if (typeof error.detail === "string") {
-        return error.detail;
-    }
-    if (Array.isArray(error.detail)) {
-        // Pydantic validation errors - extract messages
-        return error.detail
-            .map((err) => err.msg || JSON.stringify(err))
-            .join("; ");
-    }
+  if (!error || (!error.detail && !error.message)) {
     return fallback;
+  }
+  if (typeof error.detail === "string") {
+    return error.detail;
+  }
+  if (Array.isArray(error.detail)) {
+    // Pydantic validation errors - extract messages
+    return error.detail.map((err) => err.msg || JSON.stringify(err)).join("; ");
+  }
+  return fallback;
 }
 
 /**
@@ -53,19 +51,22 @@ export function extractApiError(error, fallback = "An error occurred") {
  * @param {string} fallback - Fallback message if parsing fails
  * @returns {Promise<string>} Human-readable error message
  */
-export async function parseErrorResponse(response, fallback = "An error occurred") {
-    try {
-        const contentType = response.headers.get("content-type") || "";
-        if (contentType.includes("application/json")) {
-            const error = await response.json();
-            return extractApiError(error, fallback);
-        }
-        // Non-JSON response - try to get text
-        const text = await response.text();
-        return text || fallback;
-    } catch {
-        return fallback;
+export async function parseErrorResponse(
+  response,
+  fallback = "An error occurred"
+) {
+  try {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const error = await response.json();
+      return extractApiError(error, fallback);
     }
+    // Non-JSON response - try to get text
+    const text = await response.text();
+    return text || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 /**
@@ -75,144 +76,145 @@ export async function parseErrorResponse(response, fallback = "An error occurred
  * @returns {Object} Validation result with 'valid' boolean and 'error' message
  */
 export function validatePassthroughHeader(name, value) {
-    // Validate header name
-    if (!HEADER_NAME_REGEX.test(name)) {
-        return {
-            valid: false,
-            error: `Header name "${name}" contains invalid characters. Only letters, numbers, and hyphens are allowed.`,
-        };
-    }
+  // Validate header name
+  if (!HEADER_NAME_REGEX.test(name)) {
+    return {
+      valid: false,
+      error: `Header name "${name}" contains invalid characters. Only letters, numbers, and hyphens are allowed.`,
+    };
+  }
 
-    // Check for dangerous characters in value
-    if (value.includes("\n") || value.includes("\r")) {
-        return {
-            valid: false,
-            error: "Header value cannot contain newline characters",
-        };
-    }
+  // Check for dangerous characters in value
+  if (value.includes("\n") || value.includes("\r")) {
+    return {
+      valid: false,
+      error: "Header value cannot contain newline characters",
+    };
+  }
 
-    // Check value length
-    if (value.length > MAX_HEADER_VALUE_LENGTH) {
-        return {
-            valid: false,
-            error: `Header value too long (${value.length} chars, max ${MAX_HEADER_VALUE_LENGTH})`,
-        };
-    }
+  // Check value length
+  if (value.length > MAX_HEADER_VALUE_LENGTH) {
+    return {
+      valid: false,
+      error: `Header value too long (${value.length} chars, max ${MAX_HEADER_VALUE_LENGTH})`,
+    };
+  }
 
-    // Check for control characters (except tab)
-    const hasControlChars = Array.from(value).some((char) => {
-        const code = char.charCodeAt(0);
-        return code < 32 && code !== 9; // Allow tab (9) but not other control chars
-    });
+  // Check for control characters (except tab)
+  const hasControlChars = Array.from(value).some((char) => {
+    const code = char.charCodeAt(0);
+    return code < 32 && code !== 9; // Allow tab (9) but not other control chars
+  });
 
-    if (hasControlChars) {
-        return {
-            valid: false,
-            error: "Header value contains invalid control characters",
-        };
-    }
+  if (hasControlChars) {
+    return {
+      valid: false,
+      error: "Header value contains invalid control characters",
+    };
+  }
 
-    return { valid: true };
+  return { valid: true };
 }
 
 /**
  * SECURITY: Validate input names to prevent XSS and ensure clean data
  */
 export function validateInputName(name, type = "input") {
-    if (!name || typeof name !== "string") {
-        return { valid: false, error: `${type} is required` };
+  if (!name || typeof name !== "string") {
+    return { valid: false, error: `${type} is required` };
+  }
+
+  // Remove any HTML tags
+  const cleaned = name.replace(/<[^>]*>/g, "");
+
+  // Check for dangerous patterns
+  const dangerousPatterns = [
+    /<script/i,
+    /javascript:/i,
+    /on\w+\s*=/i,
+    /data:text\/html/i,
+    /vbscript:/i,
+  ];
+
+  for (const pattern of dangerousPatterns) {
+    if (pattern.test(name)) {
+      return {
+        valid: false,
+        error: `${type} contains invalid characters`,
+      };
     }
+  }
 
-    // Remove any HTML tags
-    const cleaned = name.replace(/<[^>]*>/g, "");
+  // Length validation
+  if (cleaned.length < 1) {
+    return { valid: false, error: `${type} cannot be empty` };
+  }
 
-    // Check for dangerous patterns
-    const dangerousPatterns = [
-        /<script/i,
-        /javascript:/i,
-        /on\w+\s*=/i,
-        /data:text\/html/i,
-        /vbscript:/i,
-    ];
+  if (cleaned.length > window.MAX_NAME_LENGTH) {
+    return {
+      valid: false,
+      error: `${type} must be ${window.MAX_NAME_LENGTH} characters or less`,
+    };
+  }
 
-    for (const pattern of dangerousPatterns) {
-        if (pattern.test(name)) {
-            return {
-                valid: false,
-                error: `${type} contains invalid characters`,
-            };
-        }
+  // For prompt names, be more restrictive
+  if (type === "prompt") {
+    // Only allow alphanumeric, underscore, hyphen, and spaces
+    const validPattern = /^[a-zA-Z0-9_\s-]+$/;
+    if (!validPattern.test(cleaned)) {
+      return {
+        valid: false,
+        error:
+          "Prompt name can only contain letters, numbers, spaces, underscores, and hyphens",
+      };
     }
+  }
 
-    // Length validation
-    if (cleaned.length < 1) {
-        return { valid: false, error: `${type} cannot be empty` };
-    }
-
-    if (cleaned.length > window.MAX_NAME_LENGTH) {
-        return {
-            valid: false,
-            error: `${type} must be ${window.MAX_NAME_LENGTH} characters or less`,
-        };
-    }
-
-    // For prompt names, be more restrictive
-    if (type === "prompt") {
-        // Only allow alphanumeric, underscore, hyphen, and spaces
-        const validPattern = /^[a-zA-Z0-9_\s-]+$/;
-        if (!validPattern.test(cleaned)) {
-            return {
-                valid: false,
-                error: "Prompt name can only contain letters, numbers, spaces, underscores, and hyphens",
-            };
-        }
-    }
-
-    return { valid: true, value: cleaned };
+  return { valid: true, value: cleaned };
 }
 
 /**
  * SECURITY: Validate URL inputs
  */
 export function validateUrl(url, label = "") {
-    if (!url || typeof url !== "string") {
-        return { valid: false, error: `${label || "URL"} is required` };
+  if (!url || typeof url !== "string") {
+    return { valid: false, error: `${label || "URL"} is required` };
+  }
+
+  try {
+    const urlObj = new URL(url);
+    const allowedProtocols = ["http:", "https:"];
+
+    if (!allowedProtocols.includes(urlObj.protocol)) {
+      return {
+        valid: false,
+        error: "Only HTTP and HTTPS URLs are allowed",
+      };
     }
 
-    try {
-        const urlObj = new URL(url);
-        const allowedProtocols = ["http:", "https:"];
-
-        if (!allowedProtocols.includes(urlObj.protocol)) {
-            return {
-                valid: false,
-                error: "Only HTTP and HTTPS URLs are allowed",
-            };
-        }
-
-        return { valid: true, value: url };
-    } catch (error) {
-        return { valid: false, error: "Invalid URL format" };
-    }
+    return { valid: true, value: url };
+  } catch (error) {
+    return { valid: false, error: "Invalid URL format" };
+  }
 }
 
 /**
  * SECURITY: Validate JSON input
  */
 export function validateJson(jsonString, fieldName = "JSON") {
-    if (!jsonString || !jsonString.trim()) {
-        return { valid: true, value: {} }; // Empty is OK, defaults to empty object
-    }
+  if (!jsonString || !jsonString.trim()) {
+    return { valid: true, value: {} }; // Empty is OK, defaults to empty object
+  }
 
-    try {
-        const parsed = JSON.parse(jsonString);
-        return { valid: true, value: parsed };
-    } catch (error) {
-        return {
-            valid: false,
-            error: `Invalid ${fieldName} format: ${error.message}`,
-        };
-    }
+  try {
+    const parsed = JSON.parse(jsonString);
+    return { valid: true, value: parsed };
+  } catch (error) {
+    return {
+      valid: false,
+      error: `Invalid ${fieldName} format: ${error.message}`,
+    };
+  }
 }
 
 /**
@@ -220,19 +222,19 @@ export function validateJson(jsonString, fieldName = "JSON") {
  * For user-generated content, use textContent instead
  */
 export function safeSetInnerHTML(element, htmlContent, isTrusted = false) {
-    if (!isTrusted) {
-        console.error("Attempted to set innerHTML with untrusted content");
-        element.textContent = htmlContent; // Fallback to safe text
-        return;
-    }
-    element.innerHTML = htmlContent;
+  if (!isTrusted) {
+    console.error("Attempted to set innerHTML with untrusted content");
+    element.textContent = htmlContent; // Fallback to safe text
+    return;
+  }
+  element.innerHTML = htmlContent;
 }
 
 /**
-* Helper to escape HTML for safe rendering
-*/
+ * Helper to escape HTML for safe rendering
+ */
 export const escapeHtmlChat = function (text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-}
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+};

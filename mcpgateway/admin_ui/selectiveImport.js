@@ -226,7 +226,7 @@ export const displayImportPreview = function (preview) {
 export const handleSelectiveImport = async function (dryRun = false) {
   console.log(`🎯 Starting selective import (dry_run=${dryRun})`);
 
-  if (!Admin.currentImportData) {
+  if (!window.Admin.currentImportData) {
     showNotification("❌ Please select an import file first", "error");
     return;
   }
@@ -251,7 +251,7 @@ export const handleSelectiveImport = async function (dryRun = false) {
     const rekeySecret = safeGetElement("import-rekey-secret")?.value || null;
 
     const requestData = {
-      import_data: Admin.currentImportData,
+      import_data: window.Admin.currentImportData,
       conflict_strategy: conflictStrategy,
       dry_run: dryRun,
       rekey_secret: rekeySecret,
