@@ -1,6 +1,6 @@
-  // ===================================================================
-  // ENHANCED SCHEMA GENERATION with Safe State Access
-  // ===================================================================
+// ===================================================================
+// ENHANCED SCHEMA GENERATION with Safe State Access
+// ===================================================================
 
 import { AppState } from "./appState.js";
 import { validateInputName } from "./security.js";

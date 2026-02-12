@@ -12,37 +12,37 @@ const MAX_METRICS_RETRIES = 3; // Increased from 2
 const METRICS_RETRY_DELAY = 2000; // Increased from 1500ms
 
 /**
-* Enhanced metrics loading with better race condition prevention
-*/
+ * Enhanced metrics loading with better race condition prevention
+ */
 export const loadAggregatedMetrics = async function () {
   const metricsPanel = safeGetElement("metrics-panel", true);
   if (!metricsPanel || metricsPanel.closest(".tab-panel.hidden")) {
     console.log("Metrics panel not visible, skipping load");
     return;
   }
-  
+
   // Cancel any existing request
   if (metricsRequestController) {
     console.log("Cancelling existing metrics request...");
     metricsRequestController.abort();
     metricsRequestController = null;
   }
-  
+
   // If there's already a promise in progress, return it
   if (metricsRequestPromise) {
     console.log("Returning existing metrics promise...");
     return metricsRequestPromise;
   }
-  
+
   console.log("Starting new metrics request...");
   showMetricsLoading();
-  
+
   metricsRequestPromise = loadMetricsInternal().finally(() => {
     metricsRequestPromise = null;
     metricsRequestController = null;
     hideMetricsLoading();
   });
-  
+
   return metricsRequestPromise;
 };
 
@@ -50,14 +50,14 @@ export const loadMetricsInternal = async function () {
   try {
     console.log("Loading aggregated metrics...");
     showMetricsLoading();
-    
+
     const result = await fetchWithTimeoutAndRetry(
       `${window.ROOT_PATH}/admin/metrics`,
       {}, // options
       (window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000) * 1.5, // Use 1.5x configurable timeout for metrics
-      MAX_METRICS_RETRIES,
+      MAX_METRICS_RETRIES
     );
-    
+
     if (!result.ok) {
       // If metrics endpoint doesn't exist, show a placeholder instead of failing
       if (result.status === 404) {
@@ -67,12 +67,12 @@ export const loadMetricsInternal = async function () {
       // FIX: Handle 500 errors specifically
       if (result.status >= 500) {
         throw new Error(
-          `Server error (${result.status}). The metrics calculation may have failed.`,
+          `Server error (${result.status}). The metrics calculation may have failed.`
         );
       }
       throw new Error(`HTTP ${result.status}: ${result.statusText}`);
     }
-    
+
     // FIX: Handle empty or invalid JSON responses
     let data;
     try {
@@ -87,7 +87,7 @@ export const loadMetricsInternal = async function () {
       console.error("Failed to parse metrics JSON:", parseError);
       data = {}; // Use empty object as fallback
     }
-    
+
     console.log("Metrics data received:", data);
     displayMetrics(data);
     console.log("✓ Metrics loaded successfully");
@@ -100,81 +100,73 @@ export const loadMetricsInternal = async function () {
 };
 
 /**
-* Enhanced fetch with automatic retry logic and better error handling
-*/
+ * Enhanced fetch with automatic retry logic and better error handling
+ */
 const fetchWithTimeoutAndRetry = async function (
   url,
   options = {},
   timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
-  maxRetries = 3,
+  maxRetries = 3
 ) {
   let lastError;
-  
+
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       console.log(`Metrics fetch attempt ${attempt}/${maxRetries}`);
-      
+
       // Create new controller for each attempt
       metricsRequestController = new AbortController();
-      
+
       const response = await fetchWithTimeout(
         url,
         {
           ...options,
           signal: metricsRequestController.signal,
         },
-        timeout,
+        timeout
       );
-      
+
       console.log(`✓ Metrics fetch attempt ${attempt} succeeded`);
       return response;
     } catch (error) {
       lastError = error;
-      
-      console.warn(
-        `✗ Metrics fetch attempt ${attempt} failed:`,
-        error.message,
-      );
-      
+
+      console.warn(`✗ Metrics fetch attempt ${attempt} failed:`, error.message);
+
       // Don't retry on certain errors
       if (error.name === "AbortError" && attempt < maxRetries) {
         console.log("Request was aborted, skipping retry");
         throw error;
       }
-      
+
       // Don't retry on the last attempt
       if (attempt === maxRetries) {
-        console.error(
-          `All ${maxRetries} metrics fetch attempts failed`,
-        );
+        console.error(`All ${maxRetries} metrics fetch attempts failed`);
         throw error;
       }
-      
+
       // Wait before retrying, with modest backoff
       const delay = METRICS_RETRY_DELAY * attempt;
       console.log(`Retrying metrics fetch in ${delay}ms...`);
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
-  
+
   throw lastError;
 };
 
 /**
-* Show loading state for metrics
-*/
+ * Show loading state for metrics
+ */
 export const showMetricsLoading = function () {
   // Only clear the aggregated metrics section, not the entire panel (to preserve System Metrics)
-  const aggregatedSection = safeGetElement(
-    "aggregated-metrics-section",
-    true,
-  );
+  const aggregatedSection = safeGetElement("aggregated-metrics-section", true);
   if (aggregatedSection) {
     const existingLoading = safeGetElement("metrics-loading", true);
     if (existingLoading) {
       return;
     }
-    
+
     const loadingDiv = document.createElement("div");
     loadingDiv.id = "metrics-loading";
     loadingDiv.className = "flex justify-center items-center p-8";
@@ -191,8 +183,8 @@ export const showMetricsLoading = function () {
 };
 
 /**
-* Hide loading state for metrics
-*/
+ * Hide loading state for metrics
+ */
 export const hideMetricsLoading = function () {
   const loadingDiv = safeGetElement("metrics-loading", true);
   if (loadingDiv && loadingDiv.parentNode) {
@@ -201,28 +193,28 @@ export const hideMetricsLoading = function () {
 };
 
 /**
-* Enhanced error display with retry option
-*/
+ * Enhanced error display with retry option
+ */
 export const showMetricsError = function (error) {
   // Only show error in the aggregated metrics section, not the entire panel
   const aggregatedSection = safeGetElement("aggregated-metrics-content");
   if (aggregatedSection) {
     const errorDiv = document.createElement("div");
     errorDiv.className = "text-center p-8";
-    
+
     const errorMessage = handleFetchError(error, "load metrics");
-    
+
     // Determine if this looks like a server/network issue
     const isNetworkError =
-    error.message.includes("fetch") ||
-    error.message.includes("network") ||
-    error.message.includes("timeout") ||
-    error.name === "AbortError";
-    
+      error.message.includes("fetch") ||
+      error.message.includes("network") ||
+      error.message.includes("timeout") ||
+      error.name === "AbortError";
+
     const helpText = isNetworkError
-    ? "This usually happens when the server is slow to respond or there's a network issue."
-    : "There may be an issue with the metrics calculation on the server.";
-    
+      ? "This usually happens when the server is slow to respond or there's a network issue."
+      : "There may be an issue with the metrics calculation on the server.";
+
     errorDiv.innerHTML = `
             <div class="text-red-600 mb-4">
                 <svg class="w-12 h-12 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -238,15 +230,15 @@ export const showMetricsError = function (error) {
                 </button>
             </div>
         `;
-    
+
     aggregatedSection.innerHTML = "";
     aggregatedSection.appendChild(errorDiv);
   }
 };
 
 /**
-* Retry loading metrics (callable from retry button)
-*/
+ * Retry loading metrics (callable from retry button)
+ */
 export const retryLoadMetrics = function () {
   console.log("Manual retry requested");
   // Reset all tracking variables
@@ -261,7 +253,7 @@ export const showMetricsPlaceholder = function () {
     const placeholderDiv = document.createElement("div");
     placeholderDiv.className = "text-gray-600 p-4 text-center";
     placeholderDiv.textContent =
-    "Aggregated metrics endpoint not available. This feature may not be implemented yet.";
+      "Aggregated metrics endpoint not available. This feature may not be implemented yet.";
     aggregatedSection.innerHTML = "";
     aggregatedSection.appendChild(placeholderDiv);
   }
@@ -273,46 +265,42 @@ export const showMetricsPlaceholder = function () {
 
 export const displayMetrics = function (data, retryCount = 0) {
   console.log("displayMetrics called with:", data, "retry:", retryCount);
-  
+
   // Ensure parent sections exist, create container if missing
   const metricsPanel = safeGetElement("metrics-panel");
-  const aggregatedSection = safeGetElement(
-    "aggregated-metrics-section",
-  );
-  let aggregatedContent = safeGetElement(
-    "aggregated-metrics-content",
-  );
-  
+  const aggregatedSection = safeGetElement("aggregated-metrics-section");
+  let aggregatedContent = safeGetElement("aggregated-metrics-content");
+
   console.log("Panel check:", {
     metricsPanel: !!metricsPanel,
     metricsPanelHidden: metricsPanel?.classList.contains("hidden"),
     aggregatedSection: !!aggregatedSection,
     aggregatedContent: !!aggregatedContent,
   });
-  
+
   if (!aggregatedSection) {
     if (retryCount < 10) {
       console.error(
-        `Aggregated metrics section missing, retrying (${retryCount + 1}/10) in 100ms`,
+        `Aggregated metrics section missing, retrying (${retryCount + 1}/10) in 100ms`
       );
       setTimeout(() => displayMetrics(data, retryCount + 1), 100);
       return;
     }
     console.error(
-      "Aggregated metrics section not found after retries; cannot render metrics",
+      "Aggregated metrics section not found after retries; cannot render metrics"
     );
     return;
   }
-  
+
   if (!aggregatedContent) {
     console.warn(
-      "Aggregated metrics content container missing; creating fallback container",
+      "Aggregated metrics content container missing; creating fallback container"
     );
     aggregatedContent = document.createElement("div");
     aggregatedContent.id = "aggregated-metrics-content";
     aggregatedContent.className =
-    "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
-    
+      "overflow-auto mb-6 bg-gray-100 dark:bg-gray-900";
+
     // Insert before chart if present, otherwise append to section
     const chartElement = aggregatedSection.querySelector("#metricsChart");
     if (chartElement && chartElement.parentElement === aggregatedSection) {
@@ -321,9 +309,9 @@ export const displayMetrics = function (data, retryCount = 0) {
       aggregatedSection.appendChild(aggregatedContent);
     }
   }
-  
+
   console.log("aggregated-metrics-content element ready:", aggregatedContent);
-  
+
   try {
     // FIX: Handle completely empty data
     if (!data || Object.keys(data).length === 0) {
@@ -344,11 +332,11 @@ export const displayMetrics = function (data, retryCount = 0) {
       aggregatedContent.appendChild(emptyStateDiv);
       return;
     }
-    
+
     // Create main container with safe structure
     const mainContainer = document.createElement("div");
     mainContainer.className = "space-y-6";
-    
+
     // Key Performance Indicators section - render to dedicated container above Top Performers
     const kpiData = extractKPIData(data);
     if (Object.keys(kpiData).length > 0) {
@@ -359,80 +347,72 @@ export const displayMetrics = function (data, retryCount = 0) {
         kpiContainer.appendChild(kpiSection);
       }
     }
-    
+
     // Top Performers are now handled entirely by HTMX sections below aggregated-metrics-content
     // (see <details> sections with top-tools-content, top-resources-content, etc. in admin.html)
     // Legacy JavaScript widget is disabled to prevent duplicate rendering
     console.log(
-      "✓ Top Performers handled by HTMX - skipping legacy JavaScript widget",
+      "✓ Top Performers handled by HTMX - skipping legacy JavaScript widget"
     );
-    
+
     // Individual metrics grid - render inside Top Performers section
-    const individualMetricsGrid = safeGetElement(
-      "individual-metrics-grid",
-    );
+    const individualMetricsGrid = safeGetElement("individual-metrics-grid");
     if (individualMetricsGrid) {
       const metricsContainer = document.createElement("div");
       metricsContainer.className =
-      "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
-      
+        "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6";
+
       // Tools metrics
       if (data.tools) {
         const toolsCard = createMetricsCard("Tools", data.tools);
         metricsContainer.appendChild(toolsCard);
       }
-      
+
       // Resources metrics
       if (data.resources) {
-        const resourcesCard = createMetricsCard(
-          "Resources",
-          data.resources,
-        );
+        const resourcesCard = createMetricsCard("Resources", data.resources);
         metricsContainer.appendChild(resourcesCard);
       }
-      
+
       // Prompts metrics
       if (data.prompts) {
         const promptsCard = createMetricsCard("Prompts", data.prompts);
         metricsContainer.appendChild(promptsCard);
       }
-      
+
       // Gateways metrics
       if (data.gateways) {
-        const gatewaysCard = createMetricsCard(
-          "Gateways",
-          data.gateways,
-        );
+        const gatewaysCard = createMetricsCard("Gateways", data.gateways);
         metricsContainer.appendChild(gatewaysCard);
       }
-      
+
       // Servers metrics
       if (data.servers) {
         const serversCard = createMetricsCard("Servers", data.servers);
         metricsContainer.appendChild(serversCard);
       }
-      
+
       // Performance metrics
       if (data.performance) {
         const performanceCard = createPerformanceCard(data.performance);
         metricsContainer.appendChild(performanceCard);
       }
-      
+
       individualMetricsGrid.innerHTML = "";
       individualMetricsGrid.appendChild(metricsContainer);
     }
-    
+
     // Recent activity section (bottom)
     if (data.recentActivity || data.recent) {
       const activityData = data.recentActivity || data.recent;
       const activitySection = createRecentActivitySection(activityData);
       mainContainer.appendChild(activitySection);
     }
-    
+
     // Safe content replacement
     aggregatedContent.innerHTML = "";
     aggregatedContent.appendChild(mainContainer);
-    
+
     console.log("✓ Enhanced metrics display rendered successfully");
   } catch (error) {
     console.error("Error displaying metrics:", error);
@@ -441,21 +421,20 @@ export const displayMetrics = function (data, retryCount = 0) {
 };
 
 /**
-* Switch between Top Performers tabs
-*/
-// eslint-disable-next-line no-unused-vars
+ * Switch between Top Performers tabs
+ */
 export const switchTopPerformersTab = function (entityType) {
   // Hide all panels
   const panels = document.querySelectorAll(".top-performers-panel");
   panels.forEach((panel) => panel.classList.add("hidden"));
-  
+
   // Remove active state from all tabs
   const tabs = document.querySelectorAll(".top-performers-tab");
   tabs.forEach((tab) => {
     tab.classList.remove(
       "border-indigo-500",
       "text-indigo-600",
-      "dark:text-indigo-400",
+      "dark:text-indigo-400"
     );
     tab.classList.add(
       "border-transparent",
@@ -463,22 +442,18 @@ export const switchTopPerformersTab = function (entityType) {
       "hover:text-gray-700",
       "hover:border-gray-300",
       "dark:text-gray-400",
-      "dark:hover:text-gray-300",
+      "dark:hover:text-gray-300"
     );
   });
-  
+
   // Show selected panel
-  const selectedPanel = safeGetElement(
-    `top-performers-panel-${entityType}`,
-  );
+  const selectedPanel = safeGetElement(`top-performers-panel-${entityType}`);
   if (selectedPanel) {
     selectedPanel.classList.remove("hidden");
   }
-  
+
   // Activate selected tab
-  const selectedTab = safeGetElement(
-    `top-performers-tab-${entityType}`,
-  );
+  const selectedTab = safeGetElement(`top-performers-tab-${entityType}`);
   if (selectedTab) {
     selectedTab.classList.remove(
       "border-transparent",
@@ -486,36 +461,35 @@ export const switchTopPerformersTab = function (entityType) {
       "hover:text-gray-700",
       "hover:border-gray-300",
       "dark:text-gray-400",
-      "dark:hover:text-gray-300",
+      "dark:hover:text-gray-300"
     );
     selectedTab.classList.add(
       "border-indigo-500",
       "text-indigo-600",
-      "dark:text-indigo-400",
+      "dark:text-indigo-400"
     );
   }
 };
 
 /**
-* SECURITY: Create system summary card with safe HTML generation
-*/
-// eslint-disable-next-line no-unused-vars
+ * SECURITY: Create system summary card with safe HTML generation
+ */
 export const createSystemSummaryCard = function (systemData) {
   try {
     const card = document.createElement("div");
     card.className =
-    "bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white";
-    
+      "bg-gradient-to-r from-blue-500 to-purple-600 rounded-lg shadow-lg p-6 text-white";
+
     // Card title
     const title = document.createElement("h2");
     title.className = "text-2xl font-bold mb-4";
     title.textContent = "System Overview";
     card.appendChild(title);
-    
+
     // Statistics grid
     const statsGrid = document.createElement("div");
     statsGrid.className = "grid grid-cols-2 md:grid-cols-4 gap-4";
-    
+
     // Define system statistics with validation
     const systemStats = [
       {
@@ -559,30 +533,30 @@ export const createSystemSummaryCard = function (systemData) {
         suffix: " MB",
       },
     ];
-    
+
     systemStats.forEach((stat) => {
       const value =
-      systemData[stat.key] ??
-      systemData[stat.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
-      "N/A";
-      
+        systemData[stat.key] ??
+        systemData[stat.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
+        "N/A";
+
       const statDiv = document.createElement("div");
       statDiv.className = "text-center";
-      
+
       const valueSpan = document.createElement("div");
       valueSpan.className = "text-2xl font-bold";
       valueSpan.textContent =
-      (value === "N/A" ? "N/A" : String(value)) + stat.suffix;
-      
+        (value === "N/A" ? "N/A" : String(value)) + stat.suffix;
+
       const labelSpan = document.createElement("div");
       labelSpan.className = "text-blue-100 text-sm";
       labelSpan.textContent = stat.label;
-      
+
       statDiv.appendChild(valueSpan);
       statDiv.appendChild(labelSpan);
       statsGrid.appendChild(statDiv);
     });
-    
+
     card.appendChild(statsGrid);
     return card;
   } catch (error) {
@@ -592,13 +566,13 @@ export const createSystemSummaryCard = function (systemData) {
 };
 
 /**
-* SECURITY: Create KPI section with safe data handling
-*/
+ * SECURITY: Create KPI section with safe data handling
+ */
 export const createKPISection = function (kpiData) {
   try {
     const section = document.createElement("div");
     section.className = "grid grid-cols-1 md:grid-cols-4 gap-4";
-    
+
     const kpis = [
       {
         key: "totalExecutions",
@@ -620,7 +594,7 @@ export const createKPISection = function (kpiData) {
       },
       { key: "errorRate", label: "Error Rate", icon: "❌", color: "red" },
     ];
-    
+
     kpis.forEach((kpi) => {
       let value = kpiData[kpi.key];
       if (value === null || value === undefined || value === "N/A") {
@@ -629,39 +603,36 @@ export const createKPISection = function (kpiData) {
         if (kpi.key === "avgResponseTime") {
           // ensure numeric then 3 decimals + unit
           value = isNaN(Number(value))
-          ? "N/A"
-          : Number(value).toFixed(3) + " ms";
-        } else if (
-          kpi.key === "successRate" ||
-          kpi.key === "errorRate"
-        ) {
+            ? "N/A"
+            : Number(value).toFixed(3) + " ms";
+        } else if (kpi.key === "successRate" || kpi.key === "errorRate") {
           value = String(value) + "%";
         } else {
           value = String(value);
         }
       }
-      
+
       const kpiCard = document.createElement("div");
       kpiCard.className = `bg-white rounded-lg shadow p-4 border-l-4 border-${kpi.color}-500 dark:bg-gray-800`;
-      
+
       const header = document.createElement("div");
       header.className = "flex items-center justify-between";
-      
+
       const iconSpan = document.createElement("span");
       iconSpan.className = "text-2xl";
       iconSpan.textContent = kpi.icon;
-      
+
       const valueDiv = document.createElement("div");
       valueDiv.className = "text-right";
-      
+
       const valueSpan = document.createElement("div");
       valueSpan.className = `text-2xl font-bold text-${kpi.color}-600`;
       valueSpan.textContent = value;
-      
+
       const labelSpan = document.createElement("div");
       labelSpan.className = "text-sm text-gray-500 dark:text-gray-400";
       labelSpan.textContent = kpi.label;
-      
+
       valueDiv.appendChild(valueSpan);
       valueDiv.appendChild(labelSpan);
       header.appendChild(iconSpan);
@@ -669,7 +640,7 @@ export const createKPISection = function (kpiData) {
       kpiCard.appendChild(header);
       section.appendChild(kpiCard);
     });
-    
+
     return section;
   } catch (err) {
     console.error("Error creating KPI section:", err);
@@ -678,25 +649,25 @@ export const createKPISection = function (kpiData) {
 };
 
 /**
-* SECURITY: Extract and calculate KPI data with validation
-*/
+ * SECURITY: Extract and calculate KPI data with validation
+ */
 export const formatValue = function (value, key) {
   if (value === null || value === undefined || value === "N/A") {
     return "N/A";
   }
-  
+
   if (key === "avgResponseTime") {
     return isNaN(Number(value)) ? "N/A" : Number(value).toFixed(3) + " ms";
   }
-  
+
   if (key === "successRate" || key === "errorRate") {
     return `${value}%`;
   }
-  
+
   if (typeof value === "number" && Number.isNaN(value)) {
     return "N/A";
   }
-  
+
   return String(value).trim() === "" ? "N/A" : String(value);
 };
 
@@ -706,15 +677,10 @@ export const extractKPIData = function (data) {
     let totalSuccessful = 0;
     let totalFailed = 0;
     let weightedResponseSum = 0;
-    
+
     const categoryKeys = [
       ["tools", "Tools Metrics", "Tools", "tools_metrics"],
-      [
-        "resources",
-        "Resources Metrics",
-        "Resources",
-        "resources_metrics",
-      ],
+      ["resources", "Resources Metrics", "Resources", "resources_metrics"],
       ["prompts", "Prompts Metrics", "Prompts", "prompts_metrics"],
       ["servers", "Servers Metrics", "Servers", "servers_metrics"],
       ["gateways", "Gateways Metrics", "Gateways", "gateways_metrics"],
@@ -725,7 +691,7 @@ export const extractKPIData = function (data) {
         "virtual_servers",
       ],
     ];
-    
+
     categoryKeys.forEach((aliases) => {
       let categoryData = null;
       for (const key of aliases) {
@@ -737,50 +703,50 @@ export const extractKPIData = function (data) {
       if (!categoryData) {
         return;
       }
-      
+
       // Build a lowercase-key map so "Successful Executions" and "successfulExecutions" both match
       const normalized = {};
       Object.entries(categoryData).forEach(([k, v]) => {
         normalized[k.toString().trim().toLowerCase()] = v;
       });
-      
+
       const executions = Number(
         normalized["total executions"] ??
-        normalized.totalexecutions ??
-        normalized.execution_count ??
-        normalized["execution-count"] ??
-        normalized.executions ??
-        normalized.total_executions ??
-        0,
+          normalized.totalexecutions ??
+          normalized.execution_count ??
+          normalized["execution-count"] ??
+          normalized.executions ??
+          normalized.total_executions ??
+          0
       );
-      
+
       const successful = Number(
         normalized["successful executions"] ??
-        normalized.successfulexecutions ??
-        normalized.successful ??
-        normalized.successful_executions ??
-        0,
+          normalized.successfulexecutions ??
+          normalized.successful ??
+          normalized.successful_executions ??
+          0
       );
-      
+
       const failed = Number(
         normalized["failed executions"] ??
-        normalized.failedexecutions ??
-        normalized.failed ??
-        normalized.failed_executions ??
-        0,
+          normalized.failedexecutions ??
+          normalized.failed ??
+          normalized.failed_executions ??
+          0
       );
-      
+
       const avgResponseRaw =
-      normalized["average response time"] ??
-      normalized.avgresponsetime ??
-      normalized.avg_response_time ??
-      normalized.avgresponsetime ??
-      null;
-      
+        normalized["average response time"] ??
+        normalized.avgresponsetime ??
+        normalized.avg_response_time ??
+        normalized.avgresponsetime ??
+        null;
+
       totalExecutions += Number.isNaN(executions) ? 0 : executions;
       totalSuccessful += Number.isNaN(successful) ? 0 : successful;
       totalFailed += Number.isNaN(failed) ? 0 : failed;
-      
+
       if (
         avgResponseRaw !== null &&
         avgResponseRaw !== undefined &&
@@ -791,22 +757,22 @@ export const extractKPIData = function (data) {
         weightedResponseSum += executions * Number(avgResponseRaw);
       }
     });
-    
+
     const avgResponseTime =
-    totalExecutions > 0 && weightedResponseSum > 0
-    ? weightedResponseSum / totalExecutions
-    : null;
-    
+      totalExecutions > 0 && weightedResponseSum > 0
+        ? weightedResponseSum / totalExecutions
+        : null;
+
     const successRate =
-    totalExecutions > 0
-    ? Math.round((totalSuccessful / totalExecutions) * 100)
-    : 0;
-    
+      totalExecutions > 0
+        ? Math.round((totalSuccessful / totalExecutions) * 100)
+        : 0;
+
     const errorRate =
-    totalExecutions > 0
-    ? Math.round((totalFailed / totalExecutions) * 100)
-    : 0;
-    
+      totalExecutions > 0
+        ? Math.round((totalFailed / totalExecutions) * 100)
+        : 0;
+
     // Debug: show what we've read from the payload
     console.log("KPI Totals:", {
       totalExecutions,
@@ -816,7 +782,7 @@ export const extractKPIData = function (data) {
       errorRate,
       avgResponseTime,
     });
-    
+
     return { totalExecutions, successRate, errorRate, avgResponseTime };
   } catch (err) {
     console.error("Error extracting KPI data:", err);
@@ -829,39 +795,34 @@ export const extractKPIData = function (data) {
   }
 };
 
-// eslint-disable-next-line no-unused-vars
 export const updateKPICards = function (kpiData) {
   try {
     if (!kpiData) {
       return;
     }
-    
+
     const idMap = {
       "metrics-total-executions": formatValue(
         kpiData.totalExecutions,
-        "totalExecutions",
+        "totalExecutions"
       ),
-      "metrics-success-rate": formatValue(
-        kpiData.successRate,
-        "successRate",
-      ),
+      "metrics-success-rate": formatValue(kpiData.successRate, "successRate"),
       "metrics-avg-response-time": formatValue(
         kpiData.avgResponseTime,
-        "avgResponseTime",
+        "avgResponseTime"
       ),
       "metrics-error-rate": formatValue(kpiData.errorRate, "errorRate"),
     };
-    
+
     Object.entries(idMap).forEach(([id, value]) => {
       const el = safeGetElement(id);
       if (!el) {
         return;
       }
-      
+
       // If card has a `.value` span inside, update it, else update directly
       const valueEl =
-      el.querySelector?.(".value") ||
-      el.querySelector?.(".kpi-value");
+        el.querySelector?.(".value") || el.querySelector?.(".kpi-value");
       if (valueEl) {
         valueEl.textContent = value;
       } else {
@@ -874,8 +835,8 @@ export const updateKPICards = function (kpiData) {
 };
 
 /**
-* SECURITY: Create top performers section with safe display
-*/
+ * SECURITY: Create top performers section with safe display
+ */
 // export const createTopPerformersSection = function (topData) {
 //     try {
 //         const section = document.createElement("div");
@@ -1013,7 +974,7 @@ export const calculateSuccessRate = function (item) {
   }
   // Fallback for legacy format (if needed)
   const total =
-  item.execution_count || item.executions || item.executionCount || 0;
+    item.execution_count || item.executions || item.executionCount || 0;
   const successful = item.successful_count || item.successfulExecutions || 0;
   return total > 0 ? Math.round((successful / total) * 100) : 0;
 };
@@ -1026,7 +987,7 @@ export const formatLastUsed = function (timestamp) {
   if (!timestamp) {
     return "Never";
   }
-  
+
   let date;
   if (typeof timestamp === "number" || /^\d+$/.test(timestamp)) {
     const num = Number(timestamp);
@@ -1034,21 +995,21 @@ export const formatLastUsed = function (timestamp) {
   } else {
     date = new Date(timestamp.endsWith("Z") ? timestamp : timestamp + "Z");
   }
-  
+
   if (isNaN(date.getTime())) {
     return "Never";
   }
-  
+
   const now = Date.now();
   const diff = now - date.getTime();
-  
+
   if (diff < 60 * 1000) {
     return "Just now";
   }
   if (diff < 60 * 60 * 1000) {
     return `${Math.floor(diff / 60000)} min ago`;
   }
-  
+
   return date.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
@@ -1252,15 +1213,8 @@ return tab;
 }
 */
 
-// eslint-disable-next-line no-unused-vars
 export const showTopPerformerTab = function (activeType) {
-  const entityTypes = [
-    "tools",
-    "resources",
-    "prompts",
-    "gateways",
-    "servers",
-  ];
+  const entityTypes = ["tools", "resources", "prompts", "gateways", "servers"];
   entityTypes.forEach((type) => {
     const panel = safeGetElement(`top-${type}-panel`);
     const tab = safeGetElement(`top-${type}-tab`);
@@ -1282,22 +1236,21 @@ export const showTopPerformerTab = function (activeType) {
 };
 
 /**
-* Creates standard Alpine.js-based pagination controls matching the pattern
-* used in Tools/Resources/Prompts sections for visual consistency
-*/
-// eslint-disable-next-line no-unused-vars
+ * Creates standard Alpine.js-based pagination controls matching the pattern
+ * used in Tools/Resources/Prompts sections for visual consistency
+ */
 export const createStandardPaginationControls = function (
   idPrefix,
   totalItems,
   initialPerPage,
-  onPageChange,
+  onPageChange
 ) {
   const wrapper = document.createElement("div");
-  
+
   // Store callback in a global namespace for Alpine.js to access
   const callbackId = `pagination_${idPrefix}_${Date.now()}`;
   window[callbackId] = onPageChange;
-  
+
   wrapper.setAttribute(
     "x-data",
     `{
@@ -1328,11 +1281,11 @@ export const createStandardPaginationControls = function (
             this.currentPage = 1;
             window[this.callbackId](this.currentPage, this.perPage);
         }
-    }`,
+    }`
   );
   wrapper.className =
-  "flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700";
-  
+    "flex flex-col sm:flex-row items-center justify-between gap-4 py-4 border-t border-gray-200 dark:border-gray-700";
+
   wrapper.innerHTML = `
         <!-- Page Size Selector -->
         <div class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
@@ -1465,96 +1418,98 @@ export const createStandardPaginationControls = function (
   return wrapper;
 };
 
-// eslint-disable-next-line no-unused-vars
-export const updateTableRows = function (tbody, entityType, data, page, perPage) {
+export const updateTableRows = function (
+  tbody,
+  entityType,
+  data,
+  page,
+  perPage
+) {
   tbody.innerHTML = "";
   const start = (page - 1) * perPage;
   const paginatedData = data.slice(start, start + perPage);
-  
+
   paginatedData.forEach((item, localIndex) => {
     const globalIndex = start + localIndex; // Calculate global rank
     const row = document.createElement("tr");
     row.className =
-    "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200";
-    
+      "hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors duration-200";
+
     // Rank
     const rankCell = document.createElement("td");
     rankCell.className =
-    "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
+      "px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-100 sm:px-6 sm:py-4";
     const rankBadge = document.createElement("span");
     rankBadge.className = `inline-flex items-center justify-center w-6 h-6 rounded-full ${
       globalIndex === 0
-      ? "bg-yellow-400 text-yellow-900"
-      : globalIndex === 1
-      ? "bg-gray-300 text-gray-900"
-      : globalIndex === 2
-      ? "bg-orange-400 text-orange-900"
-      : "bg-gray-100 text-gray-600"
+        ? "bg-yellow-400 text-yellow-900"
+        : globalIndex === 1
+          ? "bg-gray-300 text-gray-900"
+          : globalIndex === 2
+            ? "bg-orange-400 text-orange-900"
+            : "bg-gray-100 text-gray-600"
     }`;
     rankBadge.textContent = globalIndex + 1;
     rankBadge.setAttribute("aria-label", `Rank ${globalIndex + 1}`);
     rankCell.appendChild(rankBadge);
     row.appendChild(rankCell);
-    
+
     // Name (clickable for drill-down)
     const nameCell = document.createElement("td");
     nameCell.className =
-    "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
+      "px-6 py-4 whitespace-nowrap text-sm text-indigo-600 dark:text-indigo-400 cursor-pointer";
     nameCell.textContent = escapeHtml(item.name || "Unknown");
     nameCell.setAttribute("role", "button");
     nameCell.setAttribute(
       "aria-label",
-      `View details for ${item.name || "Unknown"}`,
+      `View details for ${item.name || "Unknown"}`
     );
     row.appendChild(nameCell);
-    
+
     // Executions
     const execCell = document.createElement("td");
     execCell.className =
-    "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+      "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
     execCell.textContent = formatNumber(
-      item.executionCount || item.execution_count || item.executions || 0,
+      item.executionCount || item.execution_count || item.executions || 0
     );
     row.appendChild(execCell);
-    
+
     // Avg Response Time
     const avgTimeCell = document.createElement("td");
     avgTimeCell.className =
-    "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+      "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
     const avgTime = item.avg_response_time || item.avgResponseTime;
     avgTimeCell.textContent = avgTime ? `${Math.round(avgTime)}ms` : "N/A";
     row.appendChild(avgTimeCell);
-    
+
     // Success Rate
     const successCell = document.createElement("td");
     successCell.className =
-    "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
+      "px-6 py-4 whitespace-nowrap text-sm sm:px-6 sm:py-4";
     const successRate = calculateSuccessRate(item);
     const successBadge = document.createElement("span");
     successBadge.className = `inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
       successRate >= 95
-      ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
-      : successRate >= 80
-      ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
-      : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
+        ? "bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100"
+        : successRate >= 80
+          ? "bg-yellow-100 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-100"
+          : "bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100"
     }`;
     successBadge.textContent = `${successRate}%`;
-    successBadge.setAttribute(
-      "aria-label",
-      `Success rate: ${successRate}%`,
-    );
+    successBadge.setAttribute("aria-label", `Success rate: ${successRate}%`);
     successCell.appendChild(successBadge);
     row.appendChild(successCell);
-    
+
     // Last Used
     const lastUsedCell = document.createElement("td");
     lastUsedCell.className =
-    "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
+      "px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 sm:px-6 sm:py-4";
     lastUsedCell.textContent = formatLastUsed(
-      item.last_execution || item.lastExecution,
+      item.last_execution || item.lastExecution
     );
     row.appendChild(lastUsedCell);
-    
+
     tbody.appendChild(row);
   });
 };
@@ -1609,8 +1564,8 @@ URL.revokeObjectURL(url);
 */
 
 /**
-* SECURITY: Create top item card with safe content handling
-*/
+ * SECURITY: Create top item card with safe content handling
+ */
 // Admin.createTopItemCard = function (title, items) {
 //     try {
 //         const card = document.createElement("div");
@@ -1625,7 +1580,7 @@ URL.revokeObjectURL(url);
 //         list.className = "space-y-1";
 
 //         items.slice(0, 5).forEach((item) => {
-  //             const listItem = document.createElement("li");
+//             const listItem = document.createElement("li");
 //             listItem.className =
 //                 "text-sm text-gray-600 dark:text-gray-300 flex justify-between";
 
@@ -1650,21 +1605,21 @@ URL.revokeObjectURL(url);
 // };
 
 /**
-* SECURITY: Create performance metrics card with safe display
-*/
+ * SECURITY: Create performance metrics card with safe display
+ */
 export const createPerformanceCard = function (performanceData) {
   try {
     const card = document.createElement("div");
     card.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
-    
+
     const titleElement = document.createElement("h3");
     titleElement.className = "text-lg font-medium mb-4 dark:text-gray-200";
     titleElement.textContent = "Performance Metrics";
     card.appendChild(titleElement);
-    
+
     const metricsList = document.createElement("div");
     metricsList.className = "space-y-2";
-    
+
     // Define performance metrics with safe structure
     const performanceMetrics = [
       { key: "memoryUsage", label: "Memory Usage" },
@@ -1674,31 +1629,29 @@ export const createPerformanceCard = function (performanceData) {
       { key: "cacheHitRate", label: "Cache Hit Rate" },
       { key: "activeThreads", label: "Active Threads" },
     ];
-    
+
     performanceMetrics.forEach((metric) => {
       const value =
-      performanceData[metric.key] ??
-      performanceData[
-        metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()
-      ] ??
-      "N/A";
-      
+        performanceData[metric.key] ??
+        performanceData[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
+        "N/A";
+
       const metricRow = document.createElement("div");
       metricRow.className = "flex justify-between";
-      
+
       const label = document.createElement("span");
       label.className = "text-gray-600 dark:text-gray-400";
       label.textContent = metric.label + ":";
-      
+
       const valueSpan = document.createElement("span");
       valueSpan.className = "font-medium dark:text-gray-200";
       valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
-      
+
       metricRow.appendChild(label);
       metricRow.appendChild(valueSpan);
       metricsList.appendChild(metricRow);
     });
-    
+
     card.appendChild(metricsList);
     return card;
   } catch (error) {
@@ -1708,62 +1661,61 @@ export const createPerformanceCard = function (performanceData) {
 };
 
 /**
-* SECURITY: Create recent activity section with safe content handling
-*/
+ * SECURITY: Create recent activity section with safe content handling
+ */
 export const createRecentActivitySection = function (activityData) {
   try {
     const section = document.createElement("div");
     section.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
-    
+
     const title = document.createElement("h3");
     title.className = "text-lg font-medium mb-4 dark:text-gray-200";
     title.textContent = "Recent Activity";
     section.appendChild(title);
-    
+
     if (Array.isArray(activityData) && activityData.length > 0) {
       const activityList = document.createElement("div");
       activityList.className = "space-y-3 max-h-64 overflow-y-auto";
-      
+
       // Display up to 10 recent activities safely
       activityData.slice(0, 10).forEach((activity) => {
         const activityItem = document.createElement("div");
         activityItem.className =
-        "flex items-center justify-between p-2 bg-gray-50 rounded dark:bg-gray-700";
-        
+          "flex items-center justify-between p-2 bg-gray-50 rounded dark:bg-gray-700";
+
         const leftSide = document.createElement("div");
-        
+
         const actionSpan = document.createElement("span");
         actionSpan.className = "font-medium dark:text-gray-200";
         actionSpan.textContent = escapeHtml(
-          activity.action || "Unknown Action",
+          activity.action || "Unknown Action"
         );
-        
+
         const targetSpan = document.createElement("span");
-        targetSpan.className =
-        "text-sm text-gray-500 dark:text-gray-400 ml-2";
+        targetSpan.className = "text-sm text-gray-500 dark:text-gray-400 ml-2";
         targetSpan.textContent = escapeHtml(activity.target || "");
-        
+
         leftSide.appendChild(actionSpan);
         leftSide.appendChild(targetSpan);
-        
+
         const rightSide = document.createElement("div");
         rightSide.className = "text-xs text-gray-400";
         rightSide.textContent = escapeHtml(activity.timestamp || "");
-        
+
         activityItem.appendChild(leftSide);
         activityItem.appendChild(rightSide);
         activityList.appendChild(activityItem);
       });
-      
+
       section.appendChild(activityList);
     } else {
       const noActivity = document.createElement("p");
       noActivity.className =
-      "text-gray-500 dark:text-gray-400 text-center py-4";
+        "text-gray-500 dark:text-gray-400 text-center py-4";
       noActivity.textContent = "No recent activity to display";
       section.appendChild(noActivity);
     }
-    
+
     return section;
   } catch (error) {
     console.error("Error creating recent activity section:", error);
@@ -1774,15 +1726,15 @@ export const createRecentActivitySection = function (activityData) {
 export const createMetricsCard = function (title, metrics) {
   const card = document.createElement("div");
   card.className = "bg-white rounded-lg shadow p-6 dark:bg-gray-800";
-  
+
   const titleElement = document.createElement("h3");
   titleElement.className = "text-lg font-medium mb-4 dark:text-gray-200";
   titleElement.textContent = `${title} Metrics`;
   card.appendChild(titleElement);
-  
+
   const metricsList = document.createElement("div");
   metricsList.className = "space-y-2";
-  
+
   const metricsToShow = [
     { key: "totalExecutions", label: "Total Executions" },
     { key: "successfulExecutions", label: "Successful Executions" },
@@ -1791,29 +1743,29 @@ export const createMetricsCard = function (title, metrics) {
     { key: "avgResponseTime", label: "Average Response Time" },
     { key: "lastExecutionTime", label: "Last Execution Time" },
   ];
-  
+
   metricsToShow.forEach((metric) => {
     const value =
-    metrics[metric.key] ??
-    metrics[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
-    "N/A";
-    
+      metrics[metric.key] ??
+      metrics[metric.key.replace(/([A-Z])/g, "_$1").toLowerCase()] ??
+      "N/A";
+
     const metricRow = document.createElement("div");
     metricRow.className = "flex justify-between";
-    
+
     const label = document.createElement("span");
     label.className = "text-gray-600 dark:text-gray-400";
     label.textContent = metric.label + ":";
-    
+
     const valueSpan = document.createElement("span");
     valueSpan.className = "font-medium dark:text-gray-200";
     valueSpan.textContent = value === "N/A" ? "N/A" : String(value);
-    
+
     metricRow.appendChild(label);
     metricRow.appendChild(valueSpan);
     metricsList.appendChild(metricRow);
   });
-  
+
   card.appendChild(metricsList);
   return card;
 };

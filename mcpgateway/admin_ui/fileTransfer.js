@@ -218,7 +218,7 @@ export const processImportJSONFile = function (file) {
       }
 
       // Store import data and enable buttons
-      Admin.currentImportData = importData;
+      window.Admin.currentImportData = importData;
 
       const previewBtn = safeGetElement("import-preview-btn");
       const validateBtn = safeGetElement("import-validate-btn");
@@ -282,7 +282,7 @@ const updateDropZoneStatus = function (fileName, importData) {
  * Reset import file selection
  */
 export const resetImportFile = function () {
-  Admin.currentImportData = null;
+  window.Admin.currentImportData = null;
 
   const dropZone = safeGetElement("import-drop-zone");
   if (dropZone) {
@@ -585,8 +585,8 @@ export const refreshCurrentTabData = function () {
       }
     } else if (href === "#gateways") {
       // Refresh gateways
-      if (typeof Admin.loadGateways === "function") {
-        Admin.loadGateways();
+      if (typeof window.Admin.loadGateways === "function") {
+        window.Admin.loadGateways();
       }
     }
     // Add other tab refresh logic as needed

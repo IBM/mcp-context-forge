@@ -472,7 +472,6 @@ export const getRootPath = function () {
 export const showToast = function (message, type = "info") {
   // Check if showMessage function exists (from existing admin.js)
   if (typeof showNotification === "function") {
-    // eslint-disable-next-line no-undef
     showNotification(message, type === "error" ? "danger" : type);
   } else {
     console.log(`[${type.toUpperCase()}] ${message}`);

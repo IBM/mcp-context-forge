@@ -243,7 +243,7 @@ export const initializeTeamScopingMonitor = function () {
       }, 500); // Check every 500ms
 
       // Store interval ID for cleanup if needed
-      Admin._teamMonitorInterval = checkInterval;
+      window.Admin._teamMonitorInterval = checkInterval;
     }
   });
 
@@ -293,7 +293,7 @@ const isValidIpOrCidr = function (value) {
   // IPv4 with optional CIDR (e.g., 192.168.1.0/24 or 192.168.1.1)
   const ipv4Segment = "(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)";
   const ipv4Pattern = new RegExp(
-    `^(?:${ipv4Segment}\\.){3}${ipv4Segment}(?:\\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$`,
+    `^(?:${ipv4Segment}\\.){3}${ipv4Segment}(?:\\/(?:[0-9]|[1-2][0-9]|3[0-2]))?$`
   );
 
   // IPv6 with optional CIDR (supports compressed forms and IPv4-embedded)
@@ -313,7 +313,7 @@ const isValidIpOrCidr = function (value) {
       "::|" +
       `(?:${ipv6Segment}:){1,4}:${ipv4Embedded}|` +
       `::(?:ffff(?::0{1,4}){0,1}:)?${ipv4Embedded}` +
-      ")(?:\\/(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))?$",
+      ")(?:\\/(?:[0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))?$"
   );
 
   return ipv4Pattern.test(trimmed) || ipv6Pattern.test(trimmed);
@@ -393,7 +393,7 @@ const createToken = async function (form) {
         if (invalidIps.length > 0) {
           throw new Error(
             `Invalid IP address or CIDR format: ${invalidIps.join(", ")}. ` +
-              "Use formats like 192.168.1.0/24 or 10.0.0.1",
+              "Use formats like 192.168.1.0/24 or 10.0.0.1"
           );
         }
         scope.ip_restrictions = ipList;
@@ -417,7 +417,7 @@ const createToken = async function (form) {
       if (invalidPerms.length > 0) {
         throw new Error(
           `Invalid permission format: ${invalidPerms.join(", ")}. ` +
-            "Use formats like tools.read, resources.write, or * for full access",
+            "Use formats like tools.read, resources.write, or * for full access"
         );
       }
       scope.permissions = permList;
@@ -441,7 +441,7 @@ const createToken = async function (form) {
     if (!response.ok) {
       const errorMsg = await parseErrorResponse(
         response,
-        `Failed to create token (${response.status})`,
+        `Failed to create token (${response.status})`
       );
       throw new Error(errorMsg);
     }
@@ -552,7 +552,7 @@ const showTokenCreatedModal = function (tokenData) {
 const revokeToken = async function (tokenId, tokenName) {
   if (
     !confirm(
-      `Are you sure you want to revoke the token "${tokenName}"? This action cannot be undone.`,
+      `Are you sure you want to revoke the token "${tokenName}"? This action cannot be undone.`
     )
   ) {
     return;
@@ -570,13 +570,13 @@ const revokeToken = async function (tokenId, tokenName) {
         body: JSON.stringify({
           reason: "Revoked by user via admin interface",
         }),
-      },
+      }
     );
 
     if (!response.ok) {
       const errorMsg = await parseErrorResponse(
         response,
-        `Failed to revoke token: ${response.status}`,
+        `Failed to revoke token: ${response.status}`
       );
       throw new Error(errorMsg);
     }
@@ -601,7 +601,7 @@ const viewTokenUsage = async function (tokenId) {
           Authorization: `Bearer ${await getAuthToken()}`,
           "Content-Type": "application/json",
         },
-      },
+      }
     );
 
     if (!response.ok) {
@@ -659,26 +659,26 @@ const showUsageStatsModal = function (stats) {
                 </div>
 
                 ${
-                  stats.top_endpoints && stats.top_endpoints.length > 0
-                    ? `
+  stats.top_endpoints && stats.top_endpoints.length > 0
+    ? `
                     <div class="mb-4">
                         <h4 class="text-md font-medium text-gray-900 dark:text-white mb-2">Top Endpoints</h4>
                         <div class="space-y-2">
                             ${stats.top_endpoints
     .map(
-                                ([endpoint, count]) => `
+      ([endpoint, count]) => `
                                 <div class="flex justify-between items-center p-2 bg-gray-50 dark:bg-gray-700 rounded">
                                     <span class="font-mono text-sm">${escapeHtml(endpoint)}</span>
                                     <span class="text-sm font-medium">${count} requests</span>
                                 </div>
-                            `,
+                            `
     )
     .join("")}
                         </div>
                     </div>
                 `
     : ""
-                }
+}
 
                 <div class="flex justify-end">
                     <button
@@ -873,13 +873,13 @@ export const showTokenDetailsModal = function (token) {
                     <div class="flex flex-wrap gap-2">
                         ${token.tags
     .map((tag) => {
-                            const raw =
+      const raw =
                               typeof tag === "object" && tag !== null
                                 ? tag.id || tag.label || JSON.stringify(tag)
                                 : tag;
-                            return `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(raw)}</span>`;
+      return `<span class="px-2 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 text-xs rounded">${escapeHtml(raw)}</span>`;
     })
-                          .join("")}
+    .join("")}
                     </div>
                 </div>
                 `
