@@ -34,7 +34,7 @@ ARG ENABLE_PROFILING=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM quay.io/pypa/manylinux2014:2025.12.13-1 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2026.02.06-1 AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
@@ -76,7 +76,7 @@ FROM rust-builder-base AS rust-builder
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.1-1769090643 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1770180700 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
@@ -213,7 +213,7 @@ RUN chown -R 1001:0 /app \
 ###########################
 # Using ubi10-minimal for cross-platform compatibility (works with QEMU emulation)
 # hadolint ignore=DL3006
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1769090502 AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557 AS runtime
 
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_PROFILING=false

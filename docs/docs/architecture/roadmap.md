@@ -957,7 +957,7 @@
     - ⏳ [**#2641**](https://github.com/IBM/mcp-context-forge/issues/2641) - Endpoints using current_user_ctx["db"] fail with NoneType error
     - ⏳ [**#2671**](https://github.com/IBM/mcp-context-forge/issues/2671) - ASGI protocol violation in streamable_http: response emitted after completion causing ClosedResourceError
     - ⏳ [**#2672**](https://github.com/IBM/mcp-context-forge/issues/2672) - MCP Agent rejects valid A2A request as malformed (UAT agent only)
-    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - (X-exchange) - UI: “Failed to load plugin details: Not Found” when opening/enabling plugins in Admin Panel
+    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - (X-exchange) - UI: "Failed to load plugin details: Not Found" when opening/enabling plugins in Admin Panel
     - ⏳ [**#2706**](https://github.com/IBM/mcp-context-forge/issues/2706) - [AUTH] OAuth Protected Resource Metadata endpoint not RFC 9728 compliant
     - ⏳ [**#2764**](https://github.com/IBM/mcp-context-forge/issues/2764) - API Tokens page missing pagination and team filter not updating
     - ⏳ [**#2794**](https://github.com/IBM/mcp-context-forge/issues/2794) - Admin users should not have option to remove administration privileges by themselves.
