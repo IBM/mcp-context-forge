@@ -245,7 +245,7 @@ class TestListTokens:
         """Test successful token listing."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_tokens(include_inactive=False, limit=50, offset=0, db=mock_db, current_user=mock_current_user)
@@ -267,7 +267,7 @@ class TestListTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=revocation_info)
 
             response = await list_tokens(include_inactive=True, limit=10, offset=0, db=mock_db, current_user=mock_current_user)
@@ -282,7 +282,7 @@ class TestListTokens:
         """Test token listing with pagination."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[])
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_tokens(include_inactive=False, limit=20, offset=10, db=mock_db, current_user=mock_current_user)
@@ -290,7 +290,7 @@ class TestListTokens:
             assert response.tokens == []
             assert response.limit == 20
             assert response.offset == 10
-            mock_service.list_user_tokens.assert_called_with(
+            mock_service.list_user_and_team_tokens.assert_called_with(
                 user_email="test@example.com",
                 include_inactive=False,
                 limit=20,
@@ -719,7 +719,7 @@ class TestApiTokenAuth:
         """API token can list own tokens."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
             response = await list_tokens(include_inactive=False, limit=50, offset=0, db=mock_db, current_user=api_token_user)
@@ -795,9 +795,7 @@ class TestApiTokenAuth:
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.get_token_revocation = AsyncMock(return_value=None)
 
-            response = await list_all_tokens(
-                user_email="other@example.com", include_inactive=False, limit=100, offset=0, current_user=admin_api_token_user, db=mock_db
-            )
+            response = await list_all_tokens(user_email="other@example.com", include_inactive=False, limit=100, offset=0, current_user=admin_api_token_user, db=mock_db)
 
             assert isinstance(response, TokenListResponse)
 
@@ -866,7 +864,7 @@ class TestEdgeCases:
         """Test listing tokens with no results."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
-            mock_service.list_user_tokens = AsyncMock(return_value=[])
+            mock_service.list_user_and_team_tokens = AsyncMock(return_value=[])
 
             response = await list_tokens(include_inactive=True, limit=100, offset=50, db=mock_db, current_user=mock_current_user)
 
