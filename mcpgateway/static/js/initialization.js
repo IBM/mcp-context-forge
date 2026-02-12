@@ -47,10 +47,12 @@ import {
 import { closeModal, openModal } from "./modals";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
+import { filterA2AAgentsTable, filterGatewaysTable, filterPromptsTable, filterResourcesTable, filterServerTable, filterToolsTable } from "./filters";
 import { escapeHtml, safeSetInnerHTML } from "./security";
 import { ADMIN_ONLY_TABS, showTab } from "./tabs";
 import { initToolSelect } from "./tools";
 import { fetchWithTimeout, isAdminUser, safeGetElement } from "./utils";
+import { getTeamNameById } from "./tokens";
 
 // ===================================================================
 // SINGLE CONSOLIDATED INITIALIZATION SYSTEM
@@ -728,13 +730,13 @@ export const initializeSearchInputs = function () {
   const catalogSearchInput = safeGetElement("catalog-search-input");
   if (catalogSearchInput) {
     catalogSearchInput.addEventListener("input", function () {
-      Admin.filterServerTable(this.value);
+      filterServerTable(this.value);
     });
     console.log("✅ Virtual Servers search initialized");
     // Reapply current search term if any (preserves search after HTMX swap)
     const currentSearch = catalogSearchInput.value || "";
     if (currentSearch) {
-      Admin.filterServerTable(currentSearch);
+      filterServerTable(currentSearch);
     }
   }
 
@@ -747,19 +749,19 @@ export const initializeSearchInputs = function () {
     gatewaysSearchInput.addEventListener("input", function (e) {
       const searchValue = e.target.value;
       console.log("🔍 MCP Servers search triggered:", searchValue);
-      Admin.filterGatewaysTable(searchValue);
+      filterGatewaysTable(searchValue);
     });
 
     // Add keyup as backup
     gatewaysSearchInput.addEventListener("keyup", function (e) {
       const searchValue = e.target.value;
-      Admin.filterGatewaysTable(searchValue);
+      filterGatewaysTable(searchValue);
     });
 
     // Add change as backup
     gatewaysSearchInput.addEventListener("change", function (e) {
       const searchValue = e.target.value;
-      Admin.filterGatewaysTable(searchValue);
+      filterGatewaysTable(searchValue);
     });
 
     console.log("✅ MCP Servers search events attached");
@@ -767,7 +769,7 @@ export const initializeSearchInputs = function () {
     // Reapply current search term if any (preserves search after HTMX swap)
     const currentSearch = gatewaysSearchInput.value || "";
     if (currentSearch) {
-      Admin.filterGatewaysTable(currentSearch);
+      filterGatewaysTable(currentSearch);
     }
   } else {
     console.error("❌ MCP Servers search input not found!");
@@ -788,7 +790,7 @@ export const initializeSearchInputs = function () {
   const toolsSearchInput = safeGetElement("tools-search-input");
   if (toolsSearchInput) {
     toolsSearchInput.addEventListener("input", function () {
-      Admin.filterToolsTable(this.value);
+      filterToolsTable(this.value);
     });
     console.log("✅ Tools search initialized");
   }
@@ -797,7 +799,7 @@ export const initializeSearchInputs = function () {
   const resourcesSearchInput = safeGetElement("resources-search-input");
   if (resourcesSearchInput) {
     resourcesSearchInput.addEventListener("input", function () {
-      Admin.filterResourcesTable(this.value);
+      filterResourcesTable(this.value);
     });
     console.log("✅ Resources search initialized");
   }
@@ -806,7 +808,7 @@ export const initializeSearchInputs = function () {
   const promptsSearchInput = safeGetElement("prompts-search-input");
   if (promptsSearchInput) {
     promptsSearchInput.addEventListener("input", function () {
-      Admin.filterPromptsTable(this.value);
+      filterPromptsTable(this.value);
     });
     console.log("✅ Prompts search initialized");
   }
@@ -815,7 +817,7 @@ export const initializeSearchInputs = function () {
   const agentsSearchInput = safeGetElement("a2a-agents-search-input");
   if (agentsSearchInput) {
     agentsSearchInput.addEventListener("input", function () {
-      Admin.filterA2AAgentsTable(this.value);
+      filterA2AAgentsTable(this.value);
     });
     console.log("✅ A2A Agents search initialized");
   }
@@ -1426,4 +1428,283 @@ export const setupTooltipsWithAlpine = function () {
       el.addEventListener("click", hideTooltip);
     });
   });
+};
+
+export const registerReloadAllResourceSections = function () {
+  // list of sections we manage
+  const SECTION_NAMES = [
+    "tools",
+    "resources",
+    "prompts",
+    "servers",
+    "gateways",
+    "catalog",
+  ];
+
+  // Save initial markup on first full load so we can restore exactly if needed
+  document.addEventListener("DOMContentLoaded", () => {
+    Admin.__initialSectionMarkup = window.__initialSectionMarkup || {};
+    SECTION_NAMES.forEach((s) => {
+      const el = safeGetElement(`${s}-section`);
+      if (el && !(s in window.__initialSectionMarkup)) {
+        // store the exact innerHTML produced by the server initially
+        Admin.__initialSectionMarkup[s] = el.innerHTML;
+      }
+    });
+  });
+
+  // Helper: try to re-run common initializers after a section's DOM is replaced
+  const reinitializeSection = function (sectionEl, sectionName) {
+    try {
+      if (!sectionEl) {
+        return;
+      }
+
+      // 1) Re-init Alpine for the new subtree (if Alpine is present)
+      try {
+        if (window.Alpine) {
+          // For Alpine 3 use initTree if available
+          if (typeof window.Alpine.initTree === "function") {
+            window.Alpine.initTree(sectionEl);
+          } else if (
+            typeof window.Alpine.discoverAndRegisterComponents === "function"
+          ) {
+            // fallback: attempt a component discovery if available
+            window.Alpine.discoverAndRegisterComponents(sectionEl);
+          }
+        }
+      } catch (err) {
+        console.warn("Alpine re-init failed for section", sectionName, err);
+      }
+
+      // 2) Re-initialize tool/resource/pill helpers that expect DOM structure
+      try {
+        // these functions exist elsewhere in admin.js; call them if present
+        if (typeof initResourceSelect === "function") {
+          // Many panels use specific ids — attempt to call generic initializers if they exist
+          initResourceSelect(
+            "associatedResources",
+            "selectedResourcePills",
+            "selectedResourceWarning",
+            10,
+            null,
+            null
+          );
+        }
+        if (typeof initToolSelect === "function") {
+          initToolSelect(
+            "associatedTools",
+            "selectedToolsPills",
+            "selectedToolsWarning",
+            10,
+            null,
+            null
+          );
+        }
+        // restore generic tool/resource selection areas if present
+        if (typeof initResourceSelect === "function") {
+          // try specific common containers if present (safeGetElement suppresses warnings)
+          const containers = ["edit-server-resources", "edit-server-tools"];
+          containers.forEach((cid) => {
+            const c = safeGetElement(cid);
+            if (c && typeof initResourceSelect === "function") {
+              // caller may have different arg signature — best-effort call is OK
+              // we don't want to throw here if arguments mismatch
+              try {
+                /* no args: assume function will find DOM by ids */ initResourceSelect();
+              } catch (e) {
+                /* ignore */
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Select/pill reinit error", err);
+      }
+
+      // 3) Re-run integration & schema handlers which attach behaviour to new inputs
+      try {
+        if (typeof setupIntegrationTypeHandlers === "function") {
+          setupIntegrationTypeHandlers();
+        }
+        if (typeof setupSchemaModeHandlers === "function") {
+          setupSchemaModeHandlers();
+        }
+      } catch (err) {
+        console.warn("Integration/schema handler reinit failed", err);
+      }
+
+      // 4) Reinitialize CodeMirror editors within the replaced DOM (if CodeMirror used)
+      try {
+        if (window.CodeMirror) {
+          // For any <textarea class="codemirror"> re-create or refresh editors
+          const textareas = sectionEl.querySelectorAll("textarea");
+          textareas.forEach((ta) => {
+            // If the page previously attached a CodeMirror instance on same textarea,
+            // the existing instance may have been stored on the element. If refresh available, refresh it.
+            if (
+              ta.CodeMirror &&
+              typeof ta.CodeMirror.refresh === "function"
+            ) {
+              ta.CodeMirror.refresh();
+            } else {
+              // Create a new CodeMirror instance only when an explicit init function is present on page
+              if (typeof window.createCodeMirrorForTextarea === "function") {
+                try {
+                  window.createCodeMirrorForTextarea(ta);
+                } catch (e) {
+                  // ignore - not all textareas need CodeMirror
+                }
+              }
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("CodeMirror reinit failed", err);
+      }
+
+      // 5) Re-attach generic event wiring that is expected by the UI (checkboxes, buttons)
+      try {
+        // checkbox-driven pill updates
+        const checkboxChangeEvent = new Event("change", {
+          bubbles: true,
+        });
+        sectionEl.querySelectorAll('input[type="checkbox"]').forEach((cb) => {
+          // If there were checkbox-specific change functions on page, they will now re-run
+          cb.dispatchEvent(checkboxChangeEvent);
+        });
+
+        // Reconnect any HTMX triggers that expect a load event
+        if (window.htmx && typeof window.htmx.trigger === "function") {
+          // find elements with data-htmx or that previously had an HTMX load
+          const htmxTargets = sectionEl.querySelectorAll(
+            "[hx-get], [hx-post], [data-hx-load]"
+          );
+          htmxTargets.forEach((el) => {
+            try {
+              window.htmx.trigger(el, "load");
+            } catch (e) {
+              /* ignore */
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("Event wiring re-attach failed", err);
+      }
+
+      // 6) Accessibility / visual: force a small layout reflow, useful in some browsers
+      try {
+        // eslint-disable-next-line no-unused-expressions
+        sectionEl.offsetHeight; // read to force reflow
+      } catch (e) {
+        /* ignore */
+      }
+    } catch (err) {
+      console.error("Error reinitializing section", sectionName, err);
+    }
+  };
+
+  const updateSectionHeaders = function (teamId) {
+    const sections = ["tools", "resources", "prompts", "servers", "gateways"];
+
+    sections.forEach((section) => {
+      const header = document.querySelector("#" + section + "-section h2");
+      if (header) {
+        // Remove existing team badge
+        const existingBadge = header.querySelector(".team-badge");
+        if (existingBadge) {
+          existingBadge.remove();
+        }
+
+        // Add team badge if team is selected
+        if (teamId && teamId !== "") {
+          const teamName = getTeamNameById(teamId);
+          if (teamName) {
+            const badge = document.createElement("span");
+            badge.className =
+              "team-badge inline-flex items-center px-2 py-1 ml-2 text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 rounded-full";
+            badge.textContent = teamName;
+            header.appendChild(badge);
+          }
+        }
+      }
+    });
+  };
+
+  // The exported function: reloadAllResourceSections
+  Admin.reloadAllResourceSections = async function (teamId) {
+    const sections = ["tools", "resources", "prompts", "servers", "gateways"];
+
+    // ensure there is a ROOT_PATH set
+    if (!window.ROOT_PATH) {
+      console.warn(
+        "ROOT_PATH not defined; aborting reloadAllResourceSections"
+      );
+      return;
+    }
+
+    // Iterate sections sequentially to avoid overloading the server and to ensure consistent order.
+    for (const section of sections) {
+      const sectionEl = safeGetElement(`${section}-section`);
+      if (!sectionEl) {
+        console.warn(`Section element not found: ${section}-section`);
+        continue;
+      }
+
+      // Build server partial URL (server should return the *full HTML fragment* for the section)
+      // Server endpoint pattern: /admin/sections/{section}?partial=true
+      let url = `${window.ROOT_PATH}/admin/sections/${section}?partial=true`;
+      if (teamId && teamId !== "") {
+        url += `&team_id=${encodeURIComponent(teamId)}`;
+      }
+
+      try {
+        const resp = await fetchWithTimeout(
+          url,
+          { credentials: "same-origin" },
+          window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
+        );
+        if (!resp.ok) {
+          throw new Error(`HTTP ${resp.status}`);
+        }
+        const html = await resp.text();
+
+        // Replace entire section's innerHTML with server-provided HTML to keep DOM identical.
+        // Use safeSetInnerHTML with isTrusted = true because this is server-rendered trusted content.
+        safeSetInnerHTML(sectionEl, html, true);
+
+        // After replacement, re-run local initializers so the new DOM behaves like initial load
+        reinitializeSection(sectionEl, section);
+      } catch (err) {
+        console.error(`Failed to load section ${section} from server:`, err);
+
+        // Restore the original markup exactly as it was on initial load (fallback)
+        if (
+          window.__initialSectionMarkup &&
+          window.__initialSectionMarkup[section]
+        ) {
+          sectionEl.innerHTML = window.__initialSectionMarkup[section];
+          // Re-run initializers on restored markup as well
+          reinitializeSection(sectionEl, section);
+          console.log(`Restored initial markup for section ${section}`);
+        } else {
+          // No fallback available: leave existing DOM intact and show error to console
+          console.warn(
+            `No saved initial markup for section ${section}; leaving DOM untouched`
+          );
+        }
+      }
+    }
+
+    // Update headers (team badges) after reload
+    try {
+      if (typeof updateSectionHeaders === "function") {
+        updateSectionHeaders(teamId);
+      }
+    } catch (err) {
+      console.warn("updateSectionHeaders failed after reload", err);
+    }
+
+    console.log("✓ reloadAllResourceSections completed");
+  };
 };

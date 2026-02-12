@@ -48,6 +48,17 @@ Admin.removeAuthHeader = removeAuthHeader;
 Admin.updateAuthHeadersJSON = updateAuthHeadersJSON;
 Admin.fetchToolsForGateway = fetchToolsForGateway;
 
+// CA Certificates
+import {
+  validateCACertFiles,
+  formatFileSize,
+  updateBodyLabel,
+} from "./caCertificate.js";
+
+Admin.validateCACertFiles = validateCACertFiles;
+Admin.formatFileSize = formatFileSize;
+Admin.updateBodyLabel = updateBodyLabel;
+
 // Config Export
 import {
   showConfigSelectionModal,
@@ -68,6 +79,12 @@ import { previewImport, resetImportFile } from "./fileTransfer.js";
 
 Admin.previewImport = previewImport;
 Admin.resetImportFile = resetImportFile;
+
+// Filtering
+import { clearSearch, filterServerTable } from "./filters.js";
+
+Admin.clearSearch = clearSearch;
+Admin.filterServerTable = filterServerTable;
 
 // Form Fields
 import {
@@ -91,11 +108,10 @@ Admin.handleToggleSubmit = handleToggleSubmit;
 Admin.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 Admin.handleDeleteSubmit = handleDeleteSubmit;
 
-
+// Gateways
 import { testGateway } from "./gateway.js";
 
 Admin.testGateway = testGateway;
-
 
 // LLM Chat
 import {
@@ -213,14 +229,38 @@ Admin.retryLoadMetrics = retryLoadMetrics;
 Admin.switchTopPerformersTab = switchTopPerformersTab;
 
 // Modals
-import { closeModal } from "./modals.js";
+import {
+  closeApiKeyModal,
+  closeModal,
+  showApiKeyModal,
+  submitApiKeyForm,
+  toggleGrpcTlsFields,
+  viewGrpcMethods,
+} from "./modals.js";
 
+Admin.closeApiKeyModal = closeApiKeyModal;
 Admin.closeModal = closeModal;
+Admin.showApiKeyModal = showApiKeyModal;
+Admin.submitApiKeyForm = submitApiKeyForm;
+Admin.toggleGrpcTlsFields = toggleGrpcTlsFields;
+Admin.viewGrpcMethods = viewGrpcMethods;
 
-// Resources
-import { initResourceSelect } from "./resources.js";
+// Plugins
+import {
+  closePluginDetails,
+  filterByAuthor,
+  filterByHook,
+  filterByTag,
+  filterPlugins,
+  showPluginDetails,
+} from "./plugins";
 
-Admin.initResourceSelect = initResourceSelect;
+Admin.closePluginDetails = closePluginDetails;
+Admin.filterByAuthor = filterByAuthor;
+Admin.filterByHook = filterByHook;
+Admin.filterByTag = filterByTag;
+Admin.filterPlugins = filterPlugins;
+Admin.showPluginDetails = showPluginDetails;
 
 // Prompts
 import { initPromptSelect, testPrompt, runPromptTest } from "./prompts.js";
@@ -228,6 +268,28 @@ import { initPromptSelect, testPrompt, runPromptTest } from "./prompts.js";
 Admin.initPromptSelect = initPromptSelect;
 Admin.testPrompt = testPrompt;
 Admin.runPromptTest = runPromptTest;
+
+// Resources
+import { initResourceSelect } from "./resources.js";
+
+Admin.initResourceSelect = initResourceSelect;
+
+// Selective Import
+import {
+  handleSelectiveImport,
+  resetImportSelection,
+  selectAllItems,
+  selectNoneItems,
+  selectOnlyCustom,
+  updateSelectionCount,
+} from "./selectiveImport.js";
+
+Admin.selectAllItems = selectAllItems;
+Admin.selectNoneItems = selectNoneItems;
+Admin.updateSelectionCount = updateSelectionCount;
+Admin.selectOnlyCustom = selectOnlyCustom;
+Admin.resetImportSelection = resetImportSelection;
+Admin.handleSelectiveImport = handleSelectiveImport;
 
 // Tabs
 import { showTab } from "./tabs.js";
@@ -238,6 +300,27 @@ Admin.showTab = showTab;
 import { clearTagFilter } from "./tags.js";
 
 Admin.clearTagFilter = clearTagFilter;
+
+// Teams
+import {
+  approveJoinRequest,
+  filterByRelationship,
+  filterTeams,
+  leaveTeam,
+  rejectJoinRequest,
+  requestToJoinTeam,
+  serverSideTeamSearch,
+  validatePasswordMatch,
+} from "./teams.js";
+
+Admin.approveJoinRequest = approveJoinRequest;
+Admin.filterByRelationship = filterByRelationship;
+Admin.filterTeams = filterTeams;
+Admin.leaveTeam = leaveTeam;
+Admin.rejectJoinRequest = rejectJoinRequest;
+Admin.requestToJoinTeam = requestToJoinTeam;
+Admin.serverSideTeamSearch = serverSideTeamSearch;
+Admin.validatePasswordMatch = validatePasswordMatch;
 
 // Tokens
 import { getAuthToken, getTeamNameById } from "./tokens.js";

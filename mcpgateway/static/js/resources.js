@@ -1,3 +1,4 @@
+/* global Admin */
 import { getSelectedGatewayIds } from "./gateway";
 import { getCurrentTeamId, safeGetElement } from "./utils";
 

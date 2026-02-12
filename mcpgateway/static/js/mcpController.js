@@ -5,6 +5,7 @@ import { MASKED_AUTH_VALUE } from "./constants";
 import { updateEditToolRequestTypes } from "./formFieldHandlers";
 import { initGatewaySelect } from "./gateway";
 import { openModal } from "./modals";
+import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
 import { validateInputName, validateJson, validateUrl } from "./security";
 import {
@@ -657,7 +658,6 @@ export const viewAgent = async function (agentId) {
 /**
  * SECURE: Edit A2A Agent function
  */
-
 export const editA2AAgent = async function (agentId) {
   try {
     console.log(`Editing A2A Agent ID: ${agentId}`);
@@ -3374,7 +3374,7 @@ export const editServer = async function (serverId) {
       "clearAllEditResourcesBtn"
     );
 
-    Admin.initPromptSelect(
+    initPromptSelect(
       "edit-server-prompts",
       "selectedEditPromptsPills",
       "selectedEditPromptsWarning",
