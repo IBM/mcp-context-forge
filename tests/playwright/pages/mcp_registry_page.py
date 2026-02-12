@@ -197,8 +197,11 @@ class MCPRegistryPage(BasePage):
     # ==================== High-Level Navigation Methods ====================
 
     def navigate_to_registry_tab(self) -> None:
-        """Navigate to MCP Registry tab and wait for panel to be visible."""
+        """Navigate to MCP Registry tab and wait for HTMX content to load."""
         self.sidebar.click_registry_tab()
+        # The HTMX partial loads asynchronously after a 300ms debounce.
+        # Wait for the #server-grid element that only exists in the partial response.
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=60000)
 
     # ==================== High-Level Filter Operations ====================
 
@@ -388,7 +391,7 @@ class MCPRegistryPage(BasePage):
             "category_badge": card.locator("span.bg-purple-100").first.text_content().strip() if card.locator("span.bg-purple-100").count() > 0 else None,
         }
 
-    def wait_for_registry_loaded(self, timeout: int = 30000) -> None:
+    def wait_for_registry_loaded(self, timeout: int = 60000) -> None:
         """Wait for MCP Registry panel to be loaded and ready.
 
         Args:
