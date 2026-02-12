@@ -10,15 +10,17 @@
         Replay historical decisions to detect policy regressions
       </p>
     </div>
-    <a
-      href="{{ root_path }}/admin/sandbox/"
+    <button
+      hx-get="{{ root_path }}/admin/sandbox/partial"
+      hx-target="#sandbox-panel"
+      hx-swap="innerHTML"
       class="inline-flex items-center px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm font-medium text-gray-700 dark:text-gray-200 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700"
     >
       <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
       </svg>
       Back to Dashboard
-    </a>
+    </button>
   </div>
 
   <!-- Configuration Form -->
