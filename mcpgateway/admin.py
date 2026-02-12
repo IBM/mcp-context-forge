@@ -3829,11 +3829,15 @@ async def admin_teams_partial_html(
             all_teams = [t for t in all_teams if t.is_active]
 
         total = len(all_teams)
+        total_pages = math.ceil(total / per_page) if per_page else 1
+        # Clamp page to valid range (matches offset_paginate behavior)
+        if total_pages > 0:
+            page = min(page, total_pages)
         start = (page - 1) * per_page
         end = start + per_page
         data = all_teams[start:end]
 
-        pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=math.ceil(total / per_page) if per_page else 1, has_next=end < total, has_prev=page > 1)
+        pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=total_pages, has_next=end < total, has_prev=page > 1)
         links = None
 
     if render == "controls":
