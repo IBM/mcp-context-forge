@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
+from pydantic import HttpUrl
 
 # First-Party
 from mcpgateway.routers import sso as sso_router
@@ -47,7 +48,7 @@ async def test_list_sso_providers_success(monkeypatch: pytest.MonkeyPatch):
 
 def test_validate_redirect_uri_allows_relative(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "allowed_origins", ["https://example.com:8443"])
-    monkeypatch.setattr(sso_router.settings, "app_domain", "myapp.com")
+    monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("https://myapp.com"))
 
     assert sso_router._validate_redirect_uri("/admin", None) is True
     assert sso_router._validate_redirect_uri("https://example.com:8443/cb", None) is True
@@ -64,7 +65,7 @@ def test_validate_redirect_uri_allowed_origin_without_scheme(monkeypatch: pytest
 
 def test_validate_redirect_uri_app_domain_localhost_http(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "allowed_origins", [])
-    monkeypatch.setattr(sso_router.settings, "app_domain", "localhost")
+    monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("http://localhost:4444"))
 
     assert sso_router._validate_redirect_uri("http://localhost:3000/cb", None) is True
 
