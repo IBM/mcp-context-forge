@@ -36,6 +36,7 @@ import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
+import re
 from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Union
 from uuid import uuid4
 
@@ -1335,8 +1336,6 @@ class SessionManagerWrapper:
         """
 
         path = scope["modified_path"]
-        # Uses precompiled regex for server ID extraction
-        match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
         raw_headers = scope.get("headers") or []
@@ -1643,32 +1642,6 @@ class SessionManagerWrapper:
                         break
             await send(message)
 
-        try:
-            await self.session_manager.handle_request(scope, receive, send_with_capture)
-            logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
-
-            # Register ownership for the session we just handled
-            # This captures both existing sessions (mcp_session_id from request)
-            # and new sessions (captured_session_id from response)
-            logger.debug(
-                f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
-            )
-            if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
-                session_to_register = captured_session_id or (mcp_session_id if mcp_session_id != "not-provided" else None)
-                logger.debug(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
-                if session_to_register:
-                    try:
-                        # First-Party - lazy import to avoid circular dependencies
-                        # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
-
-                        pool = get_mcp_session_pool()
-                        await pool.register_pool_session_owner(session_to_register)
-                        logger.debug(f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
-                    except Exception as e:
-                        logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
-                        logger.warning(f"Failed to register session ownership: {e}")
-
         # Store headers in context for tool invocations
         request_headers_var.set(context.headers or headers)
         server_id_var.set(context.server_id)
@@ -1692,6 +1665,7 @@ class SessionManagerWrapper:
 
                 if session_to_register:
                     try:
+                        # First-Party
                         from mcpgateway.services.mcp_session_pool import (
                             get_mcp_session_pool,
                             WORKER_ID,
@@ -1720,9 +1694,7 @@ class SessionManagerWrapper:
             raise
 
 
-
 # ------------------------- Authentication for /mcp routes ------------------------------
-
 
 async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     """
