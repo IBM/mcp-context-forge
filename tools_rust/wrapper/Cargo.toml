@@ -1,6 +1,6 @@
 [package]
 name = "mcp_stdio_wrapper"
-version = "1.0.0-BETA-1"
+version = "1.0.0-RC-1"
 edition = "2024"
 default-run = "mcp_stdio_wrapper"
 license = "Apache-2.0"

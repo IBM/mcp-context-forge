@@ -3,7 +3,7 @@ members = [".", "pii_filter"]
 resolver = "2"
 
 [workspace.package]
-version = "1.0.0-BETA-2"
+version = "1.0.0-RC-1"
 edition = "2024"
 authors = ["MCP Gateway Contributors"]
 license = "Apache-2.0"
