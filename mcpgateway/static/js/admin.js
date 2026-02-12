@@ -18,10 +18,16 @@ const Admin = window.Admin;
 // TIER 1: Foundation modules (fully converted to ES modules)
 // ===================================================================
 // Utils
-import { copyToClipboard, handleKeydown, safeGetElement } from "./utils.js";
+import {
+  copyToClipboard,
+  handleKeydown,
+  refreshLogs,
+  safeGetElement,
+} from "./utils.js";
 
 Admin.copyToClipboard = copyToClipboard;
 Admin.handleKeydown = handleKeydown;
+Admin.refreshLogs = refreshLogs;
 Admin.safeGetElement = safeGetElement;
 
 // AppState
@@ -185,6 +191,41 @@ Admin.syncLLMProviderModels = syncLLMProviderModels;
 Admin.toggleLLMModel = toggleLLMModel;
 Admin.toggleLLMProvider = toggleLLMProvider;
 
+// Logging
+import {
+  debugMCPSearchState,
+  displayCorrelationTrace,
+  displayLogResults,
+  emergencyFixMCPSearch,
+  generateStatusBadgeHtml,
+  handlePerformanceAggregationChange,
+  nextLogPage,
+  previousLogPage,
+  searchStructuredLogs,
+  showAuditTrail,
+  showCorrelationTrace,
+  showLogDetails,
+  showPerformanceMetrics,
+  showSecurityEvents,
+  testMCPSearchManually,
+} from "./logging.js";
+
+Admin.debugMCPSearchState = debugMCPSearchState;
+Admin.displayCorrelationTrace = displayCorrelationTrace;
+Admin.displayLogResults = displayLogResults;
+Admin.emergencyFixMCPSearch = emergencyFixMCPSearch;
+Admin.generateStatusBadgeHtml = generateStatusBadgeHtml;
+Admin.handlePerformanceAggregationChange = handlePerformanceAggregationChange;
+Admin.nextLogPage = nextLogPage;
+Admin.previousLogPage = previousLogPage;
+Admin.searchStructuredLogs = searchStructuredLogs;
+Admin.showAuditTrail = showAuditTrail;
+Admin.showCorrelationTrace = showCorrelationTrace;
+Admin.showLogDetails = showLogDetails;
+Admin.showPerformanceMetrics = showPerformanceMetrics;
+Admin.showSecurityEvents = showSecurityEvents;
+Admin.testMCPSearchManually = testMCPSearchManually;
+
 // MCP Controller
 import {
   editTool,
@@ -253,7 +294,7 @@ import {
   filterByTag,
   filterPlugins,
   showPluginDetails,
-} from "./plugins";
+} from "./plugins.js";
 
 Admin.closePluginDetails = closePluginDetails;
 Admin.filterByAuthor = filterByAuthor;
@@ -349,6 +390,11 @@ Admin.validateTool = validateTool;
 Admin.runToolTest = runToolTest;
 Admin.viewTool = viewTool;
 
+// Users
+import { hideUserEditModal } from "./users.js";
+
+Admin.hideUserEditModal = hideUserEditModal;
+
 // ===================================================================
 // TIER 3 & 4: Domain and Orchestration modules (still using IIFE)
 // These modules will attach their functions directly to window.Admin
@@ -359,3 +405,6 @@ import "./app.js";
 import "./events.js";
 
 console.log("🚀 ContextForge MCP Gateway Admin API initialized");
+
+// Export the Admin namespace so Vite's IIFE can expose it as window.Admin
+export default Admin;

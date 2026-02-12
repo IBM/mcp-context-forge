@@ -1,10 +1,9 @@
-/* global Admin */
 // ==================== LLM CHAT FUNCTIONALITY ====================
 
-import { getSelectedGatewayIds } from "./gateway";
+import { getSelectedGatewayIds } from "./gateway.js";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
-import { escapeHtml, escapeHtmlChat } from "./security";
+import { escapeHtml, escapeHtmlChat } from "./security.js";
 import { initToolSelect } from "./tools";
 import {
   fetchWithTimeout,
@@ -2102,7 +2101,7 @@ export const serverSideToolSearch = async function (searchTerm) {
     persistedToolIds = Array.from(merged);
 
     // Update both the window fallback and the container attribute
-    Admin._selectedAssociatedTools = persistedToolIds.slice();
+    window.Admin._selectedAssociatedTools = persistedToolIds.slice();
     if (persistedToolIds.length > 0) {
       container.setAttribute(
         "data-selected-tools",
@@ -2168,7 +2167,7 @@ export const serverSideToolSearch = async function (searchTerm) {
           persistedToolIds = Array.from(merged);
 
           // Update window fallback
-          Admin._selectedAssociatedTools = persistedToolIds.slice();
+          window.Admin._selectedAssociatedTools = persistedToolIds.slice();
         } catch (e) {
           console.error(
             "Error capturing current tool selections before clearing search:",
@@ -2188,7 +2187,7 @@ export const serverSideToolSearch = async function (searchTerm) {
 
         // If the container has been re-rendered server-side and our
         // `data-selected-tools` attribute was lost, restore from the
-        // global fallback `Admin._selectedAssociatedTools`.
+        // global fallback `window.Admin._selectedAssociatedTools`.
         try {
           updateToolMapping(container);
 
@@ -2216,9 +2215,9 @@ export const serverSideToolSearch = async function (searchTerm) {
             (!selectedIds ||
               !Array.isArray(selectedIds) ||
               selectedIds.length === 0) &&
-            Array.isArray(Admin._selectedAssociatedTools)
+            Array.isArray(window.Admin._selectedAssociatedTools)
           ) {
-            selectedIds = Admin._selectedAssociatedTools.slice();
+            selectedIds = window.Admin._selectedAssociatedTools.slice();
           }
 
           if (Array.isArray(selectedIds) && selectedIds.length > 0) {
@@ -2331,24 +2330,24 @@ export const serverSideToolSearch = async function (searchTerm) {
           (!existingIds ||
             !Array.isArray(existingIds) ||
             existingIds.length === 0) &&
-          Array.isArray(Admin._selectedAssociatedTools) &&
-          Admin._selectedAssociatedTools.length > 0
+          Array.isArray(window.Admin._selectedAssociatedTools) &&
+          window.Admin._selectedAssociatedTools.length > 0
         ) {
           // Write a merged view back to the container attribute so
           // subsequent init/observers see the selection
           container.setAttribute(
             "data-selected-tools",
-            JSON.stringify(Admin._selectedAssociatedTools.slice()),
+            JSON.stringify(window.Admin._selectedAssociatedTools.slice()),
           );
         } else if (
           Array.isArray(existingIds) &&
-          Array.isArray(Admin._selectedAssociatedTools) &&
-          Admin._selectedAssociatedTools.length > 0
+          Array.isArray(window.Admin._selectedAssociatedTools) &&
+          window.Admin._selectedAssociatedTools.length > 0
         ) {
           // Merge the two sets to avoid losing either
           const merged = new Set([
             ...(existingIds || []),
-            ...Admin._selectedAssociatedTools,
+            ...window.Admin._selectedAssociatedTools,
           ]);
           container.setAttribute(
             "data-selected-tools",
@@ -2389,14 +2388,14 @@ export const serverSideToolSearch = async function (searchTerm) {
           }
 
           // If parsed attribute is missing or an empty array, fall back
-          // to the in-memory `Admin._selectedAssociatedTools` saved earlier.
+          // to the in-memory `window.Admin._selectedAssociatedTools` saved earlier.
           if (
             (!selectedIds ||
               !Array.isArray(selectedIds) ||
               selectedIds.length === 0) &&
-            Array.isArray(Admin._selectedAssociatedTools)
+            Array.isArray(window.Admin._selectedAssociatedTools)
           ) {
-            selectedIds = Admin._selectedAssociatedTools.slice();
+            selectedIds = window.Admin._selectedAssociatedTools.slice();
           }
 
           if (Array.isArray(selectedIds) && selectedIds.length > 0) {
@@ -2452,8 +2451,8 @@ export const serverSideToolSearch = async function (searchTerm) {
  * Update the tool mapping with tools in the given container
  */
 const updateToolMapping = function (container) {
-  if (!Admin.toolMapping) {
-    Admin.toolMapping = {};
+  if (!window.Admin.toolMapping) {
+    window.Admin.toolMapping = {};
   }
 
   const checkboxes = container.querySelectorAll(
@@ -2463,7 +2462,7 @@ const updateToolMapping = function (container) {
     const toolId = checkbox.value;
     const toolName = checkbox.getAttribute("data-tool-name");
     if (toolId && toolName) {
-      Admin.toolMapping[toolId] = toolName;
+      window.Admin.toolMapping[toolId] = toolName;
     }
   });
 };
@@ -2472,8 +2471,8 @@ const updateToolMapping = function (container) {
  * Update the prompt mapping with prompts in the given container
  */
 const updatePromptMapping = function (container) {
-  if (!Admin.promptMapping) {
-    Admin.promptMapping = {};
+  if (!window.Admin.promptMapping) {
+    window.Admin.promptMapping = {};
   }
 
   const checkboxes = container.querySelectorAll(
@@ -2486,7 +2485,7 @@ const updatePromptMapping = function (container) {
       checkbox.nextElementSibling?.textContent?.trim() ||
       promptId;
     if (promptId && promptName) {
-      Admin.promptMapping[promptId] = promptName;
+      window.Admin.promptMapping[promptId] = promptName;
     }
   });
 };
@@ -2495,8 +2494,8 @@ const updatePromptMapping = function (container) {
  * Update the resource mapping with resources in the given container
  */
 const updateResourceMapping = function (container) {
-  if (!Admin.resourceMapping) {
-    Admin.resourceMapping = {};
+  if (!window.Admin.resourceMapping) {
+    window.Admin.resourceMapping = {};
   }
 
   const checkboxes = container.querySelectorAll(
@@ -2509,7 +2508,7 @@ const updateResourceMapping = function (container) {
       checkbox.nextElementSibling?.textContent?.trim() ||
       resourceId;
     if (resourceId && resourceName) {
-      Admin.resourceMapping[resourceId] = resourceName;
+      window.Admin.resourceMapping[resourceId] = resourceName;
     }
   });
 };
@@ -2547,13 +2546,13 @@ export const serverSidePromptSearch = async function (searchTerm) {
       !Array.isArray(window._selectedAssociatedPrompts) ||
       window._selectedAssociatedPrompts.length === 0
     ) {
-      Admin._selectedAssociatedPrompts = currentChecked.slice();
+      window.Admin._selectedAssociatedPrompts = currentChecked.slice();
     } else {
       const merged = new Set([
         ...(window._selectedAssociatedPrompts || []),
         ...currentChecked,
       ]);
-      Admin._selectedAssociatedPrompts = Array.from(merged);
+      window.Admin._selectedAssociatedPrompts = Array.from(merged);
     }
   } catch (e) {
     console.error(
@@ -2819,16 +2818,16 @@ export const serverSideResourceSearch = async function (searchTerm) {
       container.querySelectorAll('input[type="checkbox"]:checked'),
     ).map((cb) => cb.value);
     if (
-      !Array.isArray(Admin._selectedAssociatedResources) ||
-      Admin._selectedAssociatedResources.length === 0
+      !Array.isArray(window.Admin._selectedAssociatedResources) ||
+      window.Admin._selectedAssociatedResources.length === 0
     ) {
-      Admin._selectedAssociatedResources = currentChecked.slice();
+      window.Admin._selectedAssociatedResources = currentChecked.slice();
     } else {
       const merged = new Set([
-        ...(Admin._selectedAssociatedResources || []),
+        ...(window.Admin._selectedAssociatedResources || []),
         ...currentChecked,
       ]);
-      Admin._selectedAssociatedResources = Array.from(merged);
+      window.Admin._selectedAssociatedResources = Array.from(merged);
     }
   } catch (e) {
     console.error(
@@ -2869,16 +2868,16 @@ export const serverSideResourceSearch = async function (searchTerm) {
             container.querySelectorAll('input[type="checkbox"]:checked'),
           ).map((cb) => cb.value);
           if (
-            !Array.isArray(Admin._selectedAssociatedResources) ||
-            Admin._selectedAssociatedResources.length === 0
+            !Array.isArray(window.Admin._selectedAssociatedResources) ||
+            window.Admin._selectedAssociatedResources.length === 0
           ) {
-            Admin._selectedAssociatedResources = currentChecked.slice();
+            window.Admin._selectedAssociatedResources = currentChecked.slice();
           } else {
             const merged = new Set([
-              ...(Admin._selectedAssociatedResources || []),
+              ...(window.Admin._selectedAssociatedResources || []),
               ...currentChecked,
             ]);
-            Admin._selectedAssociatedResources = Array.from(merged);
+            window.Admin._selectedAssociatedResources = Array.from(merged);
           }
         } catch (e) {
           console.error(
@@ -2891,7 +2890,7 @@ export const serverSideResourceSearch = async function (searchTerm) {
 
         // If the container has been re-rendered server-side and our
         // `data-selected-resources` attribute was lost, restore from the
-        // global fallback `Admin._selectedAssociatedResources`.
+        // global fallback `window.Admin._selectedAssociatedResources`.
         try {
           // Initialize resource mapping if needed
           initResourceSelect(
@@ -2917,9 +2916,9 @@ export const serverSideResourceSearch = async function (searchTerm) {
             (!selectedIds ||
               !Array.isArray(selectedIds) ||
               selectedIds.length === 0) &&
-            Array.isArray(Admin._selectedAssociatedResources)
+            Array.isArray(window.Admin._selectedAssociatedResources)
           ) {
-            selectedIds = Admin._selectedAssociatedResources.slice();
+            selectedIds = window.Admin._selectedAssociatedResources.slice();
           }
 
           if (Array.isArray(selectedIds) && selectedIds.length > 0) {
@@ -3020,21 +3019,21 @@ export const serverSideResourceSearch = async function (searchTerm) {
           (!existingIds ||
             !Array.isArray(existingIds) ||
             existingIds.length === 0) &&
-          Array.isArray(Admin._selectedAssociatedResources) &&
-          Admin._selectedAssociatedResources.length > 0
+          Array.isArray(window.Admin._selectedAssociatedResources) &&
+          window.Admin._selectedAssociatedResources.length > 0
         ) {
           container.setAttribute(
             "data-selected-resources",
-            JSON.stringify(Admin._selectedAssociatedResources.slice()),
+            JSON.stringify(window.Admin._selectedAssociatedResources.slice()),
           );
         } else if (
           Array.isArray(existingIds) &&
-          Array.isArray(Admin._selectedAssociatedResources) &&
-          Admin._selectedAssociatedResources.length > 0
+          Array.isArray(window.Admin._selectedAssociatedResources) &&
+          window.Admin._selectedAssociatedResources.length > 0
         ) {
           const merged = new Set([
             ...(existingIds || []),
-            ...Admin._selectedAssociatedResources,
+            ...window.Admin._selectedAssociatedResources,
           ]);
           container.setAttribute(
             "data-selected-resources",
@@ -3203,7 +3202,7 @@ export const serverSideEditToolSearch = async function (searchTerm) {
               const toolId = cb.value;
               const toolName =
                 cb.getAttribute("data-tool-name") ||
-                (Admin.toolMapping && Admin.toolMapping[cb.value]);
+                (window.Admin.toolMapping && window.Admin.toolMapping[cb.value]);
               if (
                 toolsToCheck.has(toolId) ||
                 (toolName && toolsToCheck.has(String(toolName)))
@@ -3311,7 +3310,7 @@ export const serverSideEditToolSearch = async function (searchTerm) {
               const toolId = cb.value;
               const toolName =
                 cb.getAttribute("data-tool-name") ||
-                (Admin.toolMapping && Admin.toolMapping[cb.value]);
+                (window.Admin.toolMapping && window.Admin.toolMapping[cb.value]);
               if (
                 serverToolSet.has(toolId) ||
                 (toolName && serverToolSet.has(String(toolName)))
@@ -3455,7 +3454,7 @@ export const serverSideEditPromptsSearch = async function (searchTerm) {
               const promptId = cb.value;
               const promptName =
                 cb.getAttribute("data-prompt-name") ||
-                (Admin.promptMapping && Admin.promptMapping[cb.value]);
+                (window.Admin.promptMapping && window.Admin.promptMapping[cb.value]);
 
               // Check by id first (string), then by name as a fallback
               if (
@@ -3578,7 +3577,7 @@ export const serverSideEditPromptsSearch = async function (searchTerm) {
               const promptId = cb.value;
               const promptName =
               cb.getAttribute("data-prompt-name") ||
-                (Admin.promptMapping && Admin.promptMapping[cb.value]);
+                (window.Admin.promptMapping && window.Admin.promptMapping[cb.value]);
 
               if (
                 serverPromptSet.has(promptId) ||
@@ -3724,7 +3723,7 @@ export const serverSideEditResourcesSearch = async function (searchTerm) {
               const resourceId = cb.value;
               const resourceName =
                 cb.getAttribute("data-resource-name") ||
-                (Admin.resourceMapping && Admin.resourceMapping[cb.value]);
+                (window.Admin.resourceMapping && window.Admin.resourceMapping[cb.value]);
               if (
                 allSelectedResources.has(resourceId) ||
                 (resourceName && allSelectedResources.has(String(resourceName)))
@@ -3839,7 +3838,7 @@ export const serverSideEditResourcesSearch = async function (searchTerm) {
               const resourceId = cb.value;
               const resourceName =
                 cb.getAttribute("data-resource-name") ||
-                (Admin.resourceMapping && Admin.resourceMapping[cb.value]);
+                (window.Admin.resourceMapping && window.Admin.resourceMapping[cb.value]);
               // Check by id first (string), then by name as a fallback
               if (
                 serverResourceSet.has(resourceId) ||

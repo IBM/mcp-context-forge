@@ -1,17 +1,19 @@
 // ===================================================================
 // ENHANCED TAB HANDLING with Better Error Management
 
-import { loadRecentImports } from "./fileTransfer";
-import { initializeExportImport } from "./initialization";
-import { initializeLLMChat } from "./llmChat";
+import { loadRecentImports } from "./fileTransfer.js";
+import { initializeExportImport } from "./initialization.js";
+import { initializeLLMChat } from "./llmChat.js";
+import { searchStructuredLogs } from "./logging.js";
 import { loadAggregatedMetrics } from "./metrics";
 import { populatePluginFilters } from "./plugins";
-import { escapeHtml, safeSetInnerHTML } from "./security";
+import { escapeHtml, safeSetInnerHTML } from "./security.js";
 import {
   loadTokensList,
   setupCreateTokenForm,
   updateTeamScopingWarning,
 } from "./tokens";
+import { initializePermissionsPanel } from "./users";
 import {
   fetchWithTimeout,
   isAdminUser,
@@ -204,7 +206,7 @@ export const showTab = function (tabName) {
           // Load structured logs when tab is first opened
           const logsTbody = safeGetElement("logs-tbody");
           if (logsTbody && logsTbody.children.length === 0) {
-            Admin.searchStructuredLogs();
+            searchStructuredLogs();
           }
         }
 
@@ -510,11 +512,11 @@ export const showTab = function (tabName) {
             console.log("🔄 Initializing permissions tab content");
             try {
               // Check if initializePermissionsPanel function exists
-              if (typeof Admin.initializePermissionsPanel === "function") {
-                Admin.initializePermissionsPanel();
+              if (typeof initializePermissionsPanel === "function") {
+                initializePermissionsPanel();
               } else {
                 console.warn(
-                  "Admin.initializePermissionsPanel function not found",
+                  "initializePermissionsPanel function not found",
                 );
               }
             } catch (error) {

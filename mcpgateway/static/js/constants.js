@@ -1,5 +1,3 @@
-/* global marked, DOMPurify */
-
 // Constants
 export const MASKED_AUTH_VALUE = "*****";
 

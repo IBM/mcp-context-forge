@@ -26,8 +26,11 @@ export default defineConfig({
   build: {
     minify: 'terser',
     terserOptions: {
-      compress: false,       // disable compress transforms
-      mangle: false,         // disable all renaming
+      compress: true,        // enable compress transforms
+      mangle: {
+        reserved: ['Admin'], // preserve 'Admin' identifier
+        properties: false    // disable property mangling entirely
+      },
       format: {
         beautify: false,     // remove whitespace and newlines
         comments: false      // strip comments
@@ -42,6 +45,7 @@ export default defineConfig({
         // Add content hash to filename for cache busting
         entryFileNames: 'bundle-[hash].js',
         format: 'iife', // IIFE format for direct script inclusion
+        name: 'Admin', // Expose bundle as window.Admin
         // Externalize dependencies that are loaded separately
         globals: {
           marked: 'marked',

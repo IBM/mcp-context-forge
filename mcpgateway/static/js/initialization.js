@@ -1,10 +1,9 @@
-/* global Admin */
 import {
   handleAuthTypeChange,
   handleAuthTypeSelection,
   handleEditOAuthGrantTypeChange,
   handleOAuthGrantTypeChange,
-} from "./auth";
+} from "./auth.js";
 import {
   handleDragLeave,
   handleDragOver,
@@ -14,7 +13,7 @@ import {
   handleFileSelect,
   handleImport,
   loadRecentImports,
-} from "./fileTransfer";
+} from "./fileTransfer.js";
 import {
   handleAddParameter,
   handleAddPassthrough,
@@ -43,12 +42,12 @@ import {
   serverSidePromptSearch,
   serverSideResourceSearch,
   serverSideToolSearch,
-} from "./llmChat";
+} from "./llmChat.js";
 import { closeModal, openModal } from "./modals";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
 import { filterA2AAgentsTable, filterGatewaysTable, filterPromptsTable, filterResourcesTable, filterServerTable, filterToolsTable } from "./filters";
-import { escapeHtml, safeSetInnerHTML } from "./security";
+import { escapeHtml, safeSetInnerHTML } from "./security.js";
 import { ADMIN_ONLY_TABS, showTab } from "./tabs";
 import { initToolSelect } from "./tools";
 import { fetchWithTimeout, isAdminUser, safeGetElement } from "./utils";
@@ -266,7 +265,7 @@ export const setupTabNavigation = function () {
 
 const setupHTMXHooks = function () {
   document.body.addEventListener("htmx:beforeRequest", (event) => {
-    if (event.detail.elt.id === "tab-version-info") {
+    if (event.detail.target.id === "tab-version-info") {
       console.log("HTMX: Sending request for version info partial");
     }
   });
@@ -931,7 +930,7 @@ export const initializeTabState = function () {
   });
 
   // Enable toggles after HTMX swaps complete
-  document.body.addEventListener("htmx:afterSettle", (event) => {
+  window.addEventListener("htmx:afterSettle", (event) => {
     document
       .querySelectorAll(".show-inactive-toggle[disabled]")
       .forEach((checkbox) => {
@@ -1276,7 +1275,7 @@ export const initializeExportImport = function () {
   loadRecentImports();
 
   // Mark as initialized
-  Admin.exportImportInitialized = true;
+  window.Admin.exportImportInitialized = true;
 };
 
 // ===================================================================
@@ -1443,12 +1442,12 @@ export const registerReloadAllResourceSections = function () {
 
   // Save initial markup on first full load so we can restore exactly if needed
   document.addEventListener("DOMContentLoaded", () => {
-    Admin.__initialSectionMarkup = window.__initialSectionMarkup || {};
+    window.Admin.__initialSectionMarkup = window.__initialSectionMarkup || {};
     SECTION_NAMES.forEach((s) => {
       const el = safeGetElement(`${s}-section`);
       if (el && !(s in window.__initialSectionMarkup)) {
         // store the exact innerHTML produced by the server initially
-        Admin.__initialSectionMarkup[s] = el.innerHTML;
+        window.Admin.__initialSectionMarkup[s] = el.innerHTML;
       }
     });
   });
@@ -1632,7 +1631,7 @@ export const registerReloadAllResourceSections = function () {
   };
 
   // The exported function: reloadAllResourceSections
-  Admin.reloadAllResourceSections = async function (teamId) {
+  window.Admin.reloadAllResourceSections = async function (teamId) {
     const sections = ["tools", "resources", "prompts", "servers", "gateways"];
 
     // ensure there is a ROOT_PATH set

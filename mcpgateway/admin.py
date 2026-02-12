@@ -218,7 +218,7 @@ def get_bundle_js_filename() -> str:
     """Get the hashed bundle.js filename from Vite manifest.
 
     Reads the Vite manifest file to get the current hashed bundle filename.
-    Falls back to 'bundle.js' if manifest doesn't exist (dev mode).
+    Falls back to scanning for bundle-*.js on disk if the manifest is unreadable.
     Invalidates the cache when the cached bundle file no longer exists on disk.
 
     Returns:
@@ -239,14 +239,20 @@ def get_bundle_js_filename() -> str:
                 manifest = orjson.loads(f.read())
                 # The key is the input path relative to the project root
                 entry_key = "mcpgateway/static/js/admin.js"
-                if entry_key in manifest:
-                    _bundle_js_cache = manifest[entry_key].get("file", "bundle.js")
+                if entry_key in manifest and manifest[entry_key].get("file"):
+                    _bundle_js_cache = manifest[entry_key]["file"]
                     return _bundle_js_cache
     except Exception as e:
         LOGGER.warning(f"Failed to read Vite manifest: {e}")
 
-    _bundle_js_cache = "bundle.js"
-    return _bundle_js_cache
+    # Manifest unreadable or missing entry — find bundle file directly on disk
+    bundles = sorted(static_dir.glob("bundle-*.js"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if bundles:
+        _bundle_js_cache = bundles[0].name
+        return _bundle_js_cache
+
+    LOGGER.error("No bundle-*.js found in %s — admin UI will not load", static_dir)
+    return ""
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
     """Normalize UI hide values from CSV/list input into a validated set.

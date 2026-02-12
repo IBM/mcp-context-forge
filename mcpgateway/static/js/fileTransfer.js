@@ -1,5 +1,5 @@
-import { escapeHtml } from "./security";
-import { displayImportPreview } from "./selectiveImport";
+import { escapeHtml } from "./security.js";
+import { displayImportPreview } from "./selectiveImport.js";
 import { getAuthToken } from "./tokens";
 import { loadTools } from "./tools";
 import { showNotification, safeGetElement } from "./utils";

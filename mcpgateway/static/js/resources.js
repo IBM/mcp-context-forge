@@ -1,5 +1,4 @@
-/* global Admin */
-import { getSelectedGatewayIds } from "./gateway";
+import { getSelectedGatewayIds } from "./gateway.js";
 import { getCurrentTeamId, safeGetElement } from "./utils";
 
 export const initResourceSelect = function (
@@ -52,9 +51,9 @@ export const initResourceSelect = function (
         }
         if (
           (!persistedResourceIds || persistedResourceIds.length === 0) &&
-          Array.isArray(Admin._selectedAssociatedResources)
+          Array.isArray(window.Admin._selectedAssociatedResources)
         ) {
-          persistedResourceIds = Admin._selectedAssociatedResources.slice();
+          persistedResourceIds = window.Admin._selectedAssociatedResources.slice();
         }
       }
 
@@ -351,8 +350,8 @@ export const initResourceSelect = function (
                   parseErr
                 );
               }
-            } else if (Array.isArray(Admin._selectedAssociatedResources)) {
-              persisted = Admin._selectedAssociatedResources.slice();
+            } else if (Array.isArray(window.Admin._selectedAssociatedResources)) {
+              persisted = window.Admin._selectedAssociatedResources.slice();
             }
 
             if (changedEl.checked) {
@@ -377,7 +376,7 @@ export const initResourceSelect = function (
               JSON.stringify(persisted)
             );
             try {
-              Admin._selectedAssociatedResources = persisted.slice();
+              window.Admin._selectedAssociatedResources = persisted.slice();
             } catch (err) {
               console.error(
                 "Error persisting Admin._selectedAssociatedResources:",
@@ -404,7 +403,7 @@ export const initResourceSelect = function (
 export const cleanupResourceTestModal = function () {
   try {
     // Clear stored state
-    Admin.CurrentResourceUnderTest = null;
+    window.Admin.CurrentResourceUnderTest = null;
 
     // Reset form fields container
     const fieldsContainer = safeGetElement("resource-test-form-fields");

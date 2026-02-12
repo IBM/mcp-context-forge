@@ -1,4 +1,6 @@
-const { safeGetElement } = require("./utils");
+import { updateEntityActionButtons } from "./logging.js";
+import { safeGetElement } from  "./utils.js";
+
 
 /**
  * ====================================================================
@@ -166,6 +168,6 @@ const updateEntityStatus = function (type, data) {
   if (actionCell) {
     const isEnabled =
       data.enabled !== undefined ? data.enabled : data.isActive;
-    Admin.updateEntityActionButtons(actionCell, type, data.id, isEnabled);
+    updateEntityActionButtons(actionCell, type, data.id, isEnabled);
   }
 };

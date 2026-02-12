@@ -1,6 +1,6 @@
 
 import { closeModal, openModal } from "./modals";
-import { escapeHtml } from "./security";
+import { escapeHtml } from "./security.js";
 import { getAuthToken } from "./tokens";
 import { fetchWithTimeout, safeGetElement, showErrorMessage } from "./utils";
 

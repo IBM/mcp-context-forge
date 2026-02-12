@@ -2,7 +2,7 @@
 // CA Certificate Validation Functions
 // ============================================================================
 
-import { escapeHtml } from "./security";
+import { escapeHtml } from "./security.js";
 import { isValidBase64, safeGetElement } from "./utils";
 
 /**
