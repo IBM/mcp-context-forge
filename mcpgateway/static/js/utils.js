@@ -520,3 +520,24 @@ export const isValidBase64 = function (str) {
   const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
   return base64Pattern.test(str);
 };
+
+// Logs refresh function
+export const refreshLogs = function () {
+  const logsSection = safeGetElement("logs");
+  if (logsSection && typeof window.htmx !== "undefined") {
+    // Trigger HTMX refresh on the logs section
+    window.htmx.trigger(logsSection, "refresh");
+  }
+};
+
+/**
+ * Truncate text with ellipsis
+ */
+export const truncateText = function (text, maxLength) {
+  if (!text) {
+    return "";
+  }
+  return text.length > maxLength
+    ? text.substring(0, maxLength) + "..."
+    : text;
+};

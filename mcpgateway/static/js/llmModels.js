@@ -1,5 +1,5 @@
 import { showCopyableModal } from "./modals";
-import { escapeHtml, parseErrorResponse } from "./security";
+import { escapeHtml, parseErrorResponse } from "./security.js";
 import { fetchWithAuth, getAuthToken } from "./tokens";
 import { safeGetElement, showToast } from "./utils";
 

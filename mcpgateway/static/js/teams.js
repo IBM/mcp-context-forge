@@ -1,7 +1,8 @@
-import { AppState } from "./appState";
+import { AppState } from "./appState.js";
 import { DEFAULT_TEAMS_PER_PAGE } from "./constants";
-import { escapeHtml } from "./security";
-import { getAuthToken } from "./tokens";
+import { escapeHtml } from "./security.js";
+import { fetchWithAuth, getAuthToken } from "./tokens";
+import { performUserSearch } from "./users";
 import {
   fetchWithTimeout,
   safeGetElement,
@@ -70,6 +71,7 @@ const performTeamSearch = async function (searchTerm) {
   const params = new URLSearchParams();
   params.set("page", "1");
   params.set("per_page", getTeamsPerPage().toString());
+  
 
   if (searchTerm && searchTerm.trim() !== "") {
     params.set("q", searchTerm.trim());
@@ -660,4 +662,435 @@ export const validatePasswordMatch = function () {
       submitButton.classList.remove("opacity-50", "cursor-not-allowed");
     }
   }
+};
+
+// ===================================================================
+// TEAM MANAGEMENT FUNCTIONS
+// ===================================================================
+// Team edit modal functions
+export const hideTeamEditModal = function () {
+  safeGetElement("team-edit-modal").classList.add("hidden");
+};
+
+// Team member management functions
+export const showAddMemberForm = function (teamId) {
+  const form = safeGetElement("add-member-form-" + teamId);
+  if (form) {
+    form.classList.remove("hidden");
+  }
+};
+
+export const hideAddMemberForm = function (teamId) {
+  const form = safeGetElement("add-member-form-" + teamId);
+  if (form) {
+    form.classList.add("hidden");
+    // Reset form
+    const formElement = form.querySelector("form");
+    if (formElement) {
+      formElement.reset();
+    }
+  }
+};
+
+// Reset team creation form after successful HTMX actions
+export const resetTeamCreateForm = function () {
+  const form = document.querySelector('form[hx-post*="/admin/teams"]');
+  if (form) {
+    form.reset();
+  }
+  const errorEl = safeGetElement("create-team-error");
+  if (errorEl) {
+    errorEl.innerHTML = "";
+  }
+};
+
+// Normalize team ID from element IDs like "add-members-form-<id>"
+export const extractTeamId = function (prefix, elementId) {
+  if (!elementId || !elementId.startsWith(prefix)) {
+    return null;
+  }
+  return elementId.slice(prefix.length);
+};
+
+export const updateAddMembersCount = function (teamId) {
+  const form = safeGetElement(`add-members-form-${teamId}`);
+  const countEl = safeGetElement(`selected-count-${teamId}`);
+  if (!form || !countEl) {
+    return;
+  }
+  const checked = form.querySelectorAll(
+    'input[name="associatedUsers"]:checked'
+  );
+  countEl.textContent =
+    checked.length === 0
+      ? "No users selected"
+      : `${checked.length} user${checked.length !== 1 ? "s" : ""} selected`;
+};
+
+export const dedupeSelectorItems = function (container) {
+  if (!container) {
+    return;
+  }
+  const seen = new Set();
+  const items = Array.from(container.querySelectorAll(".user-item"));
+  items.forEach((item) => {
+    const email = item.getAttribute("data-user-email") || "";
+    if (!email) {
+      return;
+    }
+    if (seen.has(email)) {
+      item.remove();
+      return;
+    }
+    seen.add(email);
+  });
+};
+
+export const handleAdminTeamAction = function (event) {
+  const detail = event.detail || {};
+  const delayMs = Number(detail.delayMs) || 0;
+  setTimeout(() => {
+    if (detail.resetTeamCreateForm) {
+      resetTeamCreateForm();
+    }
+    if (detail.closeTeamEditModal && typeof hideTeamEditModal === "function") {
+      hideTeamEditModal();
+    }
+    if (detail.closeRoleModal) {
+      const roleModal = safeGetElement("role-assignment-modal");
+      if (roleModal) {
+        roleModal.classList.add("hidden");
+      }
+    }
+    if (detail.closeAllModals) {
+      const modals = document.querySelectorAll('[id$="-modal"]');
+      modals.forEach((modal) => modal.classList.add("hidden"));
+    }
+    if (detail.refreshUnifiedTeamsList && window.htmx) {
+      const unifiedList = safeGetElement("unified-teams-list");
+      if (unifiedList) {
+        // Preserve current pagination/filter state on refresh
+        const paginationState = getTeamsCurrentPaginationState();
+        const params = new URLSearchParams();
+        params.set("page", paginationState.page);
+        params.set("per_page", paginationState.perPage);
+        // Preserve search query from input field
+        const searchInput = safeGetElement("team-search");
+        if (searchInput && searchInput.value.trim()) {
+          params.set("q", searchInput.value.trim());
+        }
+        // Preserve relationship filter
+        const currentTeamRelationshipFilter = AppState.getCurrentTeamRelationshipFilter();
+        if (
+          typeof currentTeamRelationshipFilter !== "undefined" &&
+          currentTeamRelationshipFilter &&
+          currentTeamRelationshipFilter !== "all"
+        ) {
+          params.set("relationship", currentTeamRelationshipFilter);
+        }
+        const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
+        window.htmx.ajax("GET", url, {
+          target: "#unified-teams-list",
+          swap: "innerHTML",
+        });
+      }
+    }
+    if (detail.refreshTeamMembers && detail.teamId) {
+      if (typeof window.loadTeamMembersView === "function") {
+        window.loadTeamMembersView(detail.teamId);
+      } else if (window.htmx) {
+        const modalContent = safeGetElement("team-edit-modal-content");
+        if (modalContent) {
+          window.htmx.ajax(
+            "GET",
+            `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
+            {
+              target: "#team-edit-modal-content",
+              swap: "innerHTML",
+            }
+          );
+        }
+      }
+    }
+    if (detail.refreshJoinRequests && detail.teamId && window.htmx) {
+      const joinRequests = safeGetElement("team-join-requests-modal-content");
+      if (joinRequests) {
+        window.htmx.ajax(
+          "GET",
+          `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/join-requests`,
+          {
+            target: "#team-join-requests-modal-content",
+            swap: "innerHTML",
+          }
+        );
+      }
+    }
+  }, delayMs);
+};
+
+// Get current pagination state from URL parameters
+const  getTeamsCurrentPaginationState = function() {
+  const urlParams = new URLSearchParams(window.location.search);
+  return {
+    page: Math.max(1, parseInt(urlParams.get("teams_page"), 10) || 1),
+    perPage: Math.max(1, parseInt(urlParams.get("teams_size"), 10) || 10),
+  };
+}
+
+export const initializeAddMembersForm = function (form) {
+  if (!form || form.dataset.initialized === "true") {
+    return;
+  }
+  form.dataset.initialized = "true";
+
+  // Support both old add-members-form pattern and new team-members-form pattern
+  const teamId =
+    form.dataset.teamId ||
+    extractTeamId("add-members-form-", form.id) ||
+    extractTeamId("team-members-form-", form.id) ||
+    "";
+
+  console.log(
+    `[initializeAddMembersForm] Form ID: ${form.id}, Team ID: ${teamId}`
+  );
+
+  if (!teamId) {
+    console.warn(`[initializeAddMembersForm] No team ID found for form:`, form);
+    return;
+  }
+
+  const searchInput = safeGetElement(`user-search-${teamId}`);
+  const searchResults = safeGetElement(`user-search-results-${teamId}`);
+  const searchLoading = safeGetElement(`user-search-loading-${teamId}`);
+
+  // For unified view, find the list container for client-side filtering
+  const userListContainer = safeGetElement(`team-members-list-${teamId}`);
+
+  console.log(
+    `[Team ${teamId}] Form initialization - searchInput: ${!!searchInput}, userListContainer: ${!!userListContainer}, searchResults: ${!!searchResults}`
+  );
+
+  const memberEmails = [];
+  if (searchResults?.dataset.memberEmails) {
+    try {
+      const parsed = JSON.parse(searchResults.dataset.memberEmails);
+      if (Array.isArray(parsed)) {
+        memberEmails.push(...parsed);
+      }
+    } catch (error) {
+      console.warn("Failed to parse member emails", error);
+    }
+  }
+  const memberEmailSet = new Set(memberEmails);
+
+  form.addEventListener("change", function (event) {
+    if (event.target?.name === "associatedUsers") {
+      updateAddMembersCount(teamId);
+      // Role dropdown state is not managed client-side - all logic is server-side
+    }
+  });
+
+  updateAddMembersCount(teamId);
+
+  // If we have searchInput and userListContainer, use server-side search like tools (unified view)
+  if (searchInput && userListContainer) {
+    console.log(
+      `[Team ${teamId}] Initializing server-side search for unified view`
+    );
+
+    // Get team member data from the initial page load (embedded in the form)
+    const teamMemberDataScript = safeGetElement(`team-member-data-${teamId}`);
+    let teamMemberData = {};
+    if (teamMemberDataScript) {
+      try {
+        teamMemberData = JSON.parse(teamMemberDataScript.textContent || "{}");
+        console.log(
+          `[Team ${teamId}] Loaded team member data for ${Object.keys(teamMemberData).length} members`
+        );
+      } catch (e) {
+        console.error(`[Team ${teamId}] Failed to parse team member data:`, e);
+      }
+    }
+
+    let searchTimeout;
+    searchInput.addEventListener("input", function () {
+      clearTimeout(searchTimeout);
+      const query = this.value.trim();
+
+      searchTimeout = setTimeout(async () => {
+        await performUserSearch(
+          teamId,
+          query,
+          userListContainer,
+          teamMemberData
+        );
+      }, 300);
+    });
+
+    return;
+  }
+
+  if (!searchInput || !searchResults) {
+    return;
+  }
+
+  let searchTimeout;
+  searchInput.addEventListener("input", function () {
+    clearTimeout(searchTimeout);
+    const query = this.value.trim();
+
+    if (query.length < 2) {
+      searchResults.innerHTML = "";
+      if (searchLoading) {
+        searchLoading.classList.add("hidden");
+      }
+      return;
+    }
+
+    searchTimeout = setTimeout(async () => {
+      if (searchLoading) {
+        searchLoading.classList.remove("hidden");
+      }
+      try {
+        const searchUrl = searchInput.dataset.searchUrl || "";
+        const limit = searchInput.dataset.searchLimit || "10";
+        if (!searchUrl) {
+          throw new Error("Search URL missing");
+        }
+        const response = await fetchWithAuth(
+          `${searchUrl}?q=${encodeURIComponent(query)}&limit=${limit}`
+        );
+        if (!response.ok) {
+          throw new Error(`Search failed: ${response.status}`);
+        }
+        const data = await response.json();
+
+        searchResults.innerHTML = "";
+        if (data.users && data.users.length > 0) {
+          const container = document.createElement("div");
+          container.className =
+            "bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-md p-2 mt-1";
+
+          data.users.forEach((user) => {
+            if (memberEmailSet.has(user.email)) {
+              return;
+            }
+            const item = document.createElement("div");
+            item.className =
+              "p-2 hover:bg-gray-50 dark:hover:bg-gray-700 rounded cursor-pointer text-sm";
+            item.textContent = `${user.full_name || ""} (${user.email})`;
+            item.addEventListener("click", () => {
+              const container = safeGetElement(
+                `user-selector-container-${teamId}`
+              );
+              if (!container) {
+                return;
+              }
+              const checkbox = container.querySelector(
+                `input[value="${user.email}"]`
+              );
+
+              if (checkbox) {
+                checkbox.checked = true;
+                checkbox.dispatchEvent(new Event("change", { bubbles: true }));
+              } else {
+                const userItem = document.createElement("div");
+                userItem.className =
+                  "flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900 rounded-md user-item";
+                userItem.setAttribute("data-user-email", user.email);
+
+                const newCheckbox = document.createElement("input");
+                newCheckbox.type = "checkbox";
+                newCheckbox.name = "associatedUsers";
+                newCheckbox.value = user.email;
+                newCheckbox.setAttribute(
+                  "data-user-name",
+                  user.full_name || ""
+                );
+                newCheckbox.className =
+                  "user-checkbox form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600 flex-shrink-0";
+                newCheckbox.setAttribute("data-auto-check", "true");
+                newCheckbox.checked = true;
+
+                const label = document.createElement("span");
+                label.className = "select-none flex-grow";
+                label.textContent = `${user.full_name || ""} (${user.email})`;
+
+                const roleSelect = document.createElement("select");
+                roleSelect.name = `role_${encodeURIComponent(user.email)}`;
+                roleSelect.className =
+                  "role-select text-sm px-2 py-1 border border-gray-300 dark:border-gray-600 rounded-md dark:bg-gray-700 dark:text-white flex-shrink-0";
+
+                const memberOption = document.createElement("option");
+                memberOption.value = "member";
+                memberOption.textContent = "Member";
+                memberOption.selected = true;
+
+                const ownerOption = document.createElement("option");
+                ownerOption.value = "owner";
+                ownerOption.textContent = "Owner";
+
+                roleSelect.appendChild(memberOption);
+                roleSelect.appendChild(ownerOption);
+
+                userItem.appendChild(newCheckbox);
+                userItem.appendChild(label);
+                userItem.appendChild(roleSelect);
+
+                const firstChild = container.firstChild;
+                if (firstChild) {
+                  container.insertBefore(userItem, firstChild);
+                } else {
+                  container.appendChild(userItem);
+                }
+
+                newCheckbox.dispatchEvent(
+                  new Event("change", { bubbles: true })
+                );
+              }
+
+              searchInput.value = "";
+              searchResults.innerHTML = "";
+            });
+            container.appendChild(item);
+          });
+
+          if (container.childElementCount > 0) {
+            searchResults.appendChild(container);
+          } else {
+            const empty = document.createElement("div");
+            empty.className = "text-sm text-gray-500 dark:text-gray-400 mt-1";
+            empty.textContent = "No users found";
+            searchResults.appendChild(empty);
+          }
+        } else {
+          const empty = document.createElement("div");
+          empty.className = "text-sm text-gray-500 dark:text-gray-400 mt-1";
+          empty.textContent = "No users found";
+          searchResults.appendChild(empty);
+        }
+      } catch (error) {
+        console.error("Search error:", error);
+        searchResults.innerHTML = "";
+        const errorEl = document.createElement("div");
+        errorEl.className = "text-sm text-red-500 mt-1";
+        errorEl.textContent = "Search failed";
+        searchResults.appendChild(errorEl);
+      } finally {
+        if (searchLoading) {
+          searchLoading.classList.add("hidden");
+        }
+      }
+    }, 300);
+  });
+};
+
+export const initializeAddMembersForms = function (root = document) {
+  // Support both old add-members-form pattern and new unified team-members-form pattern
+  const addMembersForms =
+    root?.querySelectorAll?.('[id^="add-members-form-"]') || [];
+  const teamMembersForms =
+    root?.querySelectorAll?.('[id^="team-members-form-"]') || [];
+  const allForms = [...addMembersForms, ...teamMembersForms];
+  allForms.forEach((form) => initializeAddMembersForm(form));
 };

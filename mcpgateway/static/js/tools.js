@@ -1,13 +1,12 @@
-/* global Admin */
-import { AppState } from "./appState";
-import { getSelectedGatewayIds } from "./gateway";
+import { AppState } from "./appState.js";
+import { getSelectedGatewayIds } from "./gateway.js";
 import { closeModal, openModal } from "./modals";
 import { 
   escapeHtml, 
   safeSetInnerHTML, 
   validateInputName, 
   validatePassthroughHeader, 
-} from "./security";
+} from "./security.js";
 import { 
   fetchWithTimeout, 
   getCurrentTeamId, 
@@ -126,9 +125,9 @@ export const initToolSelect = function (
         }
         if (
           (!persistedToolIds || persistedToolIds.length === 0) &&
-          Array.isArray(Admin._selectedAssociatedTools)
+          Array.isArray(window.Admin._selectedAssociatedTools)
         ) {
-          persistedToolIds = Admin._selectedAssociatedTools.slice();
+          persistedToolIds = window.Admin._selectedAssociatedTools.slice();
         }
       }
       
@@ -164,9 +163,9 @@ export const initToolSelect = function (
       ) {
         count = persistedToolIds.length;
         // Build pill data from persisted IDs using toolMapping
-        if (Admin.toolMapping) {
+        if (window.Admin.toolMapping) {
           persistedToolIds.forEach((id) => {
-            const toolName = Admin.toolMapping[id];
+            const toolName = window.Admin.toolMapping[id];
             if (toolName) {
               pillsData.push({ id, name: toolName });
             }
@@ -192,12 +191,12 @@ export const initToolSelect = function (
         isEditServerMode &&
         serverTools &&
         Array.isArray(serverTools) &&
-        Admin.toolMapping
+        window.Admin.toolMapping
       ) {
         // In edit server mode, show the server tools rather than just currently checked ones
         const allLoadedTools = Array.from(checkboxes);
         const pillsToDisplay = allLoadedTools.filter((checkbox) => {
-          const toolName = Admin.toolMapping[checkbox.value];
+          const toolName = window.Admin.toolMapping[checkbox.value];
           return toolName && serverTools.includes(toolName);
         });
         pillsToDisplay.slice(0, maxPillsToShow).forEach((cb) => {
@@ -436,7 +435,7 @@ export const initToolSelect = function (
           // Get the tool name from toolMapping to update serverTools array
           const toolId = e.target.value;
           const toolName =
-          Admin.toolMapping && Admin.toolMapping[toolId];
+          window.Admin.toolMapping && window.Admin.toolMapping[toolId];
           
           if (toolName) {
             if (e.target.checked) {
@@ -487,9 +486,9 @@ export const initToolSelect = function (
                 );
               }
             } else if (
-              Array.isArray(Admin._selectedAssociatedTools)
+              Array.isArray(window.Admin._selectedAssociatedTools)
             ) {
-              persisted = Admin._selectedAssociatedTools.slice();
+              persisted = window.Admin._selectedAssociatedTools.slice();
             }
             
             if (changedEl.checked) {
@@ -520,7 +519,7 @@ export const initToolSelect = function (
               JSON.stringify(persisted),
             );
             try {
-              Admin._selectedAssociatedTools = persisted.slice();
+              window.Admin._selectedAssociatedTools = persisted.slice();
             } catch (e) {
               console.error(
                 "Error persisting Admin._selectedAssociatedTools:",
