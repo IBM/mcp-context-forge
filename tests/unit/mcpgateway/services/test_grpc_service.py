@@ -185,6 +185,48 @@ class TestGrpcService:
             assert next_cursor is None
             mock_team_instance.build_team_filter_clause.assert_called_once()
 
+    async def test_list_services_with_team_names(self, service, mock_db, sample_db_service):
+        """Test listing services with team name resolution."""
+        # Set up service with team_id
+        sample_db_service.team_id = "team-123"
+
+        # Mock team query result
+        mock_team = MagicMock()
+        mock_team.id = "team-123"
+        mock_team.name = "Test Team"
+
+        # Mock db.execute to return team data
+        mock_execute_result = MagicMock()
+        mock_execute_result.all.return_value = [mock_team]
+        mock_db.execute.return_value = mock_execute_result
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = ([sample_db_service], None)
+            result, next_cursor = await service.list_services(mock_db, include_inactive=False)
+
+        assert len(result) == 1
+        assert result[0].name == "test-grpc-service"
+        assert result[0].team_id == "team-123"
+        assert next_cursor is None
+        mock_db.commit.assert_called_once()
+
+    async def test_list_services_with_team_id_filter_only(self, service, mock_db, sample_db_service):
+        """Test listing services with team_id filter but no user_email."""
+        sample_db_service.team_id = "team-456"
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = ([sample_db_service], None)
+            result, next_cursor = await service.list_services(
+                mock_db,
+                include_inactive=False,
+                team_id="team-456",
+            )
+
+        assert len(result) == 1
+        assert next_cursor is None
+
     async def test_list_services_pagination(self, service, mock_db):
         """Test multi-page pagination for gRPC services."""
         # Create multiple mock services
