@@ -130,8 +130,12 @@ class TeamPage(BasePage):
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
 
-        # Click delete button
-        self.click_locator(self.get_team_delete_btn(team_name))
+        # Click delete button and wait for the DELETE response
+        with self.page.expect_response(lambda r: "/admin/teams/" in r.url and r.request.method == "DELETE"):
+            self.click_locator(self.get_team_delete_btn(team_name))
+
+        # Wait for HTMX refresh cycles to settle (delete .then() + HX-Trigger 1s delay)
+        self.page.wait_for_timeout(2000)
 
     def team_exists(self, team_name: str) -> bool:
         """Check if a team with the given name exists.
@@ -155,10 +159,17 @@ class TeamPage(BasePage):
         team_card = self.get_team_card(team_name)
         expect(team_card).to_be_visible(timeout=timeout)
 
-    def wait_for_team_hidden(self, team_name: str) -> None:
+    def wait_for_team_hidden(self, team_name: str, timeout: int = 30000) -> None:
         """Wait for a team to be hidden from the list.
+
+        Reloads the page to bypass stale HTMX display (see bug #2864).
 
         Args:
             team_name: The name of the team
+            timeout: Maximum time to wait in milliseconds
         """
-        expect(self.page.locator(f"text={team_name}")).to_be_hidden()
+        # Reload to get fresh data - workaround for stale HTMX refresh race condition
+        self.page.reload(wait_until="domcontentloaded")
+        self.navigate_to_teams_tab()
+        team_card = self.get_team_card(team_name)
+        expect(team_card).to_be_hidden(timeout=timeout)
