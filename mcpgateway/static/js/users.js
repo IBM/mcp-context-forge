@@ -2,7 +2,9 @@
 // USER MANAGEMENT FUNCTIONS
 // ===================================================================
 
+import { AppState } from "./appState";
 import { escapeHtml } from "./security";
+import { getTeamsPerPage, initializePasswordValidation } from "./teams";
 import { fetchWithAuth, getAuthToken } from "./tokens";
 import { safeGetElement } from "./utils";
 
@@ -633,7 +635,7 @@ export const handleAdminTeamAction = function (event) {
         const params = new URLSearchParams();
         params.set("page", "1"); // Reset to first page on action
         if (typeof getTeamsPerPage === "function") {
-          params.set("per_page", Admin.getTeamsPerPage().toString());
+          params.set("per_page", getTeamsPerPage().toString());
         }
         // Preserve search query from input field
         const searchInput = safeGetElement("team-search");
@@ -641,6 +643,7 @@ export const handleAdminTeamAction = function (event) {
           params.set("q", searchInput.value.trim());
         }
         // Preserve relationship filter
+        const currentTeamRelationshipFilter = AppState.getCurrentTeamRelationshipFilter();
         if (
           typeof currentTeamRelationshipFilter !== "undefined" &&
           currentTeamRelationshipFilter &&
@@ -750,7 +753,7 @@ export const registerAdminActionListeners = function () {
     initializeAddMembersForms(target);
     // Only initialize password validation if the loaded content contains password fields
     if (target?.querySelector?.("#password-field")) {
-      Admin.initializePasswordValidation(target);
+      initializePasswordValidation(target);
     }
   });
 };

@@ -1,5 +1,7 @@
 import { escapeHtml } from "./security";
+import { displayImportPreview } from "./selectiveImport";
 import { getAuthToken } from "./tokens";
+import { loadTools } from "./tools";
 import { showNotification, safeGetElement } from "./utils";
 
 // ===================================================================
@@ -75,7 +77,7 @@ export const handleExportSelected = async function () {
     showExportProgress(true);
 
     // This would need entity selection logic - for now, just do a filtered export
-    await Admin.handleExportAll(); // Simplified implementation
+    await handleExportAll(); // Simplified implementation
   } catch (error) {
     console.error("Selective export error:", error);
     showNotification(`❌ Selective export failed: ${error.message}`, "error");
@@ -353,7 +355,7 @@ export const previewImport = async function () {
     }
 
     const result = await response.json();
-    Admin.displayImportPreview(result.preview);
+    displayImportPreview(result.preview);
 
     showNotification("✅ Import preview generated successfully", "success");
   } catch (error) {
@@ -491,9 +493,9 @@ const displayImportMessages = function (errors, warnings, isDryRun) {
                 <div class="font-bold">❌ Errors (${errors.length})</div>
                 <ul class="mt-2 text-sm list-disc list-inside">
                     ${errors
-                      .slice(0, 5)
-                      .map((error) => `<li>${escapeHtml(error)}</li>`)
-                      .join("")}
+    .slice(0, 5)
+    .map((error) => `<li>${escapeHtml(error)}</li>`)
+    .join("")}
                     ${errors.length > 5 ? `<li class="text-gray-600 dark:text-gray-400">... and ${errors.length - 5} more errors</li>` : ""}
                 </ul>
             `;
@@ -510,9 +512,9 @@ const displayImportMessages = function (errors, warnings, isDryRun) {
                 <div class="font-bold">${warningTitle} (${warnings.length})</div>
                 <ul class="mt-2 text-sm list-disc list-inside">
                     ${warnings
-                      .slice(0, 5)
-                      .map((warning) => `<li>${escapeHtml(warning)}</li>`)
-                      .join("")}
+    .slice(0, 5)
+    .map((warning) => `<li>${escapeHtml(warning)}</li>`)
+    .join("")}
                     ${warnings.length > 5 ? `<li class="text-gray-600 dark:text-gray-400">... and ${warnings.length - 5} more warnings</li>` : ""}
                 </ul>
             `;
@@ -578,8 +580,8 @@ export const refreshCurrentTabData = function () {
       }
     } else if (href === "#tools") {
       // Refresh tools (for tool-ops-panel when toolops_enabled=true)
-      if (typeof Admin.loadTools === "function") {
-        Admin.loadTools();
+      if (typeof loadTools === "function") {
+        loadTools();
       }
     } else if (href === "#gateways") {
       // Refresh gateways

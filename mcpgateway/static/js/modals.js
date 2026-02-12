@@ -4,7 +4,7 @@
 
 import { AppState } from "./appState.js";
 import { escapeHtml } from "./security.js";
-import { safeGetElement } from "./utils.js";
+import { getCookie, safeGetElement } from "./utils.js";
 
 // Callback registry for cleanup functions defined in other modules
 const cleanupCallbacks = {
@@ -258,4 +258,134 @@ export const showCopyableModal = function (title, message, type = "info") {
     }
   };
   document.addEventListener("keydown", handleEscape);
+};
+
+// ===================================================================
+// MCP REGISTRY MODAL FUNCTIONS
+// ===================================================================
+
+// Define modal functions in global scope for MCP Registry
+export const showApiKeyModal = function (serverId, serverName, serverUrl) {
+  const modal = safeGetElement("api-key-modal");
+  if (modal) {
+    safeGetElement("modal-server-id").value = serverId;
+    safeGetElement("modal-server-name").textContent = serverName;
+    safeGetElement("modal-custom-name").placeholder = serverName;
+    modal.classList.remove("hidden");
+  }
+};
+
+export const closeApiKeyModal = function () {
+  const modal = safeGetElement("api-key-modal");
+  if (modal) {
+    modal.classList.add("hidden");
+  }
+  const form = safeGetElement("api-key-form");
+  if (form) {
+    form.reset();
+  }
+};
+
+export const submitApiKeyForm = function (event) {
+  event.preventDefault();
+  const serverId = safeGetElement("modal-server-id").value;
+  const customName = safeGetElement("modal-custom-name").value;
+  const apiKey = safeGetElement("modal-api-key").value;
+
+  // Prepare request data
+  const requestData = {};
+  if (customName) {
+    requestData.name = customName;
+  }
+  if (apiKey) {
+    requestData.api_key = apiKey;
+  }
+
+  const rootPath = window.ROOT_PATH || "";
+
+  // Send registration request
+  fetch(`${rootPath}/admin/mcp-registry/${serverId}/register`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + (getCookie("jwt_token") || ""),
+    },
+    body: JSON.stringify(requestData),
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.success) {
+        closeApiKeyModal();
+        // Reload the catalog
+        if (window.htmx && window.htmx.ajax) {
+          window.htmx.ajax("GET", `${rootPath}/admin/mcp-registry/partial`, {
+            target: "#mcp-registry-content",
+            swap: "innerHTML",
+          });
+        }
+      } else {
+        alert("Registration failed: " + (data.error || data.message));
+      }
+    })
+    .catch((error) => {
+      alert("Error registering server: " + error);
+    });
+};
+
+// gRPC Services Functions
+
+/**
+ * Toggle visibility of TLS certificate/key fields based on TLS checkbox
+ */
+export const toggleGrpcTlsFields = function () {
+  const tlsEnabled = safeGetElement("grpc-tls-enabled")?.checked || false;
+  const certField = safeGetElement("grpc-tls-cert-field");
+  const keyField = safeGetElement("grpc-tls-key-field");
+
+  if (tlsEnabled) {
+    certField?.classList.remove("hidden");
+    keyField?.classList.remove("hidden");
+  } else {
+    certField?.classList.add("hidden");
+    keyField?.classList.add("hidden");
+  }
+};
+
+/**
+ * View gRPC service methods in a modal or alert
+ * @param {string} serviceId - The gRPC service ID
+ */
+export const viewGrpcMethods = function (serviceId) {
+  const rootPath = window.ROOT_PATH || "";
+
+  fetch(`${rootPath}/grpc/${serviceId}/methods`, {
+    method: "GET",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: "Bearer " + (getCookie("jwt_token") || ""),
+    },
+  })
+    .then((response) => response.json())
+    .then((data) => {
+      if (data.methods && data.methods.length > 0) {
+        let methodsList = "gRPC Methods:\n\n";
+        data.methods.forEach((method) => {
+          methodsList += `${method.full_name}\n`;
+          methodsList += `  Input: ${method.input_type || "N/A"}\n`;
+          methodsList += `  Output: ${method.output_type || "N/A"}\n`;
+          if (method.client_streaming || method.server_streaming) {
+            methodsList += `  Streaming: ${method.client_streaming ? "Client" : ""} ${method.server_streaming ? "Server" : ""}\n`;
+          }
+          methodsList += "\n";
+        });
+        alert(methodsList);
+      } else {
+        alert(
+          "No methods discovered for this service. Try re-reflecting the service."
+        );
+      }
+    })
+    .catch((error) => {
+      alert("Error fetching methods: " + error);
+    });
 };

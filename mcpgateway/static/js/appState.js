@@ -15,6 +15,7 @@ export const AppState = {
   toolTestResultEditor: null,
   isInitialized: false,
   pendingRequests: new Set(),
+  currentTeamRelationshipFilter: "all",
   editors: {
     gateway: {
       headers: null,
@@ -93,5 +94,13 @@ export const AppState = {
 
   setModalInactive(modalId) {
     this.activeModals.delete(modalId);
+  },
+
+  getCurrentTeamRelationshipFilter() {
+    return this.currentTeamRelationshipFilter;
+  },
+  
+  setCurrentTeamRelationshipFilter(teamRelationshipFilter) {
+    this.currentTeamRelationshipFilter = teamRelationshipFilter;
   },
 };
