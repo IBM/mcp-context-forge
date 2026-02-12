@@ -89,7 +89,7 @@ class EmbeddingService:
 
     async def embed_tool(self, tool_data: dict) -> List[float]:
         """Generate embedding for a tool based on its metadata."""
-        # Validate tool data
+        # Validate tool data 
         if not isinstance(tool_data, dict):
             raise ValueError("Tool data must be a dictionary")
         

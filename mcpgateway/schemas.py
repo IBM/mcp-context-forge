@@ -3729,6 +3729,30 @@ class ServerCreate(BaseModel):
     oauth_enabled: bool = Field(False, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
 
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'. Meta servers expose meta-tools instead of real tools.")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden from tool listing endpoints")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema). Only applicable when server_type is 'meta'.")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server (MetaToolScope schema).")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: str) -> str:
+        """Validate server type value.
+
+        Args:
+            v: Server type to validate.
+
+        Returns:
+            Validated server type.
+
+        Raises:
+            ValueError: If server type is invalid.
+        """
+        if v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
@@ -3862,6 +3886,30 @@ class ServerUpdate(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: Optional[bool] = Field(None, description="Enable OAuth 2.0 for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Meta-server configuration (optional update fields)
+    server_type: Optional[str] = Field(None, description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: Optional[bool] = Field(None, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
+
+    @field_validator("server_type")
+    @classmethod
+    def validate_server_type(cls, v: Optional[str]) -> Optional[str]:
+        """Validate server type value.
+
+        Args:
+            v: Server type to validate.
+
+        Returns:
+            Validated server type.
+
+        Raises:
+            ValueError: If server type is invalid.
+        """
+        if v is not None and v not in ("standard", "meta"):
+            raise ValueError("server_type must be one of: standard, meta")
+        return v
 
     @field_validator("tags")
     @classmethod
@@ -4038,6 +4086,12 @@ class ServerRead(BaseModelWithConfigDict):
     # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
     oauth_enabled: bool = Field(False, description="Whether OAuth 2.0 is enabled for MCP client authentication")
     oauth_config: Optional[Dict[str, Any]] = Field(None, description="OAuth 2.0 configuration (authorization_server, scopes_supported, etc.)")
+
+    # Meta-server configuration
+    server_type: str = Field("standard", description="Server type: 'standard' or 'meta'")
+    hide_underlying_tools: bool = Field(True, description="When True and server_type is 'meta', underlying tools are hidden")
+    meta_config: Optional[Dict[str, Any]] = Field(None, description="Meta-server configuration (MetaConfig schema)")
+    meta_scope: Optional[Dict[str, Any]] = Field(None, description="Scope rules for filtering tools visible to the meta-server")
 
     @model_validator(mode="before")
     @classmethod

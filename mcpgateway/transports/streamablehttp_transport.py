@@ -56,6 +56,7 @@ from starlette.types import Receive, Scope, Send
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.meta_server.service import get_meta_server_service
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptService
@@ -82,6 +83,9 @@ mcp_app: Server[Any] = Server("mcp-streamable-http")
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+# Meta-server context: stores server_type for the current request
+server_type_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_type", default="standard")
+hide_underlying_tools_var: contextvars.ContextVar[bool] = contextvars.ContextVar("hide_underlying_tools", default=True)
 
 # ------------------------------ Event store ------------------------------
 
@@ -484,6 +488,17 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
         >>> sig.return_annotation
         typing.List[typing.Union[mcp.types.TextContent, mcp.types.ImageContent, mcp.types.AudioContent, mcp.types.ResourceLink, mcp.types.EmbeddedResource]]
     """
+    # Check if this is a meta-tool call on a meta-server
+    current_server_type = server_type_var.get()
+    meta_service = get_meta_server_service()
+
+    if meta_service.is_meta_server(current_server_type) and meta_service.is_meta_tool(name):
+        # Dispatch to meta-tool stub handler
+        import json  # pylint: disable=import-outside-toplevel
+
+        result_data = await meta_service.handle_meta_tool_call(name, arguments)
+        return [types.TextContent(type="text", text=json.dumps(result_data, default=str))]
+
     request_headers = request_headers_var.get()
     server_id = server_id_var.get()
     user_context = user_context_var.get()
@@ -650,6 +665,9 @@ async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
 
+    For meta-type servers, returns only the meta-tools (search_tools, list_tools, etc.)
+    instead of the underlying real tools when hide_underlying_tools is enabled.
+
     Returns:
         A list of Tool objects containing metadata such as name, description, and input schema.
         Logs and returns an empty list on failure.
@@ -666,6 +684,16 @@ async def list_tools() -> List[types.Tool]:
     server_id = server_id_var.get()
     request_headers = request_headers_var.get()
     user_context = user_context_var.get()
+
+    # Check if this is a meta-server that should expose meta-tools instead
+    current_server_type = server_type_var.get()
+    current_hide_underlying = hide_underlying_tools_var.get()
+    meta_service = get_meta_server_service()
+
+    if meta_service.should_hide_underlying_tools(current_server_type, current_hide_underlying):
+        # Return meta-tools instead of underlying real tools
+        meta_tool_defs = meta_service.get_meta_tool_definitions()
+        return [types.Tool(name=td["name"], description=td["description"], inputSchema=td["inputSchema"]) for td in meta_tool_defs]
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1228,8 +1256,27 @@ class SessionManagerWrapper:
         if match:
             server_id = match.group("server_id")
             server_id_var.set(server_id)
+
+            # Set meta-server context variables by looking up server_type from DB
+            try:
+                async with get_db() as db:
+                    from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+                    server_obj = db.get(DbServer, server_id)
+                    if server_obj:
+                        server_type_var.set(getattr(server_obj, "server_type", "standard") or "standard")
+                        hide_underlying_tools_var.set(getattr(server_obj, "hide_underlying_tools", True))
+                    else:
+                        server_type_var.set("standard")
+                        hide_underlying_tools_var.set(True)
+            except Exception:
+                logger.debug("Could not resolve server_type for server_id=%s", server_id)
+                server_type_var.set("standard")
+                hide_underlying_tools_var.set(True)
         else:
             server_id_var.set(None)
+            server_type_var.set("standard")
+            hide_underlying_tools_var.set(True)
 
         try:
             await self.session_manager.handle_request(scope, receive, send)
