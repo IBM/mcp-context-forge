@@ -72,6 +72,7 @@ import uvicorn
 # First-Party
 from mcpgateway.plugins.framework import ExternalPluginServer, MCPServerConfig
 from mcpgateway.plugins.framework.constants import GET_PLUGIN_CONFIG, GET_PLUGIN_CONFIGS, INVOKE_HOOK, MCP_SERVER_INSTRUCTIONS, MCP_SERVER_NAME
+from mcpgateway.plugins.framework.settings import PluginsSettings
 
 logger = logging.getLogger(__name__)
 
@@ -484,8 +485,6 @@ async def run() -> None:
     # Determine transport type from environment variable or auto-detect
     # Auto-detect: if stdin is not a TTY (i.e., it's being piped), use stdio mode
     # First-Party
-    from mcpgateway.plugins.framework.settings import PluginsSettings
-
     transport = PluginsSettings().transport
     if transport is None:
         # Auto-detect based on stdin
