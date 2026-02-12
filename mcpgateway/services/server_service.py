@@ -299,6 +299,11 @@ class ServerService:
             # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
             "oauth_enabled": getattr(server, "oauth_enabled", False),
             "oauth_config": getattr(server, "oauth_config", None),
+            # Meta-server fields
+            "server_type": getattr(server, "server_type", "standard") or "standard",
+            "hide_underlying_tools": getattr(server, "hide_underlying_tools", True),
+            "meta_config": getattr(server, "meta_config", None),
+            "meta_scope": getattr(server, "meta_scope", None),
         }
 
         # Compute aggregated metrics only if requested (avoids N+1 queries in list operations)
@@ -490,6 +495,11 @@ class ServerService:
                 # OAuth 2.0 configuration for RFC 9728 Protected Resource Metadata
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=getattr(server_in, "oauth_config", None),
+                # Meta-server fields
+                server_type=getattr(server_in, "server_type", "standard") or "standard",
+                hide_underlying_tools=getattr(server_in, "hide_underlying_tools", True),
+                meta_config=getattr(server_in, "meta_config", None),
+                meta_scope=getattr(server_in, "meta_scope", None),
                 # Metadata fields
                 created_by=created_by,
                 created_from_ip=created_from_ip,
@@ -1234,6 +1244,16 @@ class ServerService:
             # Update tags if provided
             if server_update.tags is not None:
                 server.tags = server_update.tags
+
+            # Update meta-server fields if provided
+            if getattr(server_update, "server_type", None) is not None:
+                server.server_type = server_update.server_type
+            if getattr(server_update, "hide_underlying_tools", None) is not None:
+                server.hide_underlying_tools = server_update.hide_underlying_tools
+            if getattr(server_update, "meta_config", None) is not None:
+                server.meta_config = server_update.meta_config
+            if getattr(server_update, "meta_scope", None) is not None:
+                server.meta_scope = server_update.meta_scope
 
             # Update OAuth 2.0 configuration if provided
             # Track if OAuth is being explicitly disabled to prevent config re-assignment

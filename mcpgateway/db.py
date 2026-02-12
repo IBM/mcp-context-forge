@@ -4317,6 +4317,16 @@ class Server(Base):
     oauth_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     oauth_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
+    # Meta-server fields
+    # server_type: 'standard' (default) or 'meta' (exposes meta-tools instead of real tools)
+    server_type: Mapped[str] = mapped_column(String(20), nullable=False, default="standard")
+    # When True, underlying tools are hidden from tool listing endpoints
+    hide_underlying_tools: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # JSON configuration for meta-server behavior (MetaConfig schema)
+    meta_config: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    # JSON scope rules for filtering which tools are visible (MetaToolScope schema)
+    meta_scope: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
     # Relationship for loading team names (only active teams)
     # Uses default lazy loading - team name is only loaded when accessed
     # For list/admin views, use explicit joinedload(DbServer.email_team) for single-query loading
