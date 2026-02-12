@@ -28,29 +28,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tokens", tags=["tokens"])
 
 
-def _require_interactive_session(current_user: dict) -> None:
-    """Block API token access to token management endpoints.
+def _require_authenticated_session(current_user: dict) -> None:
+    """Block anonymous and unauthenticated access to token management endpoints.
 
-    Token management requires interactive sessions (web UI login, SSO, OIDC, etc.)
-    to prevent privilege escalation via token chaining. This is a hard security
-    boundary that applies to ALL users including admins.
-
-    ALLOWED auth_methods:
-    - "jwt": Standard web login
-    - "oauth", "oidc", "saml": SSO providers via plugins
-    - "disabled": Development mode (auth disabled)
-    - Any other plugin-defined method that isn't "api_token"
-
-    BLOCKED:
-    - "api_token": Explicitly blocked
-    - "anonymous": Unauthenticated/missing proxy header
-    - None: Fail-secure - auth flow didn't set auth_method (code bug)
+    Rejects requests where authentication could not be determined or where
+    the caller is anonymous. All authenticated methods (JWT, API tokens,
+    OAuth, SSO, proxy, etc.) are allowed — RBAC permission checks and
+    scope containment (via _get_caller_permissions) handle authorization.
 
     Args:
         current_user: User context from get_current_user_with_permissions
 
     Raises:
-        HTTPException: 403 if request is from an API token or auth_method not set
+        HTTPException: 403 if auth_method is None or anonymous
     """
     auth_method = current_user.get("auth_method")
 
@@ -59,24 +49,15 @@ def _require_interactive_session(current_user: dict) -> None:
         logger.warning("Token management blocked: auth_method not set. " "This indicates an auth code path that needs to set request.state.auth_method")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires interactive session. " "Authentication method could not be determined.",
-        )
-
-    # Block API tokens explicitly
-    if auth_method == "api_token":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires interactive session (web login). " "API tokens cannot create, modify, or revoke tokens.",
+            detail="Token management requires authentication. " "Authentication method could not be determined.",
         )
 
     # Block anonymous users (missing proxy header or unauthenticated)
     if auth_method == "anonymous":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token management requires interactive session (web login). " "Anonymous access is not permitted.",
+            detail="Token management requires authentication. " "Anonymous access is not permitted.",
         )
-
-    # All other auth_methods (jwt, oauth, oidc, saml, proxy, disabled, etc.) are allowed
 
 
 async def _get_caller_permissions(
@@ -130,7 +111,7 @@ async def create_token(
         >>> asyncio.iscoroutinefunction(create_token)
         True
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
@@ -218,7 +199,7 @@ async def list_tokens(
         >>> asyncio.iscoroutinefunction(list_tokens)
         True
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
     tokens = await service.list_user_tokens(
@@ -287,7 +268,7 @@ async def get_token(
         >>> asyncio.iscoroutinefunction(get_token)
         True
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
     token = await service.get_token(token_id, current_user["email"])
@@ -338,7 +319,7 @@ async def update_token(
     Raises:
         HTTPException: If token not found or validation fails
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
@@ -421,7 +402,7 @@ async def revoke_token(
     Raises:
         HTTPException: If token not found
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
@@ -463,7 +444,7 @@ async def get_token_usage_stats(
     Raises:
         HTTPException: If token not found or not owned by user
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
@@ -505,7 +486,7 @@ async def list_all_tokens(
     Raises:
         HTTPException: If user is not admin
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     if not current_user["is_admin"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
@@ -577,7 +558,7 @@ async def admin_revoke_token(
     Raises:
         HTTPException: If user is not admin or token not found
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     if not current_user["is_admin"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
@@ -623,7 +604,7 @@ async def create_team_token(
     Raises:
         HTTPException: If user is not team owner or validation fails
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
@@ -711,7 +692,7 @@ async def list_team_tokens(
     Raises:
         HTTPException: If user is not team owner
     """
-    _require_interactive_session(current_user)
+    _require_authenticated_session(current_user)
 
     service = TokenCatalogService(db)
 
