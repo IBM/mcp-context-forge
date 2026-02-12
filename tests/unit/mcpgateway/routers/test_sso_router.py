@@ -56,6 +56,25 @@ def test_validate_redirect_uri_allows_relative(monkeypatch: pytest.MonkeyPatch):
     assert sso_router._validate_redirect_uri("https://evil.com/cb", None) is False
 
 
+def test_validate_redirect_uri_rejects_http_on_production_domain(monkeypatch: pytest.MonkeyPatch):
+    """HTTP is rejected for non-localhost domains (open redirect protection)."""
+    monkeypatch.setattr(sso_router.settings, "allowed_origins", [])
+    monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("https://myapp.com"))
+
+    assert sso_router._validate_redirect_uri("http://myapp.com/cb", None) is False
+    assert sso_router._validate_redirect_uri("https://myapp.com/cb", None) is True
+
+
+def test_validate_redirect_uri_app_domain_matches_any_port(monkeypatch: pytest.MonkeyPatch):
+    """app_domain is a domain-level match (hostname only); use allowed_origins for port-specific control."""
+    monkeypatch.setattr(sso_router.settings, "allowed_origins", [])
+    monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("https://myapp.com"))
+
+    assert sso_router._validate_redirect_uri("https://myapp.com/cb", None) is True
+    assert sso_router._validate_redirect_uri("https://myapp.com:443/cb", None) is True
+    assert sso_router._validate_redirect_uri("https://myapp.com:8443/cb", None) is True
+
+
 def test_validate_redirect_uri_allowed_origin_without_scheme(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(sso_router.settings, "allowed_origins", ["", "example.com"])
     monkeypatch.setattr(sso_router.settings, "app_domain", None)
@@ -67,7 +86,10 @@ def test_validate_redirect_uri_app_domain_localhost_http(monkeypatch: pytest.Mon
     monkeypatch.setattr(sso_router.settings, "allowed_origins", [])
     monkeypatch.setattr(sso_router.settings, "app_domain", HttpUrl("http://localhost:4444"))
 
+    # HTTP allowed for localhost (any port) - development convenience
     assert sso_router._validate_redirect_uri("http://localhost:3000/cb", None) is True
+    assert sso_router._validate_redirect_uri("http://localhost:8080/cb", None) is True
+    assert sso_router._validate_redirect_uri("https://localhost/cb", None) is True
 
 
 def test_normalize_origin_defaults():
