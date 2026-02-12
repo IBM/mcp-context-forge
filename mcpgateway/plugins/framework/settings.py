@@ -12,7 +12,9 @@ dependency on mcpgateway.config.settings.
 """
 
 # Standard
-from typing import Literal
+from functools import lru_cache
+import os
+from typing import Any, Literal
 
 # Third-Party
 from pydantic import AliasChoices, Field
@@ -99,4 +101,56 @@ class PluginsSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="PLUGINS_")
 
 
-settings = PluginsSettings()
+@lru_cache()
+def get_settings(**kwargs: Any) -> PluginsSettings:
+    """Get cached plugins settings instance.
+
+    Args:
+        **kwargs: Keyword arguments to pass to the PluginsSettings setup.
+
+    Returns:
+        PluginsSettings: A cached instance of the PluginsSettings class.
+
+    Examples:
+        >>> settings = get_settings()
+        >>> isinstance(settings, PluginsSettings)
+        True
+        >>> # Second call returns the same cached instance
+        >>> settings2 = get_settings()
+        >>> settings is settings2
+        True
+    """
+    # Instantiate a fresh Pydantic PluginsSettings object,
+    # loading from env vars or .env exactly once.
+    return PluginsSettings(**kwargs)
+
+
+class LazySettingsWrapper:
+    """Lazily initialize plugins settings singleton on getattr with override support."""
+
+    @property
+    def enabled(self) -> bool:
+        """Access plugin enabled flag with env override support.
+
+        Returns:
+            True if plugin framework is enabled.
+        """
+        env_flag = os.getenv("PLUGINS_ENABLED")
+        if env_flag is not None:
+            return env_flag.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
+    def __getattr__(self, key: str) -> Any:
+        """Get the real settings object and forward to it
+
+        Args:
+            key: The key to fetch from settings
+
+        Returns:
+            Any: The value of the attribute on the settings
+        """
+
+        return getattr(get_settings(), key)
+
+
+settings = LazySettingsWrapper()
