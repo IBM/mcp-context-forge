@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_serializer, field_validator, model_
 from mcpgateway.common.models import TransportType
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
+from mcpgateway.plugins.framework.settings import PluginsSettings
 
 T = TypeVar("T")
 
@@ -290,9 +291,6 @@ class MCPClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPClientTLSConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
@@ -331,9 +329,6 @@ class MCPServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPServerTLSConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
@@ -431,9 +426,6 @@ class MCPServerConfig(BaseModel):
         Returns:
             MCPServerConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
@@ -684,9 +676,6 @@ class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCClientTLSConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
@@ -742,9 +731,6 @@ class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCServerTLSConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
@@ -979,9 +965,6 @@ class GRPCServerConfig(BaseModel):
         Returns:
             GRPCServerConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
@@ -1068,9 +1051,6 @@ class UnixSocketServerConfig(BaseModel):
         Returns:
             UnixSocketServerConfig instance or None if no environment variables are set.
         """
-        # First-Party
-        from mcpgateway.plugins.framework.settings import PluginsSettings
-
         s = PluginsSettings()
         data: dict[str, Any] = {}
 
