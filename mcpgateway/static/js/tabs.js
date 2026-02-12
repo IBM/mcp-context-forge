@@ -5,6 +5,7 @@ import { loadRecentImports } from "./fileTransfer";
 import { initializeExportImport } from "./initialization";
 import { initializeLLMChat } from "./llmChat";
 import { loadAggregatedMetrics } from "./metrics";
+import { populatePluginFilters } from "./plugins";
 import { escapeHtml, safeSetInnerHTML } from "./security";
 import {
   loadTokensList,
@@ -133,10 +134,10 @@ export const showTab = function (tabName) {
     ) {
       console.log("Leaving observability tab, triggering cleanup...");
       // Destroy all observability charts
-      Admin.chartRegistry.destroyByPrefix("metrics-");
-      Admin.chartRegistry.destroyByPrefix("tools-");
-      Admin.chartRegistry.destroyByPrefix("prompts-");
-      Admin.chartRegistry.destroyByPrefix("resources-");
+      window.Admin.chartRegistry.destroyByPrefix("metrics-");
+      window.Admin.chartRegistry.destroyByPrefix("tools-");
+      window.Admin.chartRegistry.destroyByPrefix("prompts-");
+      window.Admin.chartRegistry.destroyByPrefix("resources-");
       // Dispatch event so Alpine components can stop intervals and reset state
       document.dispatchEvent(new CustomEvent("observability:leave"));
     }
@@ -403,11 +404,9 @@ export const showTab = function (tabName) {
               })
               .then((html) => {
                 pluginsPanel.innerHTML = html;
-                // Initialize plugin functions after HTML is loaded
-                Admin.initializePluginFunctions();
                 // Populate filter dropdowns
-                if (Admin.populatePluginFilters) {
-                  Admin.populatePluginFilters();
+                if (populatePluginFilters) {
+                  populatePluginFilters();
                 }
               })
               .catch((error) => {

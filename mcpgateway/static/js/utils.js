@@ -128,7 +128,7 @@ export function isInactiveChecked(type) {
 export async function fetchWithTimeout(
   url,
   options = {},
-  timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+  timeout = window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
 ) {
   // Use configurable timeout from window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT
   const controller = new AbortController();
@@ -154,7 +154,7 @@ export async function fetchWithTimeout(
       if (response.status === 0) {
         // Status 0 often indicates a network error or CORS issue
         throw new Error(
-          "Network error or server is not responding. Please ensure the server is running and accessible.",
+          "Network error or server is not responding. Please ensure the server is running and accessible."
         );
       }
 
@@ -186,21 +186,21 @@ export async function fetchWithTimeout(
       // Improve error messages for common issues
       if (error.name === "AbortError") {
         throw new Error(
-          `Request timed out after ${timeout / 1000} seconds. The server may be slow or unresponsive.`,
+          `Request timed out after ${timeout / 1000} seconds. The server may be slow or unresponsive.`
         );
       } else if (
         error.message.includes("Failed to fetch") ||
         error.message.includes("NetworkError")
       ) {
         throw new Error(
-          "Unable to connect to server. Please check if the server is running on the correct port.",
+          "Unable to connect to server. Please check if the server is running on the correct port."
         );
       } else if (
         error.message.includes("empty response") ||
         error.message.includes("ERR_EMPTY_RESPONSE")
       ) {
         throw new Error(
-          "Server returned an empty response. This endpoint may not be implemented yet or the server crashed.",
+          "Server returned an empty response. This endpoint may not be implemented yet or the server crashed."
         );
       }
 
@@ -299,7 +299,7 @@ export const copyJsonToClipboard = function (sourceId) {
   const el = safeGetElement(sourceId);
   if (!el) {
     console.warn(
-      `[copyJsonToClipboard] Source element "${sourceId}" not found.`,
+      `[copyJsonToClipboard] Source element "${sourceId}" not found.`
     );
     return;
   }
@@ -316,7 +316,7 @@ export const copyJsonToClipboard = function (sourceId) {
     (err) => {
       console.error("Clipboard write failed:", err);
       showErrorMessage("Unable to copy to clipboard");
-    },
+    }
   );
 };
 
@@ -405,7 +405,7 @@ export const getCurrentTeamName = function () {
     // Try to find in teams array
     if (alpineData.teams && Array.isArray(alpineData.teams)) {
       const selectedTeamObj = alpineData.teams.find(
-        (t) => t.id === currentTeamId,
+        (t) => t.id === currentTeamId
       );
       if (selectedTeamObj) {
         return selectedTeamObj.ispersonal
@@ -504,4 +504,19 @@ export const showNotification = function (message, type = "info") {
       toast.parentNode.removeChild(toast);
     }
   }, 5000);
+};
+
+/**
+ * Check if string is valid base64
+ * @param {string} str - The string to validate
+ * @returns {boolean} - True if valid base64
+ */
+export const isValidBase64 = function (str) {
+  if (str.length === 0) {
+    return false;
+  }
+
+  // Base64 regex pattern
+  const base64Pattern = /^[A-Za-z0-9+/]*={0,2}$/;
+  return base64Pattern.test(str);
 };
