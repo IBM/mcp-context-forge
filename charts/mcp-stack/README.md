@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 1.0.0-BETA-2](https://img.shields.io/badge/Version-1.0.0--BETA--2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-BETA-2](https://img.shields.io/badge/AppVersion-1.0.0--BETA--2-informational?style=flat-square)
+![Version: 1.0.0-RC-1](https://img.shields.io/badge/Version-1.0.0--BETA--2-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-RC-1](https://img.shields.io/badge/AppVersion-1.0.0--BETA--2-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:

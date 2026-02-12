@@ -12,7 +12,7 @@ build-backend = "setuptools.build_meta"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.0-BETA-2"
+version = "1.0.0-RC-1"
 description = "A production-grade MCP Gateway & Proxy built with FastAPI. Supports multi-server registration, virtual server composition, authentication, retry logic, observability, protocol translation, and a unified federated tool catalog."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -46,10 +46,10 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "alembic>=1.18.3",
+    "alembic>=1.18.4",
     "argon2-cffi>=25.1.0",
-    "cryptography>=46.0.4",
-    "fastapi>=0.128.5",
+    "cryptography>=46.0.5",
+    "fastapi>=0.128.8",
     "filelock>=3.20.3",
     "gunicorn>=25.0.3",
     "httpx>=0.28.1",
@@ -75,7 +75,7 @@ dependencies = [
     "sse-starlette>=3.2.0",
     "starlette>=0.52.1",
     "starlette-compress>=1.7.0",
-    "typer>=0.21.1",
+    "typer>=0.23.0",
     "uvicorn[standard]>=0.40.0",
 ]
 
@@ -176,12 +176,12 @@ dev = [
 # Redis with hiredis C parser for up to 83x faster response parsing
 # See ADR-026 for benchmarks and decision rationale
 redis = [
-    "redis[hiredis]>=7.1.0",
+    "redis[hiredis]>=7.1.1",
 ]
 
 # Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
 redis-pure = [
-    "redis>=7.1.0",
+    "redis>=7.1.1",
 ]
 
 # PostgreSQL adapter with psycopg3
@@ -200,19 +200,19 @@ mariadb = [
 ]
 
 llmchat = [
-    "langchain-core>=1.2.9",
+    "langchain-core>=1.2.11",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
-    "langchain-openai>=1.1.7",
+    "langchain-openai>=1.1.9",
     "langgraph>=1.0.8",
 ]
 
 # Fuzzing and property-based testing
 fuzz = [
-    "hypothesis>=6.151.5",
+    "hypothesis>=6.151.6",
     "pytest-benchmark>=5.2.3",
     "pytest-xdist>=3.8.0",
-    "schemathesis>=4.10.0",
+    "schemathesis>=4.10.1",
 ]
 
 # Coverage-guided fuzzing (requires clang/libfuzzer)
@@ -269,10 +269,10 @@ altk = [
 # Agent Lifecycle Toolkit(optional)
 toolops = [
     "agent-lifecycle-toolkit>=0.10.0",
-    "langchain-core>=1.2.9",
+    "langchain-core>=1.2.11",
     "langchain-mcp-adapters>=0.2.1",
     "langchain-ollama>=1.0.1",
-    "langchain-openai>=1.1.7",
+    "langchain-openai>=1.1.9",
     "langgraph>=1.0.8",
 ]
 
