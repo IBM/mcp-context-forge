@@ -16,6 +16,16 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
+# First-Party
+from mcpgateway.db import GrpcService as DbGrpcService
+from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
+from mcpgateway.services.grpc_service import (
+    GrpcService,
+    GrpcServiceError,
+    GrpcServiceNameConflictError,
+    GrpcServiceNotFoundError,
+)
+
 # Check if gRPC is available
 try:
     import grpc  # noqa: F401
@@ -26,16 +36,6 @@ except ImportError:
 
 # Skip all tests in this module if gRPC is not available
 pytestmark = pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
-
-# First-Party
-from mcpgateway.db import GrpcService as DbGrpcService
-from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceUpdate
-from mcpgateway.services.grpc_service import (
-    GrpcService,
-    GrpcServiceError,
-    GrpcServiceNameConflictError,
-    GrpcServiceNotFoundError,
-)
 
 
 class TestGrpcService:
@@ -152,29 +152,158 @@ class TestGrpcService:
 
     async def test_list_services(self, service, mock_db, sample_db_service):
         """Test listing gRPC services."""
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [sample_db_service]
+        sample_db_service.team_id = None
+        mock_db.commit = MagicMock()
 
-        result = await service.list_services(mock_db, include_inactive=False)
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = ([sample_db_service], None)
+            result, next_cursor = await service.list_services(mock_db, include_inactive=False)
 
         assert len(result) == 1
         assert result[0].name == "test-grpc-service"
+        assert next_cursor is None
 
     async def test_list_services_with_team_filter(self, service, mock_db, sample_db_service):
         """Test listing services with team filter."""
+        sample_db_service.team_id = None
+        mock_db.commit = MagicMock()
+
         with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team_service_class:
             mock_team_instance = mock_team_service_class.return_value
             mock_team_instance.build_team_filter_clause = AsyncMock(return_value=None)
-            mock_db.execute.return_value.scalars.return_value.all.return_value = [sample_db_service]
 
-            result = await service.list_services(
-                mock_db,
-                include_inactive=False,
-                user_email="test@example.com",
-                team_id="team-123",
-            )
+            with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+                mock_paginate.return_value = ([sample_db_service], None)
+                result, next_cursor = await service.list_services(
+                    mock_db,
+                    include_inactive=False,
+                    user_email="test@example.com",
+                    team_id="team-123",
+                )
 
             assert len(result) == 1
+            assert next_cursor is None
             mock_team_instance.build_team_filter_clause.assert_called_once()
+
+    async def test_list_services_pagination(self, service, mock_db):
+        """Test multi-page pagination for gRPC services."""
+        # Create multiple mock services
+        services_page1 = []
+        for i in range(10):
+            svc = DbGrpcService(
+                id=f"svc-{i}",
+                name=f"service-{i}",
+                slug=f"service-{i}",
+                target=f"localhost:5005{i}",
+                description=f"Test service {i}",
+                reflection_enabled=True,
+                tls_enabled=False,
+                grpc_metadata={},
+                enabled=True,
+                reachable=False,
+                service_count=0,
+                method_count=0,
+                discovered_services={},
+                tags=["test"],
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                version=1,
+                visibility="public",
+                team_id=None,
+            )
+            services_page1.append(svc)
+
+        mock_db.commit = MagicMock()
+
+        # Test page 1
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            from mcpgateway.schemas import PaginationMeta, PaginationLinks
+
+            mock_paginate.return_value = {
+                "data": services_page1,
+                "pagination": PaginationMeta(
+                    page=1,
+                    per_page=10,
+                    total_items=25,
+                    total_pages=3,
+                    has_next=True,
+                    has_prev=False,
+                ),
+                "links": PaginationLinks(
+                    self="/admin/grpc?page=1&per_page=10",
+                    first="/admin/grpc?page=1&per_page=10",
+                    last="/admin/grpc?page=3&per_page=10",
+                    next="/admin/grpc?page=2&per_page=10",
+                    prev=None,
+                ),
+            }
+
+            result = await service.list_services(mock_db, page=1, per_page=10, include_inactive=False)
+
+        assert isinstance(result, dict)
+        assert len(result["data"]) == 10
+        assert result["pagination"].page == 1
+        assert result["pagination"].total_items == 25
+        assert result["pagination"].total_pages == 3
+        assert result["pagination"].has_next is True
+        assert result["pagination"].has_prev is False
+        assert result["links"].next == "/admin/grpc?page=2&per_page=10"
+
+        # Test page 2
+        services_page2 = []
+        for i in range(10, 20):
+            svc = DbGrpcService(
+                id=f"svc-{i}",
+                name=f"service-{i}",
+                slug=f"service-{i}",
+                target=f"localhost:5005{i}",
+                description=f"Test service {i}",
+                reflection_enabled=True,
+                tls_enabled=False,
+                grpc_metadata={},
+                enabled=True,
+                reachable=False,
+                service_count=0,
+                method_count=0,
+                discovered_services={},
+                tags=["test"],
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                version=1,
+                visibility="public",
+                team_id=None,
+            )
+            services_page2.append(svc)
+
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = {
+                "data": services_page2,
+                "pagination": PaginationMeta(
+                    page=2,
+                    per_page=10,
+                    total_items=25,
+                    total_pages=3,
+                    has_next=True,
+                    has_prev=True,
+                ),
+                "links": PaginationLinks(
+                    self="/admin/grpc?page=2&per_page=10",
+                    first="/admin/grpc?page=1&per_page=10",
+                    last="/admin/grpc?page=3&per_page=10",
+                    next="/admin/grpc?page=3&per_page=10",
+                    prev="/admin/grpc?page=1&per_page=10",
+                ),
+            }
+
+            result = await service.list_services(mock_db, page=2, per_page=10, include_inactive=False)
+
+        assert isinstance(result, dict)
+        assert len(result["data"]) == 10
+        assert result["pagination"].page == 2
+        assert result["pagination"].has_next is True
+        assert result["pagination"].has_prev is True
+        assert result["links"].next == "/admin/grpc?page=3&per_page=10"
+        assert result["links"].prev == "/admin/grpc?page=1&per_page=10"
 
     async def test_get_service_success(self, service, mock_db, sample_db_service):
         """Test getting a specific service."""
@@ -278,9 +407,7 @@ class TestGrpcService:
 
     @patch("mcpgateway.services.grpc_service.grpc")
     @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
-    async def test_reflect_service_success(
-        self, mock_reflection_grpc, mock_grpc, service, mock_db, sample_db_service
-    ):
+    async def test_reflect_service_success(self, mock_reflection_grpc, mock_grpc, service, mock_db, sample_db_service):
         """Test successful service reflection."""
         # Mock gRPC channel and stub
         mock_channel = MagicMock()
