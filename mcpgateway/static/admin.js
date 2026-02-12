@@ -15800,8 +15800,8 @@ async function handleGrpcServiceFormSubmit(e) {
 
         // Build JSON payload matching GrpcServiceCreate schema
         const payload = {
-            name: name,
-            target: target,
+            name,
+            target,
             description: formData.get("description") || null,
             reflection_enabled: formData.get("reflection_enabled") === "on",
             tls_enabled: formData.get("tls_enabled") === "on",
@@ -15809,12 +15809,14 @@ async function handleGrpcServiceFormSubmit(e) {
             tls_key_path: formData.get("tls_key_path") || null,
             grpc_metadata: {},
             tags: [],
-            visibility: "public"
+            visibility: "public",
         };
 
         // Add team_id if present
         const teamIdFromForm = formData.get("team_id");
-        const teamIdFromUrl = new URL(window.location.href).searchParams.get("team_id");
+        const teamIdFromUrl = new URL(window.location.href).searchParams.get(
+            "team_id",
+        );
         const teamId = teamIdFromForm || teamIdFromUrl;
         if (teamId) {
             payload.team_id = teamId;
@@ -15831,10 +15833,13 @@ async function handleGrpcServiceFormSubmit(e) {
 
         if (!response.ok) {
             const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.detail || `Failed to register gRPC service (${response.status})`);
+            throw new Error(
+                errorData.detail ||
+                    `Failed to register gRPC service (${response.status})`,
+            );
         }
 
-        const result = await response.json();
+        await response.json();
 
         // Success - redirect to grpc services panel
         const searchParams = new URLSearchParams();
@@ -15845,11 +15850,12 @@ async function handleGrpcServiceFormSubmit(e) {
         const queryString = searchParams.toString();
         const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
         window.location.href = redirectUrl;
-
     } catch (error) {
         console.error("Add gRPC Service Error:", error);
         if (status) {
-            status.textContent = error.message || "An error occurred while registering the gRPC service.";
+            status.textContent =
+                error.message ||
+                "An error occurred while registering the gRPC service.";
             status.classList.remove("hidden");
         }
         showErrorMessage(error.message);
@@ -16705,7 +16711,10 @@ function setupFormHandlers() {
 
     const addGrpcServiceForm = safeGetElement("add-grpc-service-form");
     if (addGrpcServiceForm) {
-        addGrpcServiceForm.addEventListener("submit", handleGrpcServiceFormSubmit);
+        addGrpcServiceForm.addEventListener(
+            "submit",
+            handleGrpcServiceFormSubmit,
+        );
     }
 
     // Setup search functionality for selectors
