@@ -1647,17 +1647,17 @@ class SessionManagerWrapper:
         server_id_var.set(context.server_id)
 
         try:
-            # 1️⃣ Try Rust transport first
+            # Try Rust transport first
             rust_handled = await self.rust_bridge.handle_request(scope, receive, send)
             if rust_handled:
                 return
 
-            # 2️⃣ Fallback to Python session manager
+            # Fallback to Python session manager
             await self.session_manager.handle_request(scope, receive, send_with_capture)
 
             logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
 
-            # 3️⃣ Register ownership (stateful + affinity only)
+            # Register ownership (stateful + affinity only)
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
                 session_to_register = captured_session_id or (
                     mcp_session_id if mcp_session_id != "not-provided" else None
@@ -1665,8 +1665,8 @@ class SessionManagerWrapper:
 
                 if session_to_register:
                     try:
-                        # First-Party
-                        from mcpgateway.services.mcp_session_pool import (
+                        # First-Party - lazy import to avoid circular dependencies
+                        from mcpgateway.services.mcp_session_pool import (  # pylint: disable=import-outside-toplevel
                             get_mcp_session_pool,
                             WORKER_ID,
                         )
@@ -1690,7 +1690,7 @@ class SessionManagerWrapper:
                 f"[STATEFUL] Streamable HTTP request failed | "
                 f"Session: {mcp_session_id} | Error: {e}"
             )
-            logger.exception("Unhandled streamable HTTP error")
+            logger.exception("Error handling streamable HTTP request")
             raise
 
 
