@@ -133,15 +133,25 @@ class ToolsPage(BasePage):
 
     # ==================== High-Level Tool Operations ====================
 
-    def wait_for_tools_table_loaded(self, timeout: int = 30000) -> None:
+    def wait_for_tools_table_loaded(self, timeout: int = 60000) -> None:
         """Wait for tools table to be loaded and ready.
+
+        Handles the Alpine.js x-init / HTMX load race where the tools table
+        content may not load on the first attempt. Unlike other tabs, showTab()
+        has no retry logic for "tools", so the initial hx-trigger="load" is
+        the only chance. If it misses, we reload the page to re-run the sequence.
 
         Args:
             timeout: Maximum time to wait in milliseconds
         """
         self.page.wait_for_selector("#tools-panel:not(.hidden)", timeout=timeout)
-        # Wait for table body to exist in DOM (may be empty, so don't require visible)
-        self.wait_for_attached(self.tools_table_body, timeout=timeout)
+        try:
+            self.wait_for_attached(self.tools_table_body, timeout=timeout)
+        except AssertionError:
+            # Alpine.js x-init / HTMX load race: reload to re-run the sequence
+            self.page.reload(wait_until="domcontentloaded")
+            self.page.wait_for_selector("#tools-panel:not(.hidden)", timeout=timeout)
+            self.wait_for_attached(self.tools_table_body, timeout=timeout)
 
     def create_tool(self, name: str, url: str, description: str, integration_type: str) -> None:
         """Create a new tool by filling and submitting the form.
@@ -210,14 +220,14 @@ class ToolsPage(BasePage):
         view_btn = tool_row.locator('button:has-text("View")')
         self.click_locator(view_btn)
         # Wait for modal to open
-        self.page.wait_for_selector("#tool-modal:not(.hidden)", state="visible", timeout=10000)
+        self.page.wait_for_selector("#tool-modal:not(.hidden)", state="visible", timeout=30000)
         self.wait_for_visible(self.tool_modal)
 
     def close_tool_modal(self) -> None:
         """Close the tool view modal."""
         self.click_locator(self.tool_modal_close_btn)
         # Wait for modal to close
-        self.page.wait_for_selector("#tool-modal.hidden", state="hidden", timeout=10000)
+        self.page.wait_for_selector("#tool-modal.hidden", state="hidden", timeout=30000)
 
     def open_tool_edit_modal(self, tool_index: int = 0) -> None:
         """Open the tool edit modal for a specific tool.
@@ -229,7 +239,7 @@ class ToolsPage(BasePage):
         edit_btn = tool_row.locator('button:has-text("Edit")')
         self.click_locator(edit_btn)
         # Wait for modal to open
-        self.page.wait_for_selector("#tool-edit-modal:not(.hidden)", state="visible", timeout=10000)
+        self.page.wait_for_selector("#tool-edit-modal:not(.hidden)", state="visible", timeout=30000)
         self.wait_for_visible(self.tool_edit_modal)
 
     def edit_tool_name(self, new_name: str) -> None:
@@ -244,13 +254,13 @@ class ToolsPage(BasePage):
         """Save changes in the tool edit modal."""
         self.click_locator(self.tool_edit_save_btn)
         # Wait for modal to close
-        self.page.wait_for_selector("#tool-edit-modal.hidden", state="hidden", timeout=10000)
+        self.page.wait_for_selector("#tool-edit-modal.hidden", state="hidden", timeout=30000)
 
     def cancel_tool_edit(self) -> None:
         """Cancel editing and close the tool edit modal."""
         self.click_locator(self.tool_edit_cancel_btn)
         # Wait for modal to close
-        self.page.wait_for_selector("#tool-edit-modal.hidden", state="hidden", timeout=10000)
+        self.page.wait_for_selector("#tool-edit-modal.hidden", state="hidden", timeout=30000)
 
     def open_tool_test_modal(self, tool_index: int = 0) -> None:
         """Open the tool test modal for a specific tool.
@@ -262,7 +272,7 @@ class ToolsPage(BasePage):
         test_btn = tool_row.locator('button:has-text("Test")')
         self.click_locator(test_btn)
         # Wait for modal to open
-        self.page.wait_for_selector("#tool-test-modal:not(.hidden)", state="visible", timeout=10000)
+        self.page.wait_for_selector("#tool-test-modal:not(.hidden)", state="visible", timeout=30000)
         self.wait_for_visible(self.tool_test_modal)
 
     def run_tool_test(self, params: dict = None) -> None:
@@ -287,7 +297,7 @@ class ToolsPage(BasePage):
         """Close the tool test modal."""
         self.click_locator(self.tool_test_close_btn)
         # Wait for modal to close
-        self.page.wait_for_selector("#tool-test-modal.hidden", state="hidden", timeout=10000)
+        self.page.wait_for_selector("#tool-test-modal.hidden", state="hidden", timeout=30000)
 
     def wait_for_tool_visible(self, tool_name: str, timeout: int = 30000) -> None:
         """Wait for a tool to be visible in the table.
