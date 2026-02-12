@@ -48,6 +48,7 @@ class RustStreamableHTTPTransportBridge:
         context_fn: Callable[[Dict[str, Any]], Dict[str, Any]] | None,
         request_handler_fn: Callable[[Dict[str, Any], Any, Any], Awaitable[bool] | bool] | None,
     ) -> None:
+        """Initialize bridge with optional Rust context and request handlers."""
         self.enabled = enabled
         self._context_fn = context_fn
         self._request_handler_fn = request_handler_fn
@@ -111,5 +112,6 @@ class RustStreamableHTTPTransportBridge:
         except Exception as exc:
             logger.warning("Rust streamable HTTP request handler failed, using Python fallback: %s", exc)
             return False
+
 
 __all__ = ["RustStreamableHTTPTransportBridge", "RustStreamableRequestContext"]
