@@ -1626,8 +1626,13 @@ class TestMultiTeamSessionTokenDerivation:
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
     @pytest.mark.asyncio
-    async def test_session_token_mutate_no_team_passes_none(self, monkeypatch):
-        """Session token with mutate permission and no team derives passes team_id=None."""
+    async def test_session_token_mutate_no_team_check_any_team(self, monkeypatch):
+        """Session token with mutate permission and no team context uses check_any_team.
+
+        This is the fix for #2883/#2891: mutate operations without team context should
+        check permission across all teams (same as read ops), separating authorization
+        from resource scoping.
+        """
 
         async def dummy_func(user=None, db=None):
             return "ok"
@@ -1645,8 +1650,54 @@ class TestMultiTeamSessionTokenDerivation:
             result = await decorated(user=mock_user, db=mock_db)
 
         assert result == "ok"
-        # For mutate with no team context, team_id should be None (fail-closed for team grants)
-        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_token_delete_no_team_check_any_team(self, monkeypatch):
+        """Session token with delete permission and no team context uses check_any_team.
+
+        Regression test for #2891: platform admin blocked on gateway delete because
+        delete forms don't include team_id and public gateways have team_id=NULL.
+        """
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "admin@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
+             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("gateways.delete")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_token_mutate_with_derived_team_does_not_check_any_team(self, monkeypatch):
+        """When team_id IS derived for a mutate op, check_any_team should be False."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-abc"), \
+             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("gateways.create")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-abc"
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
 
     @pytest.mark.asyncio
@@ -1747,8 +1798,12 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
 
     @pytest.mark.asyncio
-    async def test_session_token_any_permission_all_mutating_no_team_does_not_check_any_team(self, monkeypatch):
-        """All-mutating permissions with no team context should not enable check_any_team."""
+    async def test_session_token_any_permission_all_mutating_no_team_check_any_team(self, monkeypatch):
+        """All-mutating permissions with no team context should enable check_any_team.
+
+        Fix for #2883/#2891: mutate operations without team context should check
+        permission across all teams, same as read operations.
+        """
 
         async def dummy_func(user=None, db=None):
             return "any-ok"
@@ -1766,7 +1821,7 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
             result = await decorated(user=mock_user, db=mock_db)
 
         assert result == "any-ok"
-        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
 
 def test_get_resource_param_to_model_builds_mapping():
