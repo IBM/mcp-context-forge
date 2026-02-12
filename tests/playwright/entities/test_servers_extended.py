@@ -10,10 +10,12 @@ visibility settings, OAuth configuration, and advanced features.
 """
 
 # Standard
+import re
 import uuid
 
 # Third-Party
-from playwright.sync_api import expect, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import expect
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
 # Local
@@ -288,7 +290,7 @@ class TestServersExtended:
         # Wait for HTMX to load tools (not just a fixed timeout)
         try:
             servers_page.page.wait_for_selector(
-                '#associatedTools label.tool-item',
+                "#associatedTools label.tool-item",
                 state="attached",
                 timeout=10000,
             )
@@ -433,7 +435,8 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for view button test")
 
-        # Reload to see the newly created server
+        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
+        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
         servers_page.page.reload(wait_until="domcontentloaded")
         servers_page.navigate_to_servers_tab()
@@ -479,7 +482,8 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for edit button test")
 
-        # Reload to see the newly created server
+        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
+        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
         servers_page.page.reload(wait_until="domcontentloaded")
         servers_page.navigate_to_servers_tab()
@@ -530,7 +534,8 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for export button test")
 
-        # Reload to see the newly created server
+        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
+        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
         servers_page.page.reload(wait_until="domcontentloaded")
         servers_page.navigate_to_servers_tab()
@@ -570,7 +575,8 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for deactivate button test")
 
-        # Reload to see the newly created server
+        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
+        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
         servers_page.page.reload(wait_until="domcontentloaded")
         servers_page.navigate_to_servers_tab()
@@ -613,7 +619,8 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for UI delete button test")
 
-        # Reload to see the newly created server
+        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
+        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
         servers_page.page.reload(wait_until="domcontentloaded")
         servers_page.navigate_to_servers_tab()

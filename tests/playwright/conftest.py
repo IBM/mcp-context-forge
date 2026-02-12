@@ -199,6 +199,15 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")
         raise
 
+    # Wait for JS initialization (showTab + HTMX) before any tab clicks
+    try:
+        page.wait_for_function(
+            "typeof window.showTab === 'function' && typeof window.htmx !== 'undefined'",
+            timeout=30000,
+        )
+    except PlaywrightTimeoutError:
+        pass  # Continue — JS may be loaded via alternative path
+
 
 @pytest.fixture(scope="session")
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
