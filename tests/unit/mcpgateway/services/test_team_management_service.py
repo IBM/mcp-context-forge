@@ -596,12 +596,95 @@ class TestTeamManagementService:
         mock_query.filter.return_value.first.return_value = mock_membership
         mock_db.query.return_value = mock_query
 
+        # Mock role service to avoid RBAC changes
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(return_value=None)
+        service._role_service = mock_role_service
+
         with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member")
 
             assert result is True
             assert mock_membership.role == "member"
             assert mock_db.commit.call_count == 2  # One for role update, one for history
+
+    @pytest.mark.asyncio
+    async def test_update_member_role_member_to_owner_transitions_rbac(self, service, mock_team, mock_membership, mock_db):
+        """Test that changing from member to owner updates RBAC roles."""
+        mock_membership.role = "member"  # Current role is member
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value.first.return_value = mock_membership
+        mock_db.query.return_value = mock_query
+
+        # Mock role service
+        mock_member_role = MagicMock()
+        mock_member_role.id = "member-role-id"
+        mock_owner_role = MagicMock()
+        mock_owner_role.id = "owner-role-id"
+
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(side_effect=[mock_member_role, mock_owner_role])  # First call for member, second for owner
+        mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
+        mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
+        service._role_service = mock_role_service
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="owner", updated_by="admin@example.com")
+
+            assert result is True
+            assert mock_membership.role == "owner"
+            # Should revoke member role
+            mock_role_service.revoke_role_from_user.assert_called_with(user_email="user@example.com", role_id="member-role-id", scope="team", scope_id="team123")
+            # Should assign owner role
+            mock_role_service.assign_role_to_user.assert_called_with(user_email="user@example.com", role_id="owner-role-id", scope="team", scope_id="team123", granted_by="admin@example.com")
+
+    @pytest.mark.asyncio
+    async def test_update_member_role_owner_to_member_transitions_rbac(self, service, mock_team, mock_membership, mock_db):
+        """Test that changing from owner to member updates RBAC roles."""
+        mock_membership.role = "owner"  # Current role is owner
+
+        # Setup query mocks - first call gets membership, second counts owners
+        mock_membership_query = MagicMock()
+        mock_membership_query.filter.return_value.first.return_value = mock_membership
+
+        mock_owner_count_query = MagicMock()
+        mock_owner_count_query.filter.return_value.count.return_value = 2  # Not the last owner
+
+        call_count = [0]
+
+        def query_side_effect(model):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call - get membership
+                return mock_membership_query
+            else:
+                # Second call - count owners
+                return mock_owner_count_query
+
+        mock_db.query.side_effect = query_side_effect
+
+        # Mock role service
+        mock_member_role = MagicMock()
+        mock_member_role.id = "member-role-id"
+        mock_owner_role = MagicMock()
+        mock_owner_role.id = "owner-role-id"
+
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(side_effect=[mock_member_role, mock_owner_role])
+        mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
+        mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
+        service._role_service = mock_role_service
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            result = await service.update_member_role(team_id="team123", user_email="user@example.com", new_role="member", updated_by="admin@example.com")
+
+            assert result is True
+            assert mock_membership.role == "member"
+            # Should revoke owner role
+            mock_role_service.revoke_role_from_user.assert_called_with(user_email="user@example.com", role_id="owner-role-id", scope="team", scope_id="team123")
+            # Should assign member role
+            mock_role_service.assign_role_to_user.assert_called_with(user_email="user@example.com", role_id="member-role-id", scope="team", scope_id="team123", granted_by="admin@example.com")
 
     @pytest.mark.asyncio
     async def test_update_member_role_invalid_role(self, service):

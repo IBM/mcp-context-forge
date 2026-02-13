@@ -713,9 +713,38 @@ class TeamManagementService:
                     raise ValueError("Cannot remove owner role from the last owner of a team")
 
             # Update the role
+            old_role = membership.role
             membership.role = new_role
             self.db.commit()
             self._log_team_member_action(membership.id, team_id, user_email, new_role, "role_changed", updated_by)
+
+            # Handle RBAC role changes when team membership role changes
+            if old_role != new_role:
+                try:
+                    # Get both role types
+                    team_member_role = await self.role_service.get_role_by_name(settings.default_team_member_role, scope="team")
+                    team_owner_role = await self.role_service.get_role_by_name(settings.default_team_owner_role, scope="team")
+
+                    # Handle role transitions
+                    if old_role == "member" and new_role == "owner":
+                        # member -> owner: revoke member role, assign owner role
+                        if team_member_role:
+                            await self.role_service.revoke_role_from_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id)
+                        if team_owner_role:
+                            await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_owner_role.id, scope="team", scope_id=team_id, granted_by=updated_by or user_email)
+                        logger.info(f"Transitioned RBAC role from {settings.default_team_member_role} to {settings.default_team_owner_role} for {user_email} in team {team_id}")
+
+                    elif old_role == "owner" and new_role == "member":
+                        # owner -> member: revoke owner role, assign member role
+                        if team_owner_role:
+                            await self.role_service.revoke_role_from_user(user_email=user_email, role_id=team_owner_role.id, scope="team", scope_id=team_id)
+                        if team_member_role:
+                            await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id, granted_by=updated_by or user_email)
+                        logger.info(f"Transitioned RBAC role from {settings.default_team_owner_role} to {settings.default_team_member_role} for {user_email} in team {team_id}")
+
+                except Exception as role_error:
+                    logger.warning(f"Failed to update RBAC roles for {user_email} in team {team_id}: {role_error}")
+                    # Don't fail the membership role update if RBAC role update fails
 
             # Invalidate role cache
             try:
