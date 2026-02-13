@@ -990,6 +990,8 @@ populate-report:                           ## Show latest population report
 # help: monitoring-clean       - Stop and remove all monitoring data (volumes)
 # help: monitoring-status      - Show status of monitoring services
 # help: monitoring-logs        - Show monitoring stack logs
+# help: monitoring-lite-up    - Start lite monitoring (excludes pgAdmin, Redis CLI)
+# help: monitoring-lite-down  - Stop lite monitoring stack
 
 # Compose command for monitoring (requires --profile support)
 # podman-compose < 1.1.0 doesn't support --profile, so prefer docker compose or podman compose
@@ -4394,7 +4396,9 @@ docker-shell:
 # 🛠️  COMPOSE STACK (Docker Compose v2, podman compose or podman-compose)
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
-# help: compose-up           - Bring the whole stack up (detached)
+# help: compose-up            - Bring the whole stack up (detached)
+# help: compose-lite-up       - Start lite stack (reduced resources for local dev)
+# help: compose-lite-down     - Stop lite stack
 # help: compose-restart      - Recreate changed containers, pulling / building as needed
 # help: compose-build        - Build (or rebuild) images defined in the compose file
 # help: compose-pull         - Pull the latest images only
@@ -4457,10 +4461,11 @@ define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
-.PHONY: compose-up compose-restart compose-build compose-pull \
+.PHONY: compose-up compose-lite-up compose-restart compose-build compose-pull \
 	compose-logs compose-ps compose-shell compose-stop compose-down \
-	compose-rm compose-clean compose-validate compose-exec \
-	compose-logs-service compose-restart-service compose-scale compose-up-safe
+	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
+	compose-logs-service compose-restart-service compose-scale compose-up-safe \
+	monitoring-lite-up monitoring-lite-down
 
 # Validate compose file
 compose-validate:
@@ -4491,6 +4496,14 @@ compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
 
+compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
+	@if [ ! -f "docker-compose.override.lite.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.override.lite.yml"; \
+		exit 1; \
+	fi
+	@echo "🚀  Starting lite stack (with override)..."
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml up -d
+
 compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
@@ -4517,6 +4530,39 @@ compose-stop:
 
 compose-down:
 	$(COMPOSE) down --remove-orphans
+
+compose-lite-down: ## 💻 Stop lite stack (docker-compose.yml + docker-compose.override.lite.yml)
+	@echo "🛑  Stopping lite stack..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.override.lite.yml down --remove-orphans
+	@echo "✅ Lite stack stopped."
+
+monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, Grafana, exporters - excludes pgAdmin, Redis CLI)
+	@echo "📊 Starting lite monitoring stack (docker-compose.yml + docker-compose.override.lite.yml)..."
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_TRACES_EXPORTER=otlp \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite up -d
+	@echo "⏳ Waiting for Grafana to be ready..."
+	@for i in 1 2 3 4 5 6 7 8 9 10; do \
+		if curl -s -o /dev/null -w '' http://localhost:3000/api/health 2>/dev/null; then echo "✅ Grafana ready"; break; fi; \
+		echo "  Attempt $$i: Grafana not ready yet..."; \
+		sleep 2; \
+	done
+	@curl -s -X POST -u admin:changeme 'http://localhost:3000/api/user/stars/dashboard/uid/mcp-gateway-overview' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/org/preferences' >/dev/null 2>&1 || true
+	@curl -s -X PUT -u admin:changeme -H "Content-Type: application/json" -d '{"homeDashboardUID": "mcp-gateway-overview"}' 'http://localhost:3000/api/user/preferences' >/dev/null 2>&1 || true
+	@echo ""
+	@echo "✅ Lite monitoring stack started!"
+	@echo "📊 Grafana:    http://localhost:3000 (admin/changeme)"
+	@echo "📈 Prometheus: http://localhost:9090"
+
+monitoring-lite-down: ## 📊 Stop lite monitoring stack
+	@echo "📊 Stopping lite monitoring stack..."
+	@$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD_MONITOR) -f docker-compose.yml -f docker-compose.override.lite.yml --profile monitoring-lite down --remove-orphans
+	@echo "✅ Lite monitoring stack stopped."
 
 compose-rm:
 	$(COMPOSE) rm -f
