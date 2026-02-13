@@ -5513,5 +5513,422 @@ class TestResourceServiceImportCoverage:
         """
         src = "\n" * 78 + "try:\n    raise ImportError('forced')\nexcept ImportError:\n    PLUGINS_AVAILABLE = False\n"
         glb: dict = {}
-        exec(compile(src, "mcpgateway/services/resource_service.py", "exec"), glb, glb)
+        exec(compile(src, "mcpgateway/services/resource_service.py", "exec"), glb, glb)  # noqa: S102
         assert glb.get("PLUGINS_AVAILABLE") is False
+
+
+# --------------------------------------------------------------------------- #
+# Direct proxy tests for read_resource                                        #
+# --------------------------------------------------------------------------- #
+
+
+# Subclasses with an ``id`` field so that the post-direct-proxy code path
+# (``getattr(content, "id")``) does not raise ``AttributeError``.
+# The local import inside read_resource (line ~2189) resolves these from
+# ``mcpgateway.common.models``, so we patch them there.
+from typing import Optional as _Opt
+
+from pydantic import Field as _Field
+
+from mcpgateway.common.models import BlobResourceContents as _BlobBase
+from mcpgateway.common.models import TextResourceContents as _TextBase
+
+
+class _TextResourceContentsWithId(_TextBase):
+    """TextResourceContents with ``id`` so post-proxy getattr(content, 'id') succeeds."""
+
+    id: _Opt[str] = _Field(None)
+
+
+class _BlobResourceContentsWithId(_BlobBase):
+    """BlobResourceContents with ``id`` and ``text`` so post-proxy getattr calls succeed.
+
+    The post-direct-proxy code at line ~2331-2333 calls getattr(content, 'id') and
+    getattr(content, 'text') unconditionally on any ResourceContents instance.
+    """
+
+    id: _Opt[str] = _Field(None)
+    text: _Opt[str] = _Field(None)
+
+
+class TestReadResourceDirectProxy:
+    """Tests for the direct_proxy code path inside read_resource().
+
+    When a resource's gateway has gateway_mode == 'direct_proxy' and the feature
+    flag is enabled, read_resource connects to the remote MCP server directly
+    instead of using cached content.
+    """
+
+    @pytest.fixture
+    def resource_service(self, monkeypatch):
+        """Create a ResourceService instance with plugins disabled."""
+        monkeypatch.setenv("PLUGINS_ENABLED", "false")
+        return ResourceService()
+
+    @pytest.fixture
+    def mock_direct_proxy_resource(self):
+        """Create a mock resource whose gateway is in direct_proxy mode."""
+        gateway = MagicMock()
+        gateway.id = "gw1"
+        gateway.url = "http://remote:8000"
+        gateway.gateway_mode = "direct_proxy"
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"Authorization": "Bearer remote-token"}
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+
+        resource = MagicMock()
+        resource.id = "res-dp-1"
+        resource.uri = "http://example.com/dp-resource"
+        resource.name = "Direct Proxy Resource"
+        resource.enabled = True
+        resource.gateway = gateway
+        resource.visibility = "public"
+        resource.team_id = None
+        resource.owner_email = None
+        resource.tags = []
+        resource.team = None
+
+        # .content property for fallback path (feature disabled test)
+        content_mock = MagicMock()
+        content_mock.type = "text"
+        content_mock.text = "cached-content"
+        content_mock.blob = None
+        content_mock.uri = resource.uri
+        content_mock.mime_type = "text/plain"
+        content_mock.id = resource.id
+        type(resource).content = property(lambda self: content_mock)
+
+        return resource
+
+    def _make_mock_db(self, resource_mock):
+        """Create a mock DB session that returns the resource on execute().scalar_one_or_none()."""
+        db = MagicMock()
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = resource_mock
+        db.execute.return_value = mock_scalar
+        db.get.return_value = None  # resource_id is not provided
+        return db
+
+    def _make_session_mock(self, result):
+        """Create a mock ClientSession async context manager with a read_resource return value."""
+        session_mock = AsyncMock()
+        session_mock.read_resource = AsyncMock(return_value=result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+        return client_session_cm, session_mock
+
+    def _common_patches(self, resource_service):
+        """Return a contextmanager-compatible tuple of patches common to happy-path tests.
+
+        Patches TextResourceContents and BlobResourceContents in the models module so
+        the local import inside read_resource picks up id-aware subclasses, and also
+        patches _check_resource_access and invoke_resource on the service.
+        """
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _ctx():
+            with (
+                patch("mcpgateway.common.models.TextResourceContents", _TextResourceContentsWithId),
+                patch("mcpgateway.common.models.BlobResourceContents", _BlobResourceContentsWithId),
+                patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+                patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value=None),
+            ):
+                yield
+
+        return _ctx()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_text_content(self, resource_service, mock_direct_proxy_resource):
+        """Happy path: resource gateway in direct_proxy mode returns text content."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        # Remote session returns text content
+        first_content = MagicMock()
+        first_content.text = "hello from remote"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert isinstance(content, _TextBase)
+        assert content.text == "hello from remote"
+        assert content.uri == "http://example.com/dp-resource"
+        session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource")
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_blob_content(self, resource_service, mock_direct_proxy_resource):
+        """Happy path: resource gateway in direct_proxy mode returns blob content."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        # Remote session returns blob content (no .text attribute)
+        first_content = MagicMock(spec=[])  # empty spec to control hasattr
+        first_content.blob = "base64encodeddata"
+        first_content.mimeType = "application/octet-stream"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert isinstance(content, _BlobBase)
+        assert content.blob == "base64encodeddata"
+        assert content.uri == "http://example.com/dp-resource"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_empty_contents(self, resource_service, mock_direct_proxy_resource):
+        """When result.contents is empty, returns TextResourceContents with empty text."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        # Remote session returns empty contents list
+        result_mock = MagicMock()
+        result_mock.contents = []
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert isinstance(content, _TextBase)
+        assert content.text == ""
+        assert content.uri == "http://example.com/dp-resource"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_access_denied(self, resource_service, mock_direct_proxy_resource):
+        """When check_gateway_access returns False, raises ResourceNotFoundError."""
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=False),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            with pytest.raises(ResourceNotFoundError, match="Resource not found"):
+                await resource_service.read_resource(
+                    db,
+                    resource_uri="http://example.com/dp-resource",
+                    user="intruder@example.com",
+                    token_teams=[],
+                )
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_connection_error(self, resource_service, mock_direct_proxy_resource):
+        """When streamablehttp_client raises, ResourceError is raised."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        @asynccontextmanager
+        async def mock_streamable_client_error(*_args, **_kwargs):
+            raise ConnectionError("Connection refused")
+            yield  # pragma: no cover
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client_error),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            with pytest.raises(ResourceError, match="Direct proxy resource read failed"):
+                await resource_service.read_resource(
+                    db,
+                    resource_uri="http://example.com/dp-resource",
+                    user="user@example.com",
+                    token_teams=["team-1"],
+                )
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):
+        """meta_data is forwarded to session.read_resource as _meta."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+        meta = {"request_id": "trace-abc-123"}
+
+        first_content = MagicMock()
+        first_content.text = "meta response"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+                meta_data=meta,
+            )
+
+        session_mock.read_resource.assert_awaited_once_with(
+            uri="http://example.com/dp-resource",
+            _meta={"request_id": "trace-abc-123"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_configurable_timeout(self, resource_service, mock_direct_proxy_resource):
+        """Timeout passed to streamablehttp_client matches settings.mcpgateway_direct_proxy_timeout."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+        captured_kwargs = {}
+
+        first_content = MagicMock()
+        first_content.text = "ok"
+        first_content.mimeType = "text/plain"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 120
+            mock_settings.experimental_validate_io = False
+
+            await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert captured_kwargs["timeout"] == 120
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_feature_disabled(self, resource_service, mock_direct_proxy_resource):
+        """When feature flag is disabled, falls through to normal cache mode using resource_db.content."""
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch.object(resource_service, "_check_resource_access", new_callable=AsyncMock, return_value=True),
+            patch.object(resource_service, "invoke_resource", new_callable=AsyncMock, return_value="cached-content") as mock_invoke,
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = False
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # Falls through to normal cache mode, invoke_resource is called
+        mock_invoke.assert_awaited_once()
+        # The content should come from the DB resource (cache mode), not direct proxy
+        assert content.text == "cached-content"

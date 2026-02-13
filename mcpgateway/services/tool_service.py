@@ -84,7 +84,7 @@ from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -2586,21 +2586,20 @@ class ToolService:
             ToolNotFoundError: If gateway not found or access denied.
             ToolInvocationError: If invocation fails.
         """
-        logger.info(f"Direct proxy tool invocation: {name} via gateway {gateway_id}")  # pragma: no cover - integration test
-
+        logger.info(f"Direct proxy tool invocation: {name} via gateway {gateway_id}")
         # Look up gateway
         # Use a fresh session for this lookup
-        with fresh_db_session() as db:  # pragma: no cover - integration test
+        with fresh_db_session() as db:
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
             if not gateway:
                 raise ToolNotFoundError(f"Gateway {gateway_id} not found")
 
-            if getattr(gateway, "gateway_mode", "cache") != "direct_proxy":
+            if getattr(gateway, "gateway_mode", "cache") != "direct_proxy" or not settings.mcpgateway_direct_proxy_enabled:
                 raise ToolInvocationError(f"Gateway {gateway_id} is not in direct_proxy mode")
 
             # SECURITY: Defensive access check — callers should also check,
             # but enforce here to prevent RBAC bypass if called from a new context.
-            if not await check_gateway_access(db, gateway, user_email, token_teams):  # pragma: no cover - integration test
+            if not await check_gateway_access(db, gateway, user_email, token_teams):
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
             # Prepare headers with gateway auth
@@ -2616,8 +2615,8 @@ class ToolService:
             gateway_url = gateway.url
 
         # Use MCP SDK to connect and call tool
-        try:  # pragma: no cover - integration test
-            async with streamablehttp_client(url=gateway_url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+        try:
+            async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
                     # Skip session initialize for stateless servers
                     # await session.initialize()
@@ -2631,7 +2630,7 @@ class ToolService:
 
                     logger.info(f"[INVOKE TOOL] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
                     return tool_result
-        except Exception as e:  # pragma: no cover - integration test
+        except Exception as e:
             logger.exception(f"Direct proxy tool invocation failed for {name}: {e}")
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
 
@@ -2692,12 +2691,7 @@ class ToolService:
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
-        gateway_id_from_header = None  # pragma: no cover - integration test
-        if request_headers:  # pragma: no cover - integration test
-            for header_name, header_value in request_headers.items():
-                if header_name.lower() == "x-context-forge-gateway-id":
-                    gateway_id_from_header = header_value
-                    break
+        gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
 
         # If X-Context-Forge-Gateway-Id header is present, check if gateway is in direct_proxy mode
         is_direct_proxy = False
@@ -2706,10 +2700,10 @@ class ToolService:
         tool_payload: Dict[str, Any] = {}
         gateway_payload: Optional[Dict[str, Any]] = None
 
-        if gateway_id_from_header:  # pragma: no cover - integration test
+        if gateway_id_from_header:
             # Look up gateway to check if it's in direct_proxy mode
             gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-            if gateway and gateway.gateway_mode == "direct_proxy":
+            if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                 # SECURITY: Check gateway access before allowing direct proxy
                 # This prevents RBAC bypass where any authenticated user could invoke tools
                 # on any gateway just by knowing the gateway ID
@@ -2764,32 +2758,6 @@ class ToolService:
                     raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
                 tool_payload = cached_payload.get("tool") or {}
                 gateway_payload = cached_payload.get("gateway")
-
-            if not tool_payload:
-                # Eager load tool WITH gateway in single query to prevent lazy load N+1
-                # Use a single query to avoid a race between separate enabled/inactive lookups.
-                tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalar_one_or_none()
-                if not tool:
-                    raise ToolNotFoundError(f"Tool not found: {name}")
-                if not tool.enabled:
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-
-                if not tool.reachable:
-                    await tool_lookup_cache.set_negative(name, "offline")
-                    raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-
-                gateway = tool.gateway
-                cache_payload = self._build_tool_cache_payload(tool, gateway)
-                tool_payload = cache_payload.get("tool") or {}
-                gateway_payload = cache_payload.get("gateway")
-                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
-
-            if tool_payload.get("enabled") is False:
-                raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-            if tool_payload.get("reachable") is False:
-                raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
-            tool_payload = cached_payload.get("tool") or {}
-            gateway_payload = cached_payload.get("gateway")
 
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1

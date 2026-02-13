@@ -24,6 +24,24 @@ from mcpgateway.utils.services_auth import decode_auth
 GATEWAY_ID_HEADER = "X-Context-Forge-Gateway-Id"
 
 
+def extract_gateway_id_from_headers(headers: Optional[Dict[str, str]]) -> Optional[str]:
+    """Extract gateway ID from request headers (case-insensitive).
+
+    Args:
+        headers: Request headers dictionary (may be None).
+
+    Returns:
+        Gateway ID string if found, None otherwise.
+    """
+    if not headers:
+        return None
+    header_lower = GATEWAY_ID_HEADER.lower()
+    for name, value in headers.items():
+        if name.lower() == header_lower:
+            return value
+    return None
+
+
 async def check_gateway_access(
     db: Session,
     gateway: DbGateway,
@@ -141,4 +159,3 @@ def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
                 headers["Authorization"] = auth_header
 
     return headers
-

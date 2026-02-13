@@ -824,6 +824,9 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             # Check if gateway is in direct_proxy mode
             gateway_mode = getattr(gateway, "gateway_mode", "cache")
 
+            if gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
+                raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
+
             if initialize_timeout is not None:
                 try:
                     capabilities, tools, resources, prompts = await asyncio.wait_for(
@@ -2194,6 +2197,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
                 # Update gateway_mode if provided
                 if hasattr(gateway_update, "gateway_mode") and gateway_update.gateway_mode is not None:
+                    if gateway_update.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
+                        raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
                     gateway.gateway_mode = gateway_update.gateway_mode
 
                 # Update metadata fields

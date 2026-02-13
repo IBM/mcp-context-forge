@@ -274,6 +274,9 @@ services:
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
+      # Uncomment to enable direct proxy mode
+      # - MCPGATEWAY_DIRECT_PROXY_ENABLED=false
+      # - MCPGATEWAY_DIRECT_PROXY_TIMEOUT=30
       # Authentication configuration
       - AUTH_REQUIRED=true
       - MCP_CLIENT_AUTH_ENABLED=true

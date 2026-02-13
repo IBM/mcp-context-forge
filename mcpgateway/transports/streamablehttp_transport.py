@@ -66,7 +66,7 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_credentials
 
@@ -484,7 +484,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                     headers[header_name] = header_value
 
         # Use MCP SDK to connect and list tools
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Skip initialize() for stateless MCP servers
 
@@ -531,7 +531,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             logger.debug(f"Forwarding _meta to remote gateway: {meta}")
 
         # Use MCP SDK to connect and list resources
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Skip initialize() for stateless MCP servers
 
@@ -572,11 +572,9 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         request_headers = request_headers_var.get()
 
         # Forward X-Context-Forge-Gateway-Id header
-        if request_headers:
-            for header_name, header_value in request_headers.items():
-                if header_name.lower() == "x-context-forge-gateway-id":
-                    headers["X-Context-Forge-Gateway-Id"] = header_value
-                    break
+        gw_id = extract_gateway_id_from_headers(request_headers)
+        if gw_id:
+            headers[GATEWAY_ID_HEADER] = gw_id
 
         # Forward passthrough headers if configured
         if gateway.passthrough_headers and request_headers:
@@ -590,7 +588,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             logger.debug(f"Forwarding _meta to remote gateway: {meta}")
 
         # Use MCP SDK to connect and read resource
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
                 # Skip initialize() for stateless MCP servers
                 # await session.initialize()
@@ -690,17 +688,11 @@ async def call_tool(name: str, arguments: dict) -> Union[
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
     # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
-    gateway_id_from_header = None
-    if request_headers:  # pragma: no cover - integration test
-        for header_name, header_value in request_headers.items():
-            if header_name.lower() == "x-context-forge-gateway-id":
-                gateway_id_from_header = header_value
-                break
+    gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
 
     # If X-Context-Forge-Gateway-Id header is present, use direct proxy mode
     if gateway_id_from_header:
-        try:  # pragma: no cover - integration test
-            # Check if this gateway is in direct_proxy mode
+        try:  # Check if this gateway is in direct_proxy mode
             async with get_db() as check_db:
                 # Third-Party
                 from sqlalchemy import select  # pylint: disable=import-outside-toplevel
@@ -728,7 +720,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         user_email=user_email,
                         token_teams=token_teams,
                     )
-        except Exception as e:  # pragma: no cover - integration test
+        except Exception as e:
             logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
             # Fall through to normal mode on error
 
@@ -999,16 +991,10 @@ async def list_tools() -> List[types.Tool]:
         try:
             async with get_db() as db:
                 # Check for X-Context-Forge-Gateway-Id header first - if present, try direct proxy mode
-                # Check for X-Context-Forge-Gateway-Id header (case-insensitive)
-                gateway_id = None
-                if request_headers:
-                    for header_name, header_value in request_headers.items():
-                        if header_name.lower() == "x-context-forge-gateway-id":
-                            gateway_id = header_value
-                            break
+                gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
-                if gateway_id:  # pragma: no cover - integration test
+                if gateway_id:
                     # Third-Party
                     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
@@ -1016,7 +1002,7 @@ async def list_tools() -> List[types.Tool]:
                     from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy":
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
                             logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
@@ -1028,9 +1014,7 @@ async def list_tools() -> List[types.Tool]:
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(
-                                f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}"
-                            )
+                            logger.info(f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
                         except (LookupError, AttributeError) as e:
                             logger.debug(f"No request context available for _meta extraction: {e}")
 
@@ -1038,7 +1022,7 @@ async def list_tools() -> List[types.Tool]:
                     if gateway:
                         logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
                     else:
-                        logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
 
                 # Check if server exists for cache mode
                 # Third-Party
@@ -1233,13 +1217,7 @@ async def list_resources() -> List[types.Resource]:
                 # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
                 request_headers = request_headers_var.get()
 
-                # Check for X-Context-Forge-Gateway-Id header (case-insensitive)
-                gateway_id = None
-                if request_headers:
-                    for header_name, header_value in request_headers.items():
-                        if header_name.lower() == "x-context-forge-gateway-id":
-                            gateway_id = header_value
-                            break
+                gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
                 if gateway_id:
@@ -1250,7 +1228,7 @@ async def list_resources() -> List[types.Resource]:
                     from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                    if gateway and gateway.gateway_mode == "direct_proxy":
+                    if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
                             logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
@@ -1262,9 +1240,7 @@ async def list_resources() -> List[types.Resource]:
                         try:
                             request_ctx = mcp_app.request_context
                             meta = request_ctx.meta
-                            logger.info(
-                                f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta is not None}"
-                            )
+                            logger.info(f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
                         except (LookupError, AttributeError) as e:
                             logger.debug(f"No request context available for _meta extraction: {e}")
 
@@ -1272,7 +1248,7 @@ async def list_resources() -> List[types.Resource]:
                     if gateway:
                         logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
                     else:
-                        logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
 
                 # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
@@ -1345,13 +1321,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
             # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
             request_headers = request_headers_var.get()
 
-            # Check for X-Context-Forge-Gateway-Id header (case-insensitive)
-            gateway_id = None
-            if request_headers:
-                for header_name, header_value in request_headers.items():
-                    if header_name.lower() == "x-context-forge-gateway-id":
-                        gateway_id = header_value
-                        break
+            gateway_id = extract_gateway_id_from_headers(request_headers)
 
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
             if gateway_id:
@@ -1363,7 +1333,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
-                if gateway and gateway.gateway_mode == "direct_proxy":
+                if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(db, gateway, user_email, token_teams):
                         logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
@@ -1375,9 +1345,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     try:
                         request_ctx = mcp_app.request_context
                         meta = request_ctx.meta
-                        logger.info(
-                            f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from X-Context-Forge-Gateway-Id header), forwarding _meta: {meta}"
-                        )
+                        logger.info(f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header), forwarding _meta: {meta}")
                     except (LookupError, AttributeError) as e:
                         logger.debug(f"No request context available for _meta extraction: {e}")
 
@@ -1393,7 +1361,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                 if gateway:
                     logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
                 else:
-                    logger.warning(f"Gateway {gateway_id} specified in X-Context-Forge-Gateway-Id header not found")
+                    logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
 
             # Default cache mode: use database
             try:

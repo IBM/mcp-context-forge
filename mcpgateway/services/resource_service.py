@@ -2179,14 +2179,14 @@ class ResourceService:
                     resource_db = db.execute(query).scalar_one_or_none()
 
                     # Check for direct_proxy mode
-                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy":  # pragma: no cover - integration test
+                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         # SECURITY: Check gateway access before allowing direct proxy
-                        if not await check_gateway_access(db, resource_db.gateway, user, token_teams):  # pragma: no cover - integration test
+                        if not await check_gateway_access(db, resource_db.gateway, user, token_teams):
                             raise ResourceNotFoundError(f"Resource not found: {uri}")
 
                         logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
 
-                        try:  # pragma: no cover - integration test
+                        try:  # First-Party
                             # First-Party
                             from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
 
@@ -2196,7 +2196,7 @@ class ResourceService:
                             headers = build_gateway_auth_headers(gateway)
 
                             # Use MCP SDK to connect and read resource
-                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=30.0) as (read_stream, write_stream, _get_session_id):
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                                 async with ClientSession(read_stream, write_stream) as session:
                                     # Skip session initialize for stateless servers
                                     # await session.initialize()
@@ -2228,7 +2228,7 @@ class ResourceService:
                                     logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
                                     # Skip the rest of the DB lookup logic
 
-                        except Exception as e:  # pragma: no cover - integration test
+                        except Exception as e:
                             logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
                             raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
 

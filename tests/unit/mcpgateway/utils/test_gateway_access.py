@@ -406,5 +406,45 @@ class TestCheckGatewayAccess:
         result = await check_gateway_access(db, gateway, "user@example.com", ["team1"])
         assert result is False
 
+from mcpgateway.utils.gateway_access import extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+
+
+def test_gateway_id_header_constant_value():
+    """GATEWAY_ID_HEADER should equal the canonical header name."""
+    assert GATEWAY_ID_HEADER == "X-Context-Forge-Gateway-Id"
+
+
+class TestExtractGatewayIdFromHeaders:
+    """Test suite for extract_gateway_id_from_headers function."""
+
+    def test_extract_gateway_id_found(self):
+        """Should return the gateway ID when header is present."""
+        headers = {"X-Context-Forge-Gateway-Id": "gw-123"}
+        result = extract_gateway_id_from_headers(headers)
+        assert result == "gw-123"
+
+    def test_extract_gateway_id_case_insensitive(self):
+        """Should match the header name case-insensitively."""
+        headers = {"x-context-forge-gateway-id": "gw-456"}
+        result = extract_gateway_id_from_headers(headers)
+        assert result == "gw-456"
+
+    def test_extract_gateway_id_not_found(self):
+        """Should return None when the header is absent."""
+        headers = {"Authorization": "Bearer token", "X-Other": "value"}
+        result = extract_gateway_id_from_headers(headers)
+        assert result is None
+
+    def test_extract_gateway_id_none_headers(self):
+        """Should return None when headers is None."""
+        result = extract_gateway_id_from_headers(None)
+        assert result is None
+
+    def test_extract_gateway_id_empty_headers(self):
+        """Should return None when headers dict is empty."""
+        result = extract_gateway_id_from_headers({})
+        assert result is None
+
+
 # Made with Bob
 # Co-authored by Venkat (010gvr@gmail.com)
