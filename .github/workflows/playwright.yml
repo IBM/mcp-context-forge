@@ -1,0 +1,102 @@
+name: Playwright CI Smoke
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: playwright-ci-smoke-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playwright-ci-smoke:
+    name: playwright-ci-smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      TEST_BASE_URL: http://127.0.0.1:4444
+      GUNICORN_WORKERS: "1"
+      MCPGATEWAY_UI_ENABLED: "true"
+      MCPGATEWAY_ADMIN_API_ENABLED: "true"
+      SECURE_COOKIES: "false"
+      PLAYWRIGHT_INSTALL_FLAGS: --with-deps
+      UV_CACHE_DIR: /tmp/uv-cache
+
+    steps:
+      - name: ⬇️ Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: ⚡ Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.2"
+          python-version: "3.11"
+
+      - name: 📦 Install gateway dependencies
+        run: |
+          make venv install
+
+      - name: 🎭 Run make serve + CI smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cleanup() {
+            status=$?
+            if [[ -f /tmp/mcpgateway-ci.pid ]] && kill -0 "$(cat /tmp/mcpgateway-ci.pid)" 2>/dev/null; then
+              kill "$(cat /tmp/mcpgateway-ci.pid)" || true
+              sleep 1
+            fi
+            if [[ $status -ne 0 ]]; then
+              echo "Gateway log tail (failure context):"
+              tail -n 250 /tmp/mcpgateway-ci.log || true
+            fi
+          }
+          trap cleanup EXIT
+
+          cp .env.example .env
+
+          make serve > /tmp/mcpgateway-ci.log 2>&1 &
+          echo $! > /tmp/mcpgateway-ci.pid
+
+          for i in {1..120}; do
+            if curl -fsS "${TEST_BASE_URL}/health" >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$(cat /tmp/mcpgateway-ci.pid)" 2>/dev/null; then
+              echo "Gateway exited during startup."
+              exit 1
+            fi
+            sleep 1
+          done
+
+          curl -fsS "${TEST_BASE_URL}/health" >/dev/null
+          make test-ui-ci-smoke
+
+      - name: 📦 Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: playwright-ci-smoke-artifacts
+          if-no-files-found: ignore
+          retention-days: 7
+          path: |
+            /tmp/mcpgateway-ci.log
+            test-results/
+            tests/playwright/reports/
