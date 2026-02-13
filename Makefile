@@ -48,6 +48,19 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 	*.tar.gz *.tar.bz2 *.tar.xz *.zip *.deb \
 	*.log mcpgateway.sbom.xml
 
+# Extra cleanup targets that are easiest to remove by explicit path/pattern.
+EXTRA_DIRS_TO_CLEAN := reports test-results tests/playwright/reports \
+	tests/playwright/screenshots tests/playwright/videos \
+	tests/jmeter/results tests/async/profiles tests/async/reports \
+	tests/migration/reports tests/migration/logs .jmeter plugins_rust/target
+
+EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
+	playwright-report-*.html test-results-*.xml \
+	logs/db-queries.jsonl \
+	snyk-code-results.json snyk-container-results.json \
+	snyk-iac-compose-results.json snyk-iac-docker-results.json \
+	snyk-helm-results.json aibom.json sbom-cyclonedx.json sbom-spdx.json
+
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
 METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
@@ -535,6 +548,8 @@ clean:
 	done; \
 	set -e
 	@rm -f $(FILES_TO_CLEAN)
+	@rm -rf $(EXTRA_DIRS_TO_CLEAN)
+	@rm -f $(EXTRA_FILES_TO_CLEAN)
 	@find . -name "*.py[cod]" -delete
 	@find . -name "*.py,cover" -delete
 	@echo "✅  Clean complete."
