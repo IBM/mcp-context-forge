@@ -118,6 +118,13 @@ export function safeGetElement(id, suppressWarning = false) {
   }
 }
 
+export function safeSetValue(id, val) {
+  const el = safeGetElement(id);
+  if (el) {
+    el.value = val;
+  }
+};
+
 // Check for inactive items
 export function isInactiveChecked(type) {
   const checkbox = safeGetElement(`show-inactive-${type}`);

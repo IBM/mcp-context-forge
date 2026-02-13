@@ -1,3 +1,4 @@
+import { HEADER_NAME_REGEX } from './constants';
 import { generateSchema } from './formFieldHandlers';
 import { 
   validateInputName, 
@@ -54,9 +55,9 @@ export const handleGatewayFormSubmit = async function (e) {
     if (passthroughHeadersString && passthroughHeadersString.trim()) {
       // Split by comma and clean up each header name
       const passthroughHeaders = passthroughHeadersString
-      .split(",")
-      .map((header) => header.trim())
-      .filter((header) => header.length > 0);
+        .split(",")
+        .map((header) => header.trim())
+        .filter((header) => header.length > 0);
       
       // Validate each header name
       for (const headerName of passthroughHeaders) {
@@ -471,9 +472,9 @@ export const handleA2AFormSubmit = async function (e) {
     if (passthroughHeadersString && passthroughHeadersString.trim()) {
       // Split by comma and clean up each header name
       const passthroughHeaders = passthroughHeadersString
-      .split(",")
-      .map((header) => header.trim())
-      .filter((header) => header.length > 0);
+        .split(",")
+        .map((header) => header.trim())
+        .filter((header) => header.length > 0);
       
       // Validate each header name
       for (const headerName of passthroughHeaders) {
@@ -747,9 +748,9 @@ export const handleEditGatewayFormSubmit = async function (e) {
     const passthroughHeadersString =
     formData.get("passthrough_headers") || "";
     const passthroughHeaders = passthroughHeadersString
-    .split(",")
-    .map((header) => header.trim())
-    .filter((header) => header.length > 0);
+      .split(",")
+      .map((header) => header.trim())
+      .filter((header) => header.length > 0);
     
     // Validate each header name
     for (const headerName of passthroughHeaders) {
@@ -844,9 +845,9 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
     const passthroughHeadersString =
     formData.get("passthrough_headers") || "";
     const passthroughHeaders = passthroughHeadersString
-    .split(",")
-    .map((header) => header.trim())
-    .filter((header) => header.length > 0);
+      .split(",")
+      .map((header) => header.trim())
+      .filter((header) => header.length > 0);
     
     // Validate each header name
     for (const headerName of passthroughHeaders) {
