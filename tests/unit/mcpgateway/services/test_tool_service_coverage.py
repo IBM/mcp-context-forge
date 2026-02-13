@@ -6626,6 +6626,7 @@ class TestInvokeToolLookupLogic:
         ):
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = AsyncMock(return_value=MagicMock(status_code=200, json=MagicMock(return_value={"ok": True})))
+            tool_service._plugin_manager = None
 
             await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
 
@@ -6658,6 +6659,7 @@ class TestInvokeToolLookupLogic:
         ):
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = AsyncMock(return_value=MagicMock(status_code=200, json=MagicMock(return_value={"ok": True})))
+            tool_service._plugin_manager = None
 
             await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
 
@@ -6712,6 +6714,7 @@ class TestInvokeToolLookupLogic:
         ):
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = AsyncMock(return_value=MagicMock(status_code=200, json=MagicMock(return_value={"ok": True})))
+            tool_service._plugin_manager = None
 
             await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
 
