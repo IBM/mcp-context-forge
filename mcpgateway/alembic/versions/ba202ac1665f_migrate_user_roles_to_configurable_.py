@@ -48,7 +48,7 @@ OLD_TEAM_MEMBER_ROLE = "viewer"
 
 def _generate_uuid() -> str:
     """Generate a UUID string compatible with both PostgreSQL and SQLite.
-    
+
     Returns:
         str: UUID str
     """
