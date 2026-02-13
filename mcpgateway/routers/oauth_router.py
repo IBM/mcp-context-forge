@@ -283,6 +283,7 @@ async def oauth_callback(
     try:
         # Get root path for URL construction
         root_path = request.scope.get("root_path", "") if request else ""
+        safe_root_path = escape(str(root_path), quote=True)
 
         # RFC 6749 Section 4.1.2.1: provider may return error instead of code
         if error:
@@ -298,7 +299,7 @@ async def oauth_callback(
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p><strong>Error:</strong> {error_text}</p>
                     <p><strong>Description:</strong> {description_text}</p>
-                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -315,7 +316,7 @@ async def oauth_callback(
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Missing authorization code in callback response.</p>
-                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -461,7 +462,7 @@ async def oauth_callback(
                 <div id="fetch-status" style="margin-top: 15px;"></div>
             </div>
 
-            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
 
             <script>
             async function fetchTools() {{
@@ -473,7 +474,7 @@ async def oauth_callback(
                 statusDiv.innerHTML = '<p style="color: #2563eb;">Fetching tools from MCP server...</p>';
 
                 try {{
-                    const response = await fetch('{root_path}/oauth/fetch-tools/{gateway_id}', {{
+                    const response = await fetch('{safe_root_path}/oauth/fetch-tools/{gateway_id}', {{
                         method: 'POST'
                     }});
 
@@ -537,7 +538,7 @@ async def oauth_callback(
             <h1 class="error">❌ OAuth Authorization Failed</h1>
             <p><strong>Error:</strong> {str(e)}</p>
             <p>Please check your OAuth configuration and try again.</p>
-            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
         </html>
         """,
@@ -571,7 +572,7 @@ async def oauth_callback(
             <h1 class="error">❌ OAuth Authorization Failed</h1>
             <p><strong>Unexpected Error:</strong> {str(e)}</p>
             <p>Please contact your administrator for assistance.</p>
-            <a href="{root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
         </html>
         """,
