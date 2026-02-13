@@ -43,6 +43,90 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
+class TeamManagementError(Exception):
+    """Base class for team management-related errors.
+
+    Examples:
+        >>> error = TeamManagementError("Test error")
+        >>> str(error)
+        'Test error'
+        >>> isinstance(error, Exception)
+        True
+    """
+
+
+class InvalidRoleError(TeamManagementError):
+    """Raised when an invalid role is specified.
+
+    Examples:
+        >>> error = InvalidRoleError("Invalid role: guest")
+        >>> str(error)
+        'Invalid role: guest'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
+class TeamNotFoundError(TeamManagementError):
+    """Raised when a team does not exist.
+
+    Examples:
+        >>> error = TeamNotFoundError("Team not found: team-123")
+        >>> str(error)
+        'Team not found: team-123'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
+class UserNotFoundError(TeamManagementError):
+    """Raised when a user does not exist.
+
+    Examples:
+        >>> error = UserNotFoundError("User not found: user@example.com")
+        >>> str(error)
+        'User not found: user@example.com'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
+class MemberAlreadyExistsError(TeamManagementError):
+    """Raised when a user is already a member of the team.
+
+    Examples:
+        >>> error = MemberAlreadyExistsError("User user@example.com is already a member of team team-123")
+        >>> str(error)
+        'User user@example.com is already a member of team team-123'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
+class TeamMemberLimitExceededError(TeamManagementError):
+    """Raised when a team has reached its maximum member limit.
+
+    Examples:
+        >>> error = TeamMemberLimitExceededError("Team has reached maximum member limit of 10")
+        >>> str(error)
+        'Team has reached maximum member limit of 10'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
+class TeamMemberAddError(TeamManagementError):
+    """Raised when adding a member to a team fails due to database or system errors.
+
+    Examples:
+        >>> error = TeamMemberAddError("Failed to add member due to database error")
+        >>> str(error)
+        'Failed to add member due to database error'
+        >>> isinstance(error, TeamManagementError)
+        True
+    """
+
+
 class TeamManagementService:
     """Service for team management operations.
 
@@ -484,7 +568,7 @@ class TeamManagementService:
             logger.error(f"Failed to delete team {team_id}: {e}")
             return False
 
-    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None) -> bool:
+    async def add_member_to_team(self, team_id: str, user_email: str, role: str = "member", invited_by: Optional[str] = None) -> EmailTeamMember:
         """Add a member to a team.
 
         Args:
@@ -494,10 +578,15 @@ class TeamManagementService:
             invited_by: Email of user who added this member
 
         Returns:
-            bool: True if member was added successfully, False otherwise
+            EmailTeamMember: The created or reactivated team member object
 
         Raises:
-            ValueError: If role is invalid or team member limit exceeded
+            InvalidRoleError: If role is invalid
+            TeamNotFoundError: If team does not exist
+            UserNotFoundError: If user does not exist
+            MemberAlreadyExistsError: If user is already a member
+            TeamMemberLimitExceededError: If team has reached maximum member limit
+            TeamMemberAddError: If adding member fails due to database or system errors
 
         Examples:
             >>> import asyncio
@@ -508,40 +597,40 @@ class TeamManagementService:
             >>> # After adding, EmailTeamMemberHistory is updated
             >>> # service._log_team_member_action("tm-123", "team-123", "user@example.com", "member", "added", "admin@example.com")
         """
+        # Validate role
+        valid_roles = ["owner", "member"]
+        if role not in valid_roles:
+            raise InvalidRoleError(f"Invalid role '{role}'. Must be one of: {', '.join(valid_roles)}")
+
+        # Check if team exists
+        team = await self.get_team_by_id(team_id)
+        if not team:
+            logger.warning(f"Team {team_id} not found")
+            raise TeamNotFoundError("Team not found")
+
+        # Check if user exists
+        user = self.db.query(EmailUser).filter(EmailUser.email == user_email).first()
+        if not user:
+            logger.warning(f"User {user_email} not found")
+            raise UserNotFoundError("User not found")
+
+        # Check if user is already a member
+        existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
+
+        if existing_membership and existing_membership.is_active:
+            logger.warning(f"User {user_email} is already a member of team {team_id}")
+            raise MemberAlreadyExistsError("User is already a member of this team")
+
+        # Check team member limit
+        if team.max_members:
+            current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
+
+            if current_member_count >= team.max_members:
+                logger.warning(f"Team {team_id} has reached maximum member limit of {team.max_members}")
+                raise TeamMemberLimitExceededError(f"Team has reached maximum member limit of {team.max_members}")
+
+        # Add or reactivate membership
         try:
-            # Validate role
-            valid_roles = ["owner", "member"]
-            if role not in valid_roles:
-                raise ValueError(f"Invalid role. Must be one of: {', '.join(valid_roles)}")
-
-            # Check if team exists
-            team = await self.get_team_by_id(team_id)
-            if not team:
-                logger.warning(f"Team {team_id} not found")
-                return False
-
-            # Check if user exists
-            user = self.db.query(EmailUser).filter(EmailUser.email == user_email).first()
-            if not user:
-                logger.warning(f"User {user_email} not found")
-                return False
-
-            # Check if user is already a member
-            existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
-
-            if existing_membership and existing_membership.is_active:
-                logger.warning(f"User {user_email} is already a member of team {team_id}")
-                return False
-
-            # Check team member limit
-            if team.max_members:
-                current_member_count = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).count()
-
-                if current_member_count >= team.max_members:
-                    logger.warning(f"Team {team_id} has reached maximum member limit")
-                    raise ValueError(f"Team has reached maximum member limit of {team.max_members}")
-
-            # Add or reactivate membership
             if existing_membership:
                 existing_membership.is_active = True
                 existing_membership.role = role
@@ -549,11 +638,13 @@ class TeamManagementService:
                 existing_membership.invited_by = invited_by
                 self.db.commit()
                 self._log_team_member_action(existing_membership.id, team_id, user_email, role, "reactivated", invited_by)
+                member = existing_membership
             else:
                 membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, is_active=True)
                 self.db.add(membership)
                 self.db.commit()
                 self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
+                member = membership
 
             # Assign team-scoped RBAC role matching the membership role (owner or member)
             try:
@@ -585,12 +676,12 @@ class TeamManagementService:
             await self.invalidate_team_member_count_cache(str(team_id))
 
             logger.info(f"Added {user_email} to team {team_id} with role {role}")
-            return True
+            return member
 
         except Exception as e:
             self.db.rollback()
             logger.error(f"Failed to add {user_email} to team {team_id}: {e}")
-            return False
+            raise TeamMemberAddError("Failed to add member to team") from e
 
     async def remove_member_from_team(self, team_id: str, user_email: str, removed_by: Optional[str] = None) -> bool:
         """Remove a member from a team.

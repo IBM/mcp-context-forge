@@ -41,6 +41,7 @@ from mcpgateway.schemas import (
     TeamJoinRequest,
     TeamJoinRequestResponse,
     TeamListResponse,
+    TeamMemberAddRequest,
     TeamMemberResponse,
     TeamMemberUpdateRequest,
     TeamResponse,
@@ -48,7 +49,15 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_invitation_service import TeamInvitationService
-from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.services.team_management_service import (
+    InvalidRoleError,
+    MemberAlreadyExistsError,
+    TeamManagementService,
+    TeamMemberAddError,
+    TeamMemberLimitExceededError,
+    TeamNotFoundError,
+    UserNotFoundError,
+)
 
 # Initialize logging
 logging_service = LoggingService()
@@ -503,6 +512,51 @@ async def list_team_members(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list team members")
 
 
+@teams_router.post("/{team_id}/members", response_model=TeamMemberResponse)
+@require_permission("teams.manage_members")
+async def add_team_member(
+    team_id: str, request: TeamMemberAddRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+) -> TeamMemberResponse:
+    """Add a new member to a team.
+
+    Args:
+        team_id: Team UUID
+        request: Member add request data with email and role
+        current_user: Authenticated user context dict with email and permissions
+        db: Database session
+
+    Returns:
+        TeamMemberResponse: New member data
+
+    Raises:
+        HTTPException: If team not found, access denied, or add fails
+    """
+    try:
+        service = TeamManagementService(db)
+
+        # Add member to team and get the created member directly
+        member = await service.add_member_to_team(team_id, request.email, request.role, invited_by=current_user["email"])
+
+        db.commit()
+        db.close()
+        return TeamMemberResponse.model_validate(member)
+    except InvalidRoleError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TeamNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except UserNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except MemberAlreadyExistsError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except TeamMemberLimitExceededError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except TeamMemberAddError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error adding team member {request.email} to team {team_id}: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add team member")
+
+
 @teams_router.put("/{team_id}/members/{user_email}", response_model=TeamMemberResponse)
 @require_permission("teams.manage_members")
 async def update_team_member(
@@ -540,10 +594,9 @@ async def update_team_member(
         if not member:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team member not found after update")
 
-        mm = cast(Any, member)
         db.commit()
         db.close()
-        return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
+        return TeamMemberResponse.model_validate(member)
     except HTTPException:
         raise
     except ValueError as e:
@@ -739,10 +792,9 @@ async def accept_team_invitation(token: str, current_user: dict = Depends(get_cu
         if not member or not hasattr(member, "id"):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invalid or expired invitation")
 
-        mm = cast(Any, member)
         db.commit()
         db.close()
-        return TeamMemberResponse(id=mm.id, team_id=mm.team_id, user_email=mm.user_email, role=mm.role, joined_at=mm.joined_at, invited_by=mm.invited_by, is_active=mm.is_active)
+        return TeamMemberResponse.model_validate(member)
     except HTTPException:
         raise
     except ValueError as e:

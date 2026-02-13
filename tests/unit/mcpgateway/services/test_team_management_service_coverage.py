@@ -276,6 +276,7 @@ class TestDeleteTeamEdge:
 class TestAddMemberEdge:
     @pytest.mark.asyncio
     async def test_max_members_reached(self, svc, db):
+        from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
         team = _mock_team(max_members=2)
         user = MagicMock(spec=EmailUser)
 
@@ -287,10 +288,8 @@ class TestAddMemberEdge:
         db.query = MagicMock(return_value=mock_query)
 
         with patch.object(svc, "get_team_by_id", AsyncMock(return_value=team)):
-            result = await svc.add_member_to_team("t1", "new@t.com")
-
-        # ValueError is caught by the outer except and returns False
-        assert result is False
+            with pytest.raises(TeamMemberLimitExceededError, match="Team has reached maximum member limit of 2"):
+                await svc.add_member_to_team("t1", "new@t.com")
 
     @pytest.mark.asyncio
     async def test_cache_failure_on_add(self, svc, db):
@@ -308,9 +307,7 @@ class TestAddMemberEdge:
              patch.object(svc, "invalidate_team_member_count_cache", AsyncMock()):
             mock_asyncio.create_task = MagicMock(side_effect=RuntimeError("no loop"))
 
-            result = await svc.add_member_to_team("t1", "new@t.com")
-
-        assert result is True
+            await svc.add_member_to_team("t1", "new@t.com")
 
 
 # ===========================================================================

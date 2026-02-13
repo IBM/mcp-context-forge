@@ -458,41 +458,49 @@ class TestTeamManagementService:
         mock_db.query.side_effect = side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
+            await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
 
-            assert result is True
             assert mock_db.add.call_count == 2
             assert mock_db.commit.call_count == 2  # One for membership, one for history
 
     @pytest.mark.asyncio
     async def test_add_member_invalid_role(self, service):
         """Test adding member with invalid role."""
-        result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="invalid")
-        assert result is False
+        from mcpgateway.services.team_management_service import InvalidRoleError
+
+        with pytest.raises(InvalidRoleError) as exc_info:
+            await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="invalid")
+        assert "Invalid role" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_add_member_team_not_found(self, service):
         """Test adding member to non-existent team."""
-        with patch.object(service, "get_team_by_id", return_value=None):
-            result = await service.add_member_to_team(team_id="nonexistent", user_email="user@example.com")
+        from mcpgateway.services.team_management_service import TeamNotFoundError
 
-            assert result is False
+        with patch.object(service, "get_team_by_id", return_value=None):
+            with pytest.raises(TeamNotFoundError) as exc_info:
+                await service.add_member_to_team(team_id="nonexistent", user_email="user@example.com")
+            assert str(exc_info.value) == "Team not found"
 
     @pytest.mark.asyncio
     async def test_add_member_user_not_found(self, service, mock_team, mock_db):
         """Test adding non-existent user to team."""
+        from mcpgateway.services.team_management_service import UserNotFoundError
+
         mock_query = MagicMock()
         mock_query.filter.return_value.first.return_value = None
         mock_db.query.return_value = mock_query
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="nonexistent@example.com")
-
-            assert result is False
+            with pytest.raises(UserNotFoundError) as exc_info:
+                await service.add_member_to_team(team_id="team123", user_email="nonexistent@example.com")
+            assert str(exc_info.value) == "User not found"
 
     @pytest.mark.asyncio
     async def test_add_member_already_member(self, service, mock_team, mock_user, mock_membership, mock_db):
         """Test adding user who is already a member."""
+        from mcpgateway.services.team_management_service import MemberAlreadyExistsError
+
         mock_membership.is_active = True
 
         # Setup query mocks
@@ -507,13 +515,15 @@ class TestTeamManagementService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com")
-
-            assert result is False
+            with pytest.raises(MemberAlreadyExistsError) as exc_info:
+                await service.add_member_to_team(team_id="team123", user_email="user@example.com")
+            assert str(exc_info.value) == "User is already a member of this team"
 
     @pytest.mark.asyncio
     async def test_add_member_max_members_exceeded(self, service, mock_team, mock_user, mock_db):
         """Test adding member when max members limit is reached."""
+        from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
+
         mock_team.max_members = 10
 
         # Setup query mocks
@@ -536,8 +546,9 @@ class TestTeamManagementService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com")
-            assert result is False
+            with pytest.raises(TeamMemberLimitExceededError) as exc_info:
+                await service.add_member_to_team(team_id="team123", user_email="user@example.com")
+            assert "maximum member limit" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_remove_member_success(self, service, mock_team, mock_membership, mock_db):
@@ -1412,9 +1423,8 @@ class TestTeamManagementService:
         mock_db.query.side_effect = query_side_effect
 
         with patch.object(service, "get_team_by_id", return_value=mock_team):
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
+            await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member")
 
-            assert result is True
             assert mock_membership.is_active is True
             assert mock_membership.role == "member"
 
