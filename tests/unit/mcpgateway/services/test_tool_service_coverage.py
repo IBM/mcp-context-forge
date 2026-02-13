@@ -3916,7 +3916,7 @@ class TestInvokeToolCachePaths:
             mock_cache_fn.return_value = mock_cache
 
             db = MagicMock()
-            db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=tool)))
+            db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[tool])))))
 
             with pytest.raises(ToolNotFoundError, match="offline"):
                 await tool_service.invoke_tool(db, "unreachable", {})
@@ -5117,7 +5117,7 @@ class TestInvokeToolPluginMetadataFromOrm:
         db_tool.reachable = True
         db_tool.gateway = None
 
-        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=db_tool)))
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[db_tool])))))
 
         # Cache miss triggers ORM load.
         mock_cache = AsyncMock()
@@ -6472,3 +6472,142 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
             with pytest.raises(ToolInvocationError, match="root"):
                 await tool_service.invoke_tool(db, "test_tool", {})
+
+
+class TestInvokeToolLookupLogic:
+    """Tests for invoke_tool lookup, filtering, and prioritization logic."""
+
+    @pytest.fixture
+    def mock_db_tools(self):
+        def _create(name="test_tool", **kwargs):
+            t = MagicMock(spec=DbTool)
+            t.name = name
+            t.enabled = True
+            t.reachable = True
+            t.gateway = None
+            t.owner_email = None
+            t.team_id = None
+            for k, v in kwargs.items():
+                setattr(t, k, v)
+            return t
+        yield _create
+
+    @pytest.mark.asyncio
+    async def test_lookup_filters_private_not_owner(self, tool_service, mock_db_tools):
+        """Private tool should be invisible to non-owners."""
+        tool = mock_db_tools(visibility="private", owner_email="owner@test.com")
+        
+        tool2 = mock_db_tools(visibility="private", owner_email="owner2@test.com")
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[tool, tool2])))))
+
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="other@test.com")
+
+    @pytest.mark.asyncio
+    async def test_lookup_filters_team_not_member(self, tool_service, mock_db_tools):
+        """Team tool should be invisible to non-members."""
+        tool = mock_db_tools(visibility="team", team_id="team-A")
+        
+        tool2 = mock_db_tools(visibility="team", team_id="team-C")
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[tool, tool2])))))
+
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache") as mock_cache_fn:
+            mock_cache = AsyncMock()
+            mock_cache.enabled = True
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache_fn.return_value = mock_cache
+
+            # User has no teams
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="user@test.com", token_teams=[])
+
+            # User has different team
+            with pytest.raises(ToolNotFoundError, match="not found"):
+                await tool_service.invoke_tool(db, "test_tool", {}, user_email="user@test.com", token_teams=["team-B"])
+
+    @pytest.mark.asyncio
+    async def test_lookup_prioritizes_private_over_team(self, tool_service, mock_db_tools):
+        """Private tool (Owner) should take precedence over Team tool."""
+        own_tool = mock_db_tools(id="own", visibility="private", owner_email="me@test.com")
+        team_tool = mock_db_tools(id="team", visibility="team", team_id="team-A")
+        
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[team_tool, own_tool])))))
+
+        def _fake_build(tool, gw):
+            p = _make_tool_payload()
+            p["id"] = tool.id
+            return {"status": "active", "tool": p, "gateway": None}
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=AsyncMock(get=AsyncMock(return_value=None))),
+            patch.object(tool_service, "_build_tool_cache_payload", side_effect=_fake_build),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(), __exit__=MagicMock()))),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", MagicMock()),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = AsyncMock(return_value=MagicMock(status_code=200, json=MagicMock(return_value={"ok": True})))
+
+            await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
+            
+            args, _ = tool_service._build_tool_cache_payload.call_args
+            selected_tool = args[0]
+            assert selected_tool.id == "team"
+
+    @pytest.mark.asyncio
+    async def test_lookup_prioritizes_team_over_public(self, tool_service, mock_db_tools):
+        """Team tool should take precedence over Public tool."""
+        team_tool = mock_db_tools(id="team", visibility="team", team_id="team-A")
+        pub_tool = mock_db_tools(id="pub", visibility="public")
+        
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[pub_tool, team_tool])))))
+
+        def _fake_build(tool, gw):
+            p = _make_tool_payload()
+            p["id"] = tool.id
+            return {"status": "active", "tool": p, "gateway": None}
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=AsyncMock(get=AsyncMock(return_value=None))),
+            patch.object(tool_service, "_build_tool_cache_payload", side_effect=_fake_build),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(), __exit__=MagicMock()))),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", MagicMock()),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = AsyncMock(return_value=MagicMock(status_code=200, json=MagicMock(return_value={"ok": True})))
+
+            await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])
+            
+            args, _ = tool_service._build_tool_cache_payload.call_args
+            selected_tool = args[0]
+            assert selected_tool.id == "team"
+
+    @pytest.mark.asyncio
+    async def test_lookup_ambiguous_throws_error(self, tool_service, mock_db_tools):
+        """Two tools at same priority level should raise ToolInvocationError (Ambiguous)."""
+        t1 = mock_db_tools(id="t1", visibility="team", team_id="team-A")
+        t2 = mock_db_tools(id="t2", visibility="team", team_id="team-A")
+        
+        db = MagicMock()
+        db.execute = MagicMock(return_value=MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[t1, t2])))))
+
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=AsyncMock(get=AsyncMock(return_value=None))), \
+             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)): # Bypass check_tool_access mocking from fixture if needed
+
+            with pytest.raises(ToolInvocationError, match="ambiguous"):
+                 await tool_service.invoke_tool(db, "test_tool", {}, user_email="me@test.com", token_teams=["team-A"])

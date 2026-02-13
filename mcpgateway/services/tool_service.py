@@ -2629,12 +2629,56 @@ class ToolService:
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1
             # Use a single query to avoid a race between separate enabled/inactive lookups.
-            tool = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalar_one_or_none()
-            if not tool:
+            # Eager load tool WITH gateway in single query to prevent lazy load N+1
+            # Use a single query to avoid a race between separate enabled/inactive lookups.
+            tools = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalars().all()
+
+            if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
+
+            # If only one tool is returned, skip filtering and sorting
+            if len(tools) == 1:
+                tool = tools[0]
+            else:
+                # Multiple tools found - filter by access and prioritize
+                # Priority: Private (owner matches) > Team (team matches) > Public
+                accessible_tools = []
+                for t in tools:
+                    is_owner = t.owner_email == user_email if user_email and t.owner_email else False
+                    is_team_member = t.team_id in token_teams if token_teams and t.team_id else False
+                    # Check visibility
+                    if t.visibility == "private" and not is_owner:
+                        continue
+                    if t.visibility == "team" and not is_team_member and not is_owner:
+                        continue
+
+                    # Compute priority score (lower is better)
+                    priority = 3
+                    if is_owner:
+                        priority = 2
+                    elif is_team_member:
+                        priority = 1
+
+                    accessible_tools.append((priority, t))
+
+                if not accessible_tools:
+                    # No tools visible to this user
+                    raise ToolNotFoundError(f"Tool not found: {name}")
+
+                # Sort by priority
+                accessible_tools.sort(key=lambda x: x[0])
+
+                # Check for ambiguity at the highest priority level
+                best_priority = accessible_tools[0][0]
+                best_tools = [t for p, t in accessible_tools if p == best_priority]
+
+                if len(best_tools) > 1:
+                    raise ToolInvocationError(f"Multiple tools found with name '{name}' at same priority level. Tool name is ambiguous.")
+
+                tool = best_tools[0]
+
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
-
             if not tool.reachable:
                 await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
