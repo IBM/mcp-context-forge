@@ -7,7 +7,7 @@ on:
       - "tools_rust/**"
       - ".github/workflows/rust-tools.yml"
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, rust-tools-ci]
     paths:
       - "tools_rust/**"
   workflow_dispatch:
