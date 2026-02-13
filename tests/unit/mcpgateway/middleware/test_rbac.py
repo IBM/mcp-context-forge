@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
-import importlib
-
-import pytest
+# Standard
 import asyncio
 from contextlib import contextmanager
+import importlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
 from fastapi import HTTPException, Request, status
+import pytest
+
+# First-Party
 from mcpgateway.middleware import rbac
 
 
@@ -209,6 +213,7 @@ async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypat
     exists but has_hooks_for returns False, the code should skip hook invocation
     and fall through directly to PermissionService.check_permission.
     """
+    # Standard
     import importlib
 
     async def dummy_func(user=None):
@@ -252,7 +257,10 @@ async def test_require_permission_calls_hooks_when_has_hooks_for_true(monkeypatc
     This test verifies that when plugins ARE registered for the permission hook,
     the invoke_hook method is called with the appropriate payload.
     """
+    # Standard
     import importlib
+
+    # First-Party
     from mcpgateway.plugins.framework import PluginResult
 
     async def dummy_func(user=None):
@@ -303,6 +311,7 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
     This tests the fix for issue #2183: when team_id is not in path/query parameters,
     the decorator should fall back to user_context.team_id from the JWT token.
     """
+    # Standard
     import importlib
 
     async def dummy_func(user=None):
@@ -331,6 +340,7 @@ async def test_require_permission_uses_user_context_team_id_when_no_kwarg(monkey
 @pytest.mark.asyncio
 async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
     """Verify kwarg team_id takes precedence over user_context.team_id."""
+    # Standard
     import importlib
 
     async def dummy_func(user=None, team_id=None):
@@ -359,6 +369,7 @@ async def test_require_permission_prefers_kwarg_team_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(monkeypatch):
     """Verify require_any_permission uses user_context.team_id when no team_id kwarg."""
+    # Standard
     import importlib
 
     async def dummy_func(user=None):
@@ -387,6 +398,7 @@ async def test_require_any_permission_uses_user_context_team_id_when_no_kwarg(mo
 @pytest.mark.asyncio
 async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
     """Verify require_any_permission prefers kwarg team_id over user_context.team_id."""
+    # Standard
     import importlib
 
     async def dummy_func(user=None, team_id=None):
@@ -414,6 +426,7 @@ async def test_require_any_permission_prefers_kwarg_team_id(monkeypatch):
 @pytest.mark.asyncio
 async def test_decorators_handle_none_user_context_team_id(monkeypatch):
     """Verify decorators work when user_context.team_id is None."""
+    # Standard
     import importlib
 
     async def dummy_func(user=None):
@@ -448,8 +461,11 @@ async def test_plugin_permission_hook_receives_token_team_id(monkeypatch):
     - User calls endpoint without team_id param
     Expected: Plugin's HttpAuthCheckPermissionPayload.team_id equals token's team_id
     """
+    # Standard
     import importlib
-    from mcpgateway.plugins.framework import PluginResult, HttpAuthCheckPermissionPayload
+
+    # First-Party
+    from mcpgateway.plugins.framework import HttpAuthCheckPermissionPayload, PluginResult
 
     async def dummy_func(user=None):
         return "ok"
@@ -499,6 +515,7 @@ async def test_require_permission_fallback_when_plugin_manager_none(monkeypatch)
     This verifies the optimization handles the case where get_plugin_manager()
     returns None (plugins disabled).
     """
+    # Standard
     import importlib
 
     async def dummy_func(user=None):
@@ -913,9 +930,7 @@ async def test_proxy_user_is_platform_admin():
     mock_request = MagicMock(spec=Request)
     mock_request.headers = {"x-forwarded-user": "admin@platform.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
-    mock_request.state = SimpleNamespace(
-        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
-    )
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
 
     mock_settings = MagicMock()
     mock_settings.mcp_client_auth_enabled = False
@@ -937,9 +952,7 @@ async def test_proxy_user_db_lookup_succeeds():
     mock_request = MagicMock(spec=Request)
     mock_request.headers = {"x-forwarded-user": "user@test.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
-    mock_request.state = SimpleNamespace(
-        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
-    )
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
 
     mock_settings = MagicMock()
     mock_settings.mcp_client_auth_enabled = False
@@ -1004,9 +1017,7 @@ async def test_trust_proxy_no_header_anonymous():
     mock_request = MagicMock(spec=Request)
     mock_request.headers = {"user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
-    mock_request.state = SimpleNamespace(
-        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
-    )
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
 
     mock_settings = MagicMock()
     mock_settings.mcp_client_auth_enabled = False
@@ -1027,9 +1038,7 @@ async def test_no_proxy_no_trust_anonymous():
     mock_request = MagicMock(spec=Request)
     mock_request.headers = {"user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
-    mock_request.state = SimpleNamespace(
-        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
-    )
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
 
     mock_settings = MagicMock()
     mock_settings.mcp_client_auth_enabled = False
@@ -1051,8 +1060,11 @@ async def test_bearer_token_from_credentials():
     mock_request.headers = {"accept": "application/json", "user-agent": "api"}
     mock_request.client = MagicMock(host="127.0.0.1")
     mock_request.state = SimpleNamespace(
-        auth_method="jwt", request_id="req1", team_id=None,
-        plugin_context_table=None, plugin_global_context=None,
+        auth_method="jwt",
+        request_id="req1",
+        team_id=None,
+        plugin_context_table=None,
+        plugin_global_context=None,
     )
 
     mock_credentials = MagicMock()
@@ -1248,9 +1260,7 @@ async def test_proxy_user_db_lookup_not_found():
     mock_request = MagicMock(spec=Request)
     mock_request.headers = {"x-forwarded-user": "unknown@test.com", "user-agent": "test"}
     mock_request.client = MagicMock(host="127.0.0.1")
-    mock_request.state = SimpleNamespace(
-        plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None
-    )
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
 
     mock_settings = MagicMock()
     mock_settings.mcp_client_auth_enabled = False
@@ -1573,8 +1583,7 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("tools.read")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1595,8 +1604,7 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("tools.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db, tool=payload)
 
@@ -1616,9 +1624,11 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
-             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
             decorated = rbac.require_permission("tools.read")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1643,9 +1653,11 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
-             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
             decorated = rbac.require_permission("tools.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1669,9 +1681,11 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
-             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
             decorated = rbac.require_permission("gateways.delete")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1691,8 +1705,7 @@ class TestMultiTeamSessionTokenDerivation:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-abc"), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-abc"), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
             decorated = rbac.require_permission("gateways.create")(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1740,9 +1753,11 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
-             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
             decorated = rbac.require_any_permission(["tools.read", "tools.execute"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
@@ -1787,9 +1802,11 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"), \
-             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
             decorated = rbac.require_any_permission(["tools.execute"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db, tool_id="tool-1")
 
@@ -1814,14 +1831,277 @@ class TestMultiTeamSessionTokenDerivationAnyPermission:
         mock_perm_service.check_permission.return_value = True
         monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
 
-        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), \
-             patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None), \
-             patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
             decorated = rbac.require_any_permission(["tools.execute", "tools.create"])(dummy_func)
             result = await decorated(user=mock_user, db=mock_db)
 
         assert result == "any-ok"
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
+class TestNonSessionTokenTeamDerivation:
+    """Tests for non-session token behavior (e.g. API tokens, CLI tokens).
+
+    Non-session tokens skip the derivation block entirely (gated by token_use == "session").
+    This is safe because:
+    - Single-team API tokens get team_id set by auth.py before RBAC runs
+    - Zero-team API tokens (teams=[]) have no team-scoped roles to find
+    - CLI tokens are typically admin bypass (teams=None, is_admin=True)
+    """
+
+    @pytest.mark.asyncio
+    async def test_api_token_with_team_id_uses_it(self, monkeypatch):
+        """API token with team_id in user_context uses it directly (set by auth.py)."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "api", "team_id": "team-from-auth"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("gateways.create")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-from-auth"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_api_token_no_team_id_skips_derivation(self, monkeypatch):
+        """API token with no team_id skips derivation block (check_any_team stays False).
+
+        This documents existing behavior: non-session tokens rely on auth.py to set
+        team_id. Multi-team non-session tokens don't exist in practice.
+        """
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "api"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("gateways.create")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_cli_token_no_token_use_skips_derivation(self, monkeypatch):
+        """CLI-generated token (no token_use claim) skips derivation block."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "admin@test.com", "db": mock_db}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("gateways.delete")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_api_token_with_team_id_for_any_permission(self, monkeypatch):
+        """API token with team_id uses it in require_any_permission."""
+
+        async def dummy_func(user=None, db=None):
+            return "any-ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "api", "team_id": "team-api"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_any_permission(["tools.create", "tools.execute"])(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "any-ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-api"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+
+class TestMutatePermissionDenial:
+    """Tests that permission denial still works correctly after the check_any_team fix."""
+
+    @pytest.mark.asyncio
+    async def test_session_mutate_denied_raises_403(self, monkeypatch):
+        """Session token mutate with check_any_team=True still gets 403 when permission is denied."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "viewer@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission("gateways.create")(dummy_func)
+            with pytest.raises(HTTPException) as exc:
+                await decorated(user=mock_user, db=mock_db)
+
+        assert exc.value.status_code == 403
+        # Verify check_any_team was True (the fix is in effect) but permission was still denied
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_session_delete_denied_raises_403(self, monkeypatch):
+        """Session token delete with check_any_team=True still gets 403 when permission is denied."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "viewer@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission("gateways.delete")(dummy_func)
+            with pytest.raises(HTTPException) as exc:
+                await decorated(user=mock_user, db=mock_db)
+
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_any_permission_all_mutate_denied_raises_403(self, monkeypatch):
+        """require_any_permission with all-mutate perms, check_any_team=True, still denies correctly."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "viewer@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_any_permission(["tools.create", "tools.execute"])(dummy_func)
+            with pytest.raises(HTTPException) as exc:
+                await decorated(user=mock_user, db=mock_db)
+
+        assert exc.value.status_code == 403
+
+
+class TestMutateCheckAnyTeamPermissionVariants:
+    """Tests that various mutate permission types all get check_any_team=True."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "permission",
+        [
+            "gateways.create",
+            "gateways.delete",
+            "servers.create",
+            "servers.delete",
+            "tools.execute",
+            "tools.toggle",
+            "resources.delete",
+            "admin.teams:manage",
+        ],
+    )
+    async def test_all_mutate_permissions_use_check_any_team(self, monkeypatch, permission):
+        """All mutate permission types use check_any_team when no team context."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission(permission)(dummy_func)
+            await decorated(user=mock_user, db=mock_db)
+
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_any_permission_mixed_read_mutate_no_team(self, monkeypatch):
+        """require_any_permission with mixed read+mutate, no team → check_any_team=True."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_any_permission(["tools.read", "tools.create"])(dummy_func)
+            await decorated(user=mock_user, db=mock_db)
+
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+    @pytest.mark.asyncio
+    async def test_any_permission_mutate_with_payload_derived_team(self, monkeypatch):
+        """require_any_permission with mutate + team derived from payload → scoped check."""
+
+        async def dummy_func(user=None, db=None, tool=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        payload = SimpleNamespace(team_id="team-from-payload")
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None), patch("mcpgateway.plugins.framework.get_plugin_manager", return_value=None):
+            decorated = rbac.require_any_permission(["tools.create", "tools.execute"])(dummy_func)
+            await decorated(user=mock_user, db=mock_db, tool=payload)
+
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] == "team-from-payload"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
 
 
 def test_get_resource_param_to_model_builds_mapping():

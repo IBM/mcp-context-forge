@@ -262,7 +262,7 @@ class TeamInvitationService:
             logger.error(f"Failed to get invitation by token: {e}")
             return None
 
-    async def accept_invitation(self, token: str, accepting_user_email: Optional[str] = None) -> bool:
+    async def accept_invitation(self, token: str, accepting_user_email: Optional[str] = None) -> EmailTeamMember:
         """Accept a team invitation.
 
         Args:
@@ -270,7 +270,7 @@ class TeamInvitationService:
             accepting_user_email: Email of user accepting (for validation)
 
         Returns:
-            bool: True if invitation was accepted successfully, False otherwise
+            EmailTeamMember: The created team membership record
 
         Raises:
             ValueError: If invitation is invalid or expired
@@ -349,7 +349,7 @@ class TeamInvitationService:
                 logger.debug(f"Failed to invalidate cache on invitation acceptance: {cache_error}")
 
             logger.info(f"User {invitation.email} accepted invitation to team {invitation.team_id}")
-            return True
+            return membership
 
         except Exception as e:
             self.db.rollback()
