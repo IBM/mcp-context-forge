@@ -1,9 +1,8 @@
 nav:
-
-- index.md
-- unittest.md
-- basic.md
-- performance.md
-- acceptance.md
-- fuzzing.md
-- LocalTest.md
+  - index.md
+  - unittest.md
+  - basic.md
+  - performance.md
+  - acceptance.md
+  - fuzzing.md
+  - LocalTest.md

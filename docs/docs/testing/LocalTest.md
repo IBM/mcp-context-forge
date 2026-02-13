@@ -80,9 +80,10 @@ No changes between versions - both tuned for 3000 concurrent users.
 
 | Aspect                 | Original | Lite     |
 | ---------------------- | -------- | -------- |
-| **CPU Limit**          | 1.5 CPUs | 1.5 CPUs |
+| **CPU Limit**          | 2 CPUs   | 1.5 CPUs |
 | **Memory Limit**       | 2GB      | 1.5GB    |
-| **Memory Reservation** | 1.5GB    | 0.75GB   |
+| **CPU Reservation**    | 1 CPU    | 0.75 CPU |
+| **Memory Reservation** | 1GB      | 0.75GB   |
 
 ---
 

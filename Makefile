@@ -4524,24 +4524,6 @@ compose-lite-down: ## 💻 Stop lite stack (docker-compose.yml + docker-compose.
 
 monitoring-lite-up: ## 📊 Start lite monitoring (essential only: Prometheus, Grafana, exporters - excludes pgAdmin, Redis CLI)
 	@echo "📊 Starting lite monitoring stack (docker-compose.yml + docker-compose.override.lite.yml)..."
-	@echo "🔎 Preflight: checking host port 8080 (nginx)"
-	@if command -v ss >/dev/null 2>&1; then \
-		if ss -H -ltn 'sport = :8080' | grep -q .; then \
-			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
-			ss -ltnp 'sport = :8080' || ss -ltn 'sport = :8080'; \
-			echo "   Stop the process or change the nginx host port mapping."; \
-			exit 1; \
-		fi; \
-	elif command -v lsof >/dev/null 2>&1; then \
-		if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then \
-			echo "⚠️  Port 8080 already in use; nginx can't bind to it."; \
-			lsof -nP -iTCP:8080 -sTCP:LISTEN || true; \
-			echo "   Stop the process or change the nginx host port mapping."; \
-			exit 1; \
-		fi; \
-	else \
-		echo "ℹ️  Skipping port check (ss/lsof not found)."; \
-	fi
 	LOG_FORMAT=json \
 	OTEL_ENABLE_OBSERVABILITY=true \
 	OTEL_TRACES_EXPORTER=otlp \
