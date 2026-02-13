@@ -200,7 +200,7 @@ function updateDefaultVisibility() {
     // These correspond to the "public", "team", "private" radio buttons
     // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
     const visibilityPrefixes = [
-        "edit-visibility", // Gateways (Create)
+        "gateway-visibility", // Gateways (Create)
         "server-visibility", // Virtual Servers (Create)
         "tool-visibility", // Tools (Create)
         "resource-visibility", // Resources (Create)
