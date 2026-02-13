@@ -1918,13 +1918,14 @@ class EmailTeamJoinRequest(Base):
         now = utc_now()
         expires_at = self.expires_at
 
-        # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
-
-        return now > expires_at
+        try:
+            return now.timestamp() > expires_at.timestamp()
+        except Exception:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            return now > expires_at
 
     def is_pending(self) -> bool:
         """Check if the join request is still pending.
@@ -2010,13 +2011,14 @@ class PendingUserApproval(Base):
         now = utc_now()
         expires_at = self.expires_at
 
-        # Handle timezone awareness mismatch
-        if now.tzinfo is not None and expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None and expires_at.tzinfo is not None:
-            now = now.replace(tzinfo=timezone.utc)
-
-        return now > expires_at
+        try:
+            return now.timestamp() > expires_at.timestamp()
+        except Exception:
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            return now > expires_at
 
     def approve(self, admin_email: str, notes: Optional[str] = None) -> None:
         """Approve the user registration.
@@ -5278,15 +5280,17 @@ class SSOAuthSession(Base):
         now = utc_now()
         expires = self.expires_at
 
-        # Handle timezone mismatch by converting naive datetime to UTC if needed
-        if expires.tzinfo is None:
-            # expires_at is timezone-naive, assume it's UTC
-            expires = expires.replace(tzinfo=timezone.utc)
-        elif now.tzinfo is None:
-            # now is timezone-naive (shouldn't happen with utc_now, but just in case)
-            now = now.replace(tzinfo=timezone.utc)
-
-        return now > expires
+        # Compare using POSIX timestamps to make expiration checks robust
+        # across naive/aware datetime objects and different host timezones.
+        try:
+            return now.timestamp() > expires.timestamp()
+        except Exception:
+            # Fallback: coerce to UTC-aware and compare
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
+            return now > expires
 
     def __repr__(self):
         """String representation of SSO auth session.
