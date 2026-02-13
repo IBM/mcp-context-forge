@@ -156,7 +156,7 @@ class TestAcceptInvitationCoverage:
 
             result = await svc.accept_invitation("tok-123", "user@t.com")
 
-        assert result is True
+        assert result is not None  # returns the EmailTeamMember instance
         assert invitation.is_active is False
         db.add.assert_called_once()  # membership created
         db.commit.assert_called()
@@ -196,7 +196,7 @@ class TestAcceptInvitationCoverage:
 
             result = await svc.accept_invitation("tok-123", "user@t.com")
 
-        assert result is True
+        assert result is not None
 
 
 # ===========================================================================
@@ -345,5 +345,5 @@ class TestAcceptInvitationMoreBranches:
              patch("mcpgateway.cache.auth_cache.auth_cache", mock_auth_cache):
             result = await svc.accept_invitation("tok-123", "user@t.com")
 
-        assert result is True
+        assert result is not None
         assert invitation.is_active is False

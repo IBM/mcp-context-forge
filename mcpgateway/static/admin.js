@@ -10916,6 +10916,17 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
         form.appendChild(purgeField);
     }
 
+    // Inject team_id from URL for RBAC team context derivation (defense-in-depth)
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    if (teamId) {
+        const form = event.target;
+        const teamField = document.createElement("input");
+        teamField.type = "hidden";
+        teamField.name = "team_id";
+        teamField.value = teamId;
+        form.appendChild(teamField);
+    }
+
     const toggleType = inactiveType || type;
     return handleToggleSubmit(event, toggleType);
 }
