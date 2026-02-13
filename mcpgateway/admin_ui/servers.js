@@ -10,6 +10,7 @@ import {
   isInactiveChecked,
   handleFetchError,
   showErrorMessage,
+  decodeHtml,
 } from "./utils";
 
 /**
@@ -60,7 +61,7 @@ export const viewServer = async function (serverId) {
       if (server.description) {
         const serverDesc = document.createElement("p");
         serverDesc.className = "text-sm text-gray-600 dark:text-gray-400 mt-1";
-        serverDesc.textContent = server.description;
+        serverDesc.textContent = decodeHtml(server.description);serverDesc.textContent = server.description;
         headerTextDiv.appendChild(serverDesc);
       }
 
@@ -551,7 +552,7 @@ export const editServer = async function (serverId) {
       urlField.value = urlValidation.value;
     }
     if (descField) {
-      descField.value = server.description || "";
+      descField.value = decodeHtml(server.description || "");
     }
 
     const idField = safeGetElement("edit-server-id");

@@ -2,6 +2,7 @@ import { closeModal, openModal } from "./modals";
 import { escapeHtml, validateInputName, validateUrl } from "./security.js";
 import { getAuthToken } from "./tokens";
 import {
+  decodeHtml,
   fetchWithTimeout,
   handleFetchError,
   isInactiveChecked,
@@ -45,7 +46,10 @@ export const viewA2AAgent = async function (agentId) {
         { label: "Endpoint URL", value: agent.endpointUrl },
         { label: "Agent Type", value: agent.agentType },
         { label: "Protocol Version", value: agent.protocolVersion },
-        { label: "Description", value: agent.description || "N/A" },
+        {
+          label: "Description",
+          value: decodeHtml(agent.description) || "N/A",
+        },
         { label: "Visibility", value: agent.visibility || "private" },
       ];
 
