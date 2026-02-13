@@ -29,6 +29,16 @@ We will introduce an **experimental Rust-based backend** for the **Streamable HT
 
 This Rust backend will initially support only Streamable HTTP. Expansion to other transports will be considered after validating performance assumptions and operational complexity.
 
+### Phase Scope (Current Implementation)
+
+**Phase 1** is intentionally limited to:
+
+- Rust-based request context normalization for Streamable HTTP
+- Rust-handled `OPTIONS` CORS preflight for `/mcp` paths
+- Python fallback as the source of truth for regular Streamable HTTP request handling (`GET`/`POST`)
+
+This means the runtime remains hybrid in this phase, and full Rust request handling semantics are deferred to later phases.
+
 ## Consequences
 
 ### Positive
@@ -60,6 +70,9 @@ maturin develop --release
 
 This ensures the compiled `.so` module is installed into the active
 virtual environment and exports required symbols correctly.
+
+If the compiled extension is not installed or symbols are unavailable at runtime,
+the bridge **must** disable Rust handling and fall back to Python with an explicit warning.
 
 ------------------------------------------------------------------------
 
