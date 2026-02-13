@@ -584,6 +584,7 @@ async def test_admin_get_update_delete_user():
             password_change_required=None,
             password="newPassword123!",
             admin_origin_source="api",
+            disable_admin_protection=None
         )
 
         delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
@@ -633,6 +634,7 @@ async def test_admin_update_user_without_full_name_and_is_admin():
             password_change_required=None,
             password=None,
             admin_origin_source="api",
+            disable_admin_protection=None
         )
 
 
