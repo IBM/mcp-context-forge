@@ -649,25 +649,22 @@ class TestServersExtended:
         expect(server_row).to_be_visible(timeout=10000)
 
         # Click Delete button - this will trigger TWO browser confirm() dialogs
-        delete_btn = server_row.locator('button:has-text("Delete"), form[action*="/delete"] button[type="submit"]')
+        # (delete confirmation + metrics purge), then a form POST with page navigation.
+        delete_btn = server_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
         if delete_btn.count() > 0:
-            # Setup handler to accept BOTH confirmation dialogs
-            dialog_count = 0
+            server_row.scroll_into_view_if_needed()
+            servers_page.page.wait_for_timeout(500)
 
             def handle_dialog(dialog):
-                nonlocal dialog_count
-                dialog_count += 1
                 dialog.accept()
 
             servers_page.page.on("dialog", handle_dialog)
 
-            delete_btn.first.click()
-
-            # Wait for deletion to process
-            servers_page.page.wait_for_load_state("domcontentloaded")
-
-            # Remove the dialog handler
-            servers_page.page.remove_listener("dialog", handle_dialog)
+            try:
+                with servers_page.page.expect_navigation(wait_until="domcontentloaded", timeout=30000):
+                    delete_btn.first.click(force=True)
+            finally:
+                servers_page.page.remove_listener("dialog", handle_dialog)
 
             # Verify server is deleted (should not exist)
             assert find_server(servers_page.page, server_name) is None
