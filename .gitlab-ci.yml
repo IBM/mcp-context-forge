@@ -1,9 +1,78 @@
+# MCP Context Forge Gateway 
+# Runs on merge requests + main branch + tags
+# Stages:
+#   1) quality — black, isort (fast, high value)
+#   2) test    — pytest + coverage
+
+stages:
+  - quality
+  - test
+
+default:
+  image: python:3.11-slim
+  before_script:
+    - apt-get update -qq && apt-get install -y -qq --no-install-recommends git make curl gcc g++ libffi-dev > /dev/null
+    - pip install uv --quiet
+    - uv venv .venv
+    - source .venv/bin/activate
+    - uv pip install --group dev .
+  cache:
+    key: "venv-py311-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .venv/
+    policy: pull-push
+
+variables:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+  PYTHONUNBUFFERED: "1"
+  DATABASE_URL: "sqlite:///:memory:"
+  TEST_DATABASE_URL: "sqlite:///:memory:"
+  ARGON2ID_TIME_COST: "1"
+  ARGON2ID_MEMORY_COST: "1024"
+  FF_USE_FASTZIP: "true"
+
 workflow:
   rules:
-    - when: never
+    - if: $CI_MERGE_REQUEST_IID
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG
 
-noop:
-  rules:
-    - when: never
+# QUALITY — Formatting checks
+black:
+  stage: quality
   script:
-    - echo "noop"
+    - black --check -l 200 mcpgateway
+
+isort:
+  stage: quality
+  script:
+    - isort --check-only --diff mcpgateway
+
+# TEST — Pytest with coverage
+test:
+  stage: test
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  script:
+    - pytest
+        --ignore=tests/fuzz
+        --cov=mcpgateway
+        --cov-report=xml:coverage.xml
+        --cov-report=html:htmlcov
+        --cov-report=term
+        --cov-branch
+        --cov-fail-under=60
+        --junitxml=junit.xml
+        -n auto
+        -v
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+      - junit.xml
+      - htmlcov/
+    expire_in: 7 days
