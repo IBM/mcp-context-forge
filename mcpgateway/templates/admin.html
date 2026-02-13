@@ -22,6 +22,7 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
     {% else %}
+    <!-- No SRI: Tailwind JIT compiler generates dynamic content -->
     <script src="https://cdn.tailwindcss.com"></script>
     {% endif %}
     <script>
@@ -34,7 +35,7 @@
     <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
     {% else %}
     <script
-    src="https://unpkg.com/htmx.org@1.9.10"
+    src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js"
     integrity="{{ sri_hashes.htmx }}"
     crossorigin="anonymous">
     </script>
