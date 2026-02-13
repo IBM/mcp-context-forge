@@ -2058,6 +2058,8 @@ class TestResolveTeamsFromDbHelpers:
                 return False
 
         monkeypatch.setattr(auth_cache, "_lock", ExplodingLock())
+        # Ensure L1 cache is empty so we reach the write path
+        monkeypatch.setattr(auth_cache, "_teams_list_cache", {})
 
         with patch("mcpgateway.auth._get_user_team_ids_sync", return_value=["t1"]):
             assert _resolve_teams_from_db_sync("user@example.com", is_admin=False) == ["t1"]
