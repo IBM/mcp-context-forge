@@ -526,3 +526,50 @@ class TestMetricsCacheResetStats:
         assert stats["local_hit_count"] == 0
         assert stats["local_miss_count"] == 0
         assert stats["hit_rate"] == 0.0
+
+
+class TestMetricsCacheRedisUnavailable:
+    """Tests for when Redis library is not available."""
+
+    def test_redis_client_provided_but_not_available(self, monkeypatch):
+        """Test warning when redis_client provided but REDIS_AVAILABLE is False."""
+        monkeypatch.setattr(metrics_cache_module, "REDIS_AVAILABLE", False)
+        mock_redis = MagicMock()
+
+        cache = MetricsCache(redis_client=mock_redis, ttl_seconds=10)
+
+        assert cache.use_redis is False
+
+    @pytest.mark.asyncio
+    async def test_set_async_redis_error_falls_through_to_local(self):
+        """Test that set_async falls through to local cache on Redis error."""
+        mock_redis = AsyncMock()
+        mock_redis.setex.side_effect = RedisError("Connection refused")
+
+        cache = MetricsCache(redis_client=mock_redis, ttl_seconds=60)
+        test_data = {"total": 100}
+
+        await cache.set_async("tools", test_data)
+
+        # Should have fallen back to local cache
+        assert cache._caches.get("tools") == test_data
+
+    def test_sync_invalidate_warns_with_redis(self, caplog):
+        """Test that sync invalidate() warns when Redis is active (first call)."""
+        mock_redis = MagicMock()
+        cache = MetricsCache(redis_client=mock_redis, ttl_seconds=60)
+
+        cache.invalidate("tools")
+
+        warnings = [r for r in caplog.records if "Sync methods" in r.message]
+        assert len(warnings) == 1
+
+    def test_sync_invalidate_prefix_warns_with_redis(self, caplog):
+        """Test that sync invalidate_prefix() warns when Redis is active (first call)."""
+        mock_redis = MagicMock()
+        cache = MetricsCache(redis_client=mock_redis, ttl_seconds=60)
+
+        cache.invalidate_prefix("top_")
+
+        warnings = [r for r in caplog.records if "Sync methods" in r.message]
+        assert len(warnings) == 1
