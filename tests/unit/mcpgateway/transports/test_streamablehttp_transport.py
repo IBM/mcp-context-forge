@@ -6374,6 +6374,43 @@ class TestProxyFunctions:
         mock_session.list_resources.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_proxy_list_resources_with_passthrough_headers(self):
+        """Test proxy list_resources forwards passthrough headers."""
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-456"
+        mock_gateway.url = "http://remote-gateway.example.com/mcp"
+        mock_gateway.passthrough_headers = ["X-Tenant-ID", "X-Request-ID"]
+
+        request_headers = {
+            "x-tenant-id": "tenant-abc",
+            "x-request-id": "req-789",
+            "x-ignored": "ignored-value",
+        }
+
+        mock_result = MagicMock()
+        mock_result.resources = []
+
+        mock_session = AsyncMock()
+        mock_session.list_resources = AsyncMock(return_value=mock_result)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        @asynccontextmanager
+        async def mock_client(*args, **kwargs):
+            headers = kwargs.get("headers", {})
+            # Verify passthrough headers are included
+            assert "X-Tenant-ID" in headers
+            assert headers["X-Tenant-ID"] == "tenant-abc"
+            assert "X-Request-ID" in headers
+            assert headers["X-Request-ID"] == "req-789"
+            yield (None, None, lambda: "session-id")
+
+        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
+            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
+                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                    await tr._proxy_list_resources_to_gateway(mock_gateway, request_headers, {}, None)
+
+    @pytest.mark.asyncio
     async def test_proxy_list_resources_with_meta(self):
         """Test proxy list_resources forwards _meta to remote gateway."""
         mock_gateway = MagicMock()
@@ -6845,6 +6882,203 @@ class TestDirectProxyMode:
                     result = await tr.read_resource("file:///empty.txt")
 
         assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_list_tools_direct_proxy_with_meta_extraction(self):
+        """Test list_tools extracts _meta from request context in direct_proxy mode."""
+        from unittest.mock import PropertyMock
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-direct"
+        mock_gateway.gateway_mode = "direct_proxy"
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        mock_meta = MagicMock()
+        mock_request_ctx = MagicMock()
+        mock_request_ctx.meta = mock_meta
+
+        mock_tools = [MagicMock(name="proxied_tool")]
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": ["team1"]})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True):
+                with patch("mcpgateway.transports.streamablehttp_transport._proxy_list_tools_to_gateway", return_value=mock_tools) as mock_proxy:
+                    with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_request_ctx):
+                        result = await tr.list_tools()
+
+        assert result == mock_tools
+        # Verify meta was forwarded to proxy function
+        mock_proxy.assert_awaited_once()
+        assert mock_proxy.call_args[0][3] == mock_meta
+
+    @pytest.mark.asyncio
+    async def test_list_resources_direct_proxy_with_meta_extraction(self):
+        """Test list_resources extracts _meta from request context in direct_proxy mode."""
+        from unittest.mock import PropertyMock
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-direct"
+        mock_gateway.gateway_mode = "direct_proxy"
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        mock_meta = MagicMock()
+        mock_request_ctx = MagicMock()
+        mock_request_ctx.meta = mock_meta
+
+        mock_resources = [MagicMock(uri="file:///proxied.txt")]
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": ["team1"]})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True):
+                with patch("mcpgateway.transports.streamablehttp_transport._proxy_list_resources_to_gateway", return_value=mock_resources) as mock_proxy:
+                    with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_request_ctx):
+                        result = await tr.list_resources()
+
+        assert result == mock_resources
+        mock_proxy.assert_awaited_once()
+        assert mock_proxy.call_args[0][3] == mock_meta
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_not_direct_proxy_mode(self):
+        """Test list_resources falls through when gateway is not in direct_proxy mode."""
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-cache"
+        mock_gateway.gateway_mode = "cache"
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-cache"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": []})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            result = await tr.list_resources()
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_list_resources_gateway_not_found(self):
+        """Test list_resources logs warning when gateway not found and falls through."""
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-missing"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": []})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            result = await tr.list_resources()
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_with_meta_extraction(self):
+        """Test read_resource extracts _meta from request context in direct_proxy mode."""
+        from unittest.mock import PropertyMock
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-direct"
+        mock_gateway.gateway_mode = "direct_proxy"
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        mock_meta = MagicMock()
+        mock_request_ctx = MagicMock()
+        mock_request_ctx.meta = mock_meta
+
+        mock_content = MagicMock()
+        mock_content.text = "Proxied content with meta"
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": ["team1"]})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True):
+                with patch("mcpgateway.transports.streamablehttp_transport._proxy_read_resource_to_gateway", return_value=[mock_content]) as mock_proxy:
+                    with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_request_ctx):
+                        result = await tr.read_resource("file:///meta.txt")
+
+        assert result == "Proxied content with meta"
+        mock_proxy.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_read_resource_gateway_not_direct_proxy_mode(self):
+        """Test read_resource falls through when gateway is not in direct_proxy mode."""
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-cache"
+        mock_gateway.gateway_mode = "cache"
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-cache"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": []})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+                mock_rs.read_resource = AsyncMock(return_value=MagicMock(blob=None, text="cached"))
+                result = await tr.read_resource("file:///test.txt")
+
+        assert result == "cached"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_gateway_not_found(self):
+        """Test read_resource logs warning when gateway not found and falls through."""
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-missing"})
+        tr.user_context_var.set({"email": "user@example.com", "teams": []})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+                mock_rs.read_resource = AsyncMock(return_value=MagicMock(blob=None, text="from-cache"))
+                result = await tr.read_resource("file:///test.txt")
+
+        assert result == "from-cache"
 
 
 # ---------------------------------------------------------------------------

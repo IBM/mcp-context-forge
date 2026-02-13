@@ -5730,6 +5730,48 @@ class TestReadResourceDirectProxy:
         assert content.uri == "http://example.com/dp-resource"
 
     @pytest.mark.asyncio
+    async def test_read_resource_direct_proxy_unknown_content_type(self, resource_service, mock_direct_proxy_resource):
+        """When content has neither text nor blob attribute, returns TextResourceContents with empty text."""
+        from contextlib import asynccontextmanager
+
+        db = self._make_mock_db(mock_direct_proxy_resource)
+
+        # Remote session returns content with neither text nor blob attribute
+        first_content = MagicMock(spec=[])  # empty spec means no text or blob
+        first_content.mimeType = "application/unknown"
+        result_mock = MagicMock()
+        result_mock.contents = [first_content]
+
+        client_session_cm, session_mock = self._make_session_mock(result_mock)
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.resource_service.settings") as mock_settings,
+            patch("mcpgateway.services.resource_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.resource_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.resource_service.ClientSession", return_value=client_session_cm),
+            self._common_patches(resource_service),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.experimental_validate_io = False
+
+            content = await resource_service.read_resource(
+                db,
+                resource_uri="http://example.com/dp-resource",
+                user="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert isinstance(content, _TextBase)
+        assert content.text == ""
+        assert content.uri == "http://example.com/dp-resource"
+
+    @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_empty_contents(self, resource_service, mock_direct_proxy_resource):
         """When result.contents is empty, returns TextResourceContents with empty text."""
         from contextlib import asynccontextmanager

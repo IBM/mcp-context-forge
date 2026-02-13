@@ -1957,6 +1957,40 @@ class TestToolService:
         )
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_jq_filter_error_returns_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test REST tool invocation marks result as error when jq filter returns TextContent error."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ".invalid_path"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "some data"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # extract_using_jq returns TextContent error list (error case)
+        jq_error = [TextContent(type="text", text="Error applying jsonpath filter")]
+
+        mock_metrics_buffer = Mock()
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value=jq_error),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.content[0].text == "Error applying jsonpath filter"
+        # Verify metrics recorded as failure
+        mock_metrics_buffer.record_tool_metric.assert_called_once()
+        call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+        assert call_kwargs["success"] is False
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution_missed_input(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking a REST tool."""
         # Configure tool as REST
@@ -2083,6 +2117,90 @@ class TestToolService:
         assert metric.is_success is True
         assert metric.error_message is None
         assert metric.response_time >= 0  # You can check with a tolerance if needed
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
+        """Test MCP tool invocation falls back to isError when is_error is None."""
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [value] if value else []
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        # Create a result where is_error is None but isError is True
+        # This triggers the fallback at line 3684
+        call_result = MagicMock()
+        call_result.is_error = None
+        call_result.isError = True
+        call_result.content = [TextContent(type="text", text="error from remote")]
+        call_result.model_dump.return_value = {
+            "content": [{"type": "text", "text": "error from remote"}],
+            "isError": True,
+            "structuredContent": None,
+            "structured_content": None,
+        }
+        call_result.meta = None
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=call_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        # is_error should be True from the isError fallback
+        assert result.is_error is True
+        assert result.content[0].text == "error from remote"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_non_standard(self, tool_service, mock_tool, test_db):
