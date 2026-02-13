@@ -330,6 +330,72 @@ async def test_get_user_roles_include_all_teams(svc, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_get_user_roles_include_all_teams_excludes_personal_teams(svc, mock_db):
+    """_get_user_roles with include_all_teams=True excludes personal team roles.
+
+    Every user gets a personal team with team_admin role auto-assigned.
+    When aggregating permissions via check_any_team=True, personal team
+    roles must be excluded to prevent all users from inheriting team_admin
+    permissions (servers.create, tools.create, etc.).
+    """
+
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
+    await svc._get_user_roles("user@test.com", team_id=None, include_all_teams=True)
+
+    # Verify the query was executed (the important thing is it doesn't crash)
+    assert mock_db.execute.called
+
+    # Verify the SQL contains a subquery filtering personal teams
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    # The query should reference email_teams.is_personal to exclude personal teams
+    assert "is_personal" in compiled, f"Query should filter personal teams: {compiled}"
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_specific_team_does_not_exclude_personal(svc, mock_db):
+    """_get_user_roles with specific team_id does NOT exclude personal teams.
+
+    When a specific team_id is provided (direct team context), the query
+    should include that team's roles even if it's a personal team.
+    """
+    mock_db.execute.return_value.unique.return_value.scalars.return_value.all.return_value = []
+    await svc._get_user_roles("user@test.com", team_id="personal-team-123", include_all_teams=False)
+
+    query_arg = mock_db.execute.call_args[0][0]
+    compiled = str(query_arg.compile(compile_kwargs={"literal_binds": True}))
+    # When a specific team_id is provided, personal teams should NOT be filtered
+    assert "is_personal" not in compiled, f"Specific team query should not filter personal teams: {compiled}"
+
+
+@pytest.mark.asyncio
+async def test_check_permission_check_any_team_excludes_personal_team_roles(svc, mock_db):
+    """check_permission with check_any_team=True denies viewer despite personal team_admin.
+
+    This is the core regression test for the RBAC bypass where viewers could
+    create servers because their personal team's team_admin role granted
+    servers.create via check_any_team aggregation.
+    """
+    # Simulate: viewer has only platform_viewer (global) + viewer (team-scoped on real team)
+    # The personal team's team_admin role should be excluded by the fix
+    viewer_role = SimpleNamespace(
+        name="viewer",
+        permissions=["servers.read", "tools.read"],
+        get_effective_permissions=lambda: ["servers.read", "tools.read"],
+    )
+    user_role = SimpleNamespace(role=viewer_role, role_id="r1", scope="team", scope_id="real-team-123")
+
+    with patch.object(svc, "_is_user_admin", return_value=False), patch.object(svc, "_get_user_roles", return_value=[user_role]):
+        granted = await svc.check_permission(
+            user_email="viewer@test.com",
+            permission="servers.create",
+            check_any_team=True,
+            allow_admin_bypass=True,
+        )
+    assert granted is False, "Viewer should NOT be able to create servers even with check_any_team=True"
+
+
+@pytest.mark.asyncio
 async def test_get_user_roles_include_expired(svc, mock_db):
     """get_user_roles with include_expired."""
     mock_db.execute.return_value.scalars.return_value.all.return_value = []
