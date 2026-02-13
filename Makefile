@@ -5670,6 +5670,7 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui-headless     - Run Playwright UI tests in headless mode
 # help: test-ui-debug        - Run Playwright UI tests with Playwright Inspector
 # help: test-ui-smoke        - Run Playwright UI smoke tests only (fast subset)
+# help: test-ui-ci-smoke     - Run stable Playwright CI smoke subset (headless, serve-compatible)
 # help: test-ui-parallel     - Run Playwright UI tests in parallel using pytest-xdist
 # help: test-ui-report       - Run Playwright UI tests and generate HTML report
 # help: test-ui-coverage     - Run Playwright UI tests with coverage for admin endpoints
@@ -5678,7 +5679,7 @@ db-fix-head: ## Fix multiple heads issue
 # help: test-ui-update-snapshots - Update Playwright visual regression snapshots
 # help: test-ui-clean        - Clean up Playwright test artifacts
 
-.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
+.PHONY: playwright-install playwright-install-all playwright-preflight test-ui test-ui-headless test-ui-debug test-ui-smoke test-ui-ci-smoke test-ui-parallel test-ui-report test-ui-coverage test-ui-screenshots test-ui-record test-ui-update-snapshots test-ui-clean
 
 # Playwright test variables
 PLAYWRIGHT_DIR := tests/playwright
@@ -5687,6 +5688,13 @@ PLAYWRIGHT_SCREENSHOTS := $(PLAYWRIGHT_DIR)/screenshots
 PLAYWRIGHT_VIDEOS := $(PLAYWRIGHT_DIR)/videos
 PLAYWRIGHT_SLOWMO ?= 750
 TEST_BASE_URL ?= http://localhost:8080
+# Optional install flags for Playwright browser installation (e.g. --with-deps in Linux CI)
+PLAYWRIGHT_INSTALL_FLAGS ?=
+PLAYWRIGHT_CI_SMOKE_TESTS := \
+	tests/playwright/test_admin_ui.py::TestAdminUI::test_admin_panel_loads \
+	tests/playwright/test_admin_ui.py::TestAdminUI::test_navigate_between_tabs \
+	tests/playwright/test_version_page.py::TestVersionPage::test_version_panel_loads \
+	tests/playwright/test_mcp_registry_page.py::TestMCPRegistryPage::test_registry_panel_loads
 
 ## --- Playwright Setup -------------------------------------------------------
 playwright-install:
@@ -5694,7 +5702,7 @@ playwright-install:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
-		playwright install chromium"
+		playwright install $(PLAYWRIGHT_INSTALL_FLAGS) chromium"
 	@echo "✅ Playwright chromium browser installed!"
 
 playwright-install-all:
@@ -5702,7 +5710,7 @@ playwright-install-all:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -e '.[playwright]' 2>/dev/null || uv pip install playwright pytest-playwright && \
-		playwright install"
+		playwright install $(PLAYWRIGHT_INSTALL_FLAGS)"
 	@echo "✅ All Playwright browsers installed!"
 
 playwright-preflight:
@@ -5756,6 +5764,16 @@ test-ui-smoke: playwright-install
 		TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -m smoke --headed \
 		--browser chromium || { echo '❌ UI smoke tests failed!'; exit 1; }"
 	@echo "✅ UI smoke tests passed!"
+
+test-ui-ci-smoke: playwright-install
+	@echo "🎭 Running Playwright CI smoke tests (headless subset)..."
+	@$(MAKE) --no-print-directory playwright-preflight
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p $(PLAYWRIGHT_REPORTS)
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		TEST_BASE_URL='$(TEST_BASE_URL)' pytest -v --screenshot=only-on-failure \
+		--browser chromium $(PLAYWRIGHT_CI_SMOKE_TESTS) || { echo '❌ UI CI smoke tests failed!'; exit 1; }"
+	@echo "✅ UI CI smoke tests passed!"
 
 test-ui-parallel: playwright-install
 	@echo "🎭 Running Playwright UI tests in parallel..."
