@@ -87,6 +87,7 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
+from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -185,8 +186,7 @@ if _env_flag is not None:
 else:
     _PLUGINS_ENABLED = settings.plugins_enabled
 _config_file = _os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
-plugin_manager: PluginManager | None = PluginManager(_config_file) if _PLUGINS_ENABLED else None
-
+plugin_manager: PluginManager | None = PluginManager(config=_config_file) if _PLUGINS_ENABLED else None
 
 # First-Party
 # First-Party - import module-level service singletons
@@ -2106,11 +2106,16 @@ else:
 # Note: Middleware runs in REVERSE order (last added runs first)
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
 # Execution order will be: AuthContext -> Observability -> Request Handler
+# Wire observability adapter into the plugin manager when observability is enabled
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+    from mcpgateway.services.observability_service import ObservabilityService
 
-    app.add_middleware(ObservabilityMiddleware, enabled=True)
+    _service = ObservabilityService()
+    app.add_middleware(ObservabilityMiddleware, enabled=True, service=_service)
+    if plugin_manager:
+        plugin_manager.observability = ObservabilityServiceAdapter(service=_service)
     logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
