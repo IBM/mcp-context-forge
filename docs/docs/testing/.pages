@@ -5,3 +5,4 @@ nav:
   - performance.md
   - acceptance.md
   - fuzzing.md
+  - LocalTest.md
