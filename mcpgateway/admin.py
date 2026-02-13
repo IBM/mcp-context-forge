@@ -257,7 +257,7 @@ def load_sri_hashes() -> Dict[str, str]:
 
     Returns:
         Dict[str, str]: Dictionary mapping resource names to SRI hash strings.
-                       Returns empty dict if file not found or invalid.
+                        Returns empty dict if file not found or invalid.
     """
     try:
         sri_file = Path(__file__).parent / "sri_hashes.json"
@@ -2873,6 +2873,7 @@ async def admin_ui(
             "sri_hashes": load_sri_hashes(),
             # Token policy flags
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -3008,6 +3009,7 @@ async def admin_login_page(request: Request) -> Response:
             "prefill_email": prefill_email,
             "sri_hashes": load_sri_hashes(),
             "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
