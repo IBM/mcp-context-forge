@@ -810,9 +810,9 @@ class ExportService:
                 "annotations": db_tool.annotations or {},
                 "jsonpath_filter": db_tool.jsonpath_filter,
                 "tags": db_tool.tags or [],
-                "rate_limit": db_tool.rate_limit,
-                "timeout": db_tool.timeout,
-                "is_active": db_tool.is_active,
+                "rate_limit": getattr(db_tool, "rate_limit", None),
+                "timeout": getattr(db_tool, "timeout", None),
+                "is_active": db_tool.enabled,
                 "created_at": db_tool.created_at.isoformat() if db_tool.created_at else None,
                 "updated_at": db_tool.updated_at.isoformat() if db_tool.updated_at else None,
             }
@@ -853,7 +853,7 @@ class ExportService:
                 "transport": db_gateway.transport,
                 "capabilities": db_gateway.capabilities or {},
                 "health_check": {"url": f"{db_gateway.url}/health", "interval": 30, "timeout": 10, "retries": 3},
-                "is_active": db_gateway.is_active,
+                "is_active": db_gateway.enabled,
                 "tags": db_gateway.tags or [],
                 "passthrough_headers": db_gateway.passthrough_headers or [],
             }
@@ -903,7 +903,7 @@ class ExportService:
                 "websocket_endpoint": f"{root_path}/servers/{db_server.id}/ws",
                 "jsonrpc_endpoint": f"{root_path}/servers/{db_server.id}/jsonrpc",
                 "capabilities": {"tools": {"list_changed": True}, "prompts": {"list_changed": True}},
-                "is_active": db_server.is_active,
+                "is_active": db_server.enabled,
                 "tags": db_server.tags or [],
             }
 
@@ -978,7 +978,7 @@ class ExportService:
                 "description": db_resource.description,
                 "mime_type": db_resource.mime_type,
                 "tags": db_resource.tags or [],
-                "is_active": db_resource.is_active,
+                "is_active": db_resource.enabled,
                 "last_modified": db_resource.updated_at.isoformat() if db_resource.updated_at else None,
             }
 

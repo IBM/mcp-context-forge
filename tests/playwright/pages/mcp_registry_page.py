@@ -212,8 +212,8 @@ class MCPRegistryPage(BasePage):
             category: Category name to select
         """
         self.category_filter.select_option(category)
-        # Wait for HTMX to update the content
-        self.page.wait_for_timeout(1000)
+        # Wait for HTMX to swap the content after filter change
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
 
     def select_auth_type(self, auth_type: str) -> None:
         """Select an auth type from the filter dropdown.
@@ -222,8 +222,8 @@ class MCPRegistryPage(BasePage):
             auth_type: Auth type to select (e.g., "OAuth2.1", "API Key")
         """
         self.auth_filter.select_option(auth_type)
-        # Wait for HTMX to update the content
-        self.page.wait_for_timeout(1000)
+        # Wait for HTMX to swap the content after filter change
+        self.page.wait_for_selector("#server-grid", state="attached", timeout=30000)
 
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
@@ -412,9 +412,9 @@ class MCPRegistryPage(BasePage):
             True if filter is applied correctly
         """
         if filter_type == "category":
-            selected = self.category_filter.input_value()
+            selected = self.category_filter.input_value(timeout=10000)
             return selected == filter_value
         if filter_type == "auth":
-            selected = self.auth_filter.input_value()
+            selected = self.auth_filter.input_value(timeout=10000)
             return selected == filter_value
         return False

@@ -16,7 +16,7 @@ import logging
 from typing import List, Optional
 
 # Third-Party
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -519,7 +519,7 @@ class RoleService:
         role.updated_at = utc_now()
 
         # Deactivate all user assignments of this role
-        self.db.execute(select(UserRole).where(UserRole.role_id == role_id)).update({"is_active": False})
+        self.db.execute(update(UserRole).where(UserRole.role_id == role_id).values(is_active=False))
 
         self.db.commit()
 
