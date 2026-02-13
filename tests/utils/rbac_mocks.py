@@ -19,8 +19,6 @@ barriers while preserving the ability to test RBAC functionality when needed.
 from typing import Dict, Optional
 from unittest.mock import AsyncMock, MagicMock
 
-# Third-Party
-
 
 def create_mock_user_context(
     email: str = "test@example.com",
@@ -388,6 +386,67 @@ def restore_rbac_decorators(originals: Dict):
     rbac_module.require_permission = originals["require_permission"]
     rbac_module.require_admin_permission = originals["require_admin_permission"]
     rbac_module.require_any_permission = originals["require_any_permission"]
+
+
+def create_permission_matrix_test_db():
+    """Create an in-memory SQLite database with all 5 built-in roles bootstrapped.
+
+    Returns a (engine, SessionLocal) tuple. Caller must dispose engine when done.
+    Uses real SQLAlchemy models and bootstrap_default_roles() to ensure test
+    data stays in sync with production role definitions.
+    """
+    # Third-Party
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import StaticPool
+
+    # First-Party
+    from mcpgateway.db import Base
+
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(bind=engine)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    return engine, TestSessionLocal
+
+
+def create_user_with_role(db, email, role_name, scope, scope_id=None, is_admin=False):
+    """Create an EmailUser and assign them a role by name.
+
+    Looks up the role from the DB by (name, scope), creates the user if needed,
+    then creates a UserRole assignment.
+
+    Args:
+        db: SQLAlchemy Session
+        email: User email address
+        role_name: Name of the role to assign (must already exist in DB)
+        scope: Scope for the UserRole assignment ('global', 'team', 'personal')
+        scope_id: Optional scope ID (team ID for team-scoped roles)
+        is_admin: Whether the user should be marked as admin
+
+    Returns:
+        Tuple of (EmailUser, UserRole)
+    """
+    # First-Party
+    from mcpgateway.db import EmailUser, Role, UserRole
+
+    # Create user if not exists
+    user = db.query(EmailUser).filter_by(email=email).first()
+    if not user:
+        user = EmailUser(email=email, password_hash="$argon2id$v=19$m=65536,t=3,p=1$test", full_name=email.split("@")[0], is_admin=is_admin, is_active=True)
+        db.add(user)
+        db.flush()
+
+    # Look up role
+    role = db.query(Role).filter_by(name=role_name, scope=scope).first()
+    if not role:
+        raise ValueError(f"Role '{role_name}' with scope '{scope}' not found in database. Did you bootstrap roles?")
+
+    # Create assignment
+    user_role = UserRole(user_email=email, role_id=role.id, scope=scope, scope_id=scope_id, granted_by=email, is_active=True)
+    db.add(user_role)
+    db.flush()
+
+    return user, user_role
 
 
 def teardown_rbac_mocks_for_app(app):
