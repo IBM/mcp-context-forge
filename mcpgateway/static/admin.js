@@ -190,6 +190,74 @@ function updateEditToolUrl() {
     }
 }
 
+// Function to update default visibility based on team_id in URL
+function updateDefaultVisibility() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const teamId = urlParams.get("team_id");
+    const hasTeam = teamId && teamId.trim() !== "";
+
+    // List of visibility prefixes to handle
+    // These correspond to the "public", "team", "private" radio buttons
+    // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
+    const visibilityPrefixes = [
+        "gateway-visibility", // Gateways (Create)
+        "server-visibility", // Virtual Servers (Create)
+        "tool-visibility", // Tools (Create)
+        "resource-visibility", // Resources (Create)
+        "prompt-visibility", // Prompts (Create)
+        "a2a-visibility", // Agents (Create)
+    ];
+
+    visibilityPrefixes.forEach((prefix) => {
+        const publicId = `[id="${prefix}-public"]`;
+        const teamIdStr = `[id="${prefix}-team"]`;
+        const privateIdStr = `[id="${prefix}-private"]`;
+
+        // Handle potential duplicate IDs using querySelectorAll
+        const publicRadios = document.querySelectorAll(publicId);
+        const teamRadios = document.querySelectorAll(teamIdStr);
+        const privateRadios = document.querySelectorAll(privateIdStr);
+
+        if (hasTeam) {
+            // Default to Team
+            teamRadios.forEach((radio) => {
+                // Ensure we only set check if it's the initial default (not user modified,
+                // though on page load user hasn't modified yet).
+                if (!radio.checked) {
+                    radio.checked = true;
+                    // Also set defaultChecked to ensure form resets go to this state
+                    radio.defaultChecked = true;
+                    // Trigger change event for any listeners
+                    radio.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+            });
+            // Reset public and private radios default state
+            publicRadios.forEach((radio) => {
+                radio.defaultChecked = false;
+            });
+            privateRadios.forEach((radio) => {
+                radio.defaultChecked = false;
+            });
+        } else {
+            // Default to Public
+            publicRadios.forEach((radio) => {
+                if (!radio.checked) {
+                    radio.checked = true;
+                    radio.defaultChecked = true;
+                    radio.dispatchEvent(new Event("change", { bubbles: true }));
+                }
+            });
+            // Reset team and private radios default state
+            teamRadios.forEach((radio) => {
+                radio.defaultChecked = false;
+            });
+            privateRadios.forEach((radio) => {
+                radio.defaultChecked = false;
+            });
+        }
+    });
+}
+
 // Attach event listener after DOM is loaded or when modal opens
 document.addEventListener("DOMContentLoaded", function () {
     const TypeField = document.getElementById("edit-tool-type");
@@ -198,6 +266,9 @@ document.addEventListener("DOMContentLoaded", function () {
         // Set initial state
         updateEditToolUrl();
     }
+
+    // Initialize default visibility based on URL team_id
+    updateDefaultVisibility();
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
