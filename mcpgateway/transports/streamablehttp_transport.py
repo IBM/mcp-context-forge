@@ -486,7 +486,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
-                # Skip initialize() for stateless MCP servers
+                await session.initialize()
 
                 # Prepare params with _meta if provided
                 params = None
@@ -533,7 +533,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         # Use MCP SDK to connect and list resources
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
-                # Skip initialize() for stateless MCP servers
+                await session.initialize()
 
                 # Prepare params with _meta if provided
                 params = None
@@ -590,8 +590,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         # Use MCP SDK to connect and read resource
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
-                # Skip initialize() for stateless MCP servers
-                # await session.initialize()
+                await session.initialize()
 
                 # Prepare request params with _meta if provided
                 if meta:

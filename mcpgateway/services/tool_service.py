@@ -2614,19 +2614,35 @@ class ToolService:
 
             gateway_url = gateway.url
 
+            # Resolve the original (unprefixed) tool name for the remote server.
+            # Tools registered via gateways are stored as "{gateway_slug}{separator}{slugified_name}",
+            # but the remote server only knows the original name (e.g. "get_system_time" not "get-system-time").
+            # Look up the tool's original_name from the DB; fall back to the prefixed name if not found
+            # (e.g. when calling a tool that exists on the remote but hasn't been cached locally).
+            remote_name = name
+            tool_row = db.execute(select(DbTool).where(DbTool.name == name, DbTool.gateway_id == gateway_id)).scalar_one_or_none()
+            if tool_row and tool_row.original_name:
+                remote_name = tool_row.original_name
+            else:
+                # Fallback: strip the slug prefix (best-effort for tools not yet in DB)
+                gateway_slug = getattr(gateway, "slug", None) or ""
+                if gateway_slug:
+                    prefix = f"{gateway_slug}{settings.gateway_tool_name_separator}"
+                    if name.startswith(prefix):
+                        remote_name = name[len(prefix):]
+
         # Use MCP SDK to connect and call tool
         try:
             async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                 async with ClientSession(read_stream, write_stream) as session:
-                    # Skip session initialize for stateless servers
-                    # await session.initialize()
+                    await session.initialize()
 
                     # Call tool with meta if provided
                     if meta_data:
                         logger.debug(f"Forwarding _meta to remote gateway: {meta_data}")
-                        tool_result = await session.call_tool(name=name, arguments=arguments, meta=meta_data)
+                        tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=meta_data)
                     else:
-                        tool_result = await session.call_tool(name=name, arguments=arguments)
+                        tool_result = await session.call_tool(name=remote_name, arguments=arguments)
 
                     logger.info(f"[INVOKE TOOL] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
                     return tool_result

@@ -2198,8 +2198,7 @@ class ResourceService:
                             # Use MCP SDK to connect and read resource
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
                                 async with ClientSession(read_stream, write_stream) as session:
-                                    # Skip session initialize for stateless servers
-                                    # await session.initialize()
+                                    await session.initialize()
 
                                     # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
                                     result = await session.read_resource(uri=uri)

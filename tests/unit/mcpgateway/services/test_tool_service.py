@@ -5573,6 +5573,7 @@ class TestInvokeToolDirect:
         gw = MagicMock(spec=DbGateway)
         gw.id = "gw-direct-1"
         gw.name = "direct_gateway"
+        gw.slug = "direct-gateway"
         gw.url = "http://remote-mcp:8080/mcp"
         gw.gateway_mode = "direct_proxy"
         gw.auth_type = "bearer"
@@ -5583,17 +5584,24 @@ class TestInvokeToolDirect:
         gw.owner_email = None
         return gw
 
-    def _make_fresh_db_session(self, gateway):
-        """Create a mock fresh_db_session context manager that returns a db with gateway lookup."""
+    def _make_fresh_db_session(self, gateway, tool_row=None):
+        """Create a mock fresh_db_session context manager.
+
+        The DB session handles two sequential queries:
+        1. Gateway lookup by ID → returns gateway
+        2. Tool lookup by name + gateway_id → returns tool_row (default None)
+        """
         # Standard
         from contextlib import contextmanager
 
         @contextmanager
         def mock_fresh_session():
             mock_db = MagicMock()
-            mock_scalar = MagicMock()
-            mock_scalar.scalar_one_or_none.return_value = gateway
-            mock_db.execute.return_value = mock_scalar
+            gateway_result = MagicMock()
+            gateway_result.scalar_one_or_none.return_value = gateway
+            tool_result = MagicMock()
+            tool_result.scalar_one_or_none.return_value = tool_row
+            mock_db.execute.side_effect = [gateway_result, tool_result]
             yield mock_db
 
         return mock_fresh_session
@@ -5842,6 +5850,87 @@ class TestInvokeToolDirect:
             )
 
         assert captured_kwargs["timeout"] == 120
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_resolves_original_name(self, tool_service, mock_direct_gateway):
+        """Prefixed tool name should be resolved to original_name from DB for the remote call."""
+        expected_result = MagicMock()
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        # Create a mock tool row with original_name different from slugified name
+        mock_tool = MagicMock()
+        mock_tool.original_name = "get_system_time"
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=mock_tool)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="direct-gateway-get-system-time",
+                arguments={"timezone": "UTC"},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        # The remote call should use the original_name, not the slugified prefixed name
+        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"})
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_slug_fallback_when_not_in_db(self, tool_service, mock_direct_gateway):
+        """When tool is not in DB, fall back to stripping the gateway slug prefix."""
+        expected_result = MagicMock()
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=None)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.gateway_tool_name_separator = "-"
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="direct-gateway-my-tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        # Fallback: strip slug prefix "direct-gateway-" → "my-tool"
+        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_feature_flag_disabled(self, tool_service, mock_direct_gateway):
