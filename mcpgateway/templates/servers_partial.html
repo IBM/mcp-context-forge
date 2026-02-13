@@ -97,12 +97,8 @@
       <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
       {% endif %}
     </td>
-    <td class="px-2 py-4 whitespace-nowrap">
-      {% if server.team %}
-      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team|e|replace(' ', '<br />')|safe }}</span>
-      {% else %}
-      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
-      {% endif %}
+    <td class="px-2 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">
+      {% if server.team %}{{ server.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap">
       {% if server.visibility == 'private' %}
