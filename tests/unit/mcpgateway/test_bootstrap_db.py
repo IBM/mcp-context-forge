@@ -354,7 +354,77 @@ class TestBootstrapDefaultRoles:
                     with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
                         with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                             await bootstrap_default_roles(mock_conn)
-                            mock_logger.error.assert_any_call("Failed to assign platform_admin role: boom")
+                            mock_logger.error.assert_any_call(f"Failed to assign platform_admin role to {mock_admin_user.email}: boom. Admin UI routes using allow_admin_bypass=False will return 403.")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_db_fallback_when_role_not_in_created_roles(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """When platform_admin creation fails but role exists in DB, assignment uses DB fallback."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        # Simulate: role creation fails for platform_admin, so it's not in created_roles
+        platform_admin_from_db = Mock()
+        platform_admin_from_db.id = "role-from-db"
+        platform_admin_from_db.name = "platform_admin"
+
+        async def _get_role_by_name(name, scope):
+            # First calls (during role creation loop): return None so create_role is called
+            # Final call (DB fallback): return the existing role
+            if name == "platform_admin" and scope == "global":
+                return platform_admin_from_db
+            return None
+
+        mock_role_service.get_role_by_name.side_effect = _get_role_by_name
+
+        # All role creations fail
+        mock_role_service.create_role.side_effect = RuntimeError("creation failed")
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            # Role assignment should have been called with the DB fallback role
+                            mock_role_service.assign_role_to_user.assert_called_once_with(
+                                user_email=mock_admin_user.email,
+                                role_id="role-from-db",
+                                scope="global",
+                                scope_id=None,
+                                granted_by=mock_admin_user.email,
+                            )
+                            mock_logger.info.assert_any_call(f"Assigned platform_admin role to {mock_admin_user.email}")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_not_found_anywhere_logs_error(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """When platform_admin role is not in created_roles and not in DB, error is logged."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        # All role creations fail, and DB lookup also returns None
+        mock_role_service.get_role_by_name.return_value = None
+        mock_role_service.create_role.side_effect = RuntimeError("creation failed")
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            mock_logger.error.assert_any_call(
+                                f"platform_admin role not found — could not assign to {mock_admin_user.email}. Admin UI routes using allow_admin_bypass=False will return 403."
+                            )
+                            # Assignment should NOT have been called
+                            mock_role_service.assign_role_to_user.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_bootstrap_roles_outer_exception_logged(self, mock_settings, mock_email_auth_service, mock_conn):
@@ -1360,9 +1430,7 @@ class TestMain:
                                                         mock_base.metadata.create_all.assert_not_called()
                                                         mock_command.upgrade.assert_not_called()
                                                         mock_command.stamp.assert_called_once_with(mock_config, "head")
-                                                        mock_logger.warning.assert_any_call(
-                                                            "Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations"
-                                                        )
+                                                        mock_logger.warning.assert_any_call("Existing database has no Alembic revision rows; stamping head to avoid reapplying migrations")
 
     @pytest.mark.asyncio
     async def test_main_with_normalization(self, mock_settings):
@@ -1445,6 +1513,7 @@ class TestModuleLevel:
 
     def test_module_imports(self):
         """Test that module imports work correctly."""
+        # First-Party
         from mcpgateway.bootstrap_db import Base, logger, logging_service
 
         assert logging_service is not None
@@ -1456,6 +1525,7 @@ class TestModuleLevel:
     def test_main_entrypoint(self):
         """Test that main can be called as a module."""
         # Just verify the module structure is correct
+        # First-Party
         from mcpgateway.bootstrap_db import main
 
         assert asyncio.iscoroutinefunction(main)
