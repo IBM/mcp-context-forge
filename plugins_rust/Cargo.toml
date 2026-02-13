@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "pii_filter"]
+members = [".", "pii_filter", "url_reputation"]
 resolver = "2"
 
 [workspace.package]
