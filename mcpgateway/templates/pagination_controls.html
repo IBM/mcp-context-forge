@@ -115,7 +115,7 @@
     // Preserve other query parameters
     {% if query_params %}
     {% for key, value in query_params.items() %}
-    {% if key != 'include_inactive' %}
+    {% if key != 'include_inactive' and value is not none %}
     url.searchParams.set('{{ key }}', '{{ value }}');
     {% endif %}
     {% endfor %}
