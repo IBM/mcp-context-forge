@@ -25,7 +25,7 @@ default    Running    aarch64    10      18GiB     100GiB    docker
 # Create production docker image
 make docker-prod
 
-# Note: Refer docker-compose-lite.yml for cpu and memory allocation
+# Note: Refer docker-compose.override.lite.yml for cpu and memory allocation
 # Run lite replicas (uses docker compose)
 make compose-lite-down && make compose-lite-up
 # Access the gateway via proxy - http://localhost:8080
@@ -44,13 +44,13 @@ make load-test-ui
 
 ```
 
-**Note:** The lite commands (`make compose-lite-up/down` and `make monitoring-lite-up/down`) use `docker compose` directly.
+**Note:** The lite commands (`make compose-lite-up/down` and `make monitoring-lite-up/down`) apply the `docker-compose.override.lite.yml` override file for reduced resource limits.
 
 ---
 
 ### Gateway Lite Service
 
-| Aspect                 | Original (docker-compose.yml) | Lite (docker-compose-lite.yml) | Reason                                  |
+| Aspect                 | Original (docker-compose.yml) | Lite (docker-compose.override.lite.yml) | Reason                                  |
 | ---------------------- | ----------------------------- | ------------------------------ | --------------------------------------- |
 | **Replicas**           | 3                             | 2                              | Reduce resource footprint for Colima    |
 | **CPU Limit**          | 8 CPUs per replica            | 3.5 CPUs per replica           | More reasonable for 10 CPU host         |
@@ -108,7 +108,7 @@ No changes between versions - both tuned for 3000 concurrent users.
 
 ---
 
-## Resource Breakdown (Verified Against docker-compose-lite.yml)
+## Resource Breakdown (Verified Against docker-compose.override.lite.yml)
 
 **compose-lite-up (core only):**
 
