@@ -6,6 +6,7 @@ export const MASKED_AUTH_VALUE = "*****";
  */
 export const HEADER_NAME_REGEX = /^[A-Za-z0-9-]+$/;
 export const MAX_HEADER_VALUE_LENGTH = 4096;
+export const MAX_NAME_LENGTH = 255;
 
 /**
  * Performance aggregation

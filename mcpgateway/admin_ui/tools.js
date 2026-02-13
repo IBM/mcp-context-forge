@@ -11,6 +11,7 @@ import {
   validateUrl, 
 } from "./security.js";
 import { 
+  decodeHtml,
   fetchWithTimeout, 
   getCurrentTeamId, 
   handleFetchError, 
@@ -321,14 +322,19 @@ export const viewTool = async function (toolId) {
         ".tool-display-name",
         tool.displayName || tool.customName || tool.name,
       );
-      tool.description = tool.description.slice(
-        0,
-        tool.description.indexOf("*"),
-      );
+      const cleanDesc = tool.description
+        ? tool.description.slice(
+          0,
+          tool.description.indexOf("*") > 0
+            ? tool.description.indexOf("*")
+            : tool.description.length,
+        )
+        : "";
+      const decodedDesc = decodeHtml(cleanDesc);
       setTextSafely(".tool-name", tool.name);
       setTextSafely(".tool-url", tool.url);
       setTextSafely(".tool-type", tool.integrationType);
-      setTextSafely(".tool-description", tool.description);
+      setTextSafely(".tool-description", decodedDesc);
       setTextSafely(".tool-visibility", tool.visibility);
 
       // Set tags as HTML with badges
@@ -537,11 +543,16 @@ export const editTool = async function (toolId) {
       urlField.value = urlValidation.value;
     }
     if (descField) {
-      tool.description = tool.description.slice(
-        0,
-        tool.description.indexOf("*")
-      );
-      descField.value = tool.description || "";
+      // Decode HTML entities to prevent double-encoding when saving
+      const cleanDesc = tool.description
+        ? tool.description.slice(
+          0,
+          tool.description.indexOf("*") > 0
+            ? tool.description.indexOf("*")
+            : tool.description.length,
+        )
+        : "";
+      descField.value = decodeHtml(cleanDesc);
     }
     if (typeField) {
       typeField.value = tool.integrationType || "MCP";
@@ -1542,8 +1553,9 @@ export const testTool = async function (toolId) {
     }
     if (descElement) {
       if (tool.description) {
-        // Escape HTML and then replace newlines with <br/> tags
-        descElement.innerHTML = escapeHtml(tool.description).replace(
+        // Decode HTML entities first, then escape and replace newlines with <br/> tags
+        const decodedDesc = decodeHtml(tool.description);
+        descElement.innerHTML = escapeHtml(decodedDesc).replace(
           /\n/g,
           "<br/>",
         );
@@ -2280,12 +2292,15 @@ export const validateTool = async function (toolId) {
     }
     if (descElement) {
       if (tool.description) {
-        // Escape HTML and then replace newlines with <br/> tags
-        tool.description = tool.description.slice(
+        // Decode HTML entities first, then escape and replace newlines with <br/> tags
+        const cleanDesc = tool.description.slice(
           0,
-          tool.description.indexOf("*"),
+          tool.description.indexOf("*") > 0
+            ? tool.description.indexOf("*")
+            : tool.description.length,
         );
-        descElement.innerHTML = escapeHtml(tool.description).replace(
+        const decodedDesc = decodeHtml(cleanDesc);
+        descElement.innerHTML = escapeHtml(decodedDesc).replace(
           /\n/g,
           "<br/>",
         );

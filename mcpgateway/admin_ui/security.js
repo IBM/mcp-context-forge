@@ -4,7 +4,8 @@
  * ====================================================================
  */
 
-import { HEADER_NAME_REGEX, MAX_HEADER_VALUE_LENGTH } from "./constants.js";
+import { HEADER_NAME_REGEX, MAX_HEADER_VALUE_LENGTH, MAX_NAME_LENGTH } from "./constants.js";
+import { AppState } from "./appState.js";
 
 // ===================================================================
 // SECURITY: HTML-escape function to prevent XSS attacks
@@ -35,6 +36,9 @@ export function extractApiError(error, fallback = "An error occurred") {
   if (!error || (!error.detail && !error.message)) {
     return fallback;
   }
+  if (error.message) {
+    return error.message;
+  }
   if (typeof error.detail === "string") {
     return error.detail;
   }
@@ -63,10 +67,59 @@ export async function parseErrorResponse(
     }
     // Non-JSON response - try to get text
     const text = await response.text();
-    return text || fallback;
+    if (!text) {
+      return fallback;
+    }
+    // Detect HTML responses (proxy error pages, auth redirects) and show generic message
+    if (
+      text.trimStart().startsWith("<!") ||
+      text.trimStart().toLowerCase().startsWith("<html")
+    ) {
+      return `${fallback} (HTTP ${response.status}). The server returned an HTML error page.`;
+    }
+    // Truncate long non-HTML text responses
+    const maxLength = 200;
+    if (text.length > maxLength) {
+      return text.substring(0, maxLength) + "...";
+    }
+    return text;
   } catch {
     return fallback;
   }
+}
+
+/**
+ * Safely parse a JSON response with validation.
+ * Prevents "JSON.parse: unexpected character" errors when server/proxy returns HTML.
+ * @param {Response} response - The fetch Response object
+ * @param {string} fallbackError - Fallback error message if response is not JSON
+ * @returns {Promise<Object>} Parsed JSON result
+ * @throws {Error} If response is not OK or not JSON
+ */
+export async function safeParseJsonResponse(
+  response,
+  fallbackError = "Request failed",
+) {
+  const contentType = response.headers.get("content-type") || "";
+
+  // Handle non-OK responses first
+  if (!response.ok) {
+    const errorMsg = await parseErrorResponse(
+      response,
+      `${fallbackError} (HTTP ${response.status})`,
+    );
+    throw new Error(errorMsg);
+  }
+
+  // Validate content-type before parsing
+  if (!contentType.includes("application/json")) {
+    throw new Error(
+      "The server returned an unexpected response. " +
+        "Please verify you are authenticated and the server is responding correctly.",
+    );
+  }
+
+  return await response.json();
 }
 
 /**
@@ -150,10 +203,10 @@ export function validateInputName(name, type = "input") {
     return { valid: false, error: `${type} cannot be empty` };
   }
 
-  if (cleaned.length > window.MAX_NAME_LENGTH) {
+  if (cleaned.length > MAX_NAME_LENGTH) {
     return {
       valid: false,
-      error: `${type} must be ${window.MAX_NAME_LENGTH} characters or less`,
+      error: `${type} must be ${MAX_NAME_LENGTH} characters or less`,
     };
   }
 
@@ -238,3 +291,32 @@ export const escapeHtmlChat = function (text) {
   div.textContent = text;
   return div.innerHTML;
 };
+
+// ===================================================================
+// RESTRICTED CONTEXT SAFETY (sandboxed iframes)
+// ===================================================================
+
+/**
+ * One-time debug log when running in a restricted context
+ * (e.g. sandboxed iframes where storage/history APIs are unavailable).
+ */
+export function logRestrictedContext(e) {
+  if (!AppState.isRestrictedContextLogged()) {
+    AppState.setRestrictedContextLogged(true);
+    console.debug(
+      "Running in restricted context — storage/history APIs unavailable:",
+      e.message,
+    );
+  }
+}
+
+/**
+ * Safe wrapper for history.replaceState — silently skips in restricted contexts.
+ */
+export function safeReplaceState(data, title, url) {
+  try {
+    window.history.replaceState(data, title, url);
+  } catch (e) {
+    logRestrictedContext(e);
+  }
+}

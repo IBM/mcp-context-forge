@@ -1,9 +1,9 @@
 <!doctype html>
 <html
   lang="en"
-  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); return false } })() }"
+  x-data="{ darkMode: (() => { try { return JSON.parse(localStorage.getItem('darkMode') || 'false') } catch(e) { Admin?.logRestrictedContext(e); return false } })() }"
   x-bind:class="darkMode ? 'dark' : ''"
-  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { if (typeof _logRestrictedContext === 'function') _logRestrictedContext(e); } })"
+  x-init="$watch('darkMode', val => { try { localStorage.setItem('darkMode', val) } catch(e) { Admin?.logRestrictedContext(e); } })"
 >
   <head>
     <meta charset="UTF-8" />
@@ -148,25 +148,7 @@
         newParams.set(prefix + 'page', '1');  // Reset to page 1 when filter changes
 
         const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-        safeReplaceState({}, '', newUrl);
-      }
-
-      // One-time debug notice for restricted iframe contexts (e.g. sandboxed iframes)
-      var _restrictedContextLogged = false;
-      function _logRestrictedContext(e) {
-        if (!_restrictedContextLogged) {
-          _restrictedContextLogged = true;
-          console.debug('Running in restricted context — storage/history APIs unavailable:', e.message);
-        }
-      }
-
-      // Safe wrapper for history.replaceState — skips in restricted contexts
-      function safeReplaceState(data, title, url) {
-        try {
-          window.history.replaceState(data, title, url);
-        } catch (e) {
-          _logRestrictedContext(e);
-        }
+        Admin?.safeReplaceState?.({}, '', newUrl);
       }
     </script>
 
@@ -11848,7 +11830,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             const cleanUrl = new URL(window.location);
             cleanUrl.searchParams.delete('error');
             cleanUrl.searchParams.delete('success');
-            safeReplaceState({}, '', cleanUrl);
+            Admin.safeReplaceState({}, '', cleanUrl);
           }, 5000);
         }
       })();
@@ -12209,7 +12191,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { Admin.logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -12433,7 +12415,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         // Add authentication if available
         let token = null;
-        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { _logRestrictedContext(e); }
+        try { token = localStorage.getItem('auth_token') || sessionStorage.getItem('auth_token'); } catch(e) { Admin.logRestrictedContext(e); }
         if (token) {
           headers['Authorization'] = `Bearer ${token}`;
         }
@@ -13057,6 +13039,21 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const div = document.createElement("div");
         div.textContent = text;
         return div.innerHTML;
+      }
+
+      /**
+       * Decode HTML entities back to their original characters.
+       * Used when populating form fields to prevent double-encoding.
+       * @param {string} html - The HTML-encoded string
+       * @returns {string} Decoded string
+       */
+      function decodeHtml(html) {
+          if (html === null || html === undefined) {
+              return "";
+          }
+          const txt = document.createElement("textarea");
+          txt.innerHTML = html;
+          return txt.value;
       }
 
       // Add event listeners for log filters

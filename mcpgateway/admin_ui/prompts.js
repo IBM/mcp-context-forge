@@ -2,7 +2,7 @@ import { AppState } from "./appState.js";
 import { getSelectedGatewayIds } from "./gateway.js";
 import { openModal } from "./modals";
 import { escapeHtml, validateInputName, validateJson } from "./security.js";
-import { fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
 
 
 /**
@@ -191,7 +191,10 @@ export const viewPrompt = async function (promptName) {
       setText(".prompt-custom-name", prompt.customName || "N/A");
       setText(".prompt-gateway", gatewayLabel);
       setText(".prompt-visibility", prompt.visibility || "private");
-      setText(".prompt-description", prompt.description || "N/A");
+      setText(
+        ".prompt-description",
+        decodeHtml(prompt.description) || "N/A",
+      );
 
       const tagsEl = promptDetailsDiv.querySelector(".prompt-tags");
       if (tagsEl) {
@@ -415,7 +418,7 @@ export const editPrompt = async function (promptId) {
       displayNameField.value = prompt.displayName || "";
     }
     if (descField) {
-      descField.value = prompt.description || "";
+      descField.value = decodeHtml(prompt.description || "");
     }
 
     // Set tags field
@@ -1006,10 +1009,12 @@ export const testPrompt = async function (promptId) {
       }
       if (descElement) {
         if (prompt.description) {
-          // Escape HTML and then replace newlines with <br/> tags
-          descElement.innerHTML = escapeHtml(
-            prompt.description,
-          ).replace(/\n/g, "<br/>");
+          // Decode HTML entities first, then escape and replace newlines with <br/> tags
+          const decodedDesc = decodeHtml(prompt.description);
+          descElement.innerHTML = escapeHtml(decodedDesc).replace(
+            /\n/g, 
+            "<br/>"
+          );
         } else {
           descElement.textContent = "No description available.";
         }

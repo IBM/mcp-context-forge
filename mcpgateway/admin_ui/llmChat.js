@@ -3,7 +3,7 @@
 import { getSelectedGatewayIds } from "./gateway.js";
 import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
-import { escapeHtml, escapeHtmlChat } from "./security.js";
+import { escapeHtml, escapeHtmlChat, logRestrictedContext } from "./security.js";
 import { initToolSelect } from "./tools";
 import {
   fetchWithTimeout,
@@ -113,15 +113,28 @@ const getAuthenticatedUserId = function () {
 const generateUserId = function () {
   const authenticatedUserId = getAuthenticatedUserId();
   if (authenticatedUserId) {
-    sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+    try {
+      sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+    } catch (e) {
+      logRestrictedContext(e);
+    }
     return authenticatedUserId;
   }
   // Check if user ID exists in session storage
-  let userId = sessionStorage.getItem("llm_chat_user_id");
+  let userId;
+  try {
+    userId = sessionStorage.getItem("llm_chat_user_id");
+  } catch (e) {
+    console.debug("sessionStorage unavailable:", e.message);
+  }
   if (!userId) {
     // Generate a unique ID
     userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-    sessionStorage.setItem("llm_chat_user_id", userId);
+    try {
+      sessionStorage.setItem("llm_chat_user_id", userId);
+    } catch (e) {
+      logRestrictedContext(e);
+    }
   }
   return userId;
 };
