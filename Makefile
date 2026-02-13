@@ -5859,12 +5859,14 @@ test-full: coverage test-js test-ui-report
 # help: gitleaks-install    - Install gitleaks secret scanner
 # help: gitleaks            - Scan git history for secrets
 # help: devskim-install-dotnet - Install .NET SDK and DevSkim CLI (security patterns scanner)
+# help: sri-generate        - Generate SRI hashes for CDN resources
+# help: sri-verify          - Verify SRI hashes match current CDN content
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
 SECURITY_TOOLS := semgrep dodgy dlint interrogate prospector pip-audit devskim
 
-.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim
+.PHONY: security-all security-report security-fix $(SECURITY_TOOLS) gitleaks-install gitleaks pyupgrade devskim-install-dotnet devskim sri-generate sri-verify
 
 ## --------------------------------------------------------------------------- ##
 ##  Master security target
@@ -6126,6 +6128,27 @@ devskim:                            ## 🛡️  Run DevSkim security patterns an
 		echo "   • Run 'make devskim-install-dotnet'"; \
 		echo "   • Or install .NET SDK and run: dotnet tool install --global Microsoft.CST.DevSkim.CLI"; \
 		echo "   • Then add to PATH: export PATH=\"\$$PATH:\$$HOME/.dotnet/tools\""; \
+	fi
+
+## --------------------------------------------------------------------------- ##
+##  SRI (Subresource Integrity) Management
+## --------------------------------------------------------------------------- ##
+
+.PHONY: sri-generate sri-verify
+
+sri-generate:                       ## 🔐 Generate SRI hashes for CDN resources
+	@echo "🔐 Generating SRI hashes for CDN resources..."
+	@python3 scripts/generate-sri-hashes.py
+
+sri-verify:                         ## ✅ Verify SRI hashes match current CDN content
+	@echo "✅ Verifying SRI hashes against CDN content..."
+	@python3 scripts/generate-sri-hashes.py > /dev/null 2>&1
+	@if [ -f mcpgateway/sri_hashes.json ]; then \
+		echo "✅ All SRI hashes are up to date!"; \
+	else \
+		echo "❌ SRI hashes file not found!"; \
+		echo "💡 Run 'make sri-generate' to generate hashes"; \
+		exit 1; \
 	fi
 
 ## --------------------------------------------------------------------------- ##
