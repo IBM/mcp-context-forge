@@ -1455,6 +1455,10 @@ class Settings(BaseSettings):
     # SQLite busy timeout: Maximum time (ms) SQLite will wait to acquire a database lock before returning SQLITE_BUSY.
     db_sqlite_busy_timeout: int = Field(default=5000, ge=1000, le=60000, description="SQLite busy timeout in milliseconds (default: 5000ms)")
 
+    # HNSW vector index parameters (pgvector)
+    hnsw_m: int = Field(default=16, ge=2, le=100, description="HNSW max connections per node (higher = better recall, more memory)")
+    hnsw_ef_construction: int = Field(default=64, ge=16, le=512, description="HNSW construction search depth (higher = better index quality, slower build)")
+
     # Cache
     cache_type: Literal["redis", "memory", "none", "database"] = "database"  # memory or redis or database
     redis_url: Optional[str] = "redis://localhost:6379/0"
