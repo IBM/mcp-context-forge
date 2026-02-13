@@ -1,15 +1,536 @@
+import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
+import { MASKED_AUTH_VALUE } from "./constants.js";
+import { closeModal, openModal } from "./modals";
+import { initPromptSelect } from "./prompts";
+import { initResourceSelect } from "./resources";
+import { validateInputName, validateJson, validateUrl } from "./security.js";
+import { initToolSelect } from "./tools";
+import { fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+
+
+/**
+ * SECURE: View Gateway function
+ */
+export const viewGateway = async function (gatewayId) {
+  try {
+    console.log(`Viewing gateway ID: ${gatewayId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/gateways/${gatewayId}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const gateway = await response.json();
+
+    const gatewayDetailsDiv = safeGetElement("gateway-details");
+    if (gatewayDetailsDiv) {
+      const container = document.createElement("div");
+      container.className = "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+      const fields = [
+        { label: "Name", value: gateway.name },
+        { label: "URL", value: gateway.url },
+        { label: "Description", value: gateway.description || "N/A" },
+        { label: "Visibility", value: gateway.visibility || "private" },
+      ];
+
+      // Add tags field with special handling
+      const tagsP = document.createElement("p");
+      const tagsStrong = document.createElement("strong");
+      tagsStrong.textContent = "Tags: ";
+      tagsP.appendChild(tagsStrong);
+      if (gateway.tags && gateway.tags.length > 0) {
+        gateway.tags.forEach((tag, index) => {
+          const tagSpan = document.createElement("span");
+          tagSpan.className =
+            "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1";
+          const raw =
+            typeof tag === "object" && tag !== null
+              ? tag.id || tag.label || JSON.stringify(tag)
+              : tag;
+          tagSpan.textContent = raw;
+          tagsP.appendChild(tagSpan);
+        });
+      } else {
+        tagsP.appendChild(document.createTextNode("No tags"));
+      }
+      container.appendChild(tagsP);
+
+      fields.forEach((field) => {
+        const p = document.createElement("p");
+        const strong = document.createElement("strong");
+        strong.textContent = field.label + ": ";
+        p.appendChild(strong);
+        p.appendChild(document.createTextNode(field.value));
+        container.appendChild(p);
+      });
+
+      // Status
+      const statusP = document.createElement("p");
+      const statusStrong = document.createElement("strong");
+      statusStrong.textContent = "Status: ";
+      statusP.appendChild(statusStrong);
+
+      const statusSpan = document.createElement("span");
+      let statusText = "";
+      let statusClass = "";
+      let statusIcon = "";
+      if (!gateway.enabled) {
+        statusText = "Inactive";
+        statusClass = "bg-red-100 text-red-800";
+        statusIcon = `
+                    <svg class="ml-1 h-4 w-4 text-red-600 self-center" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M6.293 6.293a1 1 0 011.414 0L10 8.586l2.293-2.293a1 1 0 111.414 1.414L11.414 10l2.293 2.293a1 1 0 11-1.414 1.414L10 11.414l-2.293 2.293a1 1 0 11-1.414-1.414L8.586 10 6.293 7.707a1 1 0 010-1.414z" clip-rule="evenodd"></path>
+                    </svg>`;
+      } else if (gateway.enabled && gateway.reachable) {
+        statusText = "Active";
+        statusClass = "bg-green-100 text-green-800";
+        statusIcon = `
+                    <svg class="ml-1 h-4 w-4 text-green-600 self-center" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-4.586l5.293-5.293-1.414-1.414L9 11.586 7.121 9.707 5.707 11.121 9 14.414z" clip-rule="evenodd"></path>
+                    </svg>`;
+      } else if (gateway.enabled && !gateway.reachable) {
+        statusText = "Offline";
+        statusClass = "bg-yellow-100 text-yellow-800";
+        statusIcon = `
+                    <svg class="ml-1 h-4 w-4 text-yellow-600 self-center" fill="currentColor" viewBox="0 0 20 20">
+                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm-1-10h2v4h-2V8zm0 6h2v2h-2v-2z" clip-rule="evenodd"></path>
+                    </svg>`;
+      }
+
+      statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${statusClass}`;
+      statusSpan.innerHTML = `${statusText} ${statusIcon}`;
+
+      statusP.appendChild(statusSpan);
+      container.appendChild(statusP);
+
+      // Add metadata section
+      const metadataDiv = document.createElement("div");
+      metadataDiv.className = "mt-6 border-t pt-4";
+
+      const metadataTitle = document.createElement("strong");
+      metadataTitle.textContent = "Metadata:";
+      metadataDiv.appendChild(metadataTitle);
+
+      const metadataGrid = document.createElement("div");
+      metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+      const metadataFields = [
+        {
+          label: "Created By",
+          value: gateway.created_by || gateway.createdBy || "Legacy Entity",
+        },
+        {
+          label: "Created At",
+          value:
+            gateway.created_at || gateway.createdAt
+              ? new Date(
+                gateway.created_at || gateway.createdAt
+              ).toLocaleString()
+              : "Pre-metadata",
+        },
+        {
+          label: "Created From IP",
+          value: gateway.created_from_ip || gateway.createdFromIp || "Unknown",
+        },
+        {
+          label: "Created Via",
+          value: gateway.created_via || gateway.createdVia || "Unknown",
+        },
+        {
+          label: "Last Modified By",
+          value: gateway.modified_by || gateway.modifiedBy || "N/A",
+        },
+        {
+          label: "Last Modified At",
+          value:
+            gateway.updated_at || gateway.updatedAt
+              ? new Date(
+                gateway.updated_at || gateway.updatedAt
+              ).toLocaleString()
+              : "N/A",
+        },
+        {
+          label: "Modified From IP",
+          value: gateway.modified_from_ip || gateway.modifiedFromIp || "N/A",
+        },
+        {
+          label: "Modified Via",
+          value: gateway.modified_via || gateway.modifiedVia || "N/A",
+        },
+        { label: "Version", value: gateway.version || "1" },
+        {
+          label: "Import Batch",
+          value: gateway.importBatchId || "N/A",
+        },
+      ];
+
+      metadataFields.forEach((field) => {
+        const fieldDiv = document.createElement("div");
+
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "font-medium text-gray-600 dark:text-gray-400";
+        labelSpan.textContent = field.label + ":";
+
+        const valueSpan = document.createElement("span");
+        valueSpan.className = "ml-2";
+        valueSpan.textContent = field.value;
+
+        fieldDiv.appendChild(labelSpan);
+        fieldDiv.appendChild(valueSpan);
+        metadataGrid.appendChild(fieldDiv);
+      });
+
+      metadataDiv.appendChild(metadataGrid);
+      container.appendChild(metadataDiv);
+
+      gatewayDetailsDiv.innerHTML = "";
+      gatewayDetailsDiv.appendChild(container);
+    }
+
+    openModal("gateway-modal");
+    console.log("✓ Gateway details loaded successfully");
+  } catch (error) {
+    console.error("Error fetching gateway details:", error);
+    const errorMessage = handleFetchError(error, "load gateway details");
+    showErrorMessage(errorMessage);
+  }
+};
+
+/**
+ * SECURE: Edit Gateway function
+ */
+export const editGateway = async function (gatewayId) {
+  try {
+    console.log(`Editing gateway ID: ${gatewayId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/gateways/${gatewayId}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const gateway = await response.json();
+
+    console.log("Gateway Details: " + JSON.stringify(gateway, null, 2));
+
+    const isInactiveCheckedBool = isInactiveChecked("gateways");
+    let hiddenField = safeGetElement("edit-gateway-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-gateway-show-inactive";
+      const editForm = safeGetElement("edit-gateway-form");
+      if (editForm) {
+        editForm.appendChild(hiddenField);
+      }
+    }
+    hiddenField.value = isInactiveCheckedBool;
+
+    // Set form action and populate fields with validation
+    const editForm = safeGetElement("edit-gateway-form");
+    if (editForm) {
+      editForm.action = `${window.ROOT_PATH}/admin/gateways/${gatewayId}/edit`;
+    }
+
+    const nameValidation = validateInputName(gateway.name, "gateway");
+    const urlValidation = validateUrl(gateway.url);
+
+    const nameField = safeGetElement("edit-gateway-name");
+    const urlField = safeGetElement("edit-gateway-url");
+    const descField = safeGetElement("edit-gateway-description");
+
+    const transportField = safeGetElement("edit-gateway-transport");
+
+    if (nameField && nameValidation.valid) {
+      nameField.value = nameValidation.value;
+    }
+    if (urlField && urlValidation.valid) {
+      urlField.value = urlValidation.value;
+    }
+    if (descField) {
+      descField.value = gateway.description || "";
+    }
+
+    // Set tags field
+    const tagsField = safeGetElement("edit-gateway-tags");
+    if (tagsField) {
+      const rawTags = gateway.tags
+        ? gateway.tags.map((tag) =>
+          typeof tag === "object" && tag !== null ? tag.label || tag.id : tag
+        )
+        : [];
+      tagsField.value = rawTags.join(", ");
+    }
+
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+    if (teamId) {
+      const hiddenInput = document.createElement("input");
+      hiddenInput.type = "hidden";
+      hiddenInput.name = "team_id";
+      hiddenInput.value = teamId;
+      editForm.appendChild(hiddenInput);
+    }
+
+    const visibility = gateway.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+    const publicRadio = safeGetElement("edit-gateway-visibility-public");
+    const teamRadio = safeGetElement("edit-gateway-visibility-team");
+    const privateRadio = safeGetElement("edit-gateway-visibility-private");
+
+    if (visibility) {
+      // Check visibility and set the corresponding radio button
+      if (visibility === "public" && publicRadio) {
+        publicRadio.checked = true;
+      } else if (visibility === "team" && teamRadio) {
+        teamRadio.checked = true;
+      } else if (visibility === "private" && privateRadio) {
+        privateRadio.checked = true;
+      }
+    }
+
+    if (transportField) {
+      transportField.value = gateway.transport || "SSE"; // falls back to Admin.SSE(default)
+    }
+
+    const authTypeField = safeGetElement("auth-type-gw-edit");
+
+    if (authTypeField) {
+      authTypeField.value = gateway.authType || ""; // falls back to None
+    }
+
+    // Auth containers
+    const authBasicSection = safeGetElement("auth-basic-fields-gw-edit");
+    const authBearerSection = safeGetElement("auth-bearer-fields-gw-edit");
+    const authHeadersSection = safeGetElement("auth-headers-fields-gw-edit");
+    const authOAuthSection = safeGetElement("auth-oauth-fields-gw-edit");
+    const authQueryParamSection = safeGetElement(
+      "auth-query_param-fields-gw-edit"
+    );
+
+    // Individual fields
+    const authUsernameField = safeGetElement(
+      "auth-basic-fields-gw-edit"
+    )?.querySelector("input[name='auth_username']");
+    const authPasswordField = safeGetElement(
+      "auth-basic-fields-gw-edit"
+    )?.querySelector("input[name='auth_password']");
+
+    const authTokenField = safeGetElement(
+      "auth-bearer-fields-gw-edit"
+    )?.querySelector("input[name='auth_token']");
+
+    const authHeaderKeyField = safeGetElement(
+      "auth-headers-fields-gw-edit"
+    )?.querySelector("input[name='auth_header_key']");
+    const authHeaderValueField = safeGetElement(
+      "auth-headers-fields-gw-edit"
+    )?.querySelector("input[name='auth_header_value']");
+
+    // OAuth fields
+    const oauthGrantTypeField = safeGetElement("oauth-grant-type-gw-edit");
+    const oauthClientIdField = safeGetElement("oauth-client-id-gw-edit");
+    const oauthClientSecretField = safeGetElement(
+      "oauth-client-secret-gw-edit"
+    );
+    const oauthTokenUrlField = safeGetElement("oauth-token-url-gw-edit");
+    const oauthAuthUrlField = safeGetElement("oauth-authorization-url-gw-edit");
+    const oauthRedirectUriField = safeGetElement("oauth-redirect-uri-gw-edit");
+    const oauthScopesField = safeGetElement("oauth-scopes-gw-edit");
+    const oauthAuthCodeFields = safeGetElement(
+      "oauth-auth-code-fields-gw-edit"
+    );
+
+    // Hide all auth sections first
+    if (authBasicSection) {
+      authBasicSection.style.display = "none";
+    }
+    if (authBearerSection) {
+      authBearerSection.style.display = "none";
+    }
+    if (authHeadersSection) {
+      authHeadersSection.style.display = "none";
+    }
+    if (authOAuthSection) {
+      authOAuthSection.style.display = "none";
+    }
+    if (authQueryParamSection) {
+      authQueryParamSection.style.display = "none";
+    }
+
+    switch (gateway.authType) {
+      case "basic":
+        if (authBasicSection) {
+          authBasicSection.style.display = "block";
+          if (authUsernameField) {
+            authUsernameField.value = gateway.authUsername || "";
+          }
+          if (authPasswordField) {
+            if (gateway.authPasswordUnmasked) {
+              authPasswordField.dataset.isMasked = "true";
+              authPasswordField.dataset.realValue =
+                gateway.authPasswordUnmasked;
+            } else {
+              delete authPasswordField.dataset.isMasked;
+              delete authPasswordField.dataset.realValue;
+            }
+            authPasswordField.value = MASKED_AUTH_VALUE;
+          }
+        }
+        break;
+      case "bearer":
+        if (authBearerSection) {
+          authBearerSection.style.display = "block";
+          if (authTokenField) {
+            if (gateway.authTokenUnmasked) {
+              authTokenField.dataset.isMasked = "true";
+              authTokenField.dataset.realValue = gateway.authTokenUnmasked;
+              authTokenField.value = MASKED_AUTH_VALUE;
+            } else {
+              delete authTokenField.dataset.isMasked;
+              delete authTokenField.dataset.realValue;
+              authTokenField.value = gateway.authToken || "";
+            }
+          }
+        }
+        break;
+      case "authheaders":
+        if (authHeadersSection) {
+          authHeadersSection.style.display = "block";
+          const unmaskedHeaders =
+            Array.isArray(gateway.authHeadersUnmasked) &&
+            gateway.authHeadersUnmasked.length > 0
+              ? gateway.authHeadersUnmasked
+              : gateway.authHeaders;
+          if (Array.isArray(unmaskedHeaders) && unmaskedHeaders.length > 0) {
+            loadAuthHeaders("auth-headers-container-gw-edit", unmaskedHeaders, {
+              maskValues: true,
+            });
+          } else {
+            updateAuthHeadersJSON("auth-headers-container-gw-edit");
+          }
+          if (authHeaderKeyField) {
+            authHeaderKeyField.value = gateway.authHeaderKey || "";
+          }
+          if (authHeaderValueField) {
+            if (
+              Array.isArray(unmaskedHeaders) &&
+              unmaskedHeaders.length === 1
+            ) {
+              authHeaderValueField.dataset.isMasked = "true";
+              authHeaderValueField.dataset.realValue =
+                unmaskedHeaders[0].value ?? "";
+            }
+            authHeaderValueField.value = MASKED_AUTH_VALUE;
+          }
+        }
+        break;
+      case "oauth":
+        if (authOAuthSection) {
+          authOAuthSection.style.display = "block";
+        }
+        // Populate OAuth fields if available
+        if (gateway.oauthConfig) {
+          const config = gateway.oauthConfig;
+          if (oauthGrantTypeField && config.grant_type) {
+            oauthGrantTypeField.value = config.grant_type;
+            // Show/hide authorization code fields based on grant type
+            if (oauthAuthCodeFields) {
+              oauthAuthCodeFields.style.display =
+                config.grant_type === "authorization_code" ? "block" : "none";
+            }
+          }
+          if (oauthClientIdField && config.client_id) {
+            oauthClientIdField.value = config.client_id;
+          }
+          if (oauthClientSecretField) {
+            oauthClientSecretField.value = ""; // Don't populate secret for security
+          }
+          if (oauthTokenUrlField && config.token_url) {
+            oauthTokenUrlField.value = config.token_url;
+          }
+          if (oauthAuthUrlField && config.authorization_url) {
+            oauthAuthUrlField.value = config.authorization_url;
+          }
+          if (oauthRedirectUriField && config.redirect_uri) {
+            oauthRedirectUriField.value = config.redirect_uri;
+          }
+          if (
+            oauthScopesField &&
+            config.scopes &&
+            Array.isArray(config.scopes)
+          ) {
+            oauthScopesField.value = config.scopes.join(" ");
+          }
+        }
+        break;
+      case "query_param":
+        if (authQueryParamSection) {
+          authQueryParamSection.style.display = "block";
+          // Get the input fields within the section
+          const queryParamKeyField = authQueryParamSection.querySelector(
+            "input[name='auth_query_param_key']"
+          );
+          const queryParamValueField = authQueryParamSection.querySelector(
+            "input[name='auth_query_param_value']"
+          );
+          if (queryParamKeyField && gateway.authQueryParamKey) {
+            queryParamKeyField.value = gateway.authQueryParamKey;
+          }
+          if (queryParamValueField) {
+            // Always show masked value for security
+            queryParamValueField.value = MASKED_AUTH_VALUE;
+            if (gateway.authQueryParamValueUnmasked) {
+              queryParamValueField.dataset.isMasked = "true";
+              queryParamValueField.dataset.realValue =
+                gateway.authQueryParamValueUnmasked;
+            } else {
+              delete queryParamValueField.dataset.isMasked;
+              delete queryParamValueField.dataset.realValue;
+            }
+          }
+        }
+        break;
+      case "":
+      default:
+        // No auth – keep everything hidden
+        break;
+    }
+
+    // Handle passthrough headers
+    const passthroughHeadersField = safeGetElement(
+      "edit-gateway-passthrough-headers"
+    );
+    if (passthroughHeadersField) {
+      if (
+        gateway.passthroughHeaders &&
+        Array.isArray(gateway.passthroughHeaders)
+      ) {
+        passthroughHeadersField.value = gateway.passthroughHeaders.join(", ");
+      } else {
+        passthroughHeadersField.value = "";
+      }
+    }
+
+    openModal("gateway-edit-modal");
+    console.log("✓ Gateway edit modal loaded successfully");
+  } catch (error) {
+    console.error("Error fetching gateway for editing:", error);
+    const errorMessage = handleFetchError(error, "load gateway for editing");
+    showErrorMessage(errorMessage);
+  }
+};
+
 // ===================================================================
 // GATEWAY SELECT (Associated MCP Servers) - search/select/clear
 // ===================================================================
 
-import { closeModal, openModal } from "./modals";
-import { initPromptSelect } from "./prompts";
-import { initResourceSelect } from "./resources";
-import { validateJson, validateUrl } from "./security.js";
-import { initToolSelect } from "./tools";
-import { fetchWithTimeout, getCurrentTeamId, safeGetElement, showErrorMessage } from "./utils";
-
-// ===================================================================
 export const initGatewaySelect = function (
   selectId = "associatedGateways",
   pillsId = "selectedGatewayPills",

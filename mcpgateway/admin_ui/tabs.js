@@ -130,8 +130,7 @@ export const showTab = function (tabName) {
     // Cleanup observability tab when leaving
     const currentPanel = document.querySelector(".tab-panel:not(.hidden)");
     if (
-      currentPanel &&
-      currentPanel.id === "observability-panel" &&
+      currentPanel?.id === "observability-panel" &&
       tabName !== "observability"
     ) {
       console.log("Leaving observability tab, triggering cleanup...");
