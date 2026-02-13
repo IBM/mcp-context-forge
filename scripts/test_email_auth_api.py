@@ -464,7 +464,7 @@ def test_admin_update_partial(ctx: TestContext):
         test("Multi: pcr updated", resp.body.get("password_change_required") is True)
 
     #----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
-    # Update name only — other fields must be preserved
+    # Tests to improve the coverage and maintain compatibility with PATCH endpoint
     resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"full_name": "Updated Name2"})
     test("Name-only update with PUT returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:

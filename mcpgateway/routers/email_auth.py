@@ -778,7 +778,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
 # ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as dirrected in the docstring of update_user_delegate
 @email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse, deprecated=True)
 @require_permission("admin.user_management")
-async def update_user_depreciated(
+async def update_user_deprecated(
     user_email: str, user_request: AdminUserUpdateRequest, response: Response, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
 ):
     """Update user information (admin only). Deprecated: use PATCH instead.
@@ -803,7 +803,7 @@ async def update_user_depreciated(
     return result
 
 
-async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict, db: Session):
     """Update user information. Common function for both update_user and update_user_depreciated.
     Helps in reducing duplicate code and consistent behaviour. Move this entire code back to update_user after
     Sun, 16 Aug 2026 23:59:59 UTC.
