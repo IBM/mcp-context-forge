@@ -7,9 +7,6 @@ session lazily and `mcpgateway.db.close_request_session` to close it.
 
 # Standard
 import logging
-from typing import Callable
-
-# Third-Party
 from typing import Callable, Awaitable
 
 # ASGI middleware (callable) avoids BaseHTTPMiddleware's context.copy() behavior
@@ -32,9 +29,29 @@ class SessionMiddleware:
     """
 
     def __init__(self, app: Callable):
+        """Initialize middleware with the downstream ASGI application.
+
+        Args:
+            app: The downstream ASGI application callable.
+        """
         self.app = app
 
-    async def __call__(self, scope: dict, receive: Callable[..., Awaitable[dict]], send: Callable[..., Awaitable[None]]):
+    async def __call__(
+        self,
+        scope: dict,
+        receive: Callable[..., Awaitable[dict]],
+        send: Callable[..., Awaitable[None]],
+    ):
+        """ASGI callable entrypoint.
+
+        Awaits the downstream application and ensures the request-scoped DB
+        session is closed afterward from the same context.
+
+        Args:
+            scope: ASGI scope dict.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
         try:
             await self.app(scope, receive, send)
         finally:
