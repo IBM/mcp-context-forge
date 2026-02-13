@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/framework/models.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor, Mihai Criveti
+Authors: Teryl Taylor, Mihai Criveti, Fred Araujo
 
 Pydantic models for plugins.
 This module implements the pydantic models associated with
@@ -14,18 +14,43 @@ from enum import Enum
 import logging
 import os
 from pathlib import Path
-from typing import Any, Generic, Optional, Self, TypeAlias, TypeVar, Union
+from typing import Any, Generic, Optional, Self, TypeVar, Union
 
 # Third-Party
-from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator, PrivateAttr, ValidationInfo
 
 # First-Party
-from mcpgateway.common.models import TransportType
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
 from mcpgateway.plugins.framework.settings import settings
+from mcpgateway.plugins.framework.validators import SecurityValidator
 
 T = TypeVar("T")
+
+
+class TransportType(str, Enum):
+    """Supported transport mechanisms for MCP plugin communication.
+
+    Attributes:
+        SSE: Server-Sent Events transport.
+        HTTP: Standard HTTP-based transport.
+        STDIO: Standard input/output transport.
+        STREAMABLEHTTP: HTTP transport with streaming.
+        GRPC: gRPC transport for external plugins.
+
+    Examples:
+        >>> TransportType.SSE
+        <TransportType.SSE: 'SSE'>
+        >>> TransportType.STDIO.value
+        'STDIO'
+        >>> TransportType('STREAMABLEHTTP')
+        <TransportType.STREAMABLEHTTP: 'STREAMABLEHTTP'>
+    """
+
+    SSE = "SSE"
+    HTTP = "HTTP"
+    STDIO = "STDIO"
+    STREAMABLEHTTP = "STREAMABLEHTTP"
+    GRPC = "GRPC"
 
 
 class PluginMode(str, Enum):
@@ -1430,4 +1455,21 @@ class PluginContext(BaseModel):
 
 PluginContextTable = dict[str, PluginContext]
 
-PluginPayload: TypeAlias = BaseModel
+
+class PluginPayload(BaseModel):
+    """Base class for all hook payloads. Immutable by design.
+
+    Frozen payloads prevent in-place mutations by plugins -- attributes
+    cannot be set directly on the object.  Plugins must use
+    ``model_copy(update=...)`` to create modified payloads and return
+    modifications via ``PluginResult.modified_payload``.
+
+    Examples:
+        >>> class TestPayload(PluginPayload):
+        ...     name: str
+        >>> p = TestPayload(name="test")
+        >>> p.name
+        'test'
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)

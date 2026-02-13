@@ -175,7 +175,7 @@ class Vault(Plugin):
             hdrs: dict[str, str] = payload.headers.model_dump() if payload.headers else {}
             if self._sconfig.vault_header_name in hdrs:
                 del hdrs[self._sconfig.vault_header_name]
-                payload.headers = HttpHeaderPayload(root=hdrs)
+                payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=hdrs)})
                 return ToolPreInvokeResult(modified_payload=payload)
             return ToolPreInvokeResult()
 
@@ -193,7 +193,7 @@ class Vault(Plugin):
             logger.error(f"Failed to parse vault tokens from header: {e}")
             # SECURITY: Always remove vault header even on parse error
             del headers[self._sconfig.vault_header_name]
-            payload.headers = HttpHeaderPayload(root=headers)
+            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
 
         # SECURITY: Always remove vault header immediately after successful parsing
@@ -202,7 +202,7 @@ class Vault(Plugin):
 
         if not isinstance(vault_tokens, dict):
             logger.error(f"Vault tokens header is not a JSON object: {type(vault_tokens).__name__}")
-            payload.headers = HttpHeaderPayload(root=headers)
+            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
             return ToolPreInvokeResult(modified_payload=payload)
         logger.debug(f"Removed vault header '{self._sconfig.vault_header_name}' from headers")
 
@@ -256,7 +256,7 @@ class Vault(Plugin):
                     headers["Authorization"] = f"Bearer {token_value}"
                     modified = True
 
-            payload.headers = HttpHeaderPayload(root=headers)
+            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
 
         if modified:
             logger.info(f"Modified tool '{payload.name}' to add auth header")
@@ -266,7 +266,7 @@ class Vault(Plugin):
         # so we need to return the modified payload
         if not token_value:
             logger.warning(f"Vault tokens provided but no match found for system '{system_key}' - possible misconfiguration")
-        payload.headers = HttpHeaderPayload(root=headers)
+        payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
         return ToolPreInvokeResult(modified_payload=payload)
 
     async def shutdown(self) -> None:

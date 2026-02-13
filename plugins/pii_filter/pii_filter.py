@@ -682,7 +682,7 @@ class PIIFilterPlugin(Plugin):
                     return ToolPostInvokeResult(continue_processing=False, violation=violation)
 
                 # Mask the PII
-                payload.result = self.detector.mask(payload.result, detections)
+                payload = payload.model_copy(update={"result": self.detector.mask(payload.result, detections)})
                 modified = True
                 self.masked_count += sum(len(items) for items in detections.values())
 
