@@ -35,6 +35,12 @@ import { AppState } from "./appState.js";
 
 Admin.AppState = AppState;
 
+// Security
+import { safeReplaceState, logRestrictedContext } from "./security.js";
+
+Admin.safeReplaceState = safeReplaceState;
+Admin.logRestrictedContext = logRestrictedContext;
+
 // ===================================================================
 // TIER 2: Feature modules (fully converted to ES modules)
 // ===================================================================

@@ -1,7 +1,7 @@
 import { getSelectedGatewayIds } from "./gateway.js";
 import { openModal } from "./modals.js";
 import { validateInputName } from "./security.js";
-import { fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, parseUriTemplate, safeGetElement, showErrorMessage } from "./utils";
+import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, parseUriTemplate, safeGetElement, showErrorMessage } from "./utils";
 
 export const testResource = async function (resourceId) {
   try {
@@ -646,7 +646,7 @@ export const editResource = async function (resourceId) {
       nameField.value = nameValidation.value;
     }
     if (descField) {
-      descField.value = resource.description || "";
+      descField.value = decodeHtml(resource.description || "");
     }
     if (mimeField) {
       mimeField.value = resource.mimeType || "";

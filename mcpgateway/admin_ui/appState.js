@@ -16,6 +16,7 @@ export const AppState = {
   isInitialized: false,
   pendingRequests: new Set(),
   currentTeamRelationshipFilter: "all",
+  restrictedContextLogged: false,
   editors: {
     gateway: {
       headers: null,
@@ -34,6 +35,7 @@ export const AppState = {
     this.currentTestTool = null;
     this.toolTestResultEditor = null;
     this.activeModals.clear();
+    this.restrictedContextLogged = false;
 
     // Cancel pending requests
     this.pendingRequests.forEach((controller) => {
@@ -102,5 +104,14 @@ export const AppState = {
   
   setCurrentTeamRelationshipFilter(teamRelationshipFilter) {
     this.currentTeamRelationshipFilter = teamRelationshipFilter;
+  },
+
+  // Restricted context tracking (sandboxed iframes)
+  isRestrictedContextLogged() {
+    return this.restrictedContextLogged;
+  },
+
+  setRestrictedContextLogged(value) {
+    this.restrictedContextLogged = value;
   },
 };

@@ -7,7 +7,7 @@ import { initializeLLMChat } from "./llmChat.js";
 import { searchStructuredLogs } from "./logging.js";
 import { loadAggregatedMetrics } from "./metrics";
 import { populatePluginFilters } from "./plugins";
-import { escapeHtml, safeSetInnerHTML } from "./security.js";
+import { escapeHtml, safeReplaceState, safeSetInnerHTML } from "./security.js";
 import {
   loadTokensList,
   setupCreateTokenForm,
@@ -107,7 +107,7 @@ export const cleanUpUrlParamsForTab = function (targetTabName) {
     currentUrl.pathname +
     (newParams.toString() ? "?" + newParams.toString() : "") +
     currentUrl.hash;
-  window.history.replaceState({}, "", newUrl);
+  safeReplaceState({}, "", newUrl);
 };
 
 export const showTab = function (tabName) {

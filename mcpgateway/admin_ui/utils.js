@@ -547,3 +547,18 @@ export const truncateText = function (text, maxLength) {
     ? text.substring(0, maxLength) + "..."
     : text;
 };
+
+/**
+ * Decode HTML entities back to their original characters.
+ * Used when populating form fields to prevent double-encoding.
+ * @param {string} html - The HTML-encoded string
+ * @returns {string} Decoded string
+ */
+export const decodeHtml = function(html) {
+  if (html === null || html === undefined) {
+    return "";
+  }
+  const txt = document.createElement("textarea");
+  txt.innerHTML = html;
+  return txt.value;
+}

@@ -1,6 +1,7 @@
 import { HEADER_NAME_REGEX } from './constants';
 import { generateSchema } from './formFieldHandlers';
 import { 
+  safeParseJsonResponse,
   validateInputName, 
   validateJson, 
   validateUrl,
@@ -121,10 +122,13 @@ export const handleGatewayFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to add Gateway",
+    );
     
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to add gateway");
+      throw new Error(result?.message || "Failed to add Gateway");
     } else {
       const teamId = new URL(window.location.href).searchParams.get(
         "team_id",
@@ -205,7 +209,10 @@ export const handleResourceFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to add Resource",
+    );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Resource");
     } else {
@@ -274,9 +281,12 @@ export const handlePromptFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to add Prompt",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to add prompt");
+      throw new Error(result?.message || "Failed to add Prompt");
     }
     
     const searchParams = new URLSearchParams();
@@ -341,7 +351,10 @@ export const handleEditPromptFormSubmit = async function (e) {
       body: formData,
     });
     
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit Prompt",
+    );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit Prompt");
     }
@@ -405,9 +418,12 @@ export const handleServerFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to add Server",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to add server.");
+      throw new Error(result?.message || "Failed to add Server.");
     } else {
       // Success redirect
       const teamId = new URL(window.location.href).searchParams.get(
@@ -534,7 +550,10 @@ export const handleA2AFormSubmit = async function (e) {
       body: formData,
     });
     
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit A2A Agentt",
+    );
     
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add A2A Agent.");
@@ -630,9 +649,12 @@ export const handleToolFormSubmit = async function (event) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to add Tool",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to add tool");
+      throw new Error(result?.message || "Failed to add Tool");
     } else {
       const teamId = new URL(window.location.href).searchParams.get(
         "team_id",
@@ -698,9 +720,12 @@ export const handleEditToolFormSubmit = async function (event) {
       headers: { "X-Requested-With": "XMLHttpRequest" },
     });
     
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit Tool",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to edit tool");
+      throw new Error(result?.message || "Failed to edit Tool");
     } else {
       const teamId = new URL(window.location.href).searchParams.get(
         "team_id",
@@ -789,9 +814,12 @@ export const handleEditGatewayFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit Gateway",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to edit gateway");
+      throw new Error(result?.message || "Failed to edit Gateway");
     }
     // Only redirect on success
     const teamId = new URL(window.location.href).searchParams.get(
@@ -887,9 +915,12 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit A2A Agent",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to edit a2a agent");
+      throw new Error(result?.message || "Failed to edit A2A Agent");
     }
     // Only redirect on success
     const teamId = new URL(window.location.href).searchParams.get(
@@ -941,9 +972,12 @@ export const handleEditServerFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit Server",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to edit server");
+      throw new Error(result?.message || "Failed to edit Server");
     }
     // Only redirect on success
     else {
@@ -1013,9 +1047,12 @@ export const handleEditResFormSubmit = async function (e) {
       body: formData,
     });
     
-    const result = await response.json();
+    const result = await safeParseJsonResponse(
+      response,
+      "Failed to edit Resource",
+    );
     if (!result || !result.success) {
-      throw new Error(result?.message || "Failed to edit resource");
+      throw new Error(result?.message || "Failed to edit Resource");
     }
     // Only redirect on success
     else {

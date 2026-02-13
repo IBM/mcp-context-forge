@@ -1,4 +1,4 @@
-import { escapeHtml, parseErrorResponse } from "./security.js";
+import { escapeHtml, logRestrictedContext, parseErrorResponse } from "./security.js";
 import {
   fetchWithTimeout,
   getCookie,
@@ -962,7 +962,11 @@ export const getAuthToken = async function () {
 
   // Fallback to localStorage for compatibility
   if (!token) {
-    token = localStorage.getItem("auth_token");
+    try {
+      token = localStorage.getItem("auth_token");
+    } catch (e) {
+      logRestrictedContext(e);
+    }
   }
   return token || "";
 };

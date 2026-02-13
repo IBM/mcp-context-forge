@@ -5,7 +5,7 @@ import { initPromptSelect } from "./prompts";
 import { initResourceSelect } from "./resources";
 import { validateInputName, validateJson, validateUrl } from "./security.js";
 import { initToolSelect } from "./tools";
-import { fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
 
 
 /**
@@ -33,7 +33,10 @@ export const viewGateway = async function (gatewayId) {
       const fields = [
         { label: "Name", value: gateway.name },
         { label: "URL", value: gateway.url },
-        { label: "Description", value: gateway.description || "N/A" },
+        {
+          label: "Description",
+          value: decodeHtml(gateway.description) || "N/A",
+        },
         { label: "Visibility", value: gateway.visibility || "private" },
       ];
 
@@ -255,7 +258,7 @@ export const editGateway = async function (gatewayId) {
       urlField.value = urlValidation.value;
     }
     if (descField) {
-      descField.value = gateway.description || "";
+      descField.value = decodeHtml(gateway.description || "");
     }
 
     // Set tags field

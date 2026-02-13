@@ -1,6 +1,6 @@
 import { AppState } from "./appState.js";
 import { DEFAULT_TEAMS_PER_PAGE } from "./constants";
-import { escapeHtml } from "./security.js";
+import { escapeHtml, safeReplaceState } from "./security.js";
 import { fetchWithAuth, getAuthToken } from "./tokens";
 import { performUserSearch } from "./users";
 import {
@@ -72,7 +72,14 @@ const performTeamSearch = async function (searchTerm) {
   params.set("page", "1");
   params.set("per_page", getTeamsPerPage().toString());
   
-
+  // Sync URL state so CRUD refresh reads the correct page
+  const currentUrl = new URL(window.location.href);
+  const urlParams = new URLSearchParams(currentUrl.searchParams);
+  urlParams.set("teams_page", "1");
+  urlParams.set("teams_size", getTeamsPerPage().toString());
+  const newUrl =
+    currentUrl.pathname + "?" + urlParams.toString() + currentUrl.hash;
+  safeReplaceState({}, "", newUrl);
   if (searchTerm && searchTerm.trim() !== "") {
     params.set("q", searchTerm.trim());
   }
@@ -829,7 +836,7 @@ export const handleAdminTeamAction = function (event) {
 };
 
 // Get current pagination state from URL parameters
-const  getTeamsCurrentPaginationState = function() {
+export const  getTeamsCurrentPaginationState = function() {
   const urlParams = new URLSearchParams(window.location.search);
   return {
     page: Math.max(1, parseInt(urlParams.get("teams_page"), 10) || 1),
