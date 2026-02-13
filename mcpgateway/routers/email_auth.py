@@ -848,6 +848,8 @@ async def update_user_delegate(user_email: str, user_request: AdminUserUpdateReq
     except Exception as e:
         logger.error(f"Error updating user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
+
+
 # -------------------------->
 
 
