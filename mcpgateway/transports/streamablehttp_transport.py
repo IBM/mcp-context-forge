@@ -1609,14 +1609,7 @@ class SessionManagerWrapper:
             except Exception as e:
                 logger.debug(f"Session affinity check failed, proceeding locally: {e}")
 
-        # Store headers in context for tool invocations
-        request_headers_var.set(headers)
-
         context = await self.rust_bridge.prepare_request_context(scope)
-
-        # Store headers in context for tool invocations
-        request_headers_var.set(context.headers or headers)
-        server_id_var.set(context.server_id)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK

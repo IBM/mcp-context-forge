@@ -68,12 +68,56 @@ fn prepare_streamable_http_context(
 }
 
 #[pyfunction]
-fn start_streamable_http_transport(
-    _scope: Bound<'_, PyAny>,
-    _receive: Bound<'_, PyAny>,
-    _send: Bound<'_, PyAny>,
-) -> PyResult<bool> {
-    Ok(false)
+fn start_streamable_http_transport(scope: Bound<'_, PyAny>, _receive: Bound<'_, PyAny>, send: Bound<'_, PyAny>) -> PyResult<bool> {
+    let py = scope.py();
+    let scope_dict = scope.downcast::<PyDict>()?;
+
+    let modified_path = scope_dict
+        .get_item("modified_path")?
+        .and_then(|v| v.extract::<String>().ok());
+    let raw_path = scope_dict
+        .get_item("path")?
+        .and_then(|v| v.extract::<String>().ok());
+    let path = modified_path.or(raw_path).unwrap_or_default();
+
+    if !http::streamable::is_mcp_path(&path) {
+        return Ok(false);
+    }
+
+    let method = scope_dict
+        .get_item("method")?
+        .and_then(|v| v.extract::<String>().ok())
+        .unwrap_or_default()
+        .to_ascii_uppercase();
+
+    // Handle CORS preflight directly in Rust to avoid a full Python fallback path.
+    // For non-OPTIONS methods, Python session manager remains the source of truth.
+    if method != "OPTIONS" {
+        return Ok(false);
+    }
+
+    let headers = PyList::empty(py);
+    headers.append(("content-length".as_bytes(), "0".as_bytes()))?;
+    headers.append(("access-control-allow-origin".as_bytes(), "*".as_bytes()))?;
+    headers.append(("access-control-allow-methods".as_bytes(), "GET,POST,OPTIONS".as_bytes()))?;
+    headers.append((
+        "access-control-allow-headers".as_bytes(),
+        "authorization,content-type,mcp-session-id,last-event-id".as_bytes(),
+    ))?;
+
+    let start_msg = PyDict::new(py);
+    start_msg.set_item("type", "http.response.start")?;
+    start_msg.set_item("status", 204)?;
+    start_msg.set_item("headers", headers)?;
+
+    let body_msg = PyDict::new(py);
+    body_msg.set_item("type", "http.response.body")?;
+    body_msg.set_item("body", "".as_bytes())?;
+
+    schedule_async_send(py, &send, &start_msg)?;
+    schedule_async_send(py, &send, &body_msg)?;
+
+    Ok(true)
 }
 
 #[pymodule]
