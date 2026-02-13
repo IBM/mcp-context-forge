@@ -199,14 +199,14 @@ class TestToolServiceHelpersExtended:
         monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: DummyProgram())
 
         result = extract_using_jq({"a": 1}, ".a")
-        assert result == "Error applying jsonpath filter"
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
 
     def test_extract_using_jq_returns_exception_message(self, monkeypatch):
-        """Exceptions during jq execution should return message string."""
+        """Exceptions during jq execution should return list with TextContent error."""
         monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: (_ for _ in ()).throw(RuntimeError("boom")))
 
         result = extract_using_jq({"a": 1}, ".a")
-        assert result == "Error applying jsonpath filter: boom"
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter: boom")]
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag should override settings."""

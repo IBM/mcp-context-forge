@@ -2549,9 +2549,20 @@ class GatewayCreate(BaseModel):
     refresh_interval_seconds: Optional[int] = Field(None, ge=60, description="Per-gateway refresh interval in seconds (minimum 60); uses global default if not set")
 
     # Gateway mode configuration
-    gateway_mode: Optional[str] = Field(
-        default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$"
-    )
+    gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
+
+    @field_validator("gateway_mode", mode="before")
+    @classmethod
+    def default_gateway_mode(cls, v: Optional[str]) -> str:
+        """Default gateway_mode to 'cache' when None is provided.
+
+        Args:
+            v: Gateway mode value (may be None).
+
+        Returns:
+            The validated gateway mode string, defaulting to 'cache'.
+        """
+        return v if v is not None else "cache"
 
     @field_validator("tags")
     @classmethod

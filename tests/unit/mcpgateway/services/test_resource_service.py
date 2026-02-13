@@ -5822,7 +5822,7 @@ class TestReadResourceDirectProxy:
 
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta(self, resource_service, mock_direct_proxy_resource):
-        """meta_data is forwarded to session.read_resource as _meta."""
+        """meta_data is accepted but not forwarded to session.read_resource (SDK doesn't support _meta)."""
         from contextlib import asynccontextmanager
 
         db = self._make_mock_db(mock_direct_proxy_resource)
@@ -5860,9 +5860,9 @@ class TestReadResourceDirectProxy:
                 meta_data=meta,
             )
 
+        # MCP SDK read_resource() only accepts uri; _meta is not forwarded
         session_mock.read_resource.assert_awaited_once_with(
             uri="http://example.com/dp-resource",
-            _meta={"request_id": "trace-abc-123"},
         )
 
     @pytest.mark.asyncio

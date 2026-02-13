@@ -2201,13 +2201,8 @@ class ResourceService:
                                     # Skip session initialize for stateless servers
                                     # await session.initialize()
 
-                                    # Read resource with _meta if provided
-                                    read_params = {"uri": uri}
-                                    if meta_data:
-                                        read_params["_meta"] = meta_data
-                                        logger.debug(f"Forwarding _meta to remote gateway: {meta_data}")
-
-                                    result = await session.read_resource(**read_params)
+                                    # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
+                                    result = await session.read_resource(uri=uri)
 
                                     # Convert MCP result to MCP-compliant content models
                                     # result.contents is a list of TextResourceContents or BlobResourceContents

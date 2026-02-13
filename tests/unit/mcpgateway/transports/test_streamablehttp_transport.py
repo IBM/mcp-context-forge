@@ -6797,10 +6797,8 @@ class TestDirectProxyMode:
         assert result == b"Binary data"
 
     @pytest.mark.asyncio
-    async def test_read_resource_direct_proxy_access_denied_raises_404(self):
-        """Test read_resource raises HTTPException 404 when gateway access is denied."""
-        from fastapi import HTTPException
-
+    async def test_read_resource_direct_proxy_access_denied_returns_empty(self):
+        """Test read_resource returns empty string when gateway access is denied."""
         mock_gateway = MagicMock()
         mock_gateway.id = "gw-direct"
         mock_gateway.gateway_mode = "direct_proxy"
@@ -6818,11 +6816,9 @@ class TestDirectProxyMode:
 
         with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
             with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=False):
-                # The HTTPException is raised but caught by outer try/except and logged
-                # So we expect empty string return, not an exception
                 result = await tr.read_resource("file:///test.txt")
 
-        # Access denied returns empty string (exception is caught and logged)
+        # Access denied returns empty string directly (no exception raised)
         assert result == ""
 
     @pytest.mark.asyncio
@@ -6858,6 +6854,12 @@ class TestDirectProxyMode:
 
 class TestCallToolDirectProxy:
     """Test direct_proxy mode in the call_tool handler."""
+
+    @pytest.fixture(autouse=True)
+    def enable_direct_proxy(self):
+        """Enable direct_proxy feature flag for all tests in this class."""
+        with patch.object(tr.settings, "mcpgateway_direct_proxy_enabled", True):
+            yield
 
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_success(self):
@@ -6938,8 +6940,10 @@ class TestCallToolDirectProxy:
         assert result.content[0].text == "Tool not found: secret_tool"
 
     @pytest.mark.asyncio
-    async def test_call_tool_direct_proxy_exception_falls_through(self):
-        """Test call_tool falls through to normal mode when invoke_tool_direct raises."""
+    async def test_call_tool_direct_proxy_exception_returns_error(self):
+        """Test call_tool returns error when invoke_tool_direct raises (no fallback to cache mode)."""
+        from mcp import types as mcp_types
+
         mock_gateway = MagicMock()
         mock_gateway.id = "gw-direct"
         mock_gateway.gateway_mode = "direct_proxy"
@@ -6956,20 +6960,6 @@ class TestCallToolDirectProxy:
         # invoke_tool_direct raises an exception
         mock_invoke_direct = AsyncMock(side_effect=RuntimeError("connection failed"))
 
-        # Normal mode invoke_tool returns a result with content
-        # Attributes must be explicit (not auto-created by MagicMock) so the
-        # content normalization code in call_tool works correctly.
-        mock_content_item = MagicMock(spec=[])
-        mock_content_item.type = "text"
-        mock_content_item.text = "normal result"
-        mock_content_item.annotations = None
-        mock_content_item.meta = None
-        mock_content_item.size = None
-        normal_result = MagicMock(spec=[])
-        normal_result.content = [mock_content_item]
-        normal_result.structuredContent = None
-        mock_invoke_normal = AsyncMock(return_value=normal_result)
-
         tr.server_id_var.set("server-123")
         tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
         tr.user_context_var.set({"email": "user@test.com", "teams": ["team1"], "is_admin": False})
@@ -6978,15 +6968,14 @@ class TestCallToolDirectProxy:
             with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-direct"):
                 with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", new_callable=AsyncMock, return_value=True):
                     with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
-                        with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
-                            with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
-                                mock_settings.mcpgateway_session_affinity_enabled = False
-                                result = await tr.call_tool("my_tool", {"arg": "value"})
+                        result = await tr.call_tool("my_tool", {"arg": "value"})
 
         # invoke_tool_direct was called and raised
         mock_invoke_direct.assert_awaited_once()
-        # Normal mode invoke_tool was called as fallback
-        mock_invoke_normal.assert_awaited_once()
+        # Should return error result, NOT fall through to normal mode
+        assert isinstance(result, mcp_types.CallToolResult)
+        assert result.isError is True
+        assert result.content[0].text == "Direct proxy tool invocation failed"
 
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_gateway_not_direct_proxy_falls_through(self):
@@ -7028,4 +7017,50 @@ class TestCallToolDirectProxy:
                         result = await tr.call_tool("my_tool", {"arg": "value"})
 
         # Normal mode invoke_tool was called since gateway is not direct_proxy
+        mock_invoke_normal.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_call_tool_direct_proxy_feature_disabled_falls_through(self):
+        """Test call_tool falls through to normal mode when feature flag is disabled."""
+        mock_gateway = MagicMock()
+        mock_gateway.id = "gw-direct"
+        mock_gateway.gateway_mode = "direct_proxy"
+
+        mock_db = MagicMock()
+        mock_db.execute = MagicMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway))
+        )
+
+        @asynccontextmanager
+        async def mock_get_db():
+            yield mock_db
+
+        mock_content_item = MagicMock(spec=[])
+        mock_content_item.type = "text"
+        mock_content_item.text = "cache result"
+        mock_content_item.annotations = None
+        mock_content_item.meta = None
+        mock_content_item.size = None
+        normal_result = MagicMock(spec=[])
+        normal_result.content = [mock_content_item]
+        normal_result.structuredContent = None
+        mock_invoke_normal = AsyncMock(return_value=normal_result)
+        mock_invoke_direct = AsyncMock()
+
+        tr.server_id_var.set("server-123")
+        tr.request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+        tr.user_context_var.set({"email": "user@test.com", "teams": ["team1"], "is_admin": False})
+
+        with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+            with patch("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", return_value="gw-direct"):
+                with patch.object(tr.tool_service, "invoke_tool_direct", mock_invoke_direct):
+                    with patch.object(tr.tool_service, "invoke_tool", mock_invoke_normal):
+                        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+                            mock_settings.mcpgateway_direct_proxy_enabled = False
+                            mock_settings.mcpgateway_session_affinity_enabled = False
+                            result = await tr.call_tool("my_tool", {"arg": "value"})
+
+        # Direct proxy was NOT called since feature flag is disabled
+        mock_invoke_direct.assert_not_awaited()
+        # Normal mode was used instead
         mock_invoke_normal.assert_awaited_once()

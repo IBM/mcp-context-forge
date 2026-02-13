@@ -701,7 +701,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                 gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
-                if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy":
+                if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(check_db, gateway, user_email, token_teams):
                         logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
@@ -722,7 +722,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                     )
         except Exception as e:
             logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
-            # Fall through to normal mode on error
+            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
 
     # Normal mode: use standard tool invocation with normalization
     app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
@@ -952,7 +952,7 @@ async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
 
-    Supports two modes based on gateway's refresh_strategy:
+    Supports two modes based on gateway's gateway_mode:
     - 'cache': Returns tools from database (default behavior)
     - 'direct_proxy': Proxies the request directly to the remote MCP server
 
@@ -1278,9 +1278,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         Union[str, bytes]: The content of the resource as text or binary data.
         Returns empty string on failure or if no content is found.
 
-    Raises:
-        HTTPException: If access is denied to the gateway in direct_proxy mode.
-
     Logs exceptions if any errors occur during reading.
 
     Examples:
@@ -1326,7 +1323,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
             if gateway_id:
                 # Third-Party
-                from fastapi import HTTPException  # pylint: disable=import-outside-toplevel
                 from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
                 # First-Party
@@ -1337,7 +1333,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(db, gateway, user_email, token_teams):
                         logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
-                        raise HTTPException(status_code=404, detail="Resource not found")
+                        return ""
 
                     # Direct proxy mode: forward request to remote MCP server
                     # Get _meta from request context if available
