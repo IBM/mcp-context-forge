@@ -45,6 +45,17 @@
 set -euo pipefail
 
 #────────────────────────────────────────────────────────────────────────────────
+# SECTION 0: macOS Fork Safety Fix
+# On macOS, Objective-C is not fork-safe. When gunicorn forks workers after
+# certain libraries (SSL, cryptography) have initialized Objective-C, it causes
+# crashes with "+[NSCharacterSet initialize] may have been in progress".
+# This disables the safety check that causes those crashes.
+#────────────────────────────────────────────────────────────────────────────────
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+fi
+
+#────────────────────────────────────────────────────────────────────────────────
 # SECTION 1: Script Location Detection
 # Determine the absolute path to this script's directory for relative path resolution
 #────────────────────────────────────────────────────────────────────────────────
