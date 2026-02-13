@@ -445,6 +445,7 @@ class PermissionService:
         - team_id provided: includes team roles for that specific team
           (plus team roles with scope_id=NULL which apply to all teams)
         - team_id=None, include_all_teams=True: includes ALL team-scoped roles
+          EXCEPT roles on personal teams (which auto-grant team_admin to every user)
         - team_id=None, include_all_teams=False: includes only team-scoped roles
           with scope_id=NULL (roles that apply to all teams, e.g. during login)
 
@@ -465,8 +466,22 @@ class PermissionService:
             # Filter to specific team's roles only
             scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
         elif include_all_teams:
-            # Include ALL team-scoped roles (for list/read endpoints with session tokens)
-            scope_conditions.append(UserRole.scope == "team")
+            # Include ALL team-scoped roles EXCEPT personal team roles.
+            # Personal teams are auto-created for every user with team_admin permissions,
+            # so including them would grant every user full mutate permissions (servers.create,
+            # tools.create, etc.) when check_any_team=True, making RBAC ineffective.
+            # First-Party
+            from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
+
+            scope_conditions.append(
+                and_(
+                    UserRole.scope == "team",
+                    or_(
+                        UserRole.scope_id.is_(None),
+                        ~UserRole.scope_id.in_(select(EmailTeam.id).where(EmailTeam.is_personal.is_(True))),
+                    ),
+                )
+            )
         else:
             # When team_id is None and include_all_teams is False (e.g., during login),
             # include team-scoped roles with scope_id=None (roles that apply to all teams)
