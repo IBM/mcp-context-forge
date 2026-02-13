@@ -117,6 +117,9 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     # db.execute() always returns the tool (GlobalConfig is now cached)
     mock_scalar_tool = Mock()
     mock_scalar_tool.scalar_one_or_none.return_value = mock_tool
+    mock_scalar_tool.scalars.return_value = mock_scalar_tool
+    mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
+    
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
@@ -296,6 +299,7 @@ def tool_service():
     """Create a tool service instance."""
     service = ToolService()
     service._http_client = AsyncMock()
+
     return service
 
 
@@ -1771,6 +1775,8 @@ class TestToolService:
         # Mock DB to return no tool
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = None
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = []
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Should raise NotFoundError
@@ -1788,6 +1794,8 @@ class TestToolService:
         # Mock DB to return inactive tool in single query
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Should raise NotFoundError with "inactive" message
@@ -2009,6 +2017,11 @@ class TestToolService:
 
             m = Mock()
             m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            if value is None:
+                m.all.return_value = []
+            else:
+                m.all.return_value = [value]
             return m
 
         test_db.execute = Mock(side_effect=execute_side_effect)
@@ -2112,6 +2125,11 @@ class TestToolService:
 
             m = Mock()
             m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            if value is None:
+                m.all.return_value = []
+            else:
+                m.all.return_value = [value]
             return m
 
         test_db.execute = Mock(side_effect=execute_side_effect)
@@ -2225,6 +2243,10 @@ class TestToolService:
             class Result:
                 def scalar_one_or_none(self_inner):
                     return value
+                def scalars(self_inner):
+                    return self_inner
+                def all(self_inner):
+                    return [value] if value else []
 
             return Result()
 
@@ -2320,6 +2342,8 @@ class TestToolService:
         # Mock DB
         mock_scalar = Mock()
         mock_scalar.scalar_one_or_none.return_value = mock_tool
+        mock_scalar.scalars.return_value = mock_scalar
+        mock_scalar.all.return_value = [mock_tool]
         test_db.execute = Mock(return_value=mock_scalar)
 
         # Mock SSE client and session
@@ -2826,6 +2850,8 @@ class TestToolService:
         # Mock DB queries
         mock_scalar1 = Mock()
         mock_scalar1.scalar_one_or_none.return_value = mock_tool
+        mock_scalar1.scalars.return_value = mock_scalar1
+        mock_scalar1.all.return_value = [mock_tool]
         mock_scalar2 = Mock()
         mock_scalar2.scalar_one_or_none.return_value = mock_gateway
         mock_scalar3 = Mock()
@@ -2912,6 +2938,8 @@ class TestToolService:
         # Mock DB queries
         mock_scalar1 = Mock()
         mock_scalar1.scalar_one_or_none.return_value = mock_tool
+        mock_scalar1.scalars.return_value = mock_scalar1
+        mock_scalar1.all.return_value = [mock_tool]
         mock_scalar2 = Mock()
         mock_scalar2.scalar_one_or_none.return_value = mock_gateway
         mock_scalar3 = Mock()
@@ -3203,6 +3231,8 @@ class TestToolService:
         # Mock DB queries
         mock_scalar1 = Mock()
         mock_scalar1.scalar_one_or_none.return_value = mock_tool
+        mock_scalar1.scalars.return_value = mock_scalar1
+        mock_scalar1.all.return_value = [mock_tool]
         mock_scalar2 = Mock()
         mock_scalar2.scalar_one_or_none.return_value = mock_gateway
         mock_scalar3 = Mock()
