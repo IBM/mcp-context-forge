@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal, get_request_session
+from mcpgateway.db import SessionLocal, get_request_session, fresh_db_session
 from mcpgateway.services.permission_service import PermissionService
 
 # Backwards-compatible alias for tests and older modules that patch
@@ -35,44 +35,8 @@ from mcpgateway.services.permission_service import PermissionService
 request_session = get_request_session
 
 
-@contextmanager
-def fresh_db_session():
-    """Context manager that yields a fresh, short-lived DB session.
-
-    Use this for permission checks that should not reuse the request-scoped
-    session (avoids session accumulation under high load).
-
-    Yields:
-        Session: a new SQLAlchemy ``Session`` instance (short-lived).
-
-    Raises:
-        Exception: Re-raises any exception after attempting rollback and
-            session invalidation/cleanup.
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        try:
-            db.commit()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                logger.debug("fresh_db_session: failed to invalidate DB after commit", exc_info=True)
-    except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            try:
-                db.invalidate()
-            except Exception:
-                logger.debug("fresh_db_session: failed to invalidate DB after rollback", exc_info=True)
-        raise
-    finally:
-        try:
-            db.close()
-        except Exception:
-            logger.debug("fresh_db_session: failed to close DB session", exc_info=True)
+# Use the canonical `fresh_db_session` from mcpgateway.db to avoid divergent
+# semantics across modules (commit/rollback/cleanup behavior must be uniform).
 
 
 logger = logging.getLogger(__name__)

@@ -1775,7 +1775,8 @@ app.add_middleware(
 )
 
 # Session middleware: ensures request-scoped DB session cleanup
-app.add_middleware(SessionMiddleware)
+# NOTE: Registered later (after other middleware) to ensure its finally
+# runs after outer middleware have finished using the request session.
 
 # Add response compression middleware (Brotli, Zstd, GZip)
 # Automatically negotiates compression algorithm based on client Accept-Encoding header
@@ -1893,6 +1894,9 @@ if settings.db_query_log_enabled:
     logger.info(f"📊 Database query logging enabled - logs: {settings.db_query_log_file}")
 else:
     logger.debug("📊 Database query logging disabled (enable with DB_QUERY_LOG_ENABLED=true)")
+
+# Register SessionMiddleware after other middlewares so its cleanup runs last.
+app.add_middleware(SessionMiddleware)
 
 # Set up Jinja2 templates and store in app state for later use
 # auto_reload=False in production prevents re-parsing templates on each request (performance)

@@ -10,9 +10,12 @@ import logging
 from typing import Callable
 
 # Third-Party
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from typing import Callable, Awaitable
+
+# ASGI middleware (callable) avoids BaseHTTPMiddleware's context.copy() behavior
+# which can break ContextVar propagation. Implementing as pure ASGI ensures
+# request-scoped ContextVar sessions are visible to downstream handlers and
+# closed in the same context.
 
 # First-Party
 from mcpgateway.db import close_request_session
@@ -20,27 +23,22 @@ from mcpgateway.db import close_request_session
 logger = logging.getLogger(__name__)
 
 
-class SessionMiddleware(BaseHTTPMiddleware):
-    """Ensure the request-scoped DB session is closed after each request."""
+class SessionMiddleware:
+    """Pure ASGI middleware that ensures request-scoped DB session cleanup.
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Dispatch request and ensure DB session cleanup after response.
+    Using a pure ASGI middleware avoids context copying performed by
+    `BaseHTTPMiddleware` and guarantees `ContextVar`-backed request sessions
+    are closed from the same context they were created in.
+    """
 
-        This method forwards the request to the next handler and always
-        attempts to close the request-scoped DB session afterward.
+    def __init__(self, app: Callable):
+        self.app = app
 
-        Args:
-            request: The incoming Starlette/FastAPI ``Request`` object.
-            call_next: The next ASGI callable to handle the request.
-
-        Returns:
-            Response: The response returned by the next handler.
-        """
+    async def __call__(self, scope: dict, receive: Callable[..., Awaitable[dict]], send: Callable[..., Awaitable[None]]):
         try:
-            response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
         finally:
             try:
                 close_request_session()
             except Exception as e:
-                logger.debug(f"Failed to close request-scoped DB session: {e}")
+                logger.debug("Failed to close request-scoped DB session: %s", e)

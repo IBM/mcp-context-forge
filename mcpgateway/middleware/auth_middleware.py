@@ -32,9 +32,8 @@ from mcpgateway.db import get_request_session
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
 
-# Backwards-compatible alias for tests and older modules that patch
-# `SessionLocal` in middleware modules.
-SessionLocal = get_request_session
+# Use request-scoped session getter directly. Do not close here; the
+# request-scoped session is managed by SessionMiddleware.
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
@@ -128,8 +127,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log successful authentication (only if logging level is "all")
             # DB session created only when needed
             if log_success:
-                db = SessionLocal()
-                close_after = SessionLocal is not get_request_session
+                db = get_request_session()
                 try:
                     security_logger.log_authentication_attempt(
                         user_id=user_id,
@@ -142,13 +140,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     )
                     db.commit()
                 except Exception as log_error:
-                    logger.debug(f"Failed to log successful auth: {log_error}")
-                finally:
-                    if close_after:
-                        try:
-                            db.close()
-                        except Exception as close_err:
-                            logger.debug("Failed to close ephemeral DB session after success log: %s", close_err)
+                    logger.debug("Failed to log successful auth: %s", log_error)
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
@@ -157,8 +149,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log failed authentication attempt (based on logging level)
             # DB session created only when needed
             if log_failure:
-                db = SessionLocal()
-                close_after = SessionLocal is not get_request_session
+                db = get_request_session()
                 try:
                     security_logger.log_authentication_attempt(
                         user_id="unknown",
@@ -172,13 +163,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                     )
                     db.commit()
                 except Exception as log_error:
-                    logger.debug(f"Failed to log auth failure: {log_error}")
-                finally:
-                    if close_after:
-                        try:
-                            db.close()
-                        except Exception as close_err:
-                            logger.debug("Failed to close ephemeral DB session after failure log: %s", close_err)
+                    logger.debug("Failed to log auth failure: %s", log_error)
 
         # Continue with request
         return await call_next(request)
