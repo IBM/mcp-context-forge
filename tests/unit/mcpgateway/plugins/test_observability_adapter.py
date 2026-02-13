@@ -124,6 +124,100 @@ class TestObservabilityServiceAdapter:
         mock_session.rollback.assert_called_once()
         mock_session.close.assert_called_once()
 
+    def test_start_span_rollback_failure(self):
+        """start_span should suppress rollback errors."""
+        mock_service = MagicMock()
+        mock_service.start_span.side_effect = RuntimeError("db error")
+        mock_session = MagicMock()
+        mock_session.rollback.side_effect = RuntimeError("rollback failed")
+
+        with patch("mcpgateway.plugins.observability_adapter.SessionLocal", return_value=mock_session):
+            # First-Party
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
+
+            adapter = ObservabilityServiceAdapter(service=mock_service)
+            result = adapter.start_span(trace_id="t", name="s")
+
+        assert result is None
+        mock_session.rollback.assert_called_once()
+        mock_session.close.assert_called_once()
+
+    def test_start_span_close_failure(self):
+        """start_span should suppress close errors in finally."""
+        mock_service = MagicMock()
+        mock_service.start_span.side_effect = RuntimeError("db error")
+        mock_session = MagicMock()
+        mock_session.close.side_effect = RuntimeError("close failed")
+
+        with patch("mcpgateway.plugins.observability_adapter.SessionLocal", return_value=mock_session):
+            # First-Party
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
+
+            adapter = ObservabilityServiceAdapter(service=mock_service)
+            result = adapter.start_span(trace_id="t", name="s")
+
+        assert result is None
+
+    def test_end_span_rollback_failure(self):
+        """end_span should suppress rollback errors."""
+        mock_service = MagicMock()
+        mock_service.end_span.side_effect = RuntimeError("db error")
+        mock_session = MagicMock()
+        mock_session.rollback.side_effect = RuntimeError("rollback failed")
+
+        with patch("mcpgateway.plugins.observability_adapter.SessionLocal", return_value=mock_session):
+            # First-Party
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
+
+            adapter = ObservabilityServiceAdapter(service=mock_service)
+            adapter.end_span(span_id="span-1", status="error")
+
+        mock_session.rollback.assert_called_once()
+        mock_session.close.assert_called_once()
+
+    def test_end_span_close_failure(self):
+        """end_span should suppress close errors in finally."""
+        mock_service = MagicMock()
+        mock_service.end_span.side_effect = RuntimeError("db error")
+        mock_session = MagicMock()
+        mock_session.close.side_effect = RuntimeError("close failed")
+
+        with patch("mcpgateway.plugins.observability_adapter.SessionLocal", return_value=mock_session):
+            # First-Party
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
+
+            adapter = ObservabilityServiceAdapter(service=mock_service)
+            adapter.end_span(span_id="span-1", status="error")
+
+    def test_start_span_success_close_failure(self):
+        """start_span should suppress close errors even on the happy path."""
+        mock_service = MagicMock()
+        mock_service.start_span.return_value = "span-99"
+        mock_session = MagicMock()
+        mock_session.close.side_effect = RuntimeError("close failed")
+
+        with patch("mcpgateway.plugins.observability_adapter.SessionLocal", return_value=mock_session):
+            # First-Party
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
+
+            adapter = ObservabilityServiceAdapter(service=mock_service)
+            result = adapter.start_span(trace_id="t", name="s")
+
+        assert result == "span-99"
+
+    def test_end_span_success_close_failure(self):
+        """end_span should suppress close errors even on the happy path."""
+        mock_service = MagicMock()
+        mock_session = MagicMock()
+        mock_session.close.side_effect = RuntimeError("close failed")
+
+        with patch("mcpgateway.plugins.observability_adapter.SessionLocal", return_value=mock_session):
+            # First-Party
+            from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
+
+            adapter = ObservabilityServiceAdapter(service=mock_service)
+            adapter.end_span(span_id="span-1", status="ok")
+
 
 # ---------------------------------------------------------------------------
 # ContextVar bridge test

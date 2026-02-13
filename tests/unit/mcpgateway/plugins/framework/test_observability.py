@@ -261,3 +261,16 @@ async def test_executor_observability_injection():
     # Also verify default is None
     default_executor = PluginExecutor()
     assert default_executor.observability is None
+
+
+def test_protocol_method_bodies():
+    """Verify that calling Protocol method stubs directly returns None."""
+    # First-Party
+    from mcpgateway.plugins.framework.observability import ObservabilityProvider
+
+    # Call the unbound protocol methods directly to exercise the `...` bodies
+    result1 = ObservabilityProvider.start_span(None, trace_id="t", name="n")
+    assert result1 is None
+
+    result2 = ObservabilityProvider.end_span(None, span_id=None)
+    assert result2 is None
