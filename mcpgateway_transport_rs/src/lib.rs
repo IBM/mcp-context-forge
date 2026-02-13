@@ -7,10 +7,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict, PyList, PyTuple};
 
 #[pyfunction]
-fn prepare_streamable_http_context(
-    py: Python<'_>,
-    scope: Bound<'_, PyAny>,
-) -> PyResult<Py<PyDict>> {
+fn prepare_streamable_http_context(py: Python<'_>, scope: Bound<'_, PyAny>) -> PyResult<Py<PyDict>> {
     let scope_dict = scope.downcast::<PyDict>()?;
 
     let modified_path = scope_dict
@@ -29,16 +26,8 @@ fn prepare_streamable_http_context(
             for item in header_list {
                 if let Ok(tuple) = item.downcast::<PyTuple>() {
                     if tuple.len() == 2 {
-                        let key = tuple
-                            .get_item(0)?
-                            .downcast::<PyBytes>()?
-                            .as_bytes()
-                            .to_vec();
-                        let value = tuple
-                            .get_item(1)?
-                            .downcast::<PyBytes>()?
-                            .as_bytes()
-                            .to_vec();
+                        let key = tuple.get_item(0)?.downcast::<PyBytes>()?.as_bytes().to_vec();
+                        let value = tuple.get_item(1)?.downcast::<PyBytes>()?.as_bytes().to_vec();
 
                         let key_str = String::from_utf8_lossy(&key).to_string();
                         let value_str = String::from_utf8_lossy(&value).to_string();
@@ -65,6 +54,16 @@ fn prepare_streamable_http_context(
     result.set_item("headers", py_headers)?;
 
     Ok(result.unbind())
+}
+
+fn schedule_async_send(py: Python<'_>, send: &Bound<'_, PyAny>, message: &Bound<'_, PyDict>) -> PyResult<()> {
+    let call_result = send.call1((message,))?;
+    if call_result.hasattr("__await__")? {
+        let asyncio = py.import("asyncio")?;
+        let loop_obj = asyncio.call_method0("get_running_loop")?;
+        loop_obj.call_method1("create_task", (call_result,))?;
+    }
+    Ok(())
 }
 
 #[pyfunction]

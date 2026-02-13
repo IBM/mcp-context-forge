@@ -11,7 +11,48 @@ import types
 import pytest
 
 # First-Party
+from mcpgateway.transports import rust_streamable_bridge as bridge_mod
 from mcpgateway.transports.rust_streamable_bridge import RustStreamableHTTPTransportBridge
+
+
+def test_import_transport_module_handles_namespace_shadow(monkeypatch):
+    class MissingAttrsModule:  # pragma: no cover - tiny local helper
+        __file__ = None
+
+    class PresentModule:
+        @staticmethod
+        def prepare_streamable_http_context(_scope):
+            return {}
+
+        @staticmethod
+        def start_streamable_http_transport(_scope, _receive, _send):
+            return True
+
+    monkeypatch.setattr(bridge_mod.importlib, "import_module", lambda _name: MissingAttrsModule())
+
+    class DummyLoader:
+        def create_module(self, spec):
+            return None
+
+        def exec_module(self, module):
+            module.prepare_streamable_http_context = PresentModule.prepare_streamable_http_context
+            module.start_streamable_http_transport = PresentModule.start_streamable_http_transport
+
+    spec = bridge_mod.machinery.ModuleSpec("mcpgateway_transport_rs", DummyLoader(), origin="/tmp/mcpgateway_transport_rs.so")
+    monkeypatch.setattr(bridge_mod.machinery.PathFinder, "find_spec", lambda _name, _paths: spec)
+
+    module = bridge_mod._import_transport_module()
+
+    assert hasattr(module, "prepare_streamable_http_context")
+    assert hasattr(module, "start_streamable_http_transport")
+
+
+def test_import_transport_module_raises_when_rust_missing(monkeypatch):
+    monkeypatch.setattr(bridge_mod.importlib, "import_module", lambda _name: types.SimpleNamespace())
+    monkeypatch.setattr(bridge_mod.machinery.PathFinder, "find_spec", lambda _name, _paths: None)
+
+    with pytest.raises(ImportError):
+        bridge_mod._import_transport_module()
 
 
 @pytest.mark.asyncio
@@ -114,6 +155,7 @@ async def test_bridge_handle_request_fallback_on_handler_error(monkeypatch):
     handled = await bridge.handle_request({}, None, None)
 
     assert handled is False
+
 
 @pytest.mark.asyncio
 async def test_bridge_handle_request_supports_sync_handlers(monkeypatch):
