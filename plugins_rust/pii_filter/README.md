@@ -13,25 +13,24 @@ High-performance PII detection and masking library for MCP Gateway.
 ## Build
 
 ```bash
-cd plugins_rust
-maturin develop --release
+make install
 ```
 
 ## Usage
 
-The Rust implementation is automatically used by the Python PII filter plugin when available. Set `MCPGATEWAY_FORCE_PYTHON_PLUGINS=true` to force Python fallback.
+The Rust implementation is automatically used by the Python PII filter plugin when available.
 
 ## Testing
 
 ```bash
 # Rust unit tests
-cargo test
+make test
 
-# Python integration tests
-pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
+# Python tests
+make test-python
 
 # Benchmarks
-cargo bench
+make bench
 ```
 
 ## Performance

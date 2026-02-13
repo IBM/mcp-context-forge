@@ -3,11 +3,11 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "mcpgateway-rust"
+name = "mcpgateway-pii-filter"
 version = "1.0.0-RC-1"
-description = "Rust-accelerated plugins for MCP Gateway"
-authors = [{name = "MCP Gateway Contributors"}]
-license = {text = "Apache-2.0"}
+description = "High-performance PII detection and masking library for MCP Gateway"
+authors = [{ name = "MCP Gateway Contributors" }]
+license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
 classifiers = [
     "Programming Language :: Rust",
@@ -17,5 +17,5 @@ classifiers = [
 ]
 
 [tool.maturin]
-module-name = "plugins_rust"
+module-name = "pii_filter_rust"
 features = ["pyo3/extension-module"]
