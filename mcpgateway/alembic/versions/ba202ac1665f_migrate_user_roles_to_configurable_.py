@@ -42,7 +42,16 @@ OLD_TEAM_OWNER_ROLE = "team_admin"
 
 
 def _get_role_id(bind, role_name: str, scope: str):
-    """Look up a role ID by name and scope."""
+    """Look up a role ID by name and scope.
+
+    Args:
+        bind: SQLAlchemy bind connection for executing queries.
+        role_name: Name of the role to look up.
+        scope: Scope of the role (e.g., 'global', 'team').
+
+    Returns:
+        str or None: The role ID if found, otherwise None.
+    """
     result = bind.execute(
         text("SELECT id FROM roles WHERE name = :name AND scope = :scope LIMIT 1"),
         {"name": role_name, "scope": scope},
@@ -56,7 +65,14 @@ def _migrate_role(bind, old_role_name: str, new_role_name: str, scope: str) -> i
     Only updates assignments where granted_by = user_email (auto-assigned
     defaults from user creation), leaving manually granted roles untouched.
 
-    Returns count of updated rows.
+    Args:
+        bind: SQLAlchemy bind connection for executing queries.
+        old_role_name: Name of the role to migrate from.
+        new_role_name: Name of the role to migrate to.
+        scope: Scope of the role (e.g., 'global', 'team').
+
+    Returns:
+        int: Count of updated role assignments.
     """
     if old_role_name == new_role_name:
         print(f"  - {scope} role '{old_role_name}' unchanged, skipping")
