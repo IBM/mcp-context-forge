@@ -112,4 +112,4 @@ Your detailed module documentation begins here...
 """
 ```
 
-You can automatically check and fix file headers using the provided `make` targets. For detailed usage and examples, please see the [File Header Management section](../docs/docs/development/module-documentation.md) in our development documentation.
+You can automatically check and fix file headers using the provided `make` targets. For detailed usage and examples, please see the [File Header Management section](docs/docs/development/module-documentation.md) in our development documentation.
