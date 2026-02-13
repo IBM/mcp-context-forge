@@ -30,7 +30,11 @@ from mcpgateway.utils.create_jwt_token import _create_jwt_token
 # Local
 from .conftest import BASE_URL, VALID_MCP_SERVER_URLS
 from .pages.gateways_page import GatewaysPage
+from .pages.prompts_page import PromptsPage
+from .pages.resources_page import ResourcesPage
 from .pages.servers_page import ServersPage
+from .pages.team_page import TeamPage
+from .pages.tools_page import ToolsPage
 
 logger = logging.getLogger(__name__)
 
@@ -643,5 +647,515 @@ class TestRBACRestAPI:
             )
             assert resp.status == 403, f"Viewer should be denied gateway creation but got status={resp.status}"
             logger.info("Viewer API create gateway: status=%d — correctly denied", resp.status)
+        finally:
+            ctx.dispose()
+
+
+# ==================== Navigation Helpers ====================
+
+
+def _navigate_to_tools(page: Page, team_id: Optional[str] = None) -> ToolsPage:
+    """Navigate to the tools tab, optionally in a team-scoped view."""
+    if team_id:
+        page.goto(f"/admin?team_id={team_id}#tools")
+        page.wait_for_load_state("domcontentloaded")
+        try:
+            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+        except PlaywrightTimeoutError:
+            pass
+    tools_page = ToolsPage(page)
+    tools_page.navigate_to_tools_tab()
+    tools_page.wait_for_tools_table_loaded()
+    return tools_page
+
+
+def _navigate_to_resources(page: Page, team_id: Optional[str] = None) -> ResourcesPage:
+    """Navigate to the resources tab, optionally in a team-scoped view."""
+    if team_id:
+        page.goto(f"/admin?team_id={team_id}#resources")
+        page.wait_for_load_state("domcontentloaded")
+        try:
+            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+        except PlaywrightTimeoutError:
+            pass
+    res_page = ResourcesPage(page)
+    res_page.navigate_to_resources_tab()
+    res_page.wait_for_resources_table_loaded()
+    return res_page
+
+
+def _navigate_to_prompts(page: Page, team_id: Optional[str] = None) -> PromptsPage:
+    """Navigate to the prompts tab, optionally in a team-scoped view."""
+    if team_id:
+        page.goto(f"/admin?team_id={team_id}#prompts")
+        page.wait_for_load_state("domcontentloaded")
+        try:
+            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+        except PlaywrightTimeoutError:
+            pass
+    pr_page = PromptsPage(page)
+    pr_page.navigate_to_prompts_tab()
+    pr_page.wait_for_prompts_table_loaded()
+    return pr_page
+
+
+def _navigate_to_teams(page: Page) -> TeamPage:
+    """Navigate to the teams tab."""
+    team_page = TeamPage(page)
+    team_page.navigate_to_teams_tab()
+    return team_page
+
+
+def _submit_tool_form_and_get_status(tools_page: ToolsPage, name: str) -> int:
+    """Fill and submit the tool form, returning the POST response status code.
+
+    Returns:
+        HTTP status code of the POST response.
+        200/201 = success, 403 = RBAC denied.
+    """
+    tools_page.fill_tool_form(name=name, url="https://example.com/api/tool", description="RBAC test tool", integration_type="REST")
+    try:
+        with tools_page.page.expect_response(
+            lambda r: "/admin/tools" in r.url and r.request.method == "POST",
+            timeout=30000,
+        ) as resp_info:
+            tools_page.click_locator(tools_page.add_tool_btn)
+        return resp_info.value.status
+    except PlaywrightTimeoutError:
+        if "/admin/login" in tools_page.page.url:
+            return 401
+        return 0
+
+
+def _submit_resource_form_and_get_status(res_page: ResourcesPage, name: str) -> int:
+    """Fill and submit the resource form, returning the POST response status code.
+
+    Returns:
+        HTTP status code of the POST response.
+        200/201 = success, 403 = RBAC denied.
+    """
+    res_page.fill_resource_form(uri=f"file:///rbac-test/{name}", name=name, mime_type="text/plain", description="RBAC test resource")
+    try:
+        with res_page.page.expect_response(
+            lambda r: "/admin/resources" in r.url and r.request.method == "POST",
+            timeout=30000,
+        ) as resp_info:
+            res_page.click_locator(res_page.add_resource_btn)
+        return resp_info.value.status
+    except PlaywrightTimeoutError:
+        if "/admin/login" in res_page.page.url:
+            return 401
+        return 0
+
+
+def _submit_prompt_form_and_get_status(pr_page: PromptsPage, name: str) -> int:
+    """Fill and submit the prompt form, returning the POST response status code.
+
+    Returns:
+        HTTP status code of the POST response.
+        200/201 = success, 403 = RBAC denied.
+    """
+    pr_page.fill_prompt_form(name=name, description="RBAC test prompt", content="Hello {{name}}")
+    try:
+        with pr_page.page.expect_response(
+            lambda r: "/admin/prompts" in r.url and r.request.method == "POST",
+            timeout=30000,
+        ) as resp_info:
+            pr_page.click_locator(pr_page.add_prompt_btn)
+        return resp_info.value.status
+    except PlaywrightTimeoutError:
+        if "/admin/login" in pr_page.page.url:
+            return 401
+        return 0
+
+
+# ==================== D8: Tool Operations ====================
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+class TestRBACToolOperations:
+    """Test RBAC enforcement on tool creation via admin UI."""
+
+    def test_developer_create_tool_team_view(self, page: Page, base_url: str, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a tool from team-scoped view."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        tools_page = _navigate_to_tools(page)
+        name = f"{RBAC_TEST_PREFIX}-dev-tool-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_tool_form_and_get_status(tools_page, name)
+
+        assert status != 403, f"Developer was denied tool creation from team view (status={status})"
+        assert status != 401, f"Developer authentication failed (status={status})"
+        logger.info("Developer create tool (team view): status=%d — RBAC passed", status)
+
+    def test_developer_create_tool_all_teams_view(self, page: Page, base_url: str, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a tool from All Teams view."""
+        _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
+        _wait_for_admin_shell(page)
+
+        tools_page = _navigate_to_tools(page, team_id=None)
+        name = f"{RBAC_TEST_PREFIX}-dev-tool-allteams-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_tool_form_and_get_status(tools_page, name)
+
+        assert status != 403, f"Developer was denied tool creation from All Teams view (status={status})"
+        assert status != 401, f"Developer authentication failed (status={status})"
+        logger.info("Developer create tool (All Teams): status=%d — RBAC passed", status)
+
+    def test_viewer_cannot_create_tool(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied tool creation (security check)."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        tools_page = _navigate_to_tools(page)
+        name = f"{RBAC_TEST_PREFIX}-viewer-tool-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_tool_form_and_get_status(tools_page, name)
+
+        assert status == 403, f"Viewer should be denied tool creation but got status={status}"
+        logger.info("Viewer create tool: status=%d — correctly denied", status)
+
+
+# ==================== D8: Resource Operations ====================
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+class TestRBACResourceOperations:
+    """Test RBAC enforcement on resource creation via admin UI."""
+
+    def test_developer_create_resource(self, page: Page, base_url: str, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a resource from team-scoped view."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        res_page = _navigate_to_resources(page)
+        name = f"{RBAC_TEST_PREFIX}-dev-res-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_resource_form_and_get_status(res_page, name)
+
+        assert status != 403, f"Developer was denied resource creation (status={status})"
+        assert status != 401, f"Developer authentication failed (status={status})"
+        logger.info("Developer create resource: status=%d — RBAC passed", status)
+
+    def test_viewer_cannot_create_resource(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied resource creation (security check)."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        res_page = _navigate_to_resources(page)
+        name = f"{RBAC_TEST_PREFIX}-viewer-res-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_resource_form_and_get_status(res_page, name)
+
+        assert status == 403, f"Viewer should be denied resource creation but got status={status}"
+        logger.info("Viewer create resource: status=%d — correctly denied", status)
+
+
+# ==================== D8: Prompt Operations ====================
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+class TestRBACPromptOperations:
+    """Test RBAC enforcement on prompt creation via admin UI."""
+
+    def test_developer_create_prompt(self, page: Page, base_url: str, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a prompt from team-scoped view."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_developer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        pr_page = _navigate_to_prompts(page)
+        name = f"{RBAC_TEST_PREFIX}-dev-prompt-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_prompt_form_and_get_status(pr_page, name)
+
+        assert status != 403, f"Developer was denied prompt creation (status={status})"
+        assert status != 401, f"Developer authentication failed (status={status})"
+        logger.info("Developer create prompt: status=%d — RBAC passed", status)
+
+    def test_viewer_cannot_create_prompt(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied prompt creation (security check)."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        pr_page = _navigate_to_prompts(page)
+        name = f"{RBAC_TEST_PREFIX}-viewer-prompt-{uuid.uuid4().hex[:8]}"
+
+        status = _submit_prompt_form_and_get_status(pr_page, name)
+
+        assert status == 403, f"Viewer should be denied prompt creation but got status={status}"
+        logger.info("Viewer create prompt: status=%d — correctly denied", status)
+
+
+# ==================== D8: Team Management ====================
+
+
+RBAC_TEAM_ADMIN_EMAIL = f"{RBAC_TEST_PREFIX}-ta-{uuid.uuid4().hex[:8]}@test.example.com"
+
+
+@pytest.fixture(scope="module")
+def rbac_team_admin_user(admin_api: APIRequestContext, rbac_test_team: Dict, playwright: Playwright) -> Generator[Dict[str, Any], None, None]:
+    """Create a team_admin user with team-scoped team_admin RBAC role."""
+    team_id = rbac_test_team["id"]
+    user_info = _create_user_and_join_team(admin_api, playwright, RBAC_TEAM_ADMIN_EMAIL, team_id, "team_admin")
+    yield user_info
+
+    # Cleanup
+    try:
+        admin_api.delete(f"/rbac/users/{RBAC_TEAM_ADMIN_EMAIL}/roles/team_admin?scope=team&scope_id={team_id}")
+    except Exception as e:
+        logger.warning("Failed to revoke team_admin role: %s", e)
+    try:
+        admin_api.delete(f"/teams/{team_id}/members/{RBAC_TEAM_ADMIN_EMAIL}")
+    except Exception as e:
+        logger.warning("Failed to remove team_admin from team: %s", e)
+    try:
+        admin_api.delete(f"/auth/email/admin/users/{RBAC_TEAM_ADMIN_EMAIL}")
+    except Exception as e:
+        logger.warning("Failed to delete team_admin user: %s", e)
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+class TestRBACTeamManagement:
+    """Test RBAC enforcement on team management operations via admin UI."""
+
+    def test_viewer_cannot_manage_team_members(self, page: Page, base_url: str, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied access to manage team members."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_viewer_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        # Navigate to teams tab and attempt to access team member management
+        _navigate_to_teams(page)
+
+        # Try to access manage members endpoint directly via API-like request
+        # The admin UI uses GET /admin/teams/{team_id}/members which requires teams.manage_members
+        with page.expect_response(
+            lambda r: f"/admin/teams/{team_id}/members" in r.url and r.request.method == "GET",
+            timeout=30000,
+        ) as resp_info:
+            page.goto(f"/admin/teams/{team_id}/members")
+
+        status = resp_info.value.status
+        assert status == 403, f"Viewer should be denied team member management but got status={status}"
+        logger.info("Viewer manage team members: status=%d — correctly denied", status)
+
+    def test_team_admin_can_manage_members(self, page: Page, base_url: str, rbac_team_admin_user: Dict, rbac_test_team: Dict):
+        """Team admin should be able to access team member management."""
+        team_id = rbac_test_team["id"]
+        _inject_jwt_cookie(page, rbac_team_admin_user["email"], token_use="session")
+        _wait_for_admin_shell(page, team_id=team_id)
+
+        # Navigate directly to team members management page
+        with page.expect_response(
+            lambda r: f"/admin/teams/{team_id}/members" in r.url and r.request.method == "GET",
+            timeout=30000,
+        ) as resp_info:
+            page.goto(f"/admin/teams/{team_id}/members")
+
+        status = resp_info.value.status
+        assert status != 403, f"Team admin was denied team member management (status={status})"
+        assert status != 401, f"Team admin authentication failed (status={status})"
+        logger.info("Team admin manage team members: status=%d — RBAC passed", status)
+
+
+# ==================== D8: REST API Operations for Tools/Resources/Prompts ====================
+
+
+@pytest.mark.ui
+@pytest.mark.rbac
+class TestRBACRestAPIEntityCreate:
+    """Test RBAC enforcement on tool/resource/prompt creation via REST API."""
+
+    def test_developer_api_create_tool(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a tool via REST API."""
+        token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
+        ctx = playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        try:
+            name = f"{RBAC_TEST_PREFIX}-api-dev-tool-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post(
+                "/tools",
+                data={
+                    "tool": {
+                        "name": name,
+                        "description": "RBAC API test tool",
+                        "url": "https://example.com/api/tool",
+                        "integration_type": "REST",
+                        "input_schema": "{}",
+                    },
+                    "team_id": None,
+                    "visibility": "public",
+                },
+            )
+            assert resp.status != 403, f"Developer REST API tool create denied (status={resp.status})"
+            logger.info("Developer API create tool: status=%d", resp.status)
+
+            # Cleanup if created
+            if resp.status in (200, 201):
+                tool_id = resp.json().get("id")
+                if tool_id:
+                    ctx.delete(f"/tools/{tool_id}")
+        finally:
+            ctx.dispose()
+
+    def test_viewer_api_create_tool_denied(self, playwright: Playwright, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied tool creation via REST API."""
+        token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
+        ctx = playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        try:
+            name = f"{RBAC_TEST_PREFIX}-api-viewer-tool-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post(
+                "/tools",
+                data={
+                    "tool": {
+                        "name": name,
+                        "description": "Should be denied",
+                        "url": "https://example.com/api/tool",
+                        "integration_type": "REST",
+                        "input_schema": "{}",
+                    },
+                    "team_id": None,
+                    "visibility": "public",
+                },
+            )
+            assert resp.status == 403, f"Viewer should be denied tool creation but got status={resp.status}"
+            logger.info("Viewer API create tool: status=%d — correctly denied", resp.status)
+        finally:
+            ctx.dispose()
+
+    def test_developer_api_create_resource(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a resource via REST API."""
+        token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
+        ctx = playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        try:
+            name = f"{RBAC_TEST_PREFIX}-api-dev-res-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post(
+                "/resources",
+                data={
+                    "resource": {
+                        "uri": f"file:///rbac-test/{name}",
+                        "name": name,
+                        "description": "RBAC API test resource",
+                        "mimeType": "text/plain",
+                    },
+                    "team_id": None,
+                    "visibility": "public",
+                },
+            )
+            assert resp.status != 403, f"Developer REST API resource create denied (status={resp.status})"
+            logger.info("Developer API create resource: status=%d", resp.status)
+
+            # Cleanup if created
+            if resp.status in (200, 201):
+                res_id = resp.json().get("id")
+                if res_id:
+                    ctx.delete(f"/resources/{res_id}")
+        finally:
+            ctx.dispose()
+
+    def test_viewer_api_create_resource_denied(self, playwright: Playwright, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied resource creation via REST API."""
+        token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
+        ctx = playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        try:
+            name = f"{RBAC_TEST_PREFIX}-api-viewer-res-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post(
+                "/resources",
+                data={
+                    "resource": {
+                        "uri": f"file:///rbac-test/{name}",
+                        "name": name,
+                        "description": "Should be denied",
+                        "mimeType": "text/plain",
+                    },
+                    "team_id": None,
+                    "visibility": "public",
+                },
+            )
+            assert resp.status == 403, f"Viewer should be denied resource creation but got status={resp.status}"
+            logger.info("Viewer API create resource: status=%d — correctly denied", resp.status)
+        finally:
+            ctx.dispose()
+
+    def test_developer_api_create_prompt(self, playwright: Playwright, rbac_developer_user: Dict, rbac_test_team: Dict):
+        """Developer should be able to create a prompt via REST API."""
+        token = _make_user_jwt(rbac_developer_user["email"], token_use="session")
+        ctx = playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        try:
+            name = f"{RBAC_TEST_PREFIX}-api-dev-prompt-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post(
+                "/prompts",
+                data={
+                    "prompt": {
+                        "name": name,
+                        "description": "RBAC API test prompt",
+                        "template": "Hello {{name}}",
+                        "arguments": [],
+                    },
+                    "team_id": None,
+                    "visibility": "public",
+                },
+            )
+            assert resp.status != 403, f"Developer REST API prompt create denied (status={resp.status})"
+            logger.info("Developer API create prompt: status=%d", resp.status)
+
+            # Cleanup if created
+            if resp.status in (200, 201):
+                prompt_id = resp.json().get("id")
+                if prompt_id:
+                    ctx.delete(f"/prompts/{prompt_id}")
+        finally:
+            ctx.dispose()
+
+    def test_viewer_api_create_prompt_denied(self, playwright: Playwright, rbac_viewer_user: Dict, rbac_test_team: Dict):
+        """Viewer should be denied prompt creation via REST API."""
+        token = _make_user_jwt(rbac_viewer_user["email"], token_use="session")
+        ctx = playwright.request.new_context(
+            base_url=BASE_URL,
+            extra_http_headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+        )
+        try:
+            name = f"{RBAC_TEST_PREFIX}-api-viewer-prompt-{uuid.uuid4().hex[:8]}"
+            resp = ctx.post(
+                "/prompts",
+                data={
+                    "prompt": {
+                        "name": name,
+                        "description": "Should be denied",
+                        "template": "Hello {{name}}",
+                        "arguments": [],
+                    },
+                    "team_id": None,
+                    "visibility": "public",
+                },
+            )
+            assert resp.status == 403, f"Viewer should be denied prompt creation but got status={resp.status}"
+            logger.info("Viewer API create prompt: status=%d — correctly denied", resp.status)
         finally:
             ctx.dispose()
