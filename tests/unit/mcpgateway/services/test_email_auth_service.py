@@ -307,9 +307,53 @@ async def test_create_user_non_admin_team_admin_role_not_found(email_auth_servic
                         is_admin=False,
                     )
 
+                assert user is not None
+                # Should only be called once for platform_viewer
+                assert mock_role_service.assign_role_to_user.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_create_user_admin_team_owner_role_assignment_fails(email_auth_service, mock_db):
+    """Test admin user creation when team owner role assignment fails (line 440)."""
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.auto_create_personal_teams = True
+            mock_settings.password_min_length = 8
+            mock_settings.password_require_uppercase = False
+            mock_settings.password_require_lowercase = False
+            mock_settings.password_require_numbers = False
+            mock_settings.password_require_special = False
+            mock_settings.default_admin_role = "platform_admin"
+            mock_settings.default_user_role = "platform_viewer"
+            mock_settings.default_team_owner_role = "team_admin"
+
+            # Mock personal team creation
+            personal_team = SimpleNamespace(id="team1", name="Personal Team")
+            mock_personal_team_service = MagicMock()
+            mock_personal_team_service.create_personal_team = AsyncMock(return_value=personal_team)
+
+            # Mock RoleService - both roles exist but team_admin assignment fails
+            platform_admin_role = SimpleNamespace(id="role1", name="platform_admin", is_active=True)
+            team_admin_role = SimpleNamespace(id="role2", name="team_admin", is_active=True)
+
+            mock_role_service = MagicMock()
+            mock_role_service.get_role_by_name = AsyncMock(side_effect=[
+                platform_admin_role,  # First call for platform_admin
+                team_admin_role,      # Second call for team_admin
+            ])
+            mock_role_service.assign_role_to_user = AsyncMock(side_effect=ValueError("Team role assignment failed"))
+
+            with patch("mcpgateway.services.personal_team_service.PersonalTeamService", return_value=mock_personal_team_service):
+                with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                    user = await email_auth_service.create_user(
+                        email="admin@example.com",
+                        password="ValidPass123!",
+                        is_admin=True,
+                    )
+
                     assert user is not None
-                    # Should only be called once for platform_viewer
-                    assert mock_role_service.assign_role_to_user.call_count == 1
+                    # Should be called twice: once for platform_admin, once for team_admin
+                    assert mock_role_service.assign_role_to_user.call_count == 2
 
 
 # ---------- Role Assignment Exception Handling ----------
