@@ -211,10 +211,12 @@ function updateDefaultVisibility() {
     visibilityPrefixes.forEach((prefix) => {
         const publicId = `[id="${prefix}-public"]`;
         const teamIdStr = `[id="${prefix}-team"]`;
+        const privateIdStr = `[id="${prefix}-private"]`;
 
         // Handle potential duplicate IDs using querySelectorAll
         const publicRadios = document.querySelectorAll(publicId);
         const teamRadios = document.querySelectorAll(teamIdStr);
+        const privateRadios = document.querySelectorAll(privateIdStr);
 
         if (hasTeam) {
             // Default to Team
@@ -229,8 +231,11 @@ function updateDefaultVisibility() {
                     radio.dispatchEvent(new Event("change", { bubbles: true }));
                 }
             });
-            // Reset public radios default state
+            // Reset public and private radios default state
             publicRadios.forEach((radio) => {
+                radio.defaultChecked = false;
+            });
+            privateRadios.forEach((radio) => {
                 radio.defaultChecked = false;
             });
         } else {
@@ -242,8 +247,11 @@ function updateDefaultVisibility() {
                     radio.dispatchEvent(new Event("change", { bubbles: true }));
                 }
             });
-            // Reset team radios default state
+            // Reset team and private radios default state
             teamRadios.forEach((radio) => {
+                radio.defaultChecked = false;
+            });
+            privateRadios.forEach((radio) => {
                 radio.defaultChecked = false;
             });
         }
