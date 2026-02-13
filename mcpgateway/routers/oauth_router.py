@@ -13,8 +13,9 @@ This module handles OAuth 2.0 Authorization Code flow endpoints including:
 """
 
 # Standard
+from html import escape
 import logging
-from typing import Any, Dict
+from typing import Annotated, Any, Dict
 from urllib.parse import urlparse, urlunparse
 
 # Third-Party
@@ -247,8 +248,10 @@ async def initiate_oauth_flow(
 
 @oauth_router.get("/callback")
 async def oauth_callback(
-    code: str = Query(..., description="Authorization code from OAuth provider"),
-    state: str = Query(..., description="State parameter for CSRF protection"),
+    code: Annotated[str | None, Query(description="Authorization code from OAuth provider")] = None,
+    state: Annotated[str, Query(description="State parameter for CSRF protection")] = ...,
+    error: Annotated[str | None, Query(description="OAuth provider error code")] = None,
+    error_description: Annotated[str | None, Query(description="OAuth provider error description")] = None,
     # Remove the gateway_id parameter requirement
     request: Request = None,
     db: Session = Depends(get_db),
@@ -280,6 +283,44 @@ async def oauth_callback(
     try:
         # Get root path for URL construction
         root_path = request.scope.get("root_path", "") if request else ""
+
+        # RFC 6749 Section 4.1.2.1: provider may return error instead of code
+        if error:
+            error_text = escape(error)
+            description_text = escape(error_description or "OAuth provider returned an authorization error.")
+            logger.warning(f"OAuth provider returned error callback: error={error}, description={error_description}")
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Authorization Failed</title></head>
+                <body>
+                    <h1>❌ OAuth Authorization Failed</h1>
+                    <p><strong>Error:</strong> {error_text}</p>
+                    <p><strong>Description:</strong> {description_text}</p>
+                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                </body>
+                </html>
+                """,
+                status_code=400,
+            )
+
+        if not code:
+            logger.warning("OAuth callback missing authorization code")
+            return HTMLResponse(
+                content=f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>OAuth Authorization Failed</title></head>
+                <body>
+                    <h1>❌ OAuth Authorization Failed</h1>
+                    <p>Error: Missing authorization code in callback response.</p>
+                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                </body>
+                </html>
+                """,
+                status_code=400,
+            )
 
         # Extract gateway_id from state parameter
         # Try new base64-encoded JSON format first
