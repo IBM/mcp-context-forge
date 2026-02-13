@@ -289,6 +289,10 @@ mcpContextForge:
     MCPGATEWAY_A2A_MAX_RETRIES: "3"     # maximum retry attempts for A2A calls
     MCPGATEWAY_A2A_METRICS_ENABLED: "true" # enable A2A agent metrics collection
 
+    # ─ Direct Proxy Configuration ─
+    MCPGATEWAY_DIRECT_PROXY_ENABLED: "false"  # enable direct_proxy gateway mode
+    MCPGATEWAY_DIRECT_PROXY_TIMEOUT: "30"     # timeout for direct proxy operations (seconds)
+
     # ─ MCP Server Catalog Configuration ─
     MCPGATEWAY_CATALOG_ENABLED: "true"  # enable MCP server catalog feature
     MCPGATEWAY_CATALOG_FILE: "mcp-catalog.yml" # path to catalog configuration file

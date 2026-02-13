@@ -83,7 +83,10 @@ def test_is_token_expired_naive_datetime(service):
     """Test _is_token_expired with a naive datetime (no timezone)."""
     naive_time = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
     record = _make_token_record(expires_at=naive_time)
-    assert service._is_token_expired(record, threshold_seconds=0) is True
+    # The implementation adds timezone.utc to naive datetimes, so comparison works correctly
+    result = service._is_token_expired(record, threshold_seconds=0)
+    # A past datetime (even if naive) should be expired
+    assert result is True
 
 
 # ---------- store_tokens ----------
