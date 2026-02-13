@@ -2629,43 +2629,31 @@ class ToolService:
         if not tool_payload:
             # Eager load tool WITH gateway in single query to prevent lazy load N+1
             # Use a single query to avoid a race between separate enabled/inactive lookups.
-            # Eager load tool WITH gateway in single query to prevent lazy load N+1
-            # Use a single query to avoid a race between separate enabled/inactive lookups.
+            # Use scalars().all() instead of scalar_one_or_none() to handle duplicate
+            # tool names across teams without crashing on MultipleResultsFound.
             tools = db.execute(select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.name == name)).scalars().all()
 
             if not tools:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
-            # If only one tool is returned, skip filtering and sorting
-            if len(tools) == 1:
+            multiple_found = len(tools) > 1
+            if not multiple_found:
                 tool = tools[0]
             else:
-                # Multiple tools found - filter by access and prioritize
-                # Priority: Private (owner matches) > Team (team matches) > Public
-                accessible_tools = []
+                # Multiple tools found with same name — filter by access using
+                # _check_tool_access (same rules as list_tools) and prioritize.
+                # Priority (lower is better): team (0) > private (1) > public (2)
+                visibility_priority = {"team": 0, "private": 1, "public": 2}
+                accessible_tools: list[tuple[int, Any]] = []
                 for t in tools:
-                    is_owner = t.owner_email == user_email if user_email and t.owner_email else False
-                    is_team_member = t.team_id in token_teams if token_teams and t.team_id else False
-                    # Check visibility
-                    if t.visibility == "private" and not is_owner:
-                        continue
-                    if t.visibility == "team" and not is_team_member and not is_owner:
-                        continue
-
-                    # Compute priority score (lower is better)
-                    priority = 3
-                    if is_owner:
-                        priority = 2
-                    elif is_team_member:
-                        priority = 1
-
-                    accessible_tools.append((priority, t))
+                    tool_dict = {"visibility": t.visibility, "team_id": t.team_id, "owner_email": t.owner_email}
+                    if await self._check_tool_access(db, tool_dict, user_email, token_teams):
+                        priority = visibility_priority.get(t.visibility, 99)
+                        accessible_tools.append((priority, t))
 
                 if not accessible_tools:
-                    # No tools visible to this user
                     raise ToolNotFoundError(f"Tool not found: {name}")
 
-                # Sort by priority
                 accessible_tools.sort(key=lambda x: x[0])
 
                 # Check for ambiguity at the highest priority level
@@ -2679,6 +2667,7 @@ class ToolService:
 
             if not tool.enabled:
                 raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
+
             if not tool.reachable:
                 await tool_lookup_cache.set_negative(name, "offline")
                 raise ToolNotFoundError(f"Tool '{name}' exists but is currently offline. Please verify if it is running.")
@@ -2687,7 +2676,10 @@ class ToolService:
             cache_payload = self._build_tool_cache_payload(tool, gateway)
             tool_payload = cache_payload.get("tool") or {}
             gateway_payload = cache_payload.get("gateway")
-            await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
+            # Skip caching when multiple tools share a name — resolution is
+            # user-dependent, so a cached result could be wrong for other users.
+            if not multiple_found:
+                await tool_lookup_cache.set(name, cache_payload, gateway_id=tool_payload.get("gateway_id"))
 
         if tool_payload.get("enabled") is False:
             raise ToolNotFoundError(f"Tool '{name}' exists but is inactive")
