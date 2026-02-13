@@ -368,6 +368,56 @@ When disabled, only administrators can create user accounts via the Admin UI or 
 - [ ] Set up rate limiting per endpoint/client
 - [ ] Verify security headers are present (automatically added by SecurityHeadersMiddleware)
 - [ ] Configure iframe embedding policy (X_FRAME_OPTIONS=DENY by default, change to SAMEORIGIN if needed)
+- [ ] Verify Subresource Integrity (SRI) hashes for CDN resources (automatically verified in CI)
+
+#### Subresource Integrity (SRI)
+
+MCP Gateway implements Subresource Integrity for all external CDN resources to cryptographically verify that fetched resources have not been tampered with. This protects against:
+
+- **CDN Compromise**: Malicious code injection if a CDN is compromised
+- **MITM Attacks**: Content modification during transit
+- **DNS Hijacking**: Redirection to malicious CDN servers
+- **Version Drift**: Unexpected changes to CDN content
+
+**Protected Resources** (15 total):
+
+- HTMX (1.9.10) - Dynamic interactions
+- Alpine.js (3.14.1) - Reactive framework
+- Chart.js (4.4.1) - Data visualization
+- Marked (11.1.1) - Markdown parser
+- DOMPurify (3.0.6) - XSS sanitizer
+- CodeMirror (5.65.18) - Code editor (7 files)
+- Font Awesome (6.4.0) - Icon library
+
+**Verification**:
+
+```bash
+# Verify all SRI hashes match current CDN content
+make sri-verify
+
+# Regenerate hashes (after updating CDN library versions)
+make sri-generate
+```
+
+**Updating CDN Libraries**:
+
+When updating a CDN library version:
+
+1. Update the URL in `scripts/generate-sri-hashes.py`
+2. Run `make sri-generate` to calculate new hash
+3. Update the URL in templates (admin.html, login.html, etc.)
+4. Run `make sri-verify` to confirm hash matches
+5. Commit both `mcpgateway/sri_hashes.json` and template changes
+
+The CI pipeline automatically verifies SRI hashes on every build to detect unexpected changes.
+
+**Security Checklist**:
+
+- [x] All CDN resources have SRI integrity attributes
+- [x] All CDN URLs use exact version numbers (no `@latest`)
+- [x] CI verifies hashes match CDN content
+- [x] Hashes use SHA-384 algorithm (W3C recommended)
+- [ ] Review SRI hashes after any CDN library updates
 
 ### 9. Container Security
 
