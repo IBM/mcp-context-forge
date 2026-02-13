@@ -127,7 +127,7 @@ const readFileAsync = function (file) {
  * @param {string} content - PEM certificate content
  * @returns {Object} - Certificate info with isRoot flag
  */
-const parseCertificateInfo = function (content) {
+export const parseCertificateInfo = function (content) {
   // Basic heuristic: check if Subject and Issuer appear the same
   // In a real implementation, you'd parse the ASN.1 structure properly
   const subjectMatch = content.match(/Subject:([^\n]+)/i);
@@ -153,7 +153,7 @@ const parseCertificateInfo = function (content) {
  * @param {Array} certResults - Array of certificate result objects
  * @returns {Array} - Ordered array of certificate results
  */
-const orderCertificateChain = function (certResults) {
+export const orderCertificateChain = function (certResults) {
   const roots = certResults.filter((r) => r.certInfo && r.certInfo.isRoot);
   const nonRoots = certResults.filter((r) => r.certInfo && !r.certInfo.isRoot);
 

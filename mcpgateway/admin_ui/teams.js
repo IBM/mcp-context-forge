@@ -575,7 +575,7 @@ const updateRequirementIcon = function (elementId, isValid) {
   }
 };
 
-const validatePasswordRequirements = function () {
+export const validatePasswordRequirements = function () {
   const policy = getPasswordPolicy();
   const passwordField = safeGetElement("password-field", true);
   if (!policy || !passwordField) {

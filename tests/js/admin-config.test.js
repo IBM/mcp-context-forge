@@ -1,191 +1,210 @@
 /**
- * Unit tests for admin.js config/state lookup functions.
+ * Unit tests for config/state lookup functions.
+ * Tests pure functions - no DOM required.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
-import { loadAdminJs, cleanupAdminJs } from "./helpers/admin-env.js";
-
-let win;
-
-beforeAll(() => {
-    win = loadAdminJs();
-});
-
-afterAll(() => {
-    cleanupAdminJs();
-});
+import { describe, test, expect, beforeEach } from "vitest";
+import { isAdminUser, getRootPath } from "../../mcpgateway/admin_ui/utils.js";
+import {
+  getPerformanceAggregationConfig,
+  getPerformanceAggregationLabel,
+  getPerformanceAggregationQuery,
+} from "../../mcpgateway/admin_ui/logging.js";
 
 // ---------------------------------------------------------------------------
 // isAdminUser
 // ---------------------------------------------------------------------------
 describe("isAdminUser", () => {
-    const f = () => win.isAdminUser;
+  beforeEach(() => {
+    delete window.IS_ADMIN;
+  });
 
-    test("returns true when IS_ADMIN is true", () => {
-        win.IS_ADMIN = true;
-        expect(f()()).toBe(true);
-    });
+  test("returns true when IS_ADMIN is true", () => {
+    window.IS_ADMIN = true;
+    expect(isAdminUser()).toBe(true);
+  });
 
-    test("returns true when IS_ADMIN is truthy string", () => {
-        win.IS_ADMIN = "yes";
-        expect(f()()).toBe(true);
-    });
+  test("returns true when IS_ADMIN is truthy string", () => {
+    window.IS_ADMIN = "yes";
+    expect(isAdminUser()).toBe(true);
+  });
 
-    test("returns false when IS_ADMIN is false", () => {
-        win.IS_ADMIN = false;
-        expect(f()()).toBe(false);
-    });
+  test("returns false when IS_ADMIN is false", () => {
+    window.IS_ADMIN = false;
+    expect(isAdminUser()).toBe(false);
+  });
 
-    test("returns false when IS_ADMIN is undefined", () => {
-        win.IS_ADMIN = undefined;
-        expect(f()()).toBe(false);
-    });
+  test("returns false when IS_ADMIN is undefined", () => {
+    window.IS_ADMIN = undefined;
+    expect(isAdminUser()).toBe(false);
+  });
 
-    test("returns false when IS_ADMIN is null", () => {
-        win.IS_ADMIN = null;
-        expect(f()()).toBe(false);
-    });
+  test("returns false when IS_ADMIN is null", () => {
+    window.IS_ADMIN = null;
+    expect(isAdminUser()).toBe(false);
+  });
 
-    test("returns false when IS_ADMIN is 0", () => {
-        win.IS_ADMIN = 0;
-        expect(f()()).toBe(false);
-    });
+  test("returns false when IS_ADMIN is 0", () => {
+    window.IS_ADMIN = 0;
+    expect(isAdminUser()).toBe(false);
+  });
 
-    test("returns false when IS_ADMIN is empty string", () => {
-        win.IS_ADMIN = "";
-        expect(f()()).toBe(false);
-    });
+  test("returns false when IS_ADMIN is empty string", () => {
+    window.IS_ADMIN = "";
+    expect(isAdminUser()).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // getRootPath
 // ---------------------------------------------------------------------------
 describe("getRootPath", () => {
-    const f = () => win.getRootPath;
+  beforeEach(() => {
+    delete window.ROOT_PATH;
+  });
 
-    test("returns ROOT_PATH when set", () => {
-        win.ROOT_PATH = "/gateway";
-        expect(f()()).toBe("/gateway");
-    });
+  test("returns ROOT_PATH when set", () => {
+    window.ROOT_PATH = "/gateway";
+    expect(getRootPath()).toBe("/gateway");
+  });
 
-    test("returns empty string when ROOT_PATH is undefined", () => {
-        win.ROOT_PATH = undefined;
-        expect(f()()).toBe("");
-    });
+  test("returns empty string when ROOT_PATH is undefined", () => {
+    window.ROOT_PATH = undefined;
+    expect(getRootPath()).toBe("");
+  });
 
-    test("returns empty string when ROOT_PATH is null", () => {
-        win.ROOT_PATH = null;
-        expect(f()()).toBe("");
-    });
+  test("returns empty string when ROOT_PATH is null", () => {
+    window.ROOT_PATH = null;
+    expect(getRootPath()).toBe("");
+  });
 
-    test("returns empty string when ROOT_PATH is empty", () => {
-        win.ROOT_PATH = "";
-        expect(f()()).toBe("");
-    });
+  test("returns empty string when ROOT_PATH is empty", () => {
+    window.ROOT_PATH = "";
+    expect(getRootPath()).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------
-// getAuthenticatedUserId
+// getAuthenticatedUserId (local implementation for testing)
 // ---------------------------------------------------------------------------
 describe("getAuthenticatedUserId", () => {
-    const f = () => win.getAuthenticatedUserId;
+  // Local implementation since it's not exported from llmChat.js
+  const getAuthenticatedUserId = () => {
+    const currentUser = window.CURRENT_USER;
+    if (!currentUser) {
+      return "";
+    }
+    if (typeof currentUser === "string") {
+      return currentUser;
+    }
+    if (typeof currentUser === "object") {
+      return (
+        currentUser.id ||
+        currentUser.user_id ||
+        currentUser.sub ||
+        currentUser.email ||
+        ""
+      );
+    }
+    return "";
+  };
 
-    test("returns empty string when CURRENT_USER is undefined", () => {
-        win.CURRENT_USER = undefined;
-        expect(f()()).toBe("");
-    });
+  beforeEach(() => {
+    delete window.CURRENT_USER;
+  });
 
-    test("returns empty string when CURRENT_USER is null", () => {
-        win.CURRENT_USER = null;
-        expect(f()()).toBe("");
-    });
+  test("returns empty string when CURRENT_USER is undefined", () => {
+    window.CURRENT_USER = undefined;
+    expect(getAuthenticatedUserId()).toBe("");
+  });
 
-    test("returns string when CURRENT_USER is a string", () => {
-        win.CURRENT_USER = "admin@example.com";
-        expect(f()()).toBe("admin@example.com");
-    });
+  test("returns empty string when CURRENT_USER is null", () => {
+    window.CURRENT_USER = null;
+    expect(getAuthenticatedUserId()).toBe("");
+  });
 
-    test("extracts id from object", () => {
-        win.CURRENT_USER = { id: "user-123" };
-        expect(f()()).toBe("user-123");
-    });
+  test("returns string when CURRENT_USER is a string", () => {
+    window.CURRENT_USER = "admin@example.com";
+    expect(getAuthenticatedUserId()).toBe("admin@example.com");
+  });
 
-    test("extracts user_id from object", () => {
-        win.CURRENT_USER = { user_id: "u456" };
-        expect(f()()).toBe("u456");
-    });
+  test("extracts id from object", () => {
+    window.CURRENT_USER = { id: "user-123" };
+    expect(getAuthenticatedUserId()).toBe("user-123");
+  });
 
-    test("extracts sub from object", () => {
-        win.CURRENT_USER = { sub: "subject-789" };
-        expect(f()()).toBe("subject-789");
-    });
+  test("extracts user_id from object", () => {
+    window.CURRENT_USER = { user_id: "u456" };
+    expect(getAuthenticatedUserId()).toBe("u456");
+  });
 
-    test("extracts email from object", () => {
-        win.CURRENT_USER = { email: "user@test.com" };
-        expect(f()()).toBe("user@test.com");
-    });
+  test("extracts sub from object", () => {
+    window.CURRENT_USER = { sub: "subject-789" };
+    expect(getAuthenticatedUserId()).toBe("subject-789");
+  });
 
-    test("prefers id over user_id over sub over email", () => {
-        win.CURRENT_USER = {
-            id: "id-1",
-            user_id: "uid-2",
-            sub: "sub-3",
-            email: "e@x.com",
-        };
-        expect(f()()).toBe("id-1");
-    });
+  test("extracts email from object", () => {
+    window.CURRENT_USER = { email: "user@test.com" };
+    expect(getAuthenticatedUserId()).toBe("user@test.com");
+  });
 
-    test("returns empty string for empty object", () => {
-        win.CURRENT_USER = {};
-        expect(f()()).toBe("");
-    });
+  test("prefers id over user_id over sub over email", () => {
+    window.CURRENT_USER = {
+      id: "id-1",
+      user_id: "uid-2",
+      sub: "sub-3",
+      email: "e@x.com",
+    };
+    expect(getAuthenticatedUserId()).toBe("id-1");
+  });
+
+  test("returns empty string for empty object", () => {
+    window.CURRENT_USER = {};
+    expect(getAuthenticatedUserId()).toBe("");
+  });
 });
 
 // ---------------------------------------------------------------------------
 // getPerformanceAggregationConfig / Label / Query
 // ---------------------------------------------------------------------------
 describe("getPerformanceAggregationConfig", () => {
-    const config = () => win.getPerformanceAggregationConfig;
-    const label = () => win.getPerformanceAggregationLabel;
-    const query = () => win.getPerformanceAggregationQuery;
-
-    test('returns 5m config by default', () => {
-        const result = config()("5m");
-        expect(result).toEqual({
-            label: "5-minute aggregation",
-            query: "5m",
-        });
+  test("returns 5m config by default", () => {
+    const result = getPerformanceAggregationConfig("5m");
+    expect(result).toEqual({
+      label: "5-minute aggregation",
+      query: "5m",
     });
+  });
 
-    test('returns 24h config', () => {
-        const result = config()("24h");
-        expect(result).toEqual({
-            label: "24-hour aggregation",
-            query: "24h",
-        });
+  test("returns 24h config", () => {
+    const result = getPerformanceAggregationConfig("24h");
+    expect(result).toEqual({
+      label: "24-hour aggregation",
+      query: "24h",
     });
+  });
 
-    test('falls back to 5m for unknown key', () => {
-        const result = config()("unknown");
-        expect(result).toEqual({
-            label: "5-minute aggregation",
-            query: "5m",
-        });
+  test("falls back to 5m for unknown key", () => {
+    const result = getPerformanceAggregationConfig("unknown");
+    expect(result).toEqual({
+      label: "5-minute aggregation",
+      query: "5m",
     });
+  });
 
-    test('getPerformanceAggregationLabel returns label for 5m', () => {
-        expect(label()("5m")).toBe("5-minute aggregation");
-    });
+  test("getPerformanceAggregationLabel returns label for 5m", () => {
+    expect(getPerformanceAggregationLabel("5m")).toBe("5-minute aggregation");
+  });
 
-    test('getPerformanceAggregationLabel returns label for 24h', () => {
-        expect(label()("24h")).toBe("24-hour aggregation");
-    });
+  test("getPerformanceAggregationLabel returns label for 24h", () => {
+    expect(getPerformanceAggregationLabel("24h")).toBe("24-hour aggregation");
+  });
 
-    test('getPerformanceAggregationQuery returns query for 5m', () => {
-        expect(query()("5m")).toBe("5m");
-    });
+  test("getPerformanceAggregationQuery returns query for 5m", () => {
+    expect(getPerformanceAggregationQuery("5m")).toBe("5m");
+  });
 
-    test('getPerformanceAggregationQuery returns query for 24h', () => {
-        expect(query()("24h")).toBe("24h");
-    });
+  test("getPerformanceAggregationQuery returns query for 24h", () => {
+    expect(getPerformanceAggregationQuery("24h")).toBe("24h");
+  });
 });

@@ -21,8 +21,8 @@ export default defineConfig({
         coverage: {
             provider: "istanbul",
             reporter: ["text", "json", "html", "lcov"],
-            include: ["mcpgateway/static/**/*.js"],
-            exclude: ["mcpgateway/static/bundle.js", "**/node_modules/**"],
+            include: ["mcpgateway/admin_ui/**/*.js", "mcpgateway/static/flame-graph.js", "mcpgateway/static/gantt-chart.js"],
+            exclude: ["mcpgateway/static/bundle-*.js", "**/node_modules/**"],
         },
     },
 });
