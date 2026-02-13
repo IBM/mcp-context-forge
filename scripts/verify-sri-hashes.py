@@ -88,13 +88,13 @@ def load_stored_hashes() -> Dict[str, str]:
         json.JSONDecodeError: If sri_hashes.json is invalid
     """
     sri_file = Path(__file__).parent.parent / "mcpgateway" / "sri_hashes.json"
-    
+
     if not sri_file.exists():
         raise FileNotFoundError(
             f"SRI hashes file not found: {sri_file}\n"
             "Run 'make sri-generate' to generate hashes"
         )
-    
+
     with sri_file.open("r") as f:
         return json.load(f)
 
@@ -112,12 +112,12 @@ def verify_hash(name: str, url: str, stored_hash: str) -> Tuple[bool, str, str]:
     """
     try:
         actual_hash = calculate_sri_hash(url)
-        
+
         if actual_hash == stored_hash:
             return True, actual_hash, ""
         else:
             return False, actual_hash, f"Hash mismatch!\n    Expected: {stored_hash}\n    Actual:   {actual_hash}"
-    
+
     except Exception as e:
         return False, "", f"Failed to fetch: {e}"
 
@@ -140,16 +140,16 @@ def main() -> int:
     # Verify each resource
     results = []
     failed = []
-    
+
     for name, url in CDN_RESOURCES.items():
         if name not in stored_hashes:
             print(f"  ⚠️  {name}: Missing from sri_hashes.json")
             failed.append(name)
             continue
-        
+
         print(f"  Verifying {name}...", end=" ", flush=True)
         success, actual_hash, error = verify_hash(name, url, stored_hashes[name])
-        
+
         if success:
             print("✓")
             results.append((name, True, ""))
