@@ -22,6 +22,7 @@ Configurable via:
 """
 
 # Standard
+import uuid
 from typing import Sequence, Union
 
 # Third-Party
@@ -43,6 +44,11 @@ OLD_ADMIN_ROLE = "platform_admin"
 OLD_USER_ROLE = "platform_viewer"
 OLD_TEAM_OWNER_ROLE = "team_admin"
 OLD_TEAM_MEMBER_ROLE = "viewer"
+
+
+def _generate_uuid() -> str:
+    """Generate a UUID string compatible with both PostgreSQL and SQLite."""
+    return str(uuid.uuid4())
 
 
 def _get_role_id(bind, role_name: str, scope: str):
@@ -130,9 +136,16 @@ def upgrade() -> None:
 
     # Also migrate/update existing team member roles if they differ
     if new_team_member_role != OLD_TEAM_MEMBER_ROLE:
-        # Migrate existing team member role assignments (not just self-granted)
-        if new_team_member_role != OLD_TEAM_MEMBER_ROLE:
-            old_role_id = _get_role_id(bind, OLD_TEAM_MEMBER_ROLE, "team")
+        old_role_id = _get_role_id(bind, OLD_TEAM_MEMBER_ROLE, "team")
+        new_role_id = _get_role_id(bind, new_team_member_role, "team")
+        if old_role_id and new_role_id:
+            result = bind.execute(
+                text("UPDATE user_roles SET role_id = :new_id WHERE role_id = :old_id AND scope = :scope"),
+                {"new_id": new_role_id, "old_id": old_role_id, "scope": "team"},
+            )
+            migrated = getattr(result, "rowcount", 0)
+            total += migrated
+            print(f"  ✓ Migrated {migrated} team member role assignments: '{OLD_TEAM_MEMBER_ROLE}' -> '{new_team_member_role}'")
             new_role_id = _get_role_id(bind, new_team_member_role, "team")
             if old_role_id and new_role_id:
                 result = bind.execute(
@@ -149,11 +162,11 @@ def upgrade() -> None:
         team_member_role_id = _get_role_id(bind, new_team_member_role, "team")
         if team_member_role_id:
             # Find team members who don't have any team-scoped role in user_roles
+            # Fetch in Python to handle UUID generation for both PostgreSQL and SQLite
             result = bind.execute(
                 text(
                     """
-                    INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, is_active)
-                    SELECT gen_random_uuid()::text, tm.user_email, :role_id, 'team', tm.team_id, 'system_migration', true
+                    SELECT tm.user_email, tm.team_id
                     FROM email_team_members tm
                     WHERE tm.is_active = true
                     AND NOT EXISTS (
@@ -165,11 +178,18 @@ def upgrade() -> None:
                     )
                     """
                 ),
-                {"role_id": team_member_role_id},
             )
-            created = getattr(result, "rowcount", 0)
-            total += created
-            print(f"  ✓ Created {created} team-scoped role assignments for existing team members")
+            members_without_roles = result.fetchall()
+
+            for member in members_without_roles:
+                user_email, team_id = member
+                bind.execute(
+                    text("INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, is_active) VALUES (:id, :user_email, :role_id, 'team', :team_id, 'system_migration', true)"),
+                    {"id": _generate_uuid(), "user_email": user_email, "role_id": team_member_role_id, "team_id": team_id},
+                )
+
+            total += len(members_without_roles)
+            print(f"  ✓ Created {len(members_without_roles)} team-scoped role assignments for existing team members")
         else:
             print(f"  ⚠ Team member role '{new_team_member_role}' not found, skipping team member role creation")
 

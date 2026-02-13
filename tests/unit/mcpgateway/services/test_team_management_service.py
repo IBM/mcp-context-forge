@@ -1208,22 +1208,26 @@ class TestTeamManagementService:
         mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
         service._role_service = mock_role_service
 
-        with (
-            patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
-            patch.object(service, "_log_team_member_action"),
-            patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()),
-            patch.object(
-                service,
-                "_fire_and_forget",
-                side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
-            ),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_role", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
-        ):
-            result = await service.approve_join_request("req-1", "admin@example.com")
+        # Mock settings to use "developer" (test expects this value)
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "developer"
+
+            with (
+                patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
+                patch.object(service, "_log_team_member_action"),
+                patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()),
+                patch.object(
+                    service,
+                    "_fire_and_forget",
+                    side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
+                ),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_role", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
+            ):
+                result = await service.approve_join_request("req-1", "admin@example.com")
 
         assert result is member
         mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
