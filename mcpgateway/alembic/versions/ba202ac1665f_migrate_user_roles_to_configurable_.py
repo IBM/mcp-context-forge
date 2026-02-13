@@ -51,7 +51,13 @@ def _get_role_id(bind, role_name: str, scope: str):
 
 
 def _migrate_role(bind, old_role_name: str, new_role_name: str, scope: str) -> int:
-    """Migrate user_roles from old role to new role. Returns count of updated rows."""
+    """Migrate self-granted user_roles from old role to new role.
+
+    Only updates assignments where granted_by = user_email (auto-assigned
+    defaults from user creation), leaving manually granted roles untouched.
+
+    Returns count of updated rows.
+    """
     if old_role_name == new_role_name:
         print(f"  - {scope} role '{old_role_name}' unchanged, skipping")
         return 0
@@ -67,11 +73,15 @@ def _migrate_role(bind, old_role_name: str, new_role_name: str, scope: str) -> i
         return 0
 
     result = bind.execute(
-        text("UPDATE user_roles SET role_id = :new_id WHERE role_id = :old_id AND scope = :scope"),
+        text(
+            "UPDATE user_roles SET role_id = :new_id "
+            "WHERE role_id = :old_id AND scope = :scope "
+            "AND granted_by = user_email"
+        ),
         {"new_id": new_role_id, "old_id": old_role_id, "scope": scope},
     )
     count = getattr(result, "rowcount", 0)
-    print(f"  ✓ Migrated {count} assignments: '{old_role_name}' -> '{new_role_name}' ({scope})")
+    print(f"  ✓ Migrated {count} self-granted assignments: '{old_role_name}' -> '{new_role_name}' ({scope})")
     return count
 
 
