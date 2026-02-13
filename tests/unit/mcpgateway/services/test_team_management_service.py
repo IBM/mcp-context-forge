@@ -1208,9 +1208,9 @@ class TestTeamManagementService:
         mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
         service._role_service = mock_role_service
 
-        # Mock settings to use "developer" (test expects this value)
+        # Mock settings to use "viewer" (test expects this value)
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
-            mock_settings.default_team_member_role = "developer"
+            mock_settings.default_team_member_role = "viewer"
 
             with (
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
@@ -1230,7 +1230,7 @@ class TestTeamManagementService:
                 result = await service.approve_join_request("req-1", "admin@example.com")
 
         assert result is member
-        mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
+        mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
         mock_role_service.assign_role_to_user.assert_called_once()
         call_args = mock_role_service.assign_role_to_user.call_args[1]
         assert call_args["user_email"] == "user@example.com"
@@ -1255,26 +1255,29 @@ class TestTeamManagementService:
         mock_role_service.get_role_by_name = AsyncMock(return_value=None)
         service._role_service = mock_role_service
 
-        with (
-            patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
-            patch.object(service, "_log_team_member_action"),
-            patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()),
-            patch.object(
-                service,
-                "_fire_and_forget",
-                side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
-            ),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_role", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
-            patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
-        ):
-            result = await service.approve_join_request("req-1", "admin@example.com")
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
+
+            with (
+                patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
+                patch.object(service, "_log_team_member_action"),
+                patch.object(service, "invalidate_team_member_count_cache", new=AsyncMock()),
+                patch.object(
+                    service,
+                    "_fire_and_forget",
+                    side_effect=lambda coro: coro.close() if hasattr(coro, "close") else None,
+                ),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_role", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_user_teams", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.auth_cache.invalidate_team_membership", new=AsyncMock()),
+                patch("mcpgateway.services.team_management_service.admin_stats_cache.invalidate_teams", new=AsyncMock()),
+            ):
+                result = await service.approve_join_request("req-1", "admin@example.com")
 
         # Should still return member even without role
         assert result is member
-        mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
+        mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
         mock_role_service.assign_role_to_user.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1855,19 +1858,22 @@ class TestTeamManagementService:
         mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
         service._role_service = mock_role_service
 
-        with patch.object(service, "get_team_by_id", return_value=mock_team):
-            # Execute
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
 
-            # Verify
-            assert result is True
-            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
-            mock_role_service.assign_role_to_user.assert_called_once()
-            call_args = mock_role_service.assign_role_to_user.call_args[1]
-            assert call_args["user_email"] == "user@example.com"
-            assert call_args["role_id"] == "role123"
-            assert call_args["scope"] == "team"
-            assert call_args["scope_id"] == "team123"
+            with patch.object(service, "get_team_by_id", return_value=mock_team):
+                # Execute
+                result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+
+                # Verify
+                assert result is True
+                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                mock_role_service.assign_role_to_user.assert_called_once()
+                call_args = mock_role_service.assign_role_to_user.call_args[1]
+                assert call_args["user_email"] == "user@example.com"
+                assert call_args["role_id"] == "role123"
+                assert call_args["scope"] == "team"
+                assert call_args["scope_id"] == "team123"
 
     @pytest.mark.asyncio
     async def test_add_member_skips_role_if_already_assigned(self, service, mock_db, mock_team, mock_user):
@@ -1940,17 +1946,20 @@ class TestTeamManagementService:
         service._role_service = mock_role_service
 
         # Patch get_team_by_id
-        with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
-            mock_get_team.return_value = mock_team
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
 
-            # Execute
-            result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+            with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
+                mock_get_team.return_value = mock_team
+                mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
 
-            # Verify
-            assert result is True
-            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
-            mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@example.com", role_id="role123", scope="team", scope_id="team123")
+                # Execute
+                result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+
+                # Verify
+                assert result is True
+                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@example.com", role_id="role123", scope="team", scope_id="team123")
 
     @pytest.mark.asyncio
     async def test_add_member_role_not_found(self, service, mock_db, mock_team, mock_user):
@@ -1989,14 +1998,17 @@ class TestTeamManagementService:
         mock_role_service.get_role_by_name = AsyncMock(return_value=None)  # Role not found
         service._role_service = mock_role_service
 
-        with patch.object(service, "get_team_by_id", return_value=mock_team):
-            # Execute
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
 
-            # Verify - member should still be added even without role
-            assert result is True
-            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
-            mock_role_service.assign_role_to_user.assert_not_called()
+            with patch.object(service, "get_team_by_id", return_value=mock_team):
+                # Execute
+                result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+
+                # Verify - member should still be added even without role
+                assert result is True
+                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                mock_role_service.assign_role_to_user.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_add_member_role_assignment_exception(self, service, mock_db, mock_team, mock_user):
@@ -2090,15 +2102,18 @@ class TestTeamManagementService:
         mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
         service._role_service = mock_role_service
 
-        with patch.object(service, "get_team_by_id", return_value=mock_team):
-            # Execute
-            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
 
-            # Verify
-            assert result is True
-            assert mock_membership.is_active is True
-            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
-            mock_role_service.assign_role_to_user.assert_called_once()
+            with patch.object(service, "get_team_by_id", return_value=mock_team):
+                # Execute
+                result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+
+                # Verify
+                assert result is True
+                assert mock_membership.is_active is True
+                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                mock_role_service.assign_role_to_user.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_remove_member_role_not_found(self, service, mock_db, mock_team):
@@ -2114,17 +2129,20 @@ class TestTeamManagementService:
         service._role_service = mock_role_service
 
         # Patch get_team_by_id
-        with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
-            mock_get_team.return_value = mock_team
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
 
-            # Execute
-            result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+            with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
+                mock_get_team.return_value = mock_team
+                mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
 
-            # Verify - member should still be removed
-            assert result is True
-            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
-            mock_role_service.revoke_role_from_user.assert_not_called()
+                # Execute
+                result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+
+                # Verify - member should still be removed
+                assert result is True
+                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                mock_role_service.revoke_role_from_user.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_remove_member_no_role_to_revoke(self, service, mock_db, mock_team):
@@ -2144,17 +2162,20 @@ class TestTeamManagementService:
         service._role_service = mock_role_service
 
         # Patch get_team_by_id
-        with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
-            mock_get_team.return_value = mock_team
-            mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
+        with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_member_role = "viewer"
 
-            # Execute
-            result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+            with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
+                mock_get_team.return_value = mock_team
+                mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
 
-            # Verify
-            assert result is True
-            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
-            mock_role_service.revoke_role_from_user.assert_called_once()
+                # Execute
+                result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+
+                # Verify
+                assert result is True
+                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                mock_role_service.revoke_role_from_user.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_remove_member_role_revocation_exception(self, service, mock_db, mock_team):
