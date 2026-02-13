@@ -365,7 +365,7 @@ def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
         team_id: Raw team ID from request params.
 
     Returns:
-        Normalized team ID string or None.
+        Normalized team ID string in hyphenated format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx) or None.
 
     Raises:
         ValueError: If the team ID is not a valid UUID.
@@ -373,7 +373,7 @@ def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
     if not team_id:
         return None
     try:
-        return uuid.UUID(str(team_id)).hex
+        return str(uuid.UUID(str(team_id)))
     except (ValueError, AttributeError, TypeError) as exc:
         raise ValueError("Invalid team ID") from exc
 

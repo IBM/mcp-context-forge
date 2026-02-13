@@ -13045,7 +13045,7 @@ class TestUtilityFunctions:
     def test_normalize_team_id_valid_uuid(self):
         uid = "12345678-1234-5678-1234-567812345678"
         result = _normalize_team_id(uid)
-        assert result == "12345678123456781234567812345678"
+        assert result == "12345678-1234-5678-1234-567812345678"
 
     def test_normalize_team_id_invalid(self):
         with pytest.raises(ValueError, match="Invalid team ID"):
