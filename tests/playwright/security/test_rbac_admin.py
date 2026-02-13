@@ -94,7 +94,6 @@ class TestRoleLifecycle:
         updated = resp.json()
         assert "prompts.read" in updated["permissions"]
 
-    @pytest.mark.xfail(reason="Server bug: incorrect SQLAlchemy query in delete_role (#2917)", strict=True)
     def test_delete_custom_role(self, admin_api: APIRequestContext):
         """Admin can delete a custom role."""
         resp = admin_api.post(
@@ -107,7 +106,6 @@ class TestRoleLifecycle:
         del_resp = admin_api.delete(f"/rbac/roles/{role_id}")
         assert del_resp.status == 200
 
-    @pytest.mark.xfail(reason="Server bug: system role delete returns 500 instead of 400 (#2917)", strict=True)
     def test_system_role_delete_returns_400(self, admin_api: APIRequestContext):
         """Deleting a system role should return 400, not 500."""
         resp = admin_api.get("/rbac/roles")
