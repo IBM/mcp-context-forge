@@ -6,4 +6,84 @@ noop:
   rules:
     - when: never
   script:
-    - echo "noop"
+    - *ensure_python
+    - python3 --version
+    # Create venv and install deps
+    - python3 -m venv .venv
+    - source .venv/bin/activate
+    - python3 -m ensurepip --upgrade 2>/dev/null || true
+    - python3 -m pip install --quiet --upgrade pip
+    - python3 -m pip install --quiet -e .
+    - python3 -m pip install --quiet black isort pytest pytest-cov pytest-xdist
+    - echo "✅ Setup complete — $(python3 --version), pip $(pip --version 2>/dev/null | awk '{print $2}')"
+  cache:
+    key: "py-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .venv/
+      - .python-standalone/
+    policy: push
+
+# Shared template for jobs that need the cached venv
+.python_job:
+  before_script:
+    - *ensure_python
+    - source .venv/bin/activate
+  cache:
+    key: "py-${CI_COMMIT_REF_SLUG}"
+    paths:
+      - .venv/
+      - .python-standalone/
+    policy: pull
+  needs:
+    - job: setup
+      artifacts: false
+
+# ---------------------------------------------------------------------------
+# 2️⃣  QUALITY — Formatting checks (run in parallel)
+# ---------------------------------------------------------------------------
+black:
+  extends: .python_job
+  stage: quality
+  allow_failure: true          # ⚠️  remove once team runs:  black -l 200 mcpgateway
+  script:
+    - black --check -l 200 mcpgateway
+
+isort:
+  extends: .python_job
+  stage: quality
+  allow_failure: true          # ⚠️  remove once team runs:  isort mcpgateway
+  script:
+    - isort --check-only --diff mcpgateway
+
+# ---------------------------------------------------------------------------
+# 3️⃣  TEST — Pytest with coverage
+# ---------------------------------------------------------------------------
+test:
+  extends: .python_job
+  stage: test
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  script:
+    - pytest
+        --ignore=tests/fuzz
+        --cov=mcpgateway
+        --cov-report=xml:coverage.xml
+        --cov-report=html:htmlcov
+        --cov-report=term
+        --cov-branch
+        --cov-fail-under=60
+        --junitxml=junit.xml
+        --tb=short
+        -n 4
+        -q
+  artifacts:
+    when: always
+    reports:
+      junit: junit.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+      - junit.xml
+      - htmlcov/
+    expire_in: 7 days
