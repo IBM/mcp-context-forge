@@ -18,5 +18,10 @@ classifiers = [
 
 [tool.maturin]
 module-name = "pii_filter_rust"
+<<<<<<< HEAD
 python-source = "python"
+||||||| parent of c92f46966 (refactor: restructure Rust plugins as independent crates)
+module-name = "plugins_rust"
+=======
+>>>>>>> c92f46966 (refactor: restructure Rust plugins as independent crates)
 features = ["pyo3/extension-module"]
