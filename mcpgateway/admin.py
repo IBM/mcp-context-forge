@@ -26,6 +26,7 @@ from datetime import datetime, timedelta, timezone
 from functools import wraps
 import html
 import io
+import json
 import logging
 import math
 import os
@@ -245,6 +246,34 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
+
+# SRI (Subresource Integrity) hash cache
+_sri_hashes_cache: Optional[Dict[str, str]] = None
+
+
+def load_sri_hashes() -> Dict[str, str]:
+    """Load SRI hashes from sri_hashes.json file.
+
+    Returns:
+        Dict[str, str]: Dictionary mapping resource names to SRI hash strings.
+                       Returns empty dict if file not found or invalid.
+    """
+    global _sri_hashes_cache
+
+    if _sri_hashes_cache is not None:
+        return _sri_hashes_cache
+
+    try:
+        sri_file = Path(__file__).parent / "sri_hashes.json"
+        if sri_file.exists():
+            with sri_file.open("r") as f:
+                _sri_hashes_cache = json.load(f)
+                return _sri_hashes_cache
+    except Exception as e:
+        LOGGER.warning(f"Failed to load SRI hashes: {e}")
+
+    _sri_hashes_cache = {}
+    return _sri_hashes_cache
 
 
 def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
@@ -2845,6 +2874,7 @@ async def admin_ui(
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
@@ -2936,7 +2966,14 @@ async def admin_login_page(request: Request) -> Response:
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
-        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
+        {
+            "request": request,
+            "root_path": root_path,
+            "secure_cookie_warning": secure_cookie_warning,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "prefill_email": prefill_email,
+            "sri_hashes": load_sri_hashes(),
+        },
     )
 
 
@@ -3247,6 +3284,7 @@ async def change_password_required_page(request: Request) -> HTMLResponse:
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
+            "sri_hashes": load_sri_hashes(),
         },
     )
 
