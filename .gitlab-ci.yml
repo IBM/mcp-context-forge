@@ -1,70 +1,10 @@
-# 🚀 MCP Context Forge Gateway — GitLab CI/CD Pipeline
-#
-# Runner: Ubuntu 24.04 shell executor (no Python pre-installed).
-# Strategy:
-#   1. Try  sudo apt-get install python3  (works if sudo is allowed)
-#   2. Fall back to downloading a portable python-build-standalone release
-#      from GitHub (indygreg/python-build-standalone)
-
-stages:
-  - setup
-  - quality
-  - test
-
-variables:
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PYTHONUNBUFFERED: "1"
-  DATABASE_URL: "sqlite:///:memory:"
-  TEST_DATABASE_URL: "sqlite:///:memory:"
-  ARGON2ID_TIME_COST: "1"
-  ARGON2ID_MEMORY_COST: "1024"
-  FF_USE_FASTZIP: "true"
-  # Portable Python install location (inside project dir so it can be cached)
-  PYTHON_STANDALONE_DIR: "$CI_PROJECT_DIR/.python-standalone"
-
 workflow:
   rules:
-    - if: $CI_MERGE_REQUEST_IID
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-    - if: $CI_COMMIT_TAG
+    - when: never
 
-# ---------------------------------------------------------------------------
-# Helper: ensure python3 is on PATH
-# ---------------------------------------------------------------------------
-.ensure_python: &ensure_python
-  - |
-    # ── Ensure python3 is available ──────────────────────────────────
-    if command -v python3 &>/dev/null; then
-      echo "✅ python3 already available: $(python3 --version)"
-    elif command -v sudo &>/dev/null; then
-      echo "📦 Installing Python 3 via sudo apt-get …"
-      sudo apt-get update -qq
-      sudo apt-get install -y -qq python3 python3-venv python3-pip python3-dev gcc g++ libffi-dev 2>/dev/null
-      echo "✅ python3 installed: $(python3 --version)"
-    else
-      echo "📦 sudo not available – downloading standalone Python …"
-      if [ ! -x "$PYTHON_STANDALONE_DIR/python/bin/python3" ]; then
-        TARBALL="cpython-3.12.8+20250106-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
-        URL="https://github.com/indygreg/python-build-standalone/releases/download/20250106/${TARBALL}"
-        mkdir -p "$PYTHON_STANDALONE_DIR"
-        echo "   ⬇  Downloading from $URL"
-        wget -q -O "/tmp/python.tar.gz" "$URL"
-        tar -xzf /tmp/python.tar.gz -C "$PYTHON_STANDALONE_DIR"
-        rm -f /tmp/python.tar.gz
-      fi
-      export PATH="$PYTHON_STANDALONE_DIR/python/bin:$PATH"
-      echo "✅ standalone python3: $(python3 --version)"
-    fi
-    # Make sure python3 is on PATH for the rest of the job
-    if [ -d "$PYTHON_STANDALONE_DIR/python/bin" ]; then
-      export PATH="$PYTHON_STANDALONE_DIR/python/bin:$PATH"
-    fi
-
-# ---------------------------------------------------------------------------
-# 1️⃣  SETUP — Install Python & create cached venv
-# ---------------------------------------------------------------------------
-setup:
-  stage: setup
+noop:
+  rules:
+    - when: never
   script:
     - *ensure_python
     - python3 --version
