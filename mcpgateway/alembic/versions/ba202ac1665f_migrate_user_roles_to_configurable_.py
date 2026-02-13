@@ -12,12 +12,15 @@ Previous hardcoded defaults:
   - Admin global role: platform_admin
   - User global role: platform_viewer
   - Team owner role: team_admin
+  - Team member role: viewer
 
 Configurable via:
   - DEFAULT_ADMIN_ROLE
   - DEFAULT_USER_ROLE
   - DEFAULT_TEAM_OWNER_ROLE
+  - DEFAULT_TEAM_MEMBER_ROLE
 """
+
 # Standard
 from typing import Sequence, Union
 
@@ -30,8 +33,8 @@ from sqlalchemy import text
 from mcpgateway.config import settings
 
 # revision identifiers, used by Alembic.
-revision: str = 'ba202ac1665f'
-down_revision: Union[str, Sequence[str], None] = 'c1c2c3c4c5c6'
+revision: str = "ba202ac1665f"
+down_revision: Union[str, Sequence[str], None] = "c1c2c3c4c5c6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -39,6 +42,7 @@ depends_on: Union[str, Sequence[str], None] = None
 OLD_ADMIN_ROLE = "platform_admin"
 OLD_USER_ROLE = "platform_viewer"
 OLD_TEAM_OWNER_ROLE = "team_admin"
+OLD_TEAM_MEMBER_ROLE = "viewer"
 
 
 def _get_role_id(bind, role_name: str, scope: str):
@@ -89,11 +93,7 @@ def _migrate_role(bind, old_role_name: str, new_role_name: str, scope: str) -> i
         return 0
 
     result = bind.execute(
-        text(
-            "UPDATE user_roles SET role_id = :new_id "
-            "WHERE role_id = :old_id AND scope = :scope "
-            "AND granted_by = user_email"
-        ),
+        text("UPDATE user_roles SET role_id = :new_id WHERE role_id = :old_id AND scope = :scope AND granted_by = user_email"),
         {"new_id": new_role_id, "old_id": old_role_id, "scope": scope},
     )
     count = getattr(result, "rowcount", 0)
@@ -114,9 +114,10 @@ def upgrade() -> None:
     new_admin_role = settings.default_admin_role
     new_user_role = settings.default_user_role
     new_team_owner_role = settings.default_team_owner_role
+    new_team_member_role = settings.default_team_member_role
 
     # Check if any role has changed from the old hardcoded defaults
-    if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE:
+    if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE and new_team_member_role == OLD_TEAM_MEMBER_ROLE:
         print("All default roles match previous hardcoded values. No migration needed.")
         return
 
@@ -125,6 +126,53 @@ def upgrade() -> None:
     total += _migrate_role(bind, OLD_ADMIN_ROLE, new_admin_role, "global")
     total += _migrate_role(bind, OLD_USER_ROLE, new_user_role, "global")
     total += _migrate_role(bind, OLD_TEAM_OWNER_ROLE, new_team_owner_role, "team")
+    total += _migrate_role(bind, OLD_TEAM_MEMBER_ROLE, new_team_member_role, "team")
+
+    # Also migrate/update existing team member roles if they differ
+    if new_team_member_role != OLD_TEAM_MEMBER_ROLE:
+        # Migrate existing team member role assignments (not just self-granted)
+        if new_team_member_role != OLD_TEAM_MEMBER_ROLE:
+            old_role_id = _get_role_id(bind, OLD_TEAM_MEMBER_ROLE, "team")
+            new_role_id = _get_role_id(bind, new_team_member_role, "team")
+            if old_role_id and new_role_id:
+                result = bind.execute(
+                    text("UPDATE user_roles SET role_id = :new_id WHERE role_id = :old_id AND scope = :scope"),
+                    {"new_id": new_role_id, "old_id": old_role_id, "scope": "team"},
+                )
+                migrated = getattr(result, "rowcount", 0)
+                total += migrated
+                print(f"  ✓ Migrated {migrated} team member role assignments: '{OLD_TEAM_MEMBER_ROLE}' -> '{new_team_member_role}'")
+
+    # Create team-scoped roles for existing team members who don't have any
+    if "email_team_members" in existing_tables:
+        print("\n=== Creating team-scoped roles for existing team members ===")
+        team_member_role_id = _get_role_id(bind, new_team_member_role, "team")
+        if team_member_role_id:
+            # Find team members who don't have any team-scoped role in user_roles
+            result = bind.execute(
+                text(
+                    """
+                    INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, is_active)
+                    SELECT gen_random_uuid()::text, tm.user_email, :role_id, 'team', tm.team_id, 'system_migration', true
+                    FROM email_team_members tm
+                    WHERE tm.is_active = true
+                    AND NOT EXISTS (
+                        SELECT 1 FROM user_roles ur
+                        WHERE ur.user_email = tm.user_email
+                        AND ur.scope = 'team'
+                        AND ur.scope_id = tm.team_id
+                        AND ur.is_active = true
+                    )
+                    """
+                ),
+                {"role_id": team_member_role_id},
+            )
+            created = getattr(result, "rowcount", 0)
+            total += created
+            print(f"  ✓ Created {created} team-scoped role assignments for existing team members")
+        else:
+            print(f"  ⚠ Team member role '{new_team_member_role}' not found, skipping team member role creation")
+
     print(f"\n✅ Migration complete: {total} role assignments updated")
 
 
@@ -141,8 +189,9 @@ def downgrade() -> None:
     new_admin_role = settings.default_admin_role
     new_user_role = settings.default_user_role
     new_team_owner_role = settings.default_team_owner_role
+    new_team_member_role = settings.default_team_member_role
 
-    if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE:
+    if new_admin_role == OLD_ADMIN_ROLE and new_user_role == OLD_USER_ROLE and new_team_owner_role == OLD_TEAM_OWNER_ROLE and new_team_member_role == OLD_TEAM_MEMBER_ROLE:
         print("All default roles match previous hardcoded values. No downgrade needed.")
         return
 
@@ -151,4 +200,5 @@ def downgrade() -> None:
     total += _migrate_role(bind, new_admin_role, OLD_ADMIN_ROLE, "global")
     total += _migrate_role(bind, new_user_role, OLD_USER_ROLE, "global")
     total += _migrate_role(bind, new_team_owner_role, OLD_TEAM_OWNER_ROLE, "team")
+    total += _migrate_role(bind, new_team_member_role, OLD_TEAM_MEMBER_ROLE, "team")
     print(f"\n✅ Downgrade complete: {total} role assignments reverted")
