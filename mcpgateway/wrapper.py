@@ -46,7 +46,6 @@ import argparse
 import asyncio
 from contextlib import suppress
 from dataclasses import dataclass
-import errno
 import logging
 import os
 import signal
@@ -212,10 +211,8 @@ def send_to_stdout(obj: Union[dict, str, bytes]) -> None:
             sys.stdout.write(line.decode("utf-8") + "\n")
             sys.stdout.flush()
     except OSError as e:
-        if e.errno in (errno.EPIPE, errno.EINVAL):
-            _mark_shutdown()
-        else:
-            _mark_shutdown()
+        logger.error("OS error: %s", e)
+        _mark_shutdown()
 
 
 def make_error(message: str, code: int = JSONRPC_INTERNAL_ERROR, data: Any = None) -> dict:
