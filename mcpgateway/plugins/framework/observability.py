@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""Observability abstractions for the plugin framework.
+"""Location: ./mcpgateway/plugins/framework/observability.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0
+Authors: Fred Araujo
+
+Observability abstractions for the plugin framework.
 
 Provides a protocol-based interface for observability so that host
 applications can inject their own tracing implementation. Includes
 a NullObservability no-op default for standalone operation.
-
-Copyright 2025
-SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard

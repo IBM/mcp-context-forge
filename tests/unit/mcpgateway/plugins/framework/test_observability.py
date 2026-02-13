@@ -28,7 +28,7 @@ from mcpgateway.plugins.framework import (
 )
 from mcpgateway.plugins.framework.base import HookRef
 from mcpgateway.plugins.framework.manager import PluginExecutor
-from mcpgateway.plugins.framework.observability import NullObservability, current_trace_id
+from mcpgateway.plugins.framework.observability import current_trace_id, NullObservability
 from mcpgateway.plugins.framework.registry import PluginRef
 
 

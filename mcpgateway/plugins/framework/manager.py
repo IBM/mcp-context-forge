@@ -517,6 +517,27 @@ class PluginManager:
         """
         return self._initialized
 
+    @property
+    def observability(self) -> Optional[ObservabilityProvider]:
+        """Current observability provider.
+
+        Returns:
+            The observability provider or None if not configured.
+        """
+        return self._executor.observability
+
+    @observability.setter
+    def observability(self, provider: Optional[ObservabilityProvider]) -> None:
+        """Set the observability provider.
+
+        Thread-safe: uses lock to prevent races with concurrent readers.
+
+        Args:
+            provider: ObservabilityProvider to inject into the executor.
+        """
+        with self.__lock:
+            self._executor.observability = provider
+
     def get_plugin(self, name: str) -> Optional[Plugin]:
         """Get a plugin by name.
 
