@@ -580,7 +580,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-compare load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -1412,6 +1412,7 @@ performance-clean:                         ## Stop and remove all performance da
 # help: load-test-fasttime    - Load test fast_time MCP tools (50 users, 60s)
 # help: load-test-1000        - High-load test (1000 users, 120s)
 # help: load-test-summary     - Parse CSV reports and show summary statistics
+# help: load-test-compare     - Compare two Locust CSV runs (baseline vs candidate)
 
 # Default load test configuration (optimized for 4000+ users)
 LOADTEST_HOST ?= http://localhost:8080
@@ -1782,6 +1783,13 @@ with open('$(LOADTEST_CSV_PREFIX)_stats.csv') as f: \
 		echo "❌ No CSV report found at $(LOADTEST_CSV_PREFIX)_stats.csv"; \
 		echo "   Run 'make load-test' first to generate reports."; \
 	fi
+
+load-test-compare:                         ## Compare two Locust CSV runs (baseline vs candidate)
+	@if [ -z "$(BASELINE_CSV)" ] || [ -z "$(CANDIDATE_CSV)" ]; then \
+		echo "❌ Usage: make load-test-compare BASELINE_CSV=reports/python_stats.csv CANDIDATE_CSV=reports/rust_stats.csv"; \
+		exit 1; \
+	fi
+	@python3 tests/loadtest/compare_locust_runs.py --baseline "$(BASELINE_CSV)" --candidate "$(CANDIDATE_CSV)"
 
 # --- Baseline Load Tests (individual components without gateway) ---
 # help: load-test-baseline     - Baseline test: Fast Time Server REST API (1000 users, 3min)
@@ -6981,3 +6989,16 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+# Experimental Rust Streamable HTTP transport scaffold
+# help: rust-transport-build    - Build experimental Rust streamable HTTP transport wheel
+# help: rust-transport-dev      - Build/install experimental Rust streamable HTTP transport in development mode
+.PHONY: rust-transport-build rust-transport-dev
+
+rust-transport-build: rust-check-maturin   ## Build experimental Rust streamable HTTP transport wheel
+	@echo "🦀 Building experimental Rust streamable HTTP transport scaffold"
+	@cd mcpgateway_transport_rs && maturin build --release
+
+rust-transport-dev: rust-check-maturin     ## Install experimental Rust streamable HTTP transport in development mode
+	@echo "🦀 Installing experimental Rust streamable HTTP transport scaffold"
+	@cd mcpgateway_transport_rs && maturin develop --release

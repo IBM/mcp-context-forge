@@ -29,6 +29,16 @@ We will introduce an **experimental Rust-based backend** for the **Streamable HT
 
 This Rust backend will initially support only Streamable HTTP. Expansion to other transports will be considered after validating performance assumptions and operational complexity.
 
+### Phase Scope (Current Implementation)
+
+**Phase 1** is intentionally limited to:
+
+- Rust-based request context normalization for Streamable HTTP
+- Rust-handled `OPTIONS` CORS preflight for `/mcp` paths
+- Python fallback as the source of truth for regular Streamable HTTP request handling (`GET`/`POST`)
+
+This means the runtime remains hybrid in this phase, and full Rust request handling semantics are deferred to later phases.
+
 ## Consequences
 
 ### Positive
@@ -46,6 +56,77 @@ This Rust backend will initially support only Streamable HTTP. Expansion to othe
 
 Lessons learned from this implementation will be documented and used to guide future transport rewrites.
 
+## Lessons Learned
+
+### 1. Rust-Python Integration Requires Proper Build Workflow
+
+Using `cargo build` alone is insufficient for Python integration.
+
+Correct workflow:
+
+``` bash
+maturin develop --release
+```
+
+This ensures the compiled `.so` module is installed into the active
+virtual environment and exports required symbols correctly.
+
+If the compiled extension is not installed or symbols are unavailable at runtime,
+the bridge **must** disable Rust handling and fall back to Python with an explicit warning.
+
+------------------------------------------------------------------------
+
+### 2. Explicit Fallback Logging Is Essential
+
+Early integration attempts silently fell back to Python when bridge
+symbols were missing.
+
+Clear startup logging is necessary to: - Detect whether Rust transport
+is actually active - Prevent false performance conclusions - Aid
+debugging in CI and production environments
+
+------------------------------------------------------------------------
+
+### 3. Transport Layer May Not Be the Primary Bottleneck
+
+Under moderate concurrency testing:
+
+-   Rust and Python transport performance were statistically similar.
+-   Application logic and database interactions likely dominate latency.
+
+Transport optimization alone does not guarantee system-level performance
+gains.
+
+------------------------------------------------------------------------
+
+### 4. Functional Parity Must Include Edge Cases
+
+Basic JSON-RPC and streaming paths were validated.
+
+However, deeper semantic validation should include:
+
+-   Partial reads
+-   Slow clients / backpressure
+-   Disconnect handling
+-   Invalid JSON input
+-   Full SSE/session lifecycle validation
+
+Parity validation must extend beyond happy-path testing.
+
+------------------------------------------------------------------------
+
+### 5. Architectural Value Beyond Immediate Performance
+
+Even without immediate throughput improvements, this implementation
+establishes:
+
+-   A clean Rust integration boundary
+-   Safe feature-flag rollout mechanism
+-   Foundation for future transport migration
+-   Reduced risk for incremental Rust adoption
+
+This lowers long-term architectural risk while preserving stability.
+
 ## Alternatives Considered
 
 | Option | Why Not |
@@ -54,6 +135,9 @@ Lessons learned from this implementation will be documented and used to guide fu
 | Full gateway rewrite in Rust | Out of scope and higher risk; significant operational complexity |
 | Using Cython for hot paths | Moderate gains but still bound by Python runtime |
 | Go-based transport layer | Different async model; less ecosystem alignment with MCP tooling |
+
+**Status:** Experimental, safe, feature-flagged, and ready for iterative
+refinement.
 
 ## References
 

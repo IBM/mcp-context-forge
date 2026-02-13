@@ -65,6 +65,7 @@ from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.transports.rust_streamable_bridge import RustStreamableHTTPTransportBridge
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_credentials
 
@@ -1273,6 +1274,7 @@ class SessionManagerWrapper:
             stateless=stateless,
         )
         self.stack = AsyncExitStack()
+        self.rust_bridge = RustStreamableHTTPTransportBridge.from_env()
 
     async def initialize(self) -> None:
         """
@@ -1334,8 +1336,6 @@ class SessionManagerWrapper:
         """
 
         path = scope["modified_path"]
-        # Uses precompiled regex for server ID extraction
-        match = _SERVER_ID_RE.search(path)
 
         # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
         raw_headers = scope.get("headers") or []
@@ -1609,14 +1609,7 @@ class SessionManagerWrapper:
             except Exception as e:
                 logger.debug(f"Session affinity check failed, proceeding locally: {e}")
 
-        # Store headers in context for tool invocations
-        request_headers_var.set(headers)
-
-        if match:
-            server_id = match.group("server_id")
-            server_id_var.set(server_id)
-        else:
-            server_id_var.set(None)
+        context = await self.rust_bridge.prepare_request_context(scope)
 
         # For session affinity: wrap send to capture session ID from response headers
         # This allows us to register ownership for new sessions created by the SDK
@@ -1642,43 +1635,59 @@ class SessionManagerWrapper:
                         break
             await send(message)
 
+        # Store headers in context for tool invocations
+        request_headers_var.set(context.headers or headers)
+        server_id_var.set(context.server_id)
+
         try:
+            # Try Rust transport first
+            rust_handled = await self.rust_bridge.handle_request(scope, receive, send)
+            if rust_handled:
+                return
+
+            # Fallback to Python session manager
             await self.session_manager.handle_request(scope, receive, send_with_capture)
+
             logger.debug(f"[STATEFUL] Streamable HTTP request completed successfully | Session: {mcp_session_id}")
 
-            # Register ownership for the session we just handled
-            # This captures both existing sessions (mcp_session_id from request)
-            # and new sessions (captured_session_id from response)
-            logger.debug(
-                f"[HTTP_AFFINITY_DEBUG] affinity_enabled={settings.mcpgateway_session_affinity_enabled} stateful={settings.use_stateful_sessions} captured={captured_session_id} mcp_session_id={mcp_session_id}"
-            )
+            # Register ownership (stateful + affinity only)
             if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions:
-                session_to_register = captured_session_id or (mcp_session_id if mcp_session_id != "not-provided" else None)
-                logger.debug(f"[HTTP_AFFINITY_DEBUG] session_to_register={session_to_register}")
+                session_to_register = captured_session_id or (
+                    mcp_session_id if mcp_session_id != "not-provided" else None
+                )
+
                 if session_to_register:
                     try:
                         # First-Party - lazy import to avoid circular dependencies
-                        # First-Party
-                        from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.mcp_session_pool import (  # pylint: disable=import-outside-toplevel
+                            get_mcp_session_pool,
+                            WORKER_ID,
+                        )
 
                         pool = get_mcp_session_pool()
                         await pool.register_pool_session_owner(session_to_register)
-                        logger.debug(f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | Session {session_to_register[:8]}... | Registered ownership after SDK handling")
+
+                        logger.debug(
+                            f"[HTTP_AFFINITY_SDK] Worker {WORKER_ID} | "
+                            f"Session {session_to_register[:8]}... | Registered ownership"
+                        )
                     except Exception as e:
-                        logger.debug(f"[HTTP_AFFINITY_DEBUG] Exception during registration: {e}")
                         logger.warning(f"Failed to register session ownership: {e}")
 
         except anyio.ClosedResourceError:
-            # Expected when client closes one side of the stream (normal lifecycle)
+            # Normal lifecycle case
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
+
         except Exception as e:
-            logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
-            logger.exception(f"Error handling streamable HTTP request: {e}")
+            logger.error(
+                f"[STATEFUL] Streamable HTTP request failed | "
+                f"Session: {mcp_session_id} | Error: {e}"
+            )
+            logger.exception("Error handling streamable HTTP request")
             raise
 
 
 # ------------------------- Authentication for /mcp routes ------------------------------
-
 
 async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     """

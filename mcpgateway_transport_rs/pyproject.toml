@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "mcpgateway-transport-rs"
+version = "0.1.0"
+description = "Experimental Rust Streamable HTTP transport backend scaffold"
+requires-python = ">=3.11"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
