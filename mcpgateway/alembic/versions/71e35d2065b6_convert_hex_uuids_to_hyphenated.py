@@ -41,7 +41,7 @@ def upgrade() -> None:
             continue
 
         # Get all records with hex UUIDs (32 chars, no hyphens)
-        result = connection.execute(sa.text(f"SELECT id FROM {table_name} WHERE LENGTH(id) = 32 AND id NOT LIKE '%-%'"))
+        result = connection.execute(sa.text(f"SELECT id FROM {table_name} WHERE LENGTH(id) = 32 AND id NOT LIKE '%-%'"))  # nosec: B608
 
         for row in result:
             hex_id = row[0]
@@ -50,7 +50,7 @@ def upgrade() -> None:
             hyphenated_id = f"{hex_id[:8]}-{hex_id[8:12]}-{hex_id[12:16]}-{hex_id[16:20]}-{hex_id[20:]}"
 
             # Update the record
-            connection.execute(sa.text(f"UPDATE {table_name} SET id = :new_id WHERE id = :old_id"), {"new_id": hyphenated_id, "old_id": hex_id})
+            connection.execute(sa.text(f"UPDATE {table_name} SET id = :new_id WHERE id = :old_id"), {"new_id": hyphenated_id, "old_id": hex_id})  # nosec: B608
 
         connection.commit()
 
@@ -72,7 +72,7 @@ def downgrade() -> None:
             continue
 
         # Get all records with hyphenated UUIDs (36 chars with hyphens)
-        result = connection.execute(sa.text(f"SELECT id FROM {table_name} WHERE LENGTH(id) = 36 AND id LIKE '%-%'"))
+        result = connection.execute(sa.text(f"SELECT id FROM {table_name} WHERE LENGTH(id) = 36 AND id LIKE '%-%'"))  # nosec: B608
 
         for row in result:
             hyphenated_id = row[0]
@@ -80,6 +80,6 @@ def downgrade() -> None:
             hex_id = hyphenated_id.replace("-", "")
 
             # Update the record
-            connection.execute(sa.text(f"UPDATE {table_name} SET id = :new_id WHERE id = :old_id"), {"new_id": hex_id, "old_id": hyphenated_id})
+            connection.execute(sa.text(f"UPDATE {table_name} SET id = :new_id WHERE id = :old_id"), {"new_id": hex_id, "old_id": hyphenated_id})  # nosec: B608
 
         connection.commit()
