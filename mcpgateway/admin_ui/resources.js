@@ -1,5 +1,712 @@
 import { getSelectedGatewayIds } from "./gateway.js";
-import { getCurrentTeamId, safeGetElement } from "./utils";
+import { openModal } from "./modals.js";
+import { validateInputName } from "./security.js";
+import { fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, parseUriTemplate, safeGetElement, showErrorMessage } from "./utils";
+
+export const testResource = async function (resourceId) {
+  try {
+    console.log(`Testing the resource: ${resourceId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`
+    );
+
+    if (!response.ok) {
+      let errorDetail = "";
+      try {
+        const errorJson = await response.json();
+        errorDetail = errorJson.detail || "";
+      } catch (_) {}
+
+      throw new Error(
+        `HTTP ${response.status}: ${errorDetail || response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const resource = data.resource;
+    //  console.log("Resource JSON:\n", JSON.stringify(resource, null, 2));
+    openResourceTestModal(resource);
+  } catch (error) {
+    console.error("Error fetching resource details:", error);
+    const errorMessage = handleFetchError(error, "load resource details");
+    showErrorMessage(errorMessage);
+  }
+};
+
+export const openResourceTestModal = function (resource) {
+  const title = safeGetElement("resource-test-modal-title");
+  const fieldsContainer = safeGetElement("resource-test-form-fields");
+  const resultBox = safeGetElement("resource-test-result");
+
+  title.textContent = `Test Resource: ${resource.name}`;
+
+  fieldsContainer.innerHTML = "";
+  resultBox.textContent = "Fill the fields and click Invoke Resource";
+
+  // 1️⃣ Build form fields ONLY if uriTemplate exists
+  if (resource.uriTemplate) {
+    const fieldNames = parseUriTemplate(resource.uriTemplate);
+
+    fieldNames.forEach((name) => {
+      const div = document.createElement("div");
+      div.className = "space-y-1";
+
+      div.innerHTML = `
+                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    ${name}
+                </label>
+                <input type="text"
+                    id="resource-field-${name}"
+                    class="mt-1 px-2 py-1 block w-full rounded-md border border-gray-300 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-300"
+                />
+            `;
+
+      fieldsContainer.appendChild(div);
+    });
+  } else {
+    // 2️⃣ If no template → show a simple message
+    fieldsContainer.innerHTML = `
+            <div class="text-gray-500 dark:text-gray-400 italic">
+                This resource has no URI template.
+                Click "Invoke Resource" to test directly.
+            </div>
+        `;
+  }
+
+  window.Admin.CurrentResourceUnderTest = resource;
+  openModal("resource-test-modal");
+};
+
+export const runResourceTest = async function () {
+  const resource = window.Admin.CurrentResourceUnderTest;
+  if (!resource) {
+    return;
+  }
+
+  let finalUri = "";
+
+  if (resource.uriTemplate) {
+    finalUri = resource.uriTemplate;
+
+    const fieldNames = parseUriTemplate(resource.uriTemplate);
+    fieldNames.forEach((name) => {
+      const value = safeGetElement(`resource-field-${name}`).value;
+      finalUri = finalUri.replace(`{${name}}`, encodeURIComponent(value));
+    });
+  } else {
+    finalUri = resource.uri; // direct test
+  }
+
+  console.log("Final URI:", finalUri);
+
+  const response = await fetchWithTimeout(
+    `${window.ROOT_PATH}/admin/resources/test/${encodeURIComponent(finalUri)}`
+  );
+
+  const json = await response.json();
+
+  const resultBox = safeGetElement("resource-test-result");
+  resultBox.innerHTML = ""; // clear previous
+
+  const container = document.createElement("div");
+  resultBox.appendChild(container);
+
+  // Extract the content text (fallback if missing)
+  const content = json.content || {};
+  let contentStr = content.text || JSON.stringify(content, null, 2);
+
+  // Try to prettify JSON content
+  try {
+    const parsed = JSON.parse(contentStr);
+    contentStr = JSON.stringify(parsed, null, 2);
+  } catch (_) {}
+
+  // ---- Content Section (same as prompt tester) ----
+  const contentSection = document.createElement("div");
+  contentSection.className = "mt-4";
+
+  // Header
+  const contentHeader = document.createElement("div");
+  contentHeader.className =
+    "flex items-center justify-between cursor-pointer select-none p-2 bg-gray-200 dark:bg-gray-700 rounded";
+  contentSection.appendChild(contentHeader);
+
+  // Title
+  const contentTitle = document.createElement("strong");
+  contentTitle.textContent = "Content";
+  contentHeader.appendChild(contentTitle);
+
+  // Right controls (arrow/copy/fullscreen/download)
+  const headerRight = document.createElement("div");
+  headerRight.className = "flex items-center space-x-2";
+  contentHeader.appendChild(headerRight);
+
+  // Arrow icon
+  const toggleIcon = document.createElement("span");
+  toggleIcon.innerHTML = "▶";
+  toggleIcon.className = "transform transition-transform text-xs";
+  headerRight.appendChild(toggleIcon);
+
+  // Copy button
+  const copyBtn = document.createElement("button");
+  copyBtn.textContent = "Copy";
+  copyBtn.className =
+    "text-xs px-2 py-1 rounded bg-gray-300 dark:bg-gray-600 hover:bg-gray-400 dark:hover:bg-gray-500";
+  headerRight.appendChild(copyBtn);
+
+  // Fullscreen button
+  const fullscreenBtn = document.createElement("button");
+  fullscreenBtn.textContent = "Fullscreen";
+  fullscreenBtn.className =
+    "text-xs px-2 py-1 rounded bg-blue-300 dark:bg-blue-600 hover:bg-blue-400 dark:hover:bg-blue-500";
+  headerRight.appendChild(fullscreenBtn);
+
+  // Download button
+  const downloadBtn = document.createElement("button");
+  downloadBtn.textContent = "Download";
+  downloadBtn.className =
+    "text-xs px-2 py-1 rounded bg-green-300 dark:bg-green-600 hover:bg-green-400 dark:hover:bg-green-500";
+  headerRight.appendChild(downloadBtn);
+
+  // Collapsible body
+  const contentBody = document.createElement("div");
+  contentBody.className = "hidden mt-2";
+  contentSection.appendChild(contentBody);
+
+  // Pre block
+  const contentPre = document.createElement("pre");
+  contentPre.className =
+    "bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100 text-sm whitespace-pre-wrap";
+  contentPre.textContent = contentStr;
+  contentBody.appendChild(contentPre);
+
+  // Auto-collapse if too large
+  const lineCount = contentStr.split("\n").length;
+
+  if (lineCount > 30) {
+    contentBody.classList.add("hidden");
+    toggleIcon.style.transform = "rotate(0deg)";
+    contentTitle.textContent = "Content (Large - Click to expand)";
+  } else {
+    contentBody.classList.remove("hidden");
+    toggleIcon.style.transform = "rotate(90deg)";
+  }
+
+  // Toggle expand/collapse
+  contentHeader.onclick = () => {
+    contentBody.classList.toggle("hidden");
+    toggleIcon.style.transform = contentBody.classList.contains("hidden")
+      ? "rotate(0deg)"
+      : "rotate(90deg)";
+  };
+
+  // Copy button
+  copyBtn.onclick = (event) => {
+    event.stopPropagation();
+    navigator.clipboard.writeText(contentStr).then(() => {
+      copyBtn.textContent = "Copied!";
+      setTimeout(() => (copyBtn.textContent = "Copy"), 1200);
+    });
+  };
+
+  // Fullscreen mode
+  fullscreenBtn.onclick = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const overlay = document.createElement("div");
+    overlay.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    overlay.className =
+      "fixed inset-0 bg-black bg-opacity-70 z-[9999] flex items-center justify-center p-4";
+
+    const box = document.createElement("div");
+    box.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    box.className =
+      "bg-white dark:bg-gray-900 rounded-lg w-full h-full p-4 overflow-auto";
+
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = "Close";
+    closeBtn.className =
+      "text-xs px-3 py-1 mb-2 rounded bg-red-400 hover:bg-red-500 dark:bg-red-700 dark:hover:bg-red-600";
+
+    closeBtn.onclick = () => overlay.remove();
+
+    const fsPre = document.createElement("pre");
+    fsPre.className =
+      "bg-gray-100 p-4 rounded overflow-auto h-full dark:bg-gray-800 dark:text-gray-100 text-sm whitespace-pre-wrap";
+    fsPre.textContent = contentStr;
+
+    box.appendChild(closeBtn);
+    box.appendChild(fsPre);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  };
+
+  // Download
+  downloadBtn.onclick = (event) => {
+    event.stopPropagation();
+
+    let blob;
+    let filename;
+
+    // JSON?
+    try {
+      JSON.parse(contentStr);
+      blob = new Blob([contentStr], { type: "application/json" });
+      filename = "resource.json";
+    } catch (_) {
+      blob = new Blob([contentStr], { type: "text/plain" });
+      filename = "resource.txt";
+    }
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  container.appendChild(contentSection);
+
+  // resultBox.textContent = JSON.stringify(json, null, 2);
+};
+
+/**
+ * SECURE: View Resource function with safe display
+ */
+export const viewResource = async function (resourceId) {
+  try {
+    console.log(`Viewing resource: ${resourceId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`
+    );
+
+    if (!response.ok) {
+      let errorDetail = "";
+      try {
+        const errorJson = await response.json();
+        errorDetail = errorJson.detail || "";
+      } catch (_) {}
+
+      throw new Error(
+        `HTTP ${response.status}: ${errorDetail || response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const resource = data.resource;
+
+    // console.log("Resource JSON:\n", JSON.stringify(resource, null, 2));
+    // const content = data.content;
+
+    const resourceDetailsDiv = safeGetElement("resource-details");
+    if (resourceDetailsDiv) {
+      // Create safe display elements
+      const container = document.createElement("div");
+      container.className = "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+      // Add each piece of information safely
+      const fields = [
+        { label: "URI", value: resource.uri },
+        { label: "Name", value: resource.name },
+        { label: "Type", value: resource.mimeType || "N/A" },
+        { label: "Description", value: resource.description || "N/A" },
+        {
+          label: "Visibility",
+          value: resource.visibility || "private",
+        },
+      ];
+
+      fields.forEach((field) => {
+        const p = document.createElement("p");
+        const strong = document.createElement("strong");
+        strong.textContent = field.label + ": ";
+        p.appendChild(strong);
+        p.appendChild(document.createTextNode(field.value));
+        container.appendChild(p);
+      });
+
+      // Tags section
+      const tagsP = document.createElement("p");
+      const tagsStrong = document.createElement("strong");
+      tagsStrong.textContent = "Tags: ";
+      tagsP.appendChild(tagsStrong);
+
+      if (resource.tags && resource.tags.length > 0) {
+        resource.tags.forEach((tag) => {
+          const tagSpan = document.createElement("span");
+          tagSpan.className =
+            "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+          const raw =
+            typeof tag === "object" && tag !== null
+              ? tag.id || tag.label || JSON.stringify(tag)
+              : tag;
+          tagSpan.textContent = raw;
+          tagsP.appendChild(tagSpan);
+        });
+      } else {
+        tagsP.appendChild(document.createTextNode("None"));
+      }
+      container.appendChild(tagsP);
+
+      // Status with safe styling
+      const statusP = document.createElement("p");
+      const statusStrong = document.createElement("strong");
+      statusStrong.textContent = "Status: ";
+      statusP.appendChild(statusStrong);
+
+      const isActive = resource.enabled === true;
+      const statusSpan = document.createElement("span");
+      statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+        isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+      }`;
+      statusSpan.textContent = isActive ? "Active" : "Inactive";
+
+      statusP.appendChild(statusSpan);
+      container.appendChild(statusP);
+
+      // Content display - safely handle different types
+      // const contentDiv = document.createElement("div");
+      // const contentStrong = document.createElement("strong");
+      // contentStrong.textContent = "Content:";
+      // contentDiv.appendChild(contentStrong);
+
+      // const contentPre = document.createElement("pre");
+      // contentPre.className =
+      //     "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
+
+      // // Handle content display - extract actual content from object if needed
+      // let contentStr = extractContent(
+      //     content,
+      //     resource.description || "No content available",
+      // );
+
+      // if (!contentStr.trim()) {
+      //     contentStr = resource.description || "No content available";
+      // }
+
+      // contentPre.textContent = contentStr;
+      // contentDiv.appendChild(contentPre);
+      // container.appendChild(contentDiv);
+
+      // Metrics display
+      if (resource.metrics) {
+        const metricsDiv = document.createElement("div");
+        const metricsStrong = document.createElement("strong");
+        metricsStrong.textContent = "Metrics:";
+        metricsDiv.appendChild(metricsStrong);
+
+        const metricsList = document.createElement("ul");
+        metricsList.className = "list-disc list-inside ml-4";
+
+        const metricsData = [
+          {
+            label: "Total Executions",
+            value: resource.metrics.totalExecutions ?? 0,
+          },
+          {
+            label: "Successful Executions",
+            value: resource.metrics.successfulExecutions ?? 0,
+          },
+          {
+            label: "Failed Executions",
+            value: resource.metrics.failedExecutions ?? 0,
+          },
+          {
+            label: "Failure Rate",
+            value: resource.metrics.failureRate ?? 0,
+          },
+          {
+            label: "Min Response Time",
+            value: resource.metrics.minResponseTime ?? "N/A",
+          },
+          {
+            label: "Max Response Time",
+            value: resource.metrics.maxResponseTime ?? "N/A",
+          },
+          {
+            label: "Average Response Time",
+            value: resource.metrics.avgResponseTime ?? "N/A",
+          },
+          {
+            label: "Last Execution Time",
+            value: resource.metrics.lastExecutionTime ?? "N/A",
+          },
+        ];
+
+        metricsData.forEach((metric) => {
+          const li = document.createElement("li");
+          li.textContent = `${metric.label}: ${metric.value}`;
+          metricsList.appendChild(li);
+        });
+
+        metricsDiv.appendChild(metricsList);
+        container.appendChild(metricsDiv);
+      }
+
+      // Add metadata section
+      const metadataDiv = document.createElement("div");
+      metadataDiv.className = "mt-6 border-t pt-4";
+
+      const metadataTitle = document.createElement("strong");
+      metadataTitle.textContent = "Metadata:";
+      metadataDiv.appendChild(metadataTitle);
+
+      const metadataGrid = document.createElement("div");
+      metadataGrid.className = "grid grid-cols-2 gap-4 mt-2 text-sm";
+
+      const metadataFields = [
+        {
+          label: "Created By",
+          value: resource.created_by || resource.createdBy || "Legacy Entity",
+        },
+        {
+          label: "Created At",
+          value:
+            resource.created_at || resource.createdAt
+              ? new Date(
+                resource.created_at || resource.createdAt
+              ).toLocaleString()
+              : "Pre-metadata",
+        },
+        {
+          label: "Created From IP",
+          value:
+            resource.created_from_ip || resource.createdFromIp || "Unknown",
+        },
+        {
+          label: "Created Via",
+          value: resource.created_via || resource.createdVia || "Unknown",
+        },
+        {
+          label: "Last Modified By",
+          value: resource.modified_by || resource.modifiedBy || "N/A",
+        },
+        {
+          label: "Last Modified At",
+          value:
+            resource.updated_at || resource.updatedAt
+              ? new Date(
+                resource.updated_at || resource.updatedAt
+              ).toLocaleString()
+              : "N/A",
+        },
+        {
+          label: "Modified From IP",
+          value: resource.modified_from_ip || resource.modifiedFromIp || "N/A",
+        },
+        {
+          label: "Modified Via",
+          value: resource.modified_via || resource.modifiedVia || "N/A",
+        },
+        {
+          label: "Version",
+          value: resource.version || "1",
+        },
+        {
+          label: "Import Batch",
+          value: resource.import_batch_id || resource.importBatchId || "N/A",
+        },
+      ];
+
+      metadataFields.forEach((field) => {
+        const fieldDiv = document.createElement("div");
+
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "font-medium text-gray-600 dark:text-gray-400";
+        labelSpan.textContent = field.label + ":";
+
+        const valueSpan = document.createElement("span");
+        valueSpan.className = "ml-2";
+        valueSpan.textContent = field.value;
+
+        fieldDiv.appendChild(labelSpan);
+        fieldDiv.appendChild(valueSpan);
+        metadataGrid.appendChild(fieldDiv);
+      });
+
+      metadataDiv.appendChild(metadataGrid);
+      container.appendChild(metadataDiv);
+
+      // Replace content safely
+      resourceDetailsDiv.innerHTML = "";
+      resourceDetailsDiv.appendChild(container);
+    }
+
+    openModal("resource-modal");
+    console.log("✓ Resource details loaded successfully");
+  } catch (error) {
+    console.error("Error fetching resource details:", error);
+    const errorMessage = handleFetchError(error, "load resource details");
+    showErrorMessage(errorMessage);
+  }
+};
+
+/**
+ * SECURE: Edit Resource function with validation
+ */
+export const editResource = async function (resourceId) {
+  try {
+    console.log(`Editing resource: ${resourceId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}`
+    );
+
+    if (!response.ok) {
+      let errorDetail = "";
+      try {
+        const errorJson = await response.json();
+        errorDetail = errorJson.detail || "";
+      } catch (_) {}
+
+      throw new Error(
+        `HTTP ${response.status}: ${errorDetail || response.statusText}`
+      );
+    }
+
+    const data = await response.json();
+    const resource = data.resource;
+    // const content = data.content;
+    // Ensure hidden inactive flag is preserved
+    const isInactiveCheckedBool = isInactiveChecked("resources");
+    let hiddenField = safeGetElement("edit-resource-show-inactive");
+    const editForm = safeGetElement("edit-resource-form");
+
+    if (!hiddenField && editForm) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-resource-show-inactive";
+      const editForm = safeGetElement("edit-resource-form");
+      editForm.appendChild(hiddenField);
+    }
+    hiddenField.value = isInactiveCheckedBool;
+
+    // ✅ Prefill visibility radios (consistent with server)
+    const visibility = resource.visibility
+      ? resource.visibility.toLowerCase()
+      : null;
+
+    const publicRadio = safeGetElement("edit-resource-visibility-public");
+    const teamRadio = safeGetElement("edit-resource-visibility-team");
+    const privateRadio = safeGetElement("edit-resource-visibility-private");
+
+    // Clear all first
+    if (publicRadio) {
+      publicRadio.checked = false;
+    }
+    if (teamRadio) {
+      teamRadio.checked = false;
+    }
+    if (privateRadio) {
+      privateRadio.checked = false;
+    }
+
+    if (visibility) {
+      if (visibility === "public" && publicRadio) {
+        publicRadio.checked = true;
+      } else if (visibility === "team" && teamRadio) {
+        teamRadio.checked = true;
+      } else if (visibility === "private" && privateRadio) {
+        privateRadio.checked = true;
+      }
+    }
+
+    // Set form action and populate fields with validation
+    if (editForm) {
+      editForm.action = `${window.ROOT_PATH}/admin/resources/${encodeURIComponent(resourceId)}/edit`;
+    }
+
+    // Validate inputs
+    const nameValidation = validateInputName(resource.name, "resource");
+    const uriValidation = validateInputName(resource.uri, "resource URI");
+
+    const uriField = safeGetElement("edit-resource-uri");
+    const nameField = safeGetElement("edit-resource-name");
+    const descField = safeGetElement("edit-resource-description");
+    const mimeField = safeGetElement("edit-resource-mime-type");
+    // const contentField = safeGetElement("edit-resource-content");
+
+    if (uriField && uriValidation.valid) {
+      uriField.value = uriValidation.value;
+    }
+    if (nameField && nameValidation.valid) {
+      nameField.value = nameValidation.value;
+    }
+    if (descField) {
+      descField.value = resource.description || "";
+    }
+    if (mimeField) {
+      mimeField.value = resource.mimeType || "";
+    }
+
+    // Set tags field
+    const tagsField = safeGetElement("edit-resource-tags");
+    if (tagsField) {
+      const rawTags = resource.tags
+        ? resource.tags.map((tag) =>
+          typeof tag === "object" && tag !== null ? tag.label || tag.id : tag
+        )
+        : [];
+      tagsField.value = rawTags.join(", ");
+    }
+
+    // if (contentField) {
+    //     let contentStr = extractContent(
+    //         content,
+    //         resource.description || "No content available",
+    //     );
+
+    //     if (!contentStr.trim()) {
+    //         contentStr = resource.description || "No content available";
+    //     }
+
+    //     contentField.value = contentStr;
+    // }
+
+    // // Update CodeMirror editor if it exists
+    // if (window.editResourceContentEditor) {
+    //     let contentStr = extractContent(
+    //         content,
+    //         resource.description || "No content available",
+    //     );
+
+    //     if (!contentStr.trim()) {
+    //         contentStr = resource.description || "No content available";
+    //     }
+
+    //     window.editResourceContentEditor.setValue(contentStr);
+    //     window.editResourceContentEditor.refresh();
+    // }
+
+    openModal("resource-edit-modal");
+
+    // Refresh editor after modal display
+    setTimeout(() => {
+      if (window.editResourceContentEditor) {
+        window.editResourceContentEditor.refresh();
+      }
+    }, 100);
+
+    console.log("✓ Resource edit modal loaded successfully");
+  } catch (error) {
+    console.error("Error fetching resource for editing:", error);
+    const errorMessage = handleFetchError(error, "load resource for editing");
+    showErrorMessage(errorMessage);
+  }
+};
 
 export const initResourceSelect = function (
   selectId,

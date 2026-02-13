@@ -1,8 +1,478 @@
 import { AppState } from "./appState.js";
 import { getSelectedGatewayIds } from "./gateway.js";
 import { openModal } from "./modals";
-import { escapeHtml } from "./security.js";
-import { getCurrentTeamId, safeGetElement, showErrorMessage } from "./utils";
+import { escapeHtml, validateInputName, validateJson } from "./security.js";
+import { fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+
+
+/**
+ * SECURE: View Prompt function with safe display
+ */
+export const viewPrompt = async function (promptName) {
+  try {
+    console.log(`Viewing prompt: ${promptName}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptName)}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const prompt = await response.json();
+    const promptLabel =
+      prompt.displayName || prompt.originalName || prompt.name || prompt.id;
+    const gatewayLabel = prompt.gatewaySlug || "Local";
+
+    const promptDetailsDiv = safeGetElement("prompt-details");
+    if (promptDetailsDiv) {
+      const safeHTML = `
+        <div class="grid grid-cols-2 gap-6 mb-6">
+        <div class="space-y-3">
+            <div>
+              <span id="prompt-id-label" class="font-medium text-gray-700 dark:text-gray-300">Prompt ID:</span>
+              <div class="mt-1 prompt-id text-sm font-mono text-indigo-600 dark:text-indigo-400" aria-labelledby="prompt-id-label"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
+            <div class="mt-1 prompt-display-name font-medium"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Technical Name:</span>
+            <div class="mt-1 prompt-name text-sm font-mono"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Original Name:</span>
+            <div class="mt-1 prompt-original-name text-sm font-mono"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Custom Name:</span>
+            <div class="mt-1 prompt-custom-name text-sm font-mono"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Gateway Name:</span>
+            <div class="mt-1 prompt-gateway text-sm"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Visibility:</span>
+            <div class="mt-1 prompt-visibility text-sm"></div>
+            </div>
+        </div>
+        <div class="space-y-3">
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Description:</span>
+            <div class="mt-1 prompt-description text-sm"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Tags:</span>
+            <div class="mt-1 prompt-tags text-sm"></div>
+            </div>
+            <div>
+            <span class="font-medium text-gray-700 dark:text-gray-300">Status:</span>
+            <div class="mt-1 prompt-status text-sm"></div>
+            </div>
+        </div>
+        </div>
+
+        <div class="space-y-4">
+        <div>
+            <strong class="text-gray-700 dark:text-gray-300">Template:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 prompt-template overflow-x-auto"></pre>
+        </div>
+        <div>
+            <strong class="text-gray-700 dark:text-gray-300">Arguments:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 prompt-arguments overflow-x-auto"></pre>
+        </div>
+        </div>
+
+        <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+        <strong class="text-gray-700 dark:text-gray-300">Metrics:</strong>
+        <div class="grid grid-cols-2 gap-4 mt-3 text-sm">
+            <div class="space-y-2">
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Total Executions:</span>
+                <span class="metric-total font-medium"></span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Successful Executions:</span>
+                <span class="metric-success font-medium text-green-600"></span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Failed Executions:</span>
+                <span class="metric-failed font-medium text-red-600"></span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Failure Rate:</span>
+                <span class="metric-failure-rate font-medium"></span>
+            </div>
+            </div>
+            <div class="space-y-2">
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Min Response Time:</span>
+                <span class="metric-min-time font-medium"></span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Max Response Time:</span>
+                <span class="metric-max-time font-medium"></span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Average Response Time:</span>
+                <span class="metric-avg-time font-medium"></span>
+            </div>
+            <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Last Execution Time:</span>
+                <span class="metric-last-time font-medium"></span>
+            </div>
+            </div>
+        </div>
+        </div>
+
+        <div class="mt-6 border-t pt-4">
+        <strong>Metadata:</strong>
+        <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Created By:</span>
+            <span class="ml-2 metadata-created-by"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Created At:</span>
+            <span class="ml-2 metadata-created-at"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Created From IP:</span>
+            <span class="ml-2 metadata-created-from"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Created Via:</span>
+            <span class="ml-2 metadata-created-via"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified By:</span>
+            <span class="ml-2 metadata-modified-by"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
+            <span class="ml-2 metadata-modified-at"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Modified From IP:</span>
+            <span class="ml-2 metadata-modified-from"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Modified Via:</span>
+            <span class="ml-2 metadata-modified-via"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
+            <span class="ml-2 metadata-version"></span>
+            </div>
+            <div>
+            <span class="font-medium text-gray-600 dark:text-gray-400">Import Batch:</span>
+            <span class="ml-2 metadata-import-batch"></span>
+            </div>
+        </div>
+        </div>
+    `;
+
+      promptDetailsDiv.innerHTML = safeHTML;
+
+      const setText = (selector, value) => {
+        const el = promptDetailsDiv.querySelector(selector);
+        if (el) {
+          el.textContent = value;
+        }
+      };
+
+      setText(".prompt-id", prompt.id || "N/A");
+      setText(".prompt-display-name", promptLabel);
+      setText(".prompt-name", prompt.name || "N/A");
+      setText(".prompt-original-name", prompt.originalName || "N/A");
+      setText(".prompt-custom-name", prompt.customName || "N/A");
+      setText(".prompt-gateway", gatewayLabel);
+      setText(".prompt-visibility", prompt.visibility || "private");
+      setText(".prompt-description", prompt.description || "N/A");
+
+      const tagsEl = promptDetailsDiv.querySelector(".prompt-tags");
+      if (tagsEl) {
+        tagsEl.innerHTML = "";
+        if (prompt.tags && prompt.tags.length > 0) {
+          prompt.tags.forEach((tag) => {
+            const tagSpan = document.createElement("span");
+            tagSpan.className =
+              "inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200";
+            const raw =
+              typeof tag === "object" && tag !== null
+                ? tag.id || tag.label
+                : tag;
+            tagSpan.textContent = raw;
+            tagsEl.appendChild(tagSpan);
+          });
+        } else {
+          tagsEl.textContent = "None";
+        }
+      }
+
+      const statusEl = promptDetailsDiv.querySelector(".prompt-status");
+      if (statusEl) {
+        const isActive =
+          prompt.enabled !== undefined ? prompt.enabled : prompt.isActive;
+        const statusSpan = document.createElement("span");
+        statusSpan.className = `px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+          isActive ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"
+        }`;
+        statusSpan.textContent = isActive ? "Active" : "Inactive";
+        statusEl.innerHTML = "";
+        statusEl.appendChild(statusSpan);
+      }
+
+      const templateEl = promptDetailsDiv.querySelector(".prompt-template");
+      if (templateEl) {
+        templateEl.textContent = prompt.template || "";
+      }
+
+      const argsEl = promptDetailsDiv.querySelector(".prompt-arguments");
+      if (argsEl) {
+        argsEl.textContent = JSON.stringify(prompt.arguments || {}, null, 2);
+      }
+
+      if (prompt.metrics) {
+        setText(".metric-total", prompt.metrics.totalExecutions ?? 0);
+        setText(".metric-success", prompt.metrics.successfulExecutions ?? 0);
+        setText(".metric-failed", prompt.metrics.failedExecutions ?? 0);
+        setText(".metric-failure-rate", prompt.metrics.failureRate ?? 0);
+        setText(".metric-min-time", prompt.metrics.minResponseTime ?? "N/A");
+        setText(".metric-max-time", prompt.metrics.maxResponseTime ?? "N/A");
+        setText(".metric-avg-time", prompt.metrics.avgResponseTime ?? "N/A");
+        setText(".metric-last-time", prompt.metrics.lastExecutionTime ?? "N/A");
+      } else {
+        [
+          ".metric-total",
+          ".metric-success",
+          ".metric-failed",
+          ".metric-failure-rate",
+          ".metric-min-time",
+          ".metric-max-time",
+          ".metric-avg-time",
+          ".metric-last-time",
+        ].forEach((selector) => setText(selector, "N/A"));
+      }
+
+      const createdAt = prompt.created_at || prompt.createdAt;
+      const updatedAt = prompt.updated_at || prompt.updatedAt;
+
+      setText(
+        ".metadata-created-by",
+        prompt.created_by || prompt.createdBy || "Legacy Entity"
+      );
+      setText(
+        ".metadata-created-at",
+        createdAt ? new Date(createdAt).toLocaleString() : "Pre-metadata"
+      );
+      setText(
+        ".metadata-created-from",
+        prompt.created_from_ip || prompt.createdFromIp || "Unknown"
+      );
+      setText(
+        ".metadata-created-via",
+        prompt.created_via || prompt.createdVia || "Unknown"
+      );
+      setText(
+        ".metadata-modified-by",
+        prompt.modified_by || prompt.modifiedBy || "N/A"
+      );
+      setText(
+        ".metadata-modified-at",
+        updatedAt ? new Date(updatedAt).toLocaleString() : "N/A"
+      );
+      setText(
+        ".metadata-modified-from",
+        prompt.modified_from_ip || prompt.modifiedFromIp || "N/A"
+      );
+      setText(
+        ".metadata-modified-via",
+        prompt.modified_via || prompt.modifiedVia || "N/A"
+      );
+      setText(".metadata-version", prompt.version || "1");
+      setText(".metadata-import-batch", prompt.importBatchId || "N/A");
+
+      // Content already injected via innerHTML; no extra wrapper needed.
+    }
+
+    openModal("prompt-modal");
+    console.log("✓ Prompt details loaded successfully");
+  } catch (error) {
+    console.error("Error fetching prompt details:", error);
+    const errorMessage = handleFetchError(error, "load prompt details");
+    showErrorMessage(errorMessage);
+  }
+};
+
+/**
+ * SECURE: Edit Prompt function with validation
+ */
+export const editPrompt = async function (promptId) {
+  try {
+    console.log(`Editing prompt: ${promptId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}`
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const prompt = await response.json();
+
+    const isInactiveCheckedBool = isInactiveChecked("prompts");
+    let hiddenField = safeGetElement("edit-prompt-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-prompt-show-inactive";
+      const editForm = safeGetElement("edit-prompt-form");
+      if (editForm) {
+        editForm.appendChild(hiddenField);
+      }
+    }
+    hiddenField.value = isInactiveCheckedBool;
+
+    // ✅ Prefill visibility radios (consistent with server)
+    const visibility = prompt.visibility
+      ? prompt.visibility.toLowerCase()
+      : null;
+
+    const publicRadio = safeGetElement("edit-prompt-visibility-public");
+    const teamRadio = safeGetElement("edit-prompt-visibility-team");
+    const privateRadio = safeGetElement("edit-prompt-visibility-private");
+
+    // Clear all first
+    if (publicRadio) {
+      publicRadio.checked = false;
+    }
+    if (teamRadio) {
+      teamRadio.checked = false;
+    }
+    if (privateRadio) {
+      privateRadio.checked = false;
+    }
+
+    if (visibility) {
+      if (visibility === "public" && publicRadio) {
+        publicRadio.checked = true;
+      } else if (visibility === "team" && teamRadio) {
+        teamRadio.checked = true;
+      } else if (visibility === "private" && privateRadio) {
+        privateRadio.checked = true;
+      }
+    }
+
+    // Set form action and populate fields with validation
+    const editForm = safeGetElement("edit-prompt-form");
+    if (editForm) {
+      editForm.action = `${window.ROOT_PATH}/admin/prompts/${encodeURIComponent(promptId)}/edit`;
+      // Add or update hidden team_id input if present in URL
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+      if (teamId) {
+        let teamInput = safeGetElement("edit-prompt-team-id");
+        if (!teamInput) {
+          teamInput = document.createElement("input");
+          teamInput.type = "hidden";
+          teamInput.name = "team_id";
+          teamInput.id = "edit-prompt-team-id";
+          editForm.appendChild(teamInput);
+        }
+        teamInput.value = teamId;
+      }
+    }
+
+    const nameValidation = validateInputName(prompt.name, "prompt");
+    const customNameValidation = validateInputName(
+      prompt.customName || prompt.originalName || prompt.name,
+      "prompt"
+    );
+
+    const nameField = safeGetElement("edit-prompt-name");
+    const customNameField = safeGetElement("edit-prompt-custom-name");
+    const displayNameField = safeGetElement("edit-prompt-display-name");
+    const technicalNameField = safeGetElement("edit-prompt-technical-name");
+    const descField = safeGetElement("edit-prompt-description");
+    const templateField = safeGetElement("edit-prompt-template");
+    const argsField = safeGetElement("edit-prompt-arguments");
+
+    if (nameField && nameValidation.valid) {
+      nameField.value = nameValidation.value;
+    }
+    if (technicalNameField) {
+      technicalNameField.value = prompt.name || "N/A";
+    }
+    if (customNameField && customNameValidation.valid) {
+      customNameField.value = customNameValidation.value;
+    }
+    if (displayNameField) {
+      displayNameField.value = prompt.displayName || "";
+    }
+    if (descField) {
+      descField.value = prompt.description || "";
+    }
+
+    // Set tags field
+    const tagsField = safeGetElement("edit-prompt-tags");
+    if (tagsField) {
+      const rawTags = prompt.tags
+        ? prompt.tags.map((tag) =>
+          typeof tag === "object" && tag !== null ? tag.label || tag.id : tag
+        )
+        : [];
+      tagsField.value = rawTags.join(", ");
+    }
+
+    if (templateField) {
+      templateField.value = prompt.template || "";
+    }
+
+    // Validate arguments JSON
+    const argsValidation = validateJson(
+      JSON.stringify(prompt.arguments || {}),
+      "Arguments"
+    );
+    if (argsField && argsValidation.valid) {
+      argsField.value = JSON.stringify(argsValidation.value, null, 2);
+    }
+
+    // Update CodeMirror editors if they exist
+    if (window.editPromptTemplateEditor) {
+      window.editPromptTemplateEditor.setValue(prompt.template || "");
+      window.editPromptTemplateEditor.refresh();
+    }
+    if (window.editPromptArgumentsEditor && argsValidation.valid) {
+      window.editPromptArgumentsEditor.setValue(
+        JSON.stringify(argsValidation.value, null, 2)
+      );
+      window.editPromptArgumentsEditor.refresh();
+    }
+
+    openModal("prompt-edit-modal");
+
+    // Refresh editors after modal display
+    setTimeout(() => {
+      if (window.editPromptTemplateEditor) {
+        window.editPromptTemplateEditor.refresh();
+      }
+      if (window.editPromptArgumentsEditor) {
+        window.editPromptArgumentsEditor.refresh();
+      }
+    }, 100);
+
+    console.log("✓ Prompt edit modal loaded successfully");
+  } catch (error) {
+    console.error("Error fetching prompt for editing:", error);
+    const errorMessage = handleFetchError(error, "load prompt for editing");
+    showErrorMessage(errorMessage);
+  }
+};
 
 export const initPromptSelect = function (
   selectId,

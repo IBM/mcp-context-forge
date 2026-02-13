@@ -39,6 +39,14 @@ Admin.AppState = AppState;
 // TIER 2: Feature modules (fully converted to ES modules)
 // ===================================================================
 
+import {
+  editA2AAgent,
+  viewA2AAgent,
+} from "./a2aAgents.js"
+
+Admin.editA2AAgent = editA2AAgent;
+Admin.viewA2AAgent = viewA2AAgent;
+
 // Auth
 import {
   toggleInputMask,
@@ -115,9 +123,15 @@ Admin.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 Admin.handleDeleteSubmit = handleDeleteSubmit;
 
 // Gateways
-import { testGateway } from "./gateway.js";
+import { 
+  editGateway,
+  testGateway,
+  viewGateway,
+} from "./gateway.js";
 
+Admin.editGateway = editGateway;
 Admin.testGateway = testGateway;
+Admin.viewGateway = viewGateway;
 
 // LLM Chat
 import {
@@ -226,43 +240,6 @@ Admin.showPerformanceMetrics = showPerformanceMetrics;
 Admin.showSecurityEvents = showSecurityEvents;
 Admin.testMCPSearchManually = testMCPSearchManually;
 
-// MCP Controller
-import {
-  editTool,
-  viewAgent,
-  editA2AAgent,
-  testResource,
-  runResourceTest,
-  viewResource,
-  editResource,
-  viewPrompt,
-  editPrompt,
-  viewGateway,
-  editGateway,
-  viewServer,
-  editServer,
-  viewRoot,
-  editRoot,
-  exportRoot,
-} from "./mcpController.js";
-
-Admin.editTool = editTool;
-Admin.viewAgent = viewAgent;
-Admin.editA2AAgent = editA2AAgent;
-Admin.testResource = testResource;
-Admin.runResourceTest = runResourceTest;
-Admin.viewResource = viewResource;
-Admin.editResource = editResource;
-Admin.viewPrompt = viewPrompt;
-Admin.editPrompt = editPrompt;
-Admin.viewGateway = viewGateway;
-Admin.editGateway = editGateway;
-Admin.viewServer = viewServer;
-Admin.editServer = editServer;
-Admin.viewRoot = viewRoot;
-Admin.editRoot = editRoot;
-Admin.exportRoot = exportRoot;
-
 // Metrics
 import { retryLoadMetrics, switchTopPerformersTab } from "./metrics.js";
 
@@ -304,16 +281,45 @@ Admin.filterPlugins = filterPlugins;
 Admin.showPluginDetails = showPluginDetails;
 
 // Prompts
-import { initPromptSelect, testPrompt, runPromptTest } from "./prompts.js";
+import { 
+  editPrompt,
+  initPromptSelect, 
+  runPromptTest,
+  testPrompt, 
+  viewPrompt,
+} from "./prompts.js";
 
+Admin.editPrompt = editPrompt;
 Admin.initPromptSelect = initPromptSelect;
-Admin.testPrompt = testPrompt;
 Admin.runPromptTest = runPromptTest;
+Admin.testPrompt = testPrompt;
+Admin.viewPrompt = viewPrompt;
 
 // Resources
-import { initResourceSelect } from "./resources.js";
+import { 
+  editResource,
+  initResourceSelect,
+  runResourceTest,
+  testResource,
+  viewResource,
+} from "./resources.js";
 
+Admin.editResource = editResource;
 Admin.initResourceSelect = initResourceSelect;
+Admin.runResourceTest = runResourceTest;
+Admin.testResource = testResource;
+Admin.viewResource = viewResource;
+
+// Roots
+import {
+  viewRoot,
+  editRoot,
+  exportRoot,
+} from "./roots.js";
+
+Admin.viewRoot = viewRoot;
+Admin.editRoot = editRoot;
+Admin.exportRoot = exportRoot;
 
 // Selective Import
 import {
@@ -331,6 +337,15 @@ Admin.updateSelectionCount = updateSelectionCount;
 Admin.selectOnlyCustom = selectOnlyCustom;
 Admin.resetImportSelection = resetImportSelection;
 Admin.handleSelectiveImport = handleSelectiveImport;
+
+// Servers
+import {
+  viewServer,
+  editServer,
+} from "./servers.js"
+
+Admin.viewServer = viewServer;
+Admin.editServer = editServer;
 
 // Tabs
 import { showTab } from "./tabs.js";
@@ -371,6 +386,7 @@ Admin.getTeamNameById = getTeamNameById;
 
 // Tools
 import {
+  editTool,
   initToolSelect,
   testTool,
   enrichTool,
@@ -381,6 +397,7 @@ import {
   viewTool,
 } from "./tools.js";
 
+Admin.editTool = editTool;
 Admin.initToolSelect = initToolSelect;
 Admin.testTool = testTool;
 Admin.enrichTool = enrichTool;

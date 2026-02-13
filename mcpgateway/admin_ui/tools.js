@@ -1,20 +1,895 @@
 import { AppState } from "./appState.js";
+import { updateEditToolRequestTypes } from "./formFieldHandlers.js";
 import { getSelectedGatewayIds } from "./gateway.js";
 import { closeModal, openModal } from "./modals";
 import { 
   escapeHtml, 
   safeSetInnerHTML, 
   validateInputName, 
-  validatePassthroughHeader, 
+  validateJson, 
+  validatePassthroughHeader,
+  validateUrl, 
 } from "./security.js";
 import { 
   fetchWithTimeout, 
   getCurrentTeamId, 
   handleFetchError, 
+  isInactiveChecked, 
   safeGetElement, 
   showErrorMessage, 
-  showSuccessMessage, 
+  showSuccessMessage,
+  updateEditToolUrl, 
 } from "./utils";
+
+// ===================================================================
+// ENHANCED TOOL VIEWING with Secure Display
+// ===================================================================
+
+/**
+* SECURE: View Tool function with safe display
+*/
+export const viewTool = async function (toolId) {
+  try {
+    console.log(`Fetching tool details for ID: ${toolId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/tools/${toolId}`,
+    );
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const tool = await response.json();
+    // Build auth HTML safely with new styling
+    let authHTML = "";
+    if (tool.auth?.username && tool.auth?.password) {
+      authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+        <div class="text-gray-600 dark:text-gray-400">Basic Authentication</div>
+        <div class="mt-1">Username: <span class="auth-username font-medium"></span></div>
+        <div>Password: <span class="font-medium">********</span></div>
+        </div>
+    `;
+    } else if (tool.auth?.token) {
+      authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+        <div class="text-gray-600 dark:text-gray-400">Bearer Token</div>
+        <div class="mt-1">Token: <span class="font-medium">********</span></div>
+        </div>
+    `;
+    } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
+      authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">
+        <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
+        <div class="mt-1">Header: <span class="auth-header-key font-medium"></span></div>
+        <div>Value: <span class="font-medium">********</span></div>
+        </div>
+    `;
+    } else {
+      authHTML = `
+        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
+        <div class="mt-1 text-sm">None</div>
+    `;
+    }
+
+    // Create annotation badges safely - NO ESCAPING since we're using textContent
+    const renderAnnotations = (annotations) => {
+      if (!annotations || Object.keys(annotations).length === 0) {
+        return '<p><strong>Annotations:</strong> <span class="text-gray-600 dark:text-gray-300">None</span></p>';
+      }
+
+      const badges = [];
+
+      // Show title if present
+      if (annotations.title) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1 annotation-title"></span>',
+        );
+      }
+
+      // Show behavior hints with appropriate colors
+      if (annotations.readOnlyHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>',
+        );
+      }
+
+      if (annotations.destructiveHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>',
+        );
+      }
+
+      if (annotations.idempotentHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>',
+        );
+      }
+
+      if (annotations.openWorldHint === true) {
+        badges.push(
+          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>',
+        );
+      }
+
+      // Show any other custom annotations
+      Object.keys(annotations).forEach((key) => {
+        if (
+          ![
+            "title",
+            "readOnlyHint",
+            "destructiveHint",
+            "idempotentHint",
+            "openWorldHint",
+          ].includes(key)
+        ) {
+          const value = annotations[key];
+          badges.push(
+            `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:text-gray-200 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
+          );
+        }
+      });
+
+      return `
+        <div>
+        <strong>Annotations:</strong>
+        <div class="mt-1 flex flex-wrap">
+            ${badges.join("")}
+        </div>
+        </div>
+    `;
+    };
+
+    const toolDetailsDiv = safeGetElement("tool-details");
+    if (toolDetailsDiv) {
+      // Create structure safely without double-escaping
+      const safeHTML = `
+        <div class="bg-transparent dark:bg-transparent dark:text-gray-300">
+        <!-- Two Column Layout for Main Info -->
+        <div class="grid grid-cols-2 gap-6 mb-6">
+            <!-- Left Column -->
+            <div class="space-y-3">
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
+                <div class="mt-1 tool-display-name font-medium"></div>
+            </div>
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Technical Name:</span>
+                <div class="mt-1 tool-name text-sm"></div>
+            </div>
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">URL:</span>
+                <div class="mt-1 tool-url text-sm"></div>
+            </div>
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Type:</span>
+                <div class="mt-1 tool-type text-sm"></div>
+            </div>
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Visibility:</span>
+                <div class="mt-1 tool-visibility text-sm"></div>
+            </div>
+            </div>
+            <!-- Right Column -->
+            <div class="space-y-3">
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Description:</span>
+                <div class="mt-1 tool-description text-sm"></div>
+            </div>
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Tags:</span>
+                <div class="mt-1 tool-tags text-sm"></div>
+            </div>
+            <div>
+                <span class="font-medium text-gray-700 dark:text-gray-300">Request Type:</span>
+                <div class="mt-1 tool-request-type text-sm"></div>
+            </div>
+            <div class="auth-info">
+                ${authHTML}
+            </div>
+            </div>
+        </div>
+
+        <!-- Annotations Section -->
+        <div class="mb-6">
+            ${renderAnnotations(tool.annotations)}
+        </div>
+
+        <!-- Technical Details Section -->
+        <div class="space-y-4">
+            <div>
+            <strong class="text-gray-700 dark:text-gray-300">Headers:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-headers overflow-x-auto"></pre>
+            </div>
+            <div>
+            <strong class="text-gray-700 dark:text-gray-300">Input Schema:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-schema overflow-x-auto"></pre>
+            </div>
+            <div>
+            <strong class="text-gray-700 dark:text-gray-300">Output Schema:</strong>
+            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-output-schema overflow-x-auto"></pre>
+            </div>
+        </div>
+
+        <!-- Metrics Section -->
+        <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
+            <strong class="text-gray-700 dark:text-gray-300">Metrics:</strong>
+            <div class="grid grid-cols-2 gap-4 mt-3 text-sm">
+            <div class="space-y-2">
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Total Executions:</span>
+                <span class="metric-total font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Successful Executions:</span>
+                <span class="metric-success font-medium text-green-600"></span>
+                </div>
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Failed Executions:</span>
+                <span class="metric-failed font-medium text-red-600"></span>
+                </div>
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Failure Rate:</span>
+                <span class="metric-failure-rate font-medium"></span>
+                </div>
+            </div>
+            <div class="space-y-2">
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Min Response Time:</span>
+                <span class="metric-min-time font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Max Response Time:</span>
+                <span class="metric-max-time font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Average Response Time:</span>
+                <span class="metric-avg-time font-medium"></span>
+                </div>
+                <div class="flex justify-between">
+                <span class="text-gray-600 dark:text-gray-400">Last Execution Time:</span>
+                <span class="metric-last-time font-medium"></span>
+                </div>
+            </div>
+            </div>
+        </div>
+        <div class="mt-6 border-t pt-4">
+        <!-- Metadata Section -->
+            <strong>Metadata:</strong>
+            <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created By:</span>
+                <span class="ml-2 metadata-created-by"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created At:</span>
+                <span class="ml-2 metadata-created-at"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created From IP:</span>
+                <span class="ml-2 metadata-created-from"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Created Via:</span>
+                <span class="ml-2 metadata-created-via"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified By:</span>
+                <span class="ml-2 metadata-modified-by"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
+                <span class="ml-2 metadata-modified-at"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Modified From IP:</span>
+                <span class="ml-2 modified-from"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Modified Via:</span>
+                <span class="ml-2 metadata-modified-via"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
+                <span class="ml-2 metadata-version"></span>
+            </div>
+            <div>
+                <span class="font-medium text-gray-600 dark:text-gray-400">Import Batch:</span>
+                <span class="ml-2 metadata-import-batch"></span>
+            </div>
+            </div>
+        </div>
+        </div>
+    `;
+
+      // Set structure first
+      safeSetInnerHTML(toolDetailsDiv, safeHTML, true);
+
+      // Now safely set text content - NO ESCAPING since textContent is safe
+      const setTextSafely = (selector, value) => {
+        const element = toolDetailsDiv.querySelector(selector);
+        if (element) {
+          element.textContent = value || "N/A";
+        }
+      };
+
+      setTextSafely(
+        ".tool-display-name",
+        tool.displayName || tool.customName || tool.name,
+      );
+      tool.description = tool.description.slice(
+        0,
+        tool.description.indexOf("*"),
+      );
+      setTextSafely(".tool-name", tool.name);
+      setTextSafely(".tool-url", tool.url);
+      setTextSafely(".tool-type", tool.integrationType);
+      setTextSafely(".tool-description", tool.description);
+      setTextSafely(".tool-visibility", tool.visibility);
+
+      // Set tags as HTML with badges
+      const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
+      if (tagsElement) {
+        if (tool.tags && tool.tags.length > 0) {
+          tagsElement.innerHTML = tool.tags
+            .map((tag) => {
+              const raw =
+                                typeof tag === "object" && tag !== null
+                                  ? tag.id || tag.label || JSON.stringify(tag)
+                                  : tag;
+              return `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(raw)}</span>`;
+            })
+            .join("");
+        } else {
+          tagsElement.textContent = "None";
+        }
+      }
+
+      setTextSafely(".tool-request-type", tool.requestType);
+      setTextSafely(
+        ".tool-headers",
+        JSON.stringify(tool.headers || {}, null, 2),
+      );
+      setTextSafely(
+        ".tool-schema",
+        JSON.stringify(tool.inputSchema || {}, null, 2),
+      );
+      setTextSafely(
+        ".tool-output-schema",
+        JSON.stringify(tool.outputSchema || {}, null, 2),
+      );
+
+      // Set auth fields safely
+      if (tool.auth?.username) {
+        setTextSafely(".auth-username", tool.auth.username);
+      }
+      if (tool.auth?.authHeaderKey) {
+        setTextSafely(".auth-header-key", tool.auth.authHeaderKey);
+      }
+
+      // Set annotation title safely
+      if (tool.annotations?.title) {
+        setTextSafely(".annotation-title", tool.annotations.title);
+      }
+
+      // Set custom annotations safely
+      const customAnnotations =
+                toolDetailsDiv.querySelectorAll(".custom-annotation");
+      customAnnotations.forEach((element) => {
+        const key = element.dataset.key;
+        const value = element.dataset.value;
+        element.textContent = `${key}: ${value}`;
+      });
+
+      // Set metrics safely
+      setTextSafely(".metric-total", tool.metrics?.totalExecutions ?? 0);
+      setTextSafely(
+        ".metric-success",
+        tool.metrics?.successfulExecutions ?? 0,
+      );
+      setTextSafely(
+        ".metric-failed",
+        tool.metrics?.failedExecutions ?? 0,
+      );
+      setTextSafely(
+        ".metric-failure-rate",
+        tool.metrics?.failureRate ?? 0,
+      );
+      setTextSafely(
+        ".metric-min-time",
+        tool.metrics?.minResponseTime ?? "N/A",
+      );
+      setTextSafely(
+        ".metric-max-time",
+        tool.metrics?.maxResponseTime ?? "N/A",
+      );
+      setTextSafely(
+        ".metric-avg-time",
+        tool.metrics?.avgResponseTime ?? "N/A",
+      );
+      setTextSafely(
+        ".metric-last-time",
+        tool.metrics?.lastExecutionTime ?? "N/A",
+      );
+
+      // Set metadata fields safely with appropriate fallbacks for legacy entities
+      setTextSafely(
+        ".metadata-created-by",
+        tool.created_by || tool.createdBy || "Legacy Entity",
+      );
+      setTextSafely(
+        ".metadata-created-at",
+        tool.created_at
+          ? new Date(tool.created_at).toLocaleString()
+          : tool.createdAt
+            ? new Date(tool.createdAt).toLocaleString()
+            : "Pre-metadata",
+      );
+      setTextSafely(
+        ".metadata-created-from",
+        tool.created_from_ip || tool.createdFromIp || "Unknown",
+      );
+      setTextSafely(
+        ".metadata-created-via",
+        tool.created_via || tool.createdVia || "Unknown",
+      );
+      setTextSafely(
+        ".metadata-modified-by",
+        tool.modified_by || tool.modifiedBy || "N/A",
+      );
+      setTextSafely(
+        ".metadata-modified-at",
+        tool.updated_at
+          ? new Date(tool.updated_at).toLocaleString()
+          : tool.updatedAt
+            ? new Date(tool.updatedAt).toLocaleString()
+            : "N/A",
+      );
+      setTextSafely(
+        ".metadata-modified-from",
+        tool.modified_from_ip || tool.modifiedFromIp || "N/A",
+      );
+      setTextSafely(
+        ".metadata-modified-via",
+        tool.modified_via || tool.modifiedVia || "N/A",
+      );
+      setTextSafely(".metadata-version", tool.version || "1");
+      setTextSafely(
+        ".metadata-import-batch",
+        tool.import_batch_id || tool.importBatchId || "N/A",
+      );
+    }
+
+    openModal("tool-modal");
+    console.log("✓ Tool details loaded successfully");
+  } catch (error) {
+    console.error("Error fetching tool details:", error);
+    const errorMessage = handleFetchError(error, "load tool details");
+    showErrorMessage(errorMessage);
+  }
+}
+
+/**
+ * SECURE: Edit Tool function with input validation
+ */
+export const editTool = async function (toolId) {
+  try {
+    console.log(`Editing tool ID: ${toolId}`);
+
+    const response = await fetchWithTimeout(
+      `${window.ROOT_PATH}/admin/tools/${toolId}`
+    );
+    if (!response.ok) {
+      // If the response is not OK, throw an error
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const tool = await response.json();
+
+    const isInactiveCheckedBool = isInactiveChecked("tools");
+    let hiddenField = safeGetElement("edit-show-inactive");
+    if (!hiddenField) {
+      hiddenField = document.createElement("input");
+      hiddenField.type = "hidden";
+      hiddenField.name = "is_inactive_checked";
+      hiddenField.id = "edit-show-inactive";
+      const editForm = safeGetElement("edit-tool-form");
+      if (editForm) {
+        editForm.appendChild(hiddenField);
+      }
+    }
+    hiddenField.value = isInactiveCheckedBool;
+
+    // Set form action and populate basic fields with validation
+    const editForm = safeGetElement("edit-tool-form");
+    if (editForm) {
+      editForm.action = `${window.ROOT_PATH}/admin/tools/${toolId}/edit`;
+    }
+
+    // Validate and set fields
+    const nameValidation = validateInputName(tool.name, "tool");
+    const customNameValidation = validateInputName(tool.customName, "tool");
+
+    const urlValidation = validateUrl(tool.url);
+
+    const nameField = safeGetElement("edit-tool-name");
+    const customNameField = safeGetElement("edit-tool-custom-name");
+    const urlField = safeGetElement("edit-tool-url");
+    const descField = safeGetElement("edit-tool-description");
+    const typeField = safeGetElement("edit-tool-type");
+
+    if (nameField && nameValidation.valid) {
+      nameField.value = nameValidation.value;
+    }
+    if (customNameField && customNameValidation.valid) {
+      customNameField.value = customNameValidation.value;
+    }
+
+    const displayNameField = safeGetElement("edit-tool-display-name");
+    if (displayNameField) {
+      displayNameField.value = tool.displayName || "";
+    }
+    if (urlField && urlValidation.valid) {
+      urlField.value = urlValidation.value;
+    }
+    if (descField) {
+      tool.description = tool.description.slice(
+        0,
+        tool.description.indexOf("*")
+      );
+      descField.value = tool.description || "";
+    }
+    if (typeField) {
+      typeField.value = tool.integrationType || "MCP";
+    }
+
+    // Set tags field
+    const tagsField = safeGetElement("edit-tool-tags");
+    if (tagsField) {
+      const rawTags = tool.tags
+        ? tool.tags.map((tag) =>
+          typeof tag === "object" && tag !== null ? tag.label || tag.id : tag
+        )
+        : [];
+      tagsField.value = rawTags.join(", ");
+    }
+
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+
+    if (teamId) {
+      const hiddenInput = document.createElement("input");
+      hiddenInput.type = "hidden";
+      hiddenInput.name = "team_id";
+      hiddenInput.value = teamId;
+      editForm.appendChild(hiddenInput);
+    }
+
+    const visibility = tool.visibility; // Ensure visibility is either 'public', 'team', or 'private'
+    const publicRadio = safeGetElement("edit-tool-visibility-public");
+    const teamRadio = safeGetElement("edit-tool-visibility-team");
+    const privateRadio = safeGetElement("edit-tool-visibility-private");
+
+    if (visibility) {
+      // Check visibility and set the corresponding radio button
+      if (visibility === "public" && publicRadio) {
+        publicRadio.checked = true;
+      } else if (visibility === "team" && teamRadio) {
+        teamRadio.checked = true;
+      } else if (visibility === "private" && privateRadio) {
+        privateRadio.checked = true;
+      }
+    }
+
+    // Handle JSON fields safely with validation
+    const headersValidation = validateJson(
+      JSON.stringify(tool.headers || {}),
+      "Headers"
+    );
+    const schemaValidation = validateJson(
+      JSON.stringify(tool.inputSchema || {}),
+      "Schema"
+    );
+    const outputSchemaValidation = validateJson(
+      tool.outputSchema ? JSON.stringify(tool.outputSchema) : "",
+      "Output Schema"
+    );
+    const annotationsValidation = validateJson(
+      JSON.stringify(tool.annotations || {}),
+      "Annotations"
+    );
+
+    const headersField = safeGetElement("edit-tool-headers");
+    const schemaField = safeGetElement("edit-tool-schema");
+    const outputSchemaField = safeGetElement("edit-tool-output-schema");
+    const annotationsField = safeGetElement("edit-tool-annotations");
+
+    if (headersField && headersValidation.valid) {
+      headersField.value = JSON.stringify(headersValidation.value, null, 2);
+    }
+    if (schemaField && schemaValidation.valid) {
+      schemaField.value = JSON.stringify(schemaValidation.value, null, 2);
+    }
+    if (outputSchemaField) {
+      if (tool.outputSchema) {
+        outputSchemaField.value = outputSchemaValidation.valid
+          ? JSON.stringify(outputSchemaValidation.value, null, 2)
+          : "";
+      } else {
+        outputSchemaField.value = "";
+      }
+    }
+    if (annotationsField && annotationsValidation.valid) {
+      annotationsField.value = JSON.stringify(
+        annotationsValidation.value,
+        null,
+        2
+      );
+    }
+
+    // Update CodeMirror editors if they exist
+    if (window.editToolHeadersEditor && headersValidation.valid) {
+      window.editToolHeadersEditor.setValue(
+        JSON.stringify(headersValidation.value, null, 2)
+      );
+      window.editToolHeadersEditor.refresh();
+    }
+    if (window.editToolSchemaEditor && schemaValidation.valid) {
+      window.editToolSchemaEditor.setValue(
+        JSON.stringify(schemaValidation.value, null, 2)
+      );
+      window.editToolSchemaEditor.refresh();
+    }
+    if (window.editToolOutputSchemaEditor) {
+      if (tool.outputSchema && outputSchemaValidation.valid) {
+        window.editToolOutputSchemaEditor.setValue(
+          JSON.stringify(outputSchemaValidation.value, null, 2)
+        );
+      } else {
+        window.editToolOutputSchemaEditor.setValue("");
+      }
+      window.editToolOutputSchemaEditor.refresh();
+    }
+
+    // Prefill integration type from DB and set request types accordingly
+    if (typeField) {
+      typeField.value = tool.integrationType || "REST";
+      // Disable integration type field for MCP tools (cannot be changed)
+      if (tool.integrationType === "MCP") {
+        typeField.disabled = true;
+      } else {
+        typeField.disabled = false;
+      }
+      updateEditToolRequestTypes(tool.requestType || null); // preselect from DB
+      updateEditToolUrl(tool.url || null);
+    }
+
+    // Request Type field handling (disable for MCP)
+    const requestTypeField = safeGetElement("edit-tool-request-type");
+    if (requestTypeField) {
+      if ((tool.integrationType || "REST") === "MCP") {
+        requestTypeField.value = "";
+        requestTypeField.disabled = true; // disabled -> not submitted
+      } else {
+        requestTypeField.disabled = false;
+        requestTypeField.value = tool.requestType || ""; // keep DB verb or blank
+      }
+    }
+
+    // Set auth type field
+    const authTypeField = safeGetElement("edit-auth-type");
+    if (authTypeField) {
+      authTypeField.value = tool.auth?.authType || "";
+    }
+    const editAuthTokenField = safeGetElement("edit-auth-token");
+    // Prefill integration type from DB and set request types accordingly
+    if (typeField) {
+      // Always set value from DB, never from previous UI state
+      typeField.value = tool.integrationType;
+      // Remove any previous hidden field for type
+      const prevHiddenType = safeGetElement("hidden-edit-tool-type");
+      if (prevHiddenType) {
+        prevHiddenType.remove();
+      }
+      // Remove any previous hidden field for authType
+      const prevHiddenAuthType = safeGetElement("hidden-edit-auth-type");
+      if (prevHiddenAuthType) {
+        prevHiddenAuthType.remove();
+      }
+      // Disable integration type field for MCP tools (cannot be changed)
+      if (tool.integrationType === "MCP") {
+        typeField.disabled = true;
+        if (authTypeField) {
+          authTypeField.disabled = true;
+          // Add hidden field for authType
+          const hiddenAuthTypeField = document.createElement("input");
+          hiddenAuthTypeField.type = "hidden";
+          hiddenAuthTypeField.name = authTypeField.name;
+          hiddenAuthTypeField.value = authTypeField.value;
+          hiddenAuthTypeField.id = "hidden-edit-auth-type";
+          authTypeField.form.appendChild(hiddenAuthTypeField);
+        }
+        if (urlField) {
+          urlField.readOnly = true;
+        }
+        if (headersField) {
+          headersField.setAttribute("readonly", "readonly");
+        }
+        if (schemaField) {
+          schemaField.setAttribute("readonly", "readonly");
+        }
+        if (editAuthTokenField) {
+          editAuthTokenField.setAttribute("readonly", "readonly");
+        }
+        if (window.editToolHeadersEditor) {
+          window.editToolHeadersEditor.setOption("readOnly", true);
+        }
+        if (window.editToolSchemaEditor) {
+          window.editToolSchemaEditor.setOption("readOnly", true);
+        }
+        if (window.editToolOutputSchemaEditor) {
+          window.editToolOutputSchemaEditor.setOption("readOnly", true);
+        }
+      } else {
+        typeField.disabled = false;
+        if (authTypeField) {
+          authTypeField.disabled = false;
+        }
+        if (urlField) {
+          urlField.readOnly = false;
+        }
+        if (headersField) {
+          headersField.removeAttribute("readonly");
+        }
+        if (schemaField) {
+          schemaField.removeAttribute("readonly");
+        }
+        if (editAuthTokenField) {
+          editAuthTokenField.removeAttribute("readonly");
+        }
+        if (window.editToolHeadersEditor) {
+          window.editToolHeadersEditor.setOption("readOnly", false);
+        }
+        if (window.editToolSchemaEditor) {
+          window.editToolSchemaEditor.setOption("readOnly", false);
+        }
+        if (window.editToolOutputSchemaEditor) {
+          window.editToolOutputSchemaEditor.setOption("readOnly", false);
+        }
+      }
+      // Update request types and URL field
+      updateEditToolRequestTypes(tool.requestType || null);
+      updateEditToolUrl(tool.url || null);
+    }
+
+    // Auth containers
+    const authBasicSection = safeGetElement("edit-auth-basic-fields");
+    const authBearerSection = safeGetElement("edit-auth-bearer-fields");
+    const authHeadersSection = safeGetElement("edit-auth-headers-fields");
+
+    // Individual fields
+    const authUsernameField = authBasicSection?.querySelector(
+      "input[name='auth_username']"
+    );
+    const authPasswordField = authBasicSection?.querySelector(
+      "input[name='auth_password']"
+    );
+
+    const authTokenField = authBearerSection?.querySelector(
+      "input[name='auth_token']"
+    );
+
+    const authHeaderKeyField = authHeadersSection?.querySelector(
+      "input[name='auth_header_key']"
+    );
+    const authHeaderValueField = authHeadersSection?.querySelector(
+      "input[name='auth_header_value']"
+    );
+    const authHeadersContainer = safeGetElement(
+      "auth-headers-container-gw-edit"
+    );
+    const authHeadersJsonInput = safeGetElement("auth-headers-json-gw-edit");
+    if (authHeadersContainer) {
+      authHeadersContainer.innerHTML = "";
+    }
+    if (authHeadersJsonInput) {
+      authHeadersJsonInput.value = "";
+    }
+
+    // Hide all auth sections first
+    if (authBasicSection) {
+      authBasicSection.style.display = "none";
+    }
+    if (authBearerSection) {
+      authBearerSection.style.display = "none";
+    }
+    if (authHeadersSection) {
+      authHeadersSection.style.display = "none";
+    }
+
+    // Clear old values
+    if (authUsernameField) {
+      authUsernameField.value = "";
+    }
+    if (authPasswordField) {
+      authPasswordField.value = "";
+    }
+    if (authTokenField) {
+      authTokenField.value = "";
+    }
+    if (authHeaderKeyField) {
+      authHeaderKeyField.value = "";
+    }
+    if (authHeaderValueField) {
+      authHeaderValueField.value = "";
+    }
+
+    // Display appropriate auth section and populate values
+    switch (tool.auth?.authType) {
+      case "basic":
+        if (authBasicSection) {
+          authBasicSection.style.display = "block";
+          if (authUsernameField) {
+            authUsernameField.value = tool.auth.username || "";
+          }
+          if (authPasswordField) {
+            authPasswordField.value = "*****"; // masked
+          }
+        }
+        break;
+
+      case "bearer":
+        if (authBearerSection) {
+          authBearerSection.style.display = "block";
+          if (authTokenField) {
+            authTokenField.value = "*****"; // masked
+          }
+        }
+        break;
+
+      case "authheaders":
+        if (authHeadersSection) {
+          authHeadersSection.style.display = "block";
+          if (authHeaderKeyField) {
+            authHeaderKeyField.value = tool.auth.authHeaderKey || "";
+          }
+          if (authHeaderValueField) {
+            authHeaderValueField.value = "*****"; // masked
+          }
+        }
+        break;
+
+      case "":
+      default:
+        // No auth – keep everything hidden
+        break;
+    }
+
+    openModal("tool-edit-modal");
+
+    // Ensure editors are refreshed after modal display
+    setTimeout(() => {
+      if (window.editToolHeadersEditor) {
+        window.editToolHeadersEditor.refresh();
+      }
+      if (window.editToolSchemaEditor) {
+        window.editToolSchemaEditor.refresh();
+      }
+      if (window.editToolOutputSchemaEditor) {
+        window.editToolOutputSchemaEditor.refresh();
+      }
+    }, 100);
+
+    console.log("✓ Tool edit modal loaded successfully");
+  } catch (error) {
+    console.error("Error fetching tool details for editing:", error);
+    const errorMessage = handleFetchError(error, "load tool for editing");
+    showErrorMessage(errorMessage);
+  }
+};
 
 // ===================================================================
 // TOOL SELECT FUNCTIONALITY
@@ -2803,456 +3678,3 @@ export const cleanupToolTestModal = function () {
     console.error("Error cleaning up tool test modal:", error);
   }
 };
-
-// ===================================================================
-// ENHANCED TOOL VIEWING with Secure Display
-// ===================================================================
-
-/**
-* SECURE: View Tool function with safe display
-*/
-export const viewTool = async function (toolId) {
-  try {
-    console.log(`Fetching tool details for ID: ${toolId}`);
-
-    const response = await fetchWithTimeout(
-      `${window.ROOT_PATH}/admin/tools/${toolId}`,
-    );
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-
-    const tool = await response.json();
-    // Build auth HTML safely with new styling
-    let authHTML = "";
-    if (tool.auth?.username && tool.auth?.password) {
-      authHTML = `
-        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
-        <div class="mt-1 text-sm">
-        <div class="text-gray-600 dark:text-gray-400">Basic Authentication</div>
-        <div class="mt-1">Username: <span class="auth-username font-medium"></span></div>
-        <div>Password: <span class="font-medium">********</span></div>
-        </div>
-    `;
-    } else if (tool.auth?.token) {
-      authHTML = `
-        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
-        <div class="mt-1 text-sm">
-        <div class="text-gray-600 dark:text-gray-400">Bearer Token</div>
-        <div class="mt-1">Token: <span class="font-medium">********</span></div>
-        </div>
-    `;
-    } else if (tool.auth?.authHeaderKey && tool.auth?.authHeaderValue) {
-      authHTML = `
-        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
-        <div class="mt-1 text-sm">
-        <div class="text-gray-600 dark:text-gray-400">Custom Headers</div>
-        <div class="mt-1">Header: <span class="auth-header-key font-medium"></span></div>
-        <div>Value: <span class="font-medium">********</span></div>
-        </div>
-    `;
-    } else {
-      authHTML = `
-        <span class="font-medium text-gray-700 dark:text-gray-300">Authentication Type:</span>
-        <div class="mt-1 text-sm">None</div>
-    `;
-    }
-
-    // Create annotation badges safely - NO ESCAPING since we're using textContent
-    const renderAnnotations = (annotations) => {
-      if (!annotations || Object.keys(annotations).length === 0) {
-        return '<p><strong>Annotations:</strong> <span class="text-gray-600 dark:text-gray-300">None</span></p>';
-      }
-
-      const badges = [];
-
-      // Show title if present
-      if (annotations.title) {
-        badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1 annotation-title"></span>',
-        );
-      }
-
-      // Show behavior hints with appropriate colors
-      if (annotations.readOnlyHint === true) {
-        badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 mr-1 mb-1">📖 Read-Only</span>',
-        );
-      }
-
-      if (annotations.destructiveHint === true) {
-        badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 mr-1 mb-1">⚠️ Destructive</span>',
-        );
-      }
-
-      if (annotations.idempotentHint === true) {
-        badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 mr-1 mb-1">🔄 Idempotent</span>',
-        );
-      }
-
-      if (annotations.openWorldHint === true) {
-        badges.push(
-          '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800 mr-1 mb-1">🌐 External Access</span>',
-        );
-      }
-
-      // Show any other custom annotations
-      Object.keys(annotations).forEach((key) => {
-        if (
-          ![
-            "title",
-            "readOnlyHint",
-            "destructiveHint",
-            "idempotentHint",
-            "openWorldHint",
-          ].includes(key)
-        ) {
-          const value = annotations[key];
-          badges.push(
-            `<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:text-gray-200 mr-1 mb-1 custom-annotation" data-key="${key}" data-value="${value}"></span>`,
-          );
-        }
-      });
-
-      return `
-        <div>
-        <strong>Annotations:</strong>
-        <div class="mt-1 flex flex-wrap">
-            ${badges.join("")}
-        </div>
-        </div>
-    `;
-    };
-
-    const toolDetailsDiv = safeGetElement("tool-details");
-    if (toolDetailsDiv) {
-      // Create structure safely without double-escaping
-      const safeHTML = `
-        <div class="bg-transparent dark:bg-transparent dark:text-gray-300">
-        <!-- Two Column Layout for Main Info -->
-        <div class="grid grid-cols-2 gap-6 mb-6">
-            <!-- Left Column -->
-            <div class="space-y-3">
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
-                <div class="mt-1 tool-display-name font-medium"></div>
-            </div>
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Technical Name:</span>
-                <div class="mt-1 tool-name text-sm"></div>
-            </div>
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">URL:</span>
-                <div class="mt-1 tool-url text-sm"></div>
-            </div>
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Type:</span>
-                <div class="mt-1 tool-type text-sm"></div>
-            </div>
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Visibility:</span>
-                <div class="mt-1 tool-visibility text-sm"></div>
-            </div>
-            </div>
-            <!-- Right Column -->
-            <div class="space-y-3">
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Description:</span>
-                <div class="mt-1 tool-description text-sm"></div>
-            </div>
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Tags:</span>
-                <div class="mt-1 tool-tags text-sm"></div>
-            </div>
-            <div>
-                <span class="font-medium text-gray-700 dark:text-gray-300">Request Type:</span>
-                <div class="mt-1 tool-request-type text-sm"></div>
-            </div>
-            <div class="auth-info">
-                ${authHTML}
-            </div>
-            </div>
-        </div>
-
-        <!-- Annotations Section -->
-        <div class="mb-6">
-            ${renderAnnotations(tool.annotations)}
-        </div>
-
-        <!-- Technical Details Section -->
-        <div class="space-y-4">
-            <div>
-            <strong class="text-gray-700 dark:text-gray-300">Headers:</strong>
-            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-headers overflow-x-auto"></pre>
-            </div>
-            <div>
-            <strong class="text-gray-700 dark:text-gray-300">Input Schema:</strong>
-            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-schema overflow-x-auto"></pre>
-            </div>
-            <div>
-            <strong class="text-gray-700 dark:text-gray-300">Output Schema:</strong>
-            <pre class="mt-1 bg-gray-100 p-3 rounded text-xs dark:bg-gray-800 dark:text-gray-200 tool-output-schema overflow-x-auto"></pre>
-            </div>
-        </div>
-
-        <!-- Metrics Section -->
-        <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-600">
-            <strong class="text-gray-700 dark:text-gray-300">Metrics:</strong>
-            <div class="grid grid-cols-2 gap-4 mt-3 text-sm">
-            <div class="space-y-2">
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Total Executions:</span>
-                <span class="metric-total font-medium"></span>
-                </div>
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Successful Executions:</span>
-                <span class="metric-success font-medium text-green-600"></span>
-                </div>
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Failed Executions:</span>
-                <span class="metric-failed font-medium text-red-600"></span>
-                </div>
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Failure Rate:</span>
-                <span class="metric-failure-rate font-medium"></span>
-                </div>
-            </div>
-            <div class="space-y-2">
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Min Response Time:</span>
-                <span class="metric-min-time font-medium"></span>
-                </div>
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Max Response Time:</span>
-                <span class="metric-max-time font-medium"></span>
-                </div>
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Average Response Time:</span>
-                <span class="metric-avg-time font-medium"></span>
-                </div>
-                <div class="flex justify-between">
-                <span class="text-gray-600 dark:text-gray-400">Last Execution Time:</span>
-                <span class="metric-last-time font-medium"></span>
-                </div>
-            </div>
-            </div>
-        </div>
-        <div class="mt-6 border-t pt-4">
-        <!-- Metadata Section -->
-            <strong>Metadata:</strong>
-            <div class="grid grid-cols-2 gap-4 mt-2 text-sm">
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Created By:</span>
-                <span class="ml-2 metadata-created-by"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Created At:</span>
-                <span class="ml-2 metadata-created-at"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Created From IP:</span>
-                <span class="ml-2 metadata-created-from"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Created Via:</span>
-                <span class="ml-2 metadata-created-via"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified By:</span>
-                <span class="ml-2 metadata-modified-by"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Last Modified At:</span>
-                <span class="ml-2 metadata-modified-at"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Modified From IP:</span>
-                <span class="ml-2 modified-from"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Modified Via:</span>
-                <span class="ml-2 metadata-modified-via"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Version:</span>
-                <span class="ml-2 metadata-version"></span>
-            </div>
-            <div>
-                <span class="font-medium text-gray-600 dark:text-gray-400">Import Batch:</span>
-                <span class="ml-2 metadata-import-batch"></span>
-            </div>
-            </div>
-        </div>
-        </div>
-    `;
-
-      // Set structure first
-      safeSetInnerHTML(toolDetailsDiv, safeHTML, true);
-
-      // Now safely set text content - NO ESCAPING since textContent is safe
-      const setTextSafely = (selector, value) => {
-        const element = toolDetailsDiv.querySelector(selector);
-        if (element) {
-          element.textContent = value || "N/A";
-        }
-      };
-
-      setTextSafely(
-        ".tool-display-name",
-        tool.displayName || tool.customName || tool.name,
-      );
-      tool.description = tool.description.slice(
-        0,
-        tool.description.indexOf("*"),
-      );
-      setTextSafely(".tool-name", tool.name);
-      setTextSafely(".tool-url", tool.url);
-      setTextSafely(".tool-type", tool.integrationType);
-      setTextSafely(".tool-description", tool.description);
-      setTextSafely(".tool-visibility", tool.visibility);
-
-      // Set tags as HTML with badges
-      const tagsElement = toolDetailsDiv.querySelector(".tool-tags");
-      if (tagsElement) {
-        if (tool.tags && tool.tags.length > 0) {
-          tagsElement.innerHTML = tool.tags
-            .map((tag) => {
-              const raw =
-                                typeof tag === "object" && tag !== null
-                                  ? tag.id || tag.label || JSON.stringify(tag)
-                                  : tag;
-              return `<span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1 dark:bg-blue-900 dark:text-blue-200">${escapeHtml(raw)}</span>`;
-            })
-            .join("");
-        } else {
-          tagsElement.textContent = "None";
-        }
-      }
-
-      setTextSafely(".tool-request-type", tool.requestType);
-      setTextSafely(
-        ".tool-headers",
-        JSON.stringify(tool.headers || {}, null, 2),
-      );
-      setTextSafely(
-        ".tool-schema",
-        JSON.stringify(tool.inputSchema || {}, null, 2),
-      );
-      setTextSafely(
-        ".tool-output-schema",
-        JSON.stringify(tool.outputSchema || {}, null, 2),
-      );
-
-      // Set auth fields safely
-      if (tool.auth?.username) {
-        setTextSafely(".auth-username", tool.auth.username);
-      }
-      if (tool.auth?.authHeaderKey) {
-        setTextSafely(".auth-header-key", tool.auth.authHeaderKey);
-      }
-
-      // Set annotation title safely
-      if (tool.annotations?.title) {
-        setTextSafely(".annotation-title", tool.annotations.title);
-      }
-
-      // Set custom annotations safely
-      const customAnnotations =
-                toolDetailsDiv.querySelectorAll(".custom-annotation");
-      customAnnotations.forEach((element) => {
-        const key = element.dataset.key;
-        const value = element.dataset.value;
-        element.textContent = `${key}: ${value}`;
-      });
-
-      // Set metrics safely
-      setTextSafely(".metric-total", tool.metrics?.totalExecutions ?? 0);
-      setTextSafely(
-        ".metric-success",
-        tool.metrics?.successfulExecutions ?? 0,
-      );
-      setTextSafely(
-        ".metric-failed",
-        tool.metrics?.failedExecutions ?? 0,
-      );
-      setTextSafely(
-        ".metric-failure-rate",
-        tool.metrics?.failureRate ?? 0,
-      );
-      setTextSafely(
-        ".metric-min-time",
-        tool.metrics?.minResponseTime ?? "N/A",
-      );
-      setTextSafely(
-        ".metric-max-time",
-        tool.metrics?.maxResponseTime ?? "N/A",
-      );
-      setTextSafely(
-        ".metric-avg-time",
-        tool.metrics?.avgResponseTime ?? "N/A",
-      );
-      setTextSafely(
-        ".metric-last-time",
-        tool.metrics?.lastExecutionTime ?? "N/A",
-      );
-
-      // Set metadata fields safely with appropriate fallbacks for legacy entities
-      setTextSafely(
-        ".metadata-created-by",
-        tool.created_by || tool.createdBy || "Legacy Entity",
-      );
-      setTextSafely(
-        ".metadata-created-at",
-        tool.created_at
-          ? new Date(tool.created_at).toLocaleString()
-          : tool.createdAt
-            ? new Date(tool.createdAt).toLocaleString()
-            : "Pre-metadata",
-      );
-      setTextSafely(
-        ".metadata-created-from",
-        tool.created_from_ip || tool.createdFromIp || "Unknown",
-      );
-      setTextSafely(
-        ".metadata-created-via",
-        tool.created_via || tool.createdVia || "Unknown",
-      );
-      setTextSafely(
-        ".metadata-modified-by",
-        tool.modified_by || tool.modifiedBy || "N/A",
-      );
-      setTextSafely(
-        ".metadata-modified-at",
-        tool.updated_at
-          ? new Date(tool.updated_at).toLocaleString()
-          : tool.updatedAt
-            ? new Date(tool.updatedAt).toLocaleString()
-            : "N/A",
-      );
-      setTextSafely(
-        ".metadata-modified-from",
-        tool.modified_from_ip || tool.modifiedFromIp || "N/A",
-      );
-      setTextSafely(
-        ".metadata-modified-via",
-        tool.modified_via || tool.modifiedVia || "N/A",
-      );
-      setTextSafely(".metadata-version", tool.version || "1");
-      setTextSafely(
-        ".metadata-import-batch",
-        tool.import_batch_id || tool.importBatchId || "N/A",
-      );
-    }
-
-    openModal("tool-modal");
-    console.log("✓ Tool details loaded successfully");
-  } catch (error) {
-    console.error("Error fetching tool details:", error);
-    const errorMessage = handleFetchError(error, "load tool details");
-    showErrorMessage(errorMessage);
-  }
-}
-
