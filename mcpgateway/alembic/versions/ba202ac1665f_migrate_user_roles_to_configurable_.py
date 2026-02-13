@@ -1,9 +1,8 @@
-# -*- coding: utf-8 -*-
-"""migrate user roles to configurable defaults
+"""Migrate user roles to configurable defaults
 
-Revision ID: d2d3d4d5d6d7
+Revision ID: ba202ac1665f
 Revises: c1c2c3c4c5c6
-Create Date: 2026-02-13 10:00:00.000000
+Create Date: 2026-02-13 16:43:04.089267
 
 Migrate existing user_roles assignments to use the configurable default role
 names from settings. If settings match the previous hardcoded defaults, this
@@ -19,7 +18,6 @@ Configurable via:
   - DEFAULT_USER_ROLE
   - DEFAULT_TEAM_OWNER_ROLE
 """
-
 # Standard
 from typing import Sequence, Union
 
@@ -32,8 +30,8 @@ from sqlalchemy import text
 from mcpgateway.config import settings
 
 # revision identifiers, used by Alembic.
-revision: str = "d2d3d4d5d6d7"
-down_revision: Union[str, Sequence[str], None] = "c1c2c3c4c5c6"
+revision: str = 'ba202ac1665f'
+down_revision: Union[str, Sequence[str], None] = 'c1c2c3c4c5c6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
