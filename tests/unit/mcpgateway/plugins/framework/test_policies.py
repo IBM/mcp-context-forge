@@ -7,6 +7,9 @@ Authors: Fred Araujo
 Tests for hook payload policies.
 """
 
+# Standard
+from unittest.mock import patch
+
 # Third-Party
 import pytest
 from pydantic import BaseModel
@@ -188,6 +191,134 @@ class TestProtocolConformance:
         assert isinstance(msg, MessageLike)
 
 
+class TestPromptPosthookCoercion:
+    """Tests for PromptPosthookPayload._coerce_result field validator."""
+
+    def test_dict_result_coerced_to_structured_data(self):
+        from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload
+        from mcpgateway.plugins.framework.utils import StructuredData
+
+        payload = PromptPosthookPayload(
+            prompt_id="test",
+            result={"messages": [{"role": "user", "content": {"type": "text", "text": "hi"}}]},
+        )
+        assert isinstance(payload.result, StructuredData)
+        assert payload.result.messages[0].content.text == "hi"
+
+    def test_non_dict_result_passthrough(self):
+        from types import SimpleNamespace
+
+        from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload
+
+        ns = SimpleNamespace(messages=[], description=None)
+        payload = PromptPosthookPayload(prompt_id="test", result=ns)
+        assert payload.result is ns
+
+    def test_pydantic_model_result_passthrough(self):
+        from mcpgateway.plugins.framework.hooks.prompts import PromptPosthookPayload
+
+        class FakeResult(BaseModel):
+            messages: list = []
+            description: str = "test"
+
+        fake = FakeResult()
+        payload = PromptPosthookPayload(prompt_id="test", result=fake)
+        assert payload.result is fake
+
+
+class TestExecutorPolicyEnforcement:
+    """Tests for policy enforcement in PluginExecutor.execute()."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_policy_filters_writable_fields(self):
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class ModifyingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                modified = payload.model_copy(update={"name": "new", "secret": "hacked"})
+                return PluginResult(continue_processing=True, modified_payload=modified)
+
+        config = PluginConfig(name="modifier", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        plugin = ModifyingPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old", secret="original")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [hook_ref], payload, global_ctx, hook_type="test_hook",
+        )
+        assert result.modified_payload is not None
+        assert result.modified_payload.name == "new"
+        assert result.modified_payload.secret == "original"  # filtered by policy
+
+    @pytest.mark.asyncio
+    async def test_default_deny_rejects_modifications(self):
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class ModifyingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                modified = payload.model_copy(update={"name": "new"})
+                return PluginResult(continue_processing=True, modified_payload=modified)
+
+        config = PluginConfig(name="modifier", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        plugin = ModifyingPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        # No policies passed — default deny should reject all
+        with patch("mcpgateway.plugins.framework.manager.settings") as mock_settings:
+            mock_settings.default_hook_policy = "deny"
+            mock_settings.max_payload_size_bytes = 1048576
+            executor = PluginExecutor(hook_policies={})
+
+        payload = SamplePayload(name="old", secret="original")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [hook_ref], payload, global_ctx, hook_type="test_hook",
+        )
+        # With deny policy, modifications should be rejected — modified_payload is None
+        assert result.modified_payload is None
+
+    @pytest.mark.asyncio
+    async def test_explicit_policy_no_effective_change(self):
+        from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+        from mcpgateway.plugins.framework.manager import PluginExecutor
+        from mcpgateway.plugins.framework.models import GlobalContext, PluginConfig, PluginResult
+
+        class ModifyingPlugin(Plugin):
+            async def test_hook(self, payload, context):
+                # Only modify 'secret' which is NOT writable
+                modified = payload.model_copy(update={"secret": "hacked"})
+                return PluginResult(continue_processing=True, modified_payload=modified)
+
+        config = PluginConfig(name="modifier", kind="test.Plugin", version="1.0", hooks=["test_hook"])
+        plugin = ModifyingPlugin(config)
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+
+        policies = {"test_hook": HookPayloadPolicy(writable_fields=frozenset({"name"}))}
+        executor = PluginExecutor(hook_policies=policies)
+
+        payload = SamplePayload(name="old", secret="original")
+        global_ctx = GlobalContext(request_id="1")
+
+        result, _ = await executor.execute(
+            [hook_ref], payload, global_ctx, hook_type="test_hook",
+        )
+        # apply_policy returns None because no writable fields changed — so modified_payload stays None
+        assert result.modified_payload is None
+
+
 class TestFrameworkImportIsolation:
     """Verify the plugin framework has no remaining imports from mcpgateway.common or mcpgateway.utils."""
 
@@ -209,4 +340,4 @@ class TestFrameworkImportIsolation:
                     if node.module.startswith(("mcpgateway.common", "mcpgateway.utils")):
                         violations.append(f"{py_file.relative_to(framework_dir)}:{node.lineno} -> {node.module}")
 
-        assert violations == [], f"Framework still imports from gateway internals:\n" + "\n".join(violations)
+        assert violations == [], "Framework still imports from gateway internals:\n" + "\n".join(violations)
