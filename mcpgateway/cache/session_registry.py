@@ -1918,15 +1918,14 @@ class SessionRegistry(SessionBackend):
             # Get the token from the current authentication context
             # The user object should contain auth_token, token_teams, and is_admin from the SSE endpoint
             token = None
-            token_teams = user.get("token_teams", [])  # Default to empty list, never None
             is_admin = user.get("is_admin", False)  # Preserve admin status from SSE endpoint
 
             try:
                 if hasattr(user, "get") and user.get("auth_token"):
                     token = user["auth_token"]
                 else:
-                    # Fallback: create token preserving the user's context (including admin status)
-                    logger.warning("No auth token available for SSE RPC call - creating fallback token")
+                    # Fallback: create lightweight session token (teams resolved server-side by downstream /rpc)
+                    logger.warning("No auth token available for SSE RPC call - creating fallback session token")
                     now = datetime.now(timezone.utc)
                     payload = {
                         "sub": user.get("email", "system"),
@@ -1934,7 +1933,7 @@ class SessionRegistry(SessionBackend):
                         "aud": settings.jwt_audience,
                         "iat": int(now.timestamp()),
                         "jti": str(uuid.uuid4()),
-                        "teams": token_teams,  # Always a list - preserves token scope
+                        "token_use": "session",  # nosec B105 - token type marker, not a password
                         "user": {
                             "email": user.get("email", "system"),
                             "full_name": user.get("full_name", "System"),

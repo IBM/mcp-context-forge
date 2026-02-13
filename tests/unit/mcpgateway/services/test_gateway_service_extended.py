@@ -759,7 +759,6 @@ class TestGatewayServiceExtended:
         assert existing_resource.visibility == "public"
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Skipping this test temporarily - will be handled in PR related to #PROMPTS")
     async def test_update_or_create_prompts_new_prompts(self):
         """Test _update_or_create_prompts creates new prompts."""
         service = GatewayService()
@@ -785,7 +784,7 @@ class TestGatewayServiceExtended:
         mock_prompt = MagicMock()
         mock_prompt.name = "test_prompt"
         mock_prompt.description = "A test prompt"
-        mock_prompt.uri_template = "Hello {name}!"
+        mock_prompt.template = "Hello {name}!"
 
         prompts = [mock_prompt]
         context = "test"
@@ -798,7 +797,7 @@ class TestGatewayServiceExtended:
         new_prompt = result[0]
         assert new_prompt.name == "test_prompt"
         assert new_prompt.description == "A test prompt"
-        assert new_prompt.uri_template == "Hello {name}!"
+        assert new_prompt.template == "Hello {name}!"
         assert new_prompt.created_via == "test"
         assert new_prompt.visibility == "private"
         assert new_prompt.argument_schema == {}

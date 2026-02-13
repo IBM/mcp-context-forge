@@ -803,3 +803,280 @@ async def test_subscribe_events_redis_flow(monkeypatch):
         assert event == {"hello": "world"}
         assert fake_pubsub.unsubscribed is True
         assert fake_pubsub.closed is True
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_get_redis_client_none_falls_back_to_local(monkeypatch):
+    """Exercise fallback_to_local path when get_redis_client returns None."""
+    from mcpgateway.services.event_service import EventService
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-none-client")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(return_value=None))
+
+        agen = service.subscribe_events()
+        task = asyncio.create_task(agen.__anext__())
+
+        # Wait until the local queue is registered.
+        while not service._event_subscribers:
+            await asyncio.sleep(0)
+
+        service._redis_client = None
+        await service.publish_event({"event": "local"})
+
+        event = await task
+        await agen.aclose()
+
+        assert event == {"event": "local"}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_timeout_error_continues(monkeypatch):
+    """Exercise the asyncio.TimeoutError branch during Redis polling."""
+    from mcpgateway.services.event_service import EventService
+
+    class FakePubSub:
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            return None
+
+        async def unsubscribe(self, _channel):
+            return None
+
+        async def aclose(self):
+            return None
+
+    fake_pubsub = FakePubSub()
+    fake_client = MagicMock()
+    fake_client.pubsub.return_value = fake_pubsub
+
+    call_count = 0
+
+    async def fake_wait_for(awaitable, timeout):  # noqa: ARG001
+        nonlocal call_count
+        call_count += 1
+        await awaitable  # Ensure awaited to avoid warnings
+        if call_count == 1:
+            raise asyncio.TimeoutError()
+        return {"type": "message", "data": orjson.dumps({"ok": True})}
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-timeout")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(return_value=fake_client))
+        monkeypatch.setattr("mcpgateway.services.event_service.asyncio.wait_for", fake_wait_for)
+
+        agen = service.subscribe_events()
+        event = await agen.__anext__()
+        await agen.aclose()
+
+        assert event == {"ok": True}
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_cancelled_error_is_logged(monkeypatch):
+    """Exercise the asyncio.CancelledError branch for Redis subscriptions."""
+    from mcpgateway.services.event_service import EventService
+
+    class FakePubSub:
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            return None
+
+        async def unsubscribe(self, _channel):
+            return None
+
+        async def aclose(self):
+            return None
+
+    fake_client = MagicMock()
+    fake_client.pubsub.return_value = FakePubSub()
+
+    async def fake_wait_for(awaitable, timeout):  # noqa: ARG001
+        await awaitable
+        raise asyncio.CancelledError()
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-cancel")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(return_value=fake_client))
+        monkeypatch.setattr("mcpgateway.services.event_service.asyncio.wait_for", fake_wait_for)
+
+        with patch("mcpgateway.services.event_service.logger") as mock_logger:
+            agen = service.subscribe_events()
+            with pytest.raises(asyncio.CancelledError):
+                await agen.__anext__()
+            await agen.aclose()
+
+            mock_logger.debug.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_redis_exception_is_logged(monkeypatch):
+    """Exercise the generic exception branch for Redis subscriptions."""
+    from mcpgateway.services.event_service import EventService
+
+    class FakePubSub:
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            return None
+
+        async def unsubscribe(self, _channel):
+            return None
+
+        async def aclose(self):
+            return None
+
+    fake_client = MagicMock()
+    fake_client.pubsub.return_value = FakePubSub()
+
+    async def fake_wait_for(awaitable, timeout):  # noqa: ARG001
+        await awaitable
+        raise Exception("Redis boom")
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-error")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(return_value=fake_client))
+        monkeypatch.setattr("mcpgateway.services.event_service.asyncio.wait_for", fake_wait_for)
+
+        with patch("mcpgateway.services.event_service.logger") as mock_logger:
+            agen = service.subscribe_events()
+            with pytest.raises(Exception, match="Redis boom"):
+                await agen.__anext__()
+            await agen.aclose()
+
+            mock_logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_cleanup_error_is_logged(monkeypatch):
+    """Exercise the cleanup warning path when unsubscribing fails."""
+    from mcpgateway.services.event_service import EventService
+
+    class FakePubSub:
+        def __init__(self):
+            self._returned = False
+
+        async def subscribe(self, _channel):
+            return None
+
+        async def get_message(self, **_kwargs):
+            if self._returned:
+                return None
+            self._returned = True
+            return {"type": "message", "data": orjson.dumps({"hello": "world"})}
+
+        async def unsubscribe(self, _channel):
+            raise Exception("Cleanup boom")
+
+        async def aclose(self):
+            return None
+
+    fake_client = MagicMock()
+    fake_client.pubsub.return_value = FakePubSub()
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-cleanup")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(return_value=fake_client))
+
+        with patch("mcpgateway.services.event_service.logger") as mock_logger:
+            agen = service.subscribe_events()
+            event = await agen.__anext__()
+            await agen.aclose()
+
+            assert event == {"hello": "world"}
+            mock_logger.warning.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_import_error_falls_back_to_local(monkeypatch):
+    """Exercise ImportError handling during Redis subscribe setup."""
+    from mcpgateway.services.event_service import EventService
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-import-error")
+        service._redis_client = object()
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.services.event_service.get_redis_client", AsyncMock(side_effect=ImportError("no redis")))
+
+        with patch("mcpgateway.services.event_service.logger") as mock_logger:
+            agen = service.subscribe_events()
+            task = asyncio.create_task(agen.__anext__())
+
+            while not service._event_subscribers:
+                await asyncio.sleep(0)
+
+            service._redis_client = None
+            await service.publish_event({"event": "local"})
+
+            event = await task
+            await agen.aclose()
+
+            assert event == {"event": "local"}
+            mock_logger.error.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_subscribe_events_redis_configured_without_client_exits(monkeypatch):
+    """Exercise the branch where Redis is configured/available but the service has no client."""
+    from mcpgateway.services.event_service import EventService
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:redis-no-client")
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+
+        agen = service.subscribe_events()
+        with pytest.raises(StopAsyncIteration):
+            await agen.__anext__()
+
+
+@pytest.mark.asyncio
+async def test_event_generator_exits_when_subscribe_events_exits(monkeypatch):
+    """Exercise event_generator's empty-loop path when subscribe_events produces nothing."""
+    from mcpgateway.services.event_service import EventService
+
+    with patch("mcpgateway.services.event_service.settings") as mock_settings:
+        mock_settings.cache_type = "redis"
+        mock_settings.redis_url = "redis://localhost:6379"
+        service = EventService("test:event-gen-empty")
+
+        monkeypatch.setattr("mcpgateway.services.event_service.REDIS_AVAILABLE", True)
+
+        agen = service.event_generator()
+        with pytest.raises(StopAsyncIteration):
+            await agen.__anext__()

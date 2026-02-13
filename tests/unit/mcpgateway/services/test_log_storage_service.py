@@ -106,6 +106,19 @@ async def test_add_log_with_entity():
 
 
 @pytest.mark.asyncio
+async def test_add_log_with_existing_entity_index_key():
+    """Cover branch when entity index key already exists."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+
+        service = LogStorageService()
+        await service.add_log(level=LogLevel.INFO, message="Entity log 1", entity_type="tool", entity_id="tool-1")
+        await service.add_log(level=LogLevel.INFO, message="Entity log 2", entity_type="tool", entity_id="tool-1")
+
+        assert len(service._entity_index["tool:tool-1"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_add_log_with_request_id():
     """Test adding log with request ID."""
     with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
@@ -309,6 +322,43 @@ async def test_get_logs_time_range():
         result = await service.get_logs(start_time=datetime(2024, 6, 1, tzinfo=timezone.utc), end_time=future_time)
         assert len(result) == 1
         assert result[0]["message"] == "Current log"
+
+
+@pytest.mark.asyncio
+async def test_get_logs_time_range_excludes_entries_after_end_time():
+    """Cover end_time upper-bound filter branch."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+        service = LogStorageService()
+
+        future_entry = LogEntry(level=LogLevel.INFO, message="Future log")
+        future_entry.timestamp = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        service._buffer.append(future_entry)
+        service._current_size_bytes += future_entry._size
+
+        result = await service.get_logs(end_time=datetime(2025, 1, 1, tzinfo=timezone.utc))
+
+        assert result == []
+
+
+@pytest.mark.asyncio
+async def test_remove_from_indices_branch_coverage():
+    """Cover remaining _remove_from_indices index branches."""
+    with patch("mcpgateway.services.log_storage_service.settings") as mock_settings:
+        mock_settings.log_buffer_size_mb = 1.0
+        service = LogStorageService()
+
+        # Create shared indices with multiple IDs so deletion keeps key alive.
+        e1 = await service.add_log(level=LogLevel.INFO, message="one", entity_type="tool", entity_id="tool-1", request_id="req-1")
+        await service.add_log(level=LogLevel.INFO, message="two", entity_type="tool", entity_id="tool-1", request_id="req-1")
+
+        service._remove_from_indices(e1)
+        assert "tool:tool-1" in service._entity_index
+        assert "req-1" in service._request_index
+
+        # Entry with unknown entity key should hit "key not in index" branch.
+        ghost = LogEntry(level=LogLevel.INFO, message="ghost", entity_type="tool", entity_id="missing", request_id=None)
+        service._remove_from_indices(ghost)
 
 
 @pytest.mark.asyncio

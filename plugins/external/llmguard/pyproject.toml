@@ -44,13 +44,11 @@ authors = [
 ]
 
 dependencies = [
-    "mcp>=1.16.0",
-    "mcp-contextforge-gateway",
-    "llm-guard",
-    "redis>=5.0.0",
-    "orjson>=3.10.0",
+    "llm-guard>=0.3.16",
+    "mcp>=1.26.0",
+    "orjson>=3.11.7",
     "rapidfuzz>=3.14.3",
-    "transformers==4.55.1"
+    "redis>=7.1.1",
 ]
 
 # URLs
@@ -61,29 +59,27 @@ Repository = "https://github.com/IBM/mcp-context-forge"
 "Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
 Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 
-[tool.uv.sources]
-mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git", rev = "main" }
+# Note: mcp-contextforge-gateway is provided at runtime by the gateway process.
+# It is not listed as a direct dependency to avoid cryptography version conflicts
+# with llm-guard's transitive dependency on presidio-anonymizer.
 
 # ----------------------------------------------------------------
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
 [project.optional-dependencies]
 dev = [
-    "black>=25.1.0",
-    "pytest>=8.4.1",
-    "pytest-asyncio>=1.1.0",
-    "pytest-cov>=6.2.1",
+    "black>=26.1.0",
+    "pytest>=9.0.2",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
     "pytest-dotenv>=0.5.2",
-    "pytest-env>=1.1.5",
+    "pytest-env>=1.3.2",
     "pytest-examples>=0.0.18",
-    "pytest-md-report>=0.7.0",
-    "pytest-rerunfailures>=15.1",
+    "pytest-rerunfailures>=16.1",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.12.9",
-    "unimport>=1.2.1",
-    "uv>=0.8.11",
-
+    "ruff>=0.15.0",
+    "uv>=0.10.2",
 ]
 
 # --------------------------------------------------------------------

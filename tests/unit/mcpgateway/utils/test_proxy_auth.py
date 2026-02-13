@@ -20,6 +20,8 @@ import pytest
 # First-Party
 from mcpgateway.utils import verify_credentials as vc
 
+TEST_JWT_SECRET = "test-jwt-secret-key-with-minimum-32-bytes"
+
 
 class TestProxyAuthentication:
     """Test cases for proxy authentication functionality."""
@@ -29,7 +31,7 @@ class TestProxyAuthentication:
         """Create mock settings for testing."""
 
         class MockSettings:
-            jwt_secret_key = "test-secret"
+            jwt_secret_key = TEST_JWT_SECRET
             jwt_algorithm = "HS256"
             basic_auth_user = "admin"
             basic_auth_password = "password"
@@ -187,7 +189,7 @@ class TestRBACProxyAuthentication:
         """Create mock settings for testing."""
 
         class MockSettings:
-            jwt_secret_key = "test-secret"
+            jwt_secret_key = TEST_JWT_SECRET
             jwt_algorithm = "HS256"
             basic_auth_user = "admin"
             basic_auth_password = "password"
@@ -397,7 +399,7 @@ class TestWebSocketAuthentication:
 
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
-        token = jwt.encode({"sub": "test-user"}, "test-secret", algorithm="HS256")
+        token = jwt.encode({"sub": "test-user"}, TEST_JWT_SECRET, algorithm="HS256")
         websocket.query_params = {"token": token}
         websocket.headers = {}
         websocket.accept = AsyncMock()
@@ -477,7 +479,7 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
-            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_secret_key = TEST_JWT_SECRET
             mock_settings.jwt_algorithm = "HS256"
             mock_settings.auth_required = False
 
@@ -498,7 +500,7 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
-            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_secret_key = TEST_JWT_SECRET
             mock_settings.jwt_algorithm = "HS256"
             mock_settings.auth_required = True
             send = AsyncMock()

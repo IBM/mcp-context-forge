@@ -87,6 +87,99 @@ async def test_remove_nonexistent_root_raises():
 
 
 @pytest.mark.asyncio
+async def test_get_root_by_uri():
+    """Getting a root by URI should return the correct root object."""
+    service = RootService()
+    uri = "http://example.com/get-test"
+    custom_name = "Test Root"
+
+    # Add a root with a custom name
+    await service.add_root(uri, name=custom_name)
+
+    # Retrieve the root by URI
+    root = await service.get_root_by_uri(uri)
+
+    # Verify properties
+    assert root.uri == uri
+    assert root.name == custom_name
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_get_nonexistent_root_by_uri_raises():
+    """Getting a nonexistent root should raise a RootServiceError."""
+    service = RootService()
+
+    with pytest.raises(RootServiceError) as excinfo:
+        await service.get_root_by_uri("http://nonexistent.root")
+
+    assert "Root not found" in str(excinfo.value)
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_update_root():
+    """Updating a root should modify its properties and notify subscribers."""
+    service = RootService()
+    uri = "http://example.com/update-test"
+    initial_name = "Initial Name"
+    updated_name = "Updated Name"
+
+    # Add a root with initial name
+    await service.add_root(uri, name=initial_name)
+
+    # Track notifications via subscription
+    notifications = []
+
+    async def collect_notification():
+        async for event in service.subscribe_changes():
+            notifications.append(event)
+            if event["type"] == "root_updated":
+                break
+
+    # Start subscription and wait a tick
+    task = asyncio.create_task(collect_notification())
+    await asyncio.sleep(0)
+
+    # Update the root's name
+    updated_root = await service.update_root(uri, name=updated_name)
+
+    # Wait for notification
+    await asyncio.wait_for(task, timeout=1.0)
+
+    # Verify properties of returned root
+    assert updated_root.name == updated_name
+    assert updated_root.uri == uri
+
+    # Verify notification was sent
+    assert len(notifications) == 1
+    assert notifications[0]["type"] == "root_updated"
+    assert notifications[0]["data"]["name"] == updated_name
+    assert notifications[0]["data"]["uri"] == uri
+
+    # Verify the root in storage was updated
+    stored_root = await service.get_root_by_uri(uri)
+    assert stored_root.name == updated_name
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_update_nonexistent_root_raises():
+    """Updating a nonexistent root should raise a RootServiceError."""
+    service = RootService()
+
+    with pytest.raises(RootServiceError) as excinfo:
+        await service.update_root("http://nonexistent.root", name="New Name")
+
+    assert "Root not found" in str(excinfo.value)
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
 async def test_initialize_adds_default_roots(monkeypatch):
     # Pretend the app was configured with two default roots
     monkeypatch.setattr(settings, "default_roots", ["http://a.com", "local/path"])
@@ -100,6 +193,24 @@ async def test_initialize_adds_default_roots(monkeypatch):
     # FileUrl normalises the HTTP URI to include a trailing slash
     assert "http://a.com/" in uris
     assert "file://local/path" in uris
+
+    await service.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_initialize_continues_when_default_root_fails(monkeypatch):
+    monkeypatch.setattr(settings, "default_roots", ["http://a.com"])
+    service = RootService()
+
+    async def _raise(_root_uri, _name=None):
+        raise RootServiceError("bad root")
+
+    monkeypatch.setattr(service, "add_root", _raise)
+
+    # Should handle RootServiceError internally and continue.
+    await service.initialize()
+
+    assert await service.list_roots() == []
 
     await service.shutdown()
 
@@ -122,7 +233,7 @@ async def test_subscribe_changes_receives_events():
 
     # Add a root, then remove it again.
     r = await service.add_root("subscriber-test")
-    await service.remove_root(str(r.uri).rstrip("/"))  # match stored key
+    await service.remove_root(str(r.uri))  # match stored key
 
     # Collect both events or time-out
     await asyncio.wait_for(task, timeout=1.0)

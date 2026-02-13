@@ -47,3 +47,6 @@ per-file-ignores =
     tests/**/*.py: DAR
     tests/loadtest/locustfile.py: DAR101,DAR201,DUO102
     tests/unit/mcpgateway/cache/test_cache_invalidation_subscriber.py: DAR101,DAR201
+    mcpgateway/plugins/framework/external/grpc/proto/*_pb2.py: E501,E701,E711,W503,N802,F401,E402,DAR
+    mcpgateway/plugins/framework/external/grpc/proto/*_pb2_grpc.py: E501,E701,E711,W503,N802,F401,DAR
+    mcpgateway/plugins/framework/external/grpc/server/server.py: N802

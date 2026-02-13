@@ -1762,23 +1762,99 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
-            # Check if "teams" key exists and is not None to distinguish:
-            # - Key exists with non-None value (even empty []) -> normalized list (scoped token)
-            # - Key absent OR key is None -> None (unrestricted for admin, public-only for non-admin)
-            teams_value = user_payload.get("teams") if "teams" in user_payload else None
-            if teams_value is not None:
-                normalized_teams = []
-                for team in teams_value or []:
-                    if isinstance(team, dict):
-                        team_id = team.get("id")
-                        if team_id:
-                            normalized_teams.append(team_id)
-                    elif isinstance(team, str):
-                        normalized_teams.append(team)
-                final_teams = normalized_teams
+            # Resolve teams based on token_use claim
+            token_use = user_payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache
+                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
+                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
+                if is_admin_flag:
+                    final_teams = None  # Admin bypass
+                elif user_email_for_teams:
+                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
+                    # First-Party
+                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
+                else:
+                    final_teams = []  # No email — public-only
             else:
-                # No "teams" key or teams is null - treat as unrestricted (None)
-                final_teams = None
+                # API token or legacy: use embedded teams from JWT
+                # First-Party
+                from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+                final_teams = normalize_token_teams(user_payload)
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # SECURITY: Validate team membership for team-scoped tokens
+            # Users removed from a team should lose MCP access immediately, not at token expiry
+            # ═══════════════════════════════════════════════════════════════════════════
+            user_email = user_payload.get("sub") or user_payload.get("email")
+            is_admin = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
+
+            # Only validate membership for team-scoped tokens (non-empty teams list)
+            # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
+            if final_teams and len(final_teams) > 0 and user_email:
+                # Import lazily to avoid circular imports
+                # First-Party
+                from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+                from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+                auth_cache = get_auth_cache()
+
+                # Check cache first (60s TTL)
+                cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
+                if cached_result is False:
+                    logger.warning(f"MCP auth rejected: User {user_email} no longer member of teams (cached)")
+                    response = ORJSONResponse(
+                        {"detail": "Token invalid: User is no longer a member of the associated team"},
+                        status_code=HTTP_403_FORBIDDEN,
+                    )
+                    await response(scope, receive, send)
+                    return False
+
+                if cached_result is None:
+                    # Cache miss - query database
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    db = SessionLocal()
+                    try:
+                        memberships = (
+                            db.execute(
+                                select(EmailTeamMember.team_id).where(
+                                    EmailTeamMember.team_id.in_(final_teams),
+                                    EmailTeamMember.user_email == user_email,
+                                    EmailTeamMember.is_active.is_(True),
+                                )
+                            )
+                            .scalars()
+                            .all()
+                        )
+
+                        valid_team_ids = set(memberships)
+                        missing_teams = set(final_teams) - valid_team_ids
+
+                        if missing_teams:
+                            logger.warning(f"MCP auth rejected: User {user_email} no longer member of teams: {missing_teams}")
+                            auth_cache.set_team_membership_valid_sync(user_email, final_teams, False)
+                            response = ORJSONResponse(
+                                {"detail": "Token invalid: User is no longer a member of the associated team"},
+                                status_code=HTTP_403_FORBIDDEN,
+                            )
+                            await response(scope, receive, send)
+                            return False
+
+                        # Cache positive result
+                        auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
+                    finally:
+                        # Rollback any implicit transaction before closing to prevent
+                        # idle-in-transaction state if the connection is returned to pool
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass  # nosec B110 - Best effort rollback
+                        db.close()
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Validate team membership for team-scoped tokens

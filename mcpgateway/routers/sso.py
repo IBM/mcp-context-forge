@@ -180,11 +180,12 @@ def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) ->
 
     # Check against app_domain (if configured)
     if hasattr(settings, "app_domain") and settings.app_domain:
-        # app_domain is typically just a hostname, allow both http and https
-        app_domain = settings.app_domain.lower()
-        if redirect_host == app_domain:
+        # app_domain is an HttpUrl - extract the hostname for comparison
+        app_domain_host = urlparse(str(settings.app_domain)).hostname or ""
+        app_domain_host = app_domain_host.lower()
+        if redirect_host == app_domain_host:
             # Only allow HTTPS in production, or HTTP for localhost
-            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain in ("localhost", "127.0.0.1")):
+            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain_host in ("localhost", "127.0.0.1")):
                 return True
 
     # Check against allowed_origins (full origin match including scheme and port)
@@ -334,9 +335,16 @@ async def handle_sso_callback(
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
-    from mcpgateway.utils.security_cookies import set_auth_cookie
+    from mcpgateway.utils.security_cookies import CookieTooLargeError, set_auth_cookie
 
-    set_auth_cookie(redirect_response, access_token, remember_me=False)
+    try:
+        set_auth_cookie(redirect_response, access_token, remember_me=False)
+    except CookieTooLargeError:
+        redirect_response = RedirectResponse(
+            url=f"{root_path}/admin/login?error=token_too_large",
+            status_code=302,
+        )
+        return redirect_response
 
     return redirect_response
 
@@ -369,7 +377,7 @@ async def create_sso_provider(
     if existing:
         raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
 
-    provider = await sso_service.create_provider(provider_data.dict())
+    provider = await sso_service.create_provider(provider_data.model_dump())
 
     result = {
         "id": provider.id,
@@ -502,7 +510,7 @@ async def update_sso_provider(
     sso_service = SSOService(db)
 
     # Filter out None values
-    update_data = {k: v for k, v in provider_data.dict().items() if v is not None}
+    update_data = {k: v for k, v in provider_data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No update data provided")
 

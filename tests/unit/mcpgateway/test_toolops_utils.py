@@ -135,6 +135,48 @@ def test_get_llm_instance_openai_sets_default_headers(monkeypatch: pytest.Monkey
     assert llm_config.default_headers == {"RITS_API_KEY": "key"}
 
 
+def test_get_llm_instance_anthropic(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LLM_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-3")
+
+    class DummyProvider:
+        def __init__(self, config):
+            self.config = config
+
+        def get_llm(self, model_type="chat"):
+            return f"llm-{model_type}"
+
+    monkeypatch.setattr(llm_util, "AnthropicProvider", DummyProvider)
+
+    llm_instance, llm_config = llm_util.get_llm_instance("chat")
+
+    assert llm_instance == "llm-chat"
+    assert llm_config.api_key == "key"
+    assert llm_config.model == "claude-3"
+
+
+def test_get_llm_instance_ollama(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "llama3")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434")
+
+    class DummyProvider:
+        def __init__(self, config):
+            self.config = config
+
+        def get_llm(self, model_type="chat"):
+            return f"llm-{model_type}"
+
+    monkeypatch.setattr(llm_util, "OllamaProvider", DummyProvider)
+
+    llm_instance, llm_config = llm_util.get_llm_instance("completion")
+
+    assert llm_instance == "llm-completion"
+    assert llm_config.model == "llama3"
+    assert llm_config.base_url == "http://localhost:11434"
+
+
 def test_execute_prompt_success(monkeypatch: pytest.MonkeyPatch):
     class DummyLLM:
         def invoke(self, prompt, stop=None):

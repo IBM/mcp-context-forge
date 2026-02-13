@@ -187,13 +187,16 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         Raises:
             HTTPException: If path is invalid or contains traversal patterns
         """
+        # Skip validation for URI schemes (http://, plugin://, etc.)
+        #
+        # Note: This must run before the '//' traversal check, otherwise every URI
+        # would be rejected due to the '://' sequence.
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://", path):
+            return path
+
         # Check explicit path traversal detection
         if ".." in path or "//" in path:
             raise HTTPException(status_code=400, detail="invalid_path: Path traversal detected")
-
-        # Skip validation for URI schemes (http://, plugin://, etc.)
-        if re.match(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://", path):
-            return path
 
         try:
             resolved_path = Path(path).resolve()

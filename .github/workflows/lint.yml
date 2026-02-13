@@ -67,7 +67,7 @@ jobs:
           - id: vulture
             setup: pip install vulture
             cmd: |
-              vulture mcpgateway --min-confidence 80
+              vulture mcpgateway --min-confidence 80 --exclude "*_pb2.py,*_pb2_grpc.py"
 
           - id: pylint
             setup: true

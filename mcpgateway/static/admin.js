@@ -1,5 +1,28 @@
-/* global marked, DOMPurify */
+/* global marked, DOMPurify, safeReplaceState, _logRestrictedContext */
 const MASKED_AUTH_VALUE = "*****";
+
+// Runtime fallbacks when admin.js is loaded outside admin.html
+window._restrictedContextLogged = window._restrictedContextLogged || false;
+window._logRestrictedContext =
+    window._logRestrictedContext ||
+    function (e) {
+        if (!window._restrictedContextLogged) {
+            window._restrictedContextLogged = true;
+            console.debug(
+                "Running in restricted context — storage/history APIs unavailable:",
+                e.message,
+            );
+        }
+    };
+window.safeReplaceState =
+    window.safeReplaceState ||
+    function (data, title, url) {
+        try {
+            window.history.replaceState(data, title, url);
+        } catch (e) {
+            window._logRestrictedContext(e);
+        }
+    };
 
 // ===================================================================
 // GLOBAL CHART.JS INSTANCE REGISTRY
@@ -333,6 +356,21 @@ function escapeHtml(unsafe) {
 }
 
 /**
+ * Decode HTML entities back to their original characters.
+ * Used when populating form fields to prevent double-encoding.
+ * @param {string} html - The HTML-encoded string
+ * @returns {string} Decoded string
+ */
+function decodeHtml(html) {
+    if (html === null || html === undefined) {
+        return "";
+    }
+    const txt = document.createElement("textarea");
+    txt.innerHTML = html;
+    return txt.value;
+}
+
+/**
  * Extract a human-readable error message from an API error response.
  * Handles both string errors and Pydantic validation error arrays.
  * @param {Object} error - The parsed JSON error response
@@ -340,8 +378,11 @@ function escapeHtml(unsafe) {
  * @returns {string} Human-readable error message
  */
 function extractApiError(error, fallback = "An error occurred") {
-    if (!error || !error.detail) {
+    if (!error || (!error.detail && !error.message)) {
         return fallback;
+    }
+    if (error.message) {
+        return error.message;
     }
     if (typeof error.detail === "string") {
         return error.detail;
@@ -370,10 +411,59 @@ async function parseErrorResponse(response, fallback = "An error occurred") {
         }
         // Non-JSON response - try to get text
         const text = await response.text();
-        return text || fallback;
+        if (!text) {
+            return fallback;
+        }
+        // Detect HTML responses (proxy error pages, auth redirects) and show generic message
+        if (
+            text.trimStart().startsWith("<!") ||
+            text.trimStart().toLowerCase().startsWith("<html")
+        ) {
+            return `${fallback} (HTTP ${response.status}). The server returned an HTML error page.`;
+        }
+        // Truncate long non-HTML text responses
+        const maxLength = 200;
+        if (text.length > maxLength) {
+            return text.substring(0, maxLength) + "...";
+        }
+        return text;
     } catch {
         return fallback;
     }
+}
+
+/**
+ * Safely parse a JSON response with validation.
+ * Prevents "JSON.parse: unexpected character" errors when server/proxy returns HTML.
+ * @param {Response} response - The fetch Response object
+ * @param {string} fallbackError - Fallback error message if response is not JSON
+ * @returns {Promise<Object>} Parsed JSON result
+ * @throws {Error} If response is not OK or not JSON
+ */
+async function safeParseJsonResponse(
+    response,
+    fallbackError = "Request failed",
+) {
+    const contentType = response.headers.get("content-type") || "";
+
+    // Handle non-OK responses first
+    if (!response.ok) {
+        const errorMsg = await parseErrorResponse(
+            response,
+            `${fallbackError} (HTTP ${response.status})`,
+        );
+        throw new Error(errorMsg);
+    }
+
+    // Validate content-type before parsing
+    if (!contentType.includes("application/json")) {
+        throw new Error(
+            "The server returned an unexpected response. " +
+                "Please verify you are authenticated and the server is responding correctly.",
+        );
+    }
+
+    return await response.json();
 }
 
 /**
@@ -2965,11 +3055,16 @@ async function editTool(toolId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
-            descField.value = tool.description || "";
+            // Decode HTML entities to prevent double-encoding when saving
+            const cleanDesc = tool.description
+                ? tool.description.slice(
+                      0,
+                      tool.description.indexOf("*") > 0
+                          ? tool.description.indexOf("*")
+                          : tool.description.length,
+                  )
+                : "";
+            descField.value = decodeHtml(cleanDesc);
         }
         if (typeField) {
             typeField.value = tool.integrationType || "MCP";
@@ -3370,7 +3465,10 @@ async function viewAgent(agentId) {
                 { label: "Endpoint URL", value: agent.endpointUrl },
                 { label: "Agent Type", value: agent.agentType },
                 { label: "Protocol Version", value: agent.protocolVersion },
-                { label: "Description", value: agent.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(agent.description) || "N/A",
+                },
                 { label: "Visibility", value: agent.visibility || "private" },
             ];
 
@@ -3633,7 +3731,7 @@ async function editA2AAgent(agentId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = agent.description || "";
+            descField.value = decodeHtml(agent.description || "");
         }
 
         // Set tags field
@@ -4271,7 +4369,10 @@ async function viewResource(resourceId) {
                 { label: "URI", value: resource.uri },
                 { label: "Name", value: resource.name },
                 { label: "Type", value: resource.mimeType || "N/A" },
-                { label: "Description", value: resource.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(resource.description) || "N/A",
+                },
                 {
                     label: "Visibility",
                     value: resource.visibility || "private",
@@ -4614,7 +4715,7 @@ async function editResource(resourceId) {
             nameField.value = nameValidation.value;
         }
         if (descField) {
-            descField.value = resource.description || "";
+            descField.value = decodeHtml(resource.description || "");
         }
         if (mimeField) {
             mimeField.value = resource.mimeType || "";
@@ -4709,6 +4810,10 @@ async function viewPrompt(promptName) {
             const safeHTML = `
         <div class="grid grid-cols-2 gap-6 mb-6">
           <div class="space-y-3">
+            <div>
+              <span id="prompt-id-label" class="font-medium text-gray-700 dark:text-gray-300">Prompt ID:</span>
+              <div class="mt-1 prompt-id text-sm font-mono text-indigo-600 dark:text-indigo-400" aria-labelledby="prompt-id-label"></div>
+            </div>
             <div>
               <span class="font-medium text-gray-700 dark:text-gray-300">Display Name:</span>
               <div class="mt-1 prompt-display-name font-medium"></div>
@@ -4859,13 +4964,17 @@ async function viewPrompt(promptName) {
                 }
             };
 
+            setText(".prompt-id", prompt.id || "N/A");
             setText(".prompt-display-name", promptLabel);
             setText(".prompt-name", prompt.name || "N/A");
             setText(".prompt-original-name", prompt.originalName || "N/A");
             setText(".prompt-custom-name", prompt.customName || "N/A");
             setText(".prompt-gateway", gatewayLabel);
             setText(".prompt-visibility", prompt.visibility || "private");
-            setText(".prompt-description", prompt.description || "N/A");
+            setText(
+                ".prompt-description",
+                decodeHtml(prompt.description) || "N/A",
+            );
 
             const tagsEl = promptDetailsDiv.querySelector(".prompt-tags");
             if (tagsEl) {
@@ -5120,7 +5229,7 @@ async function editPrompt(promptId) {
             displayNameField.value = prompt.displayName || "";
         }
         if (descField) {
-            descField.value = prompt.description || "";
+            descField.value = decodeHtml(prompt.description || "");
         }
 
         // Set tags field
@@ -5207,7 +5316,10 @@ async function viewGateway(gatewayId) {
             const fields = [
                 { label: "Name", value: gateway.name },
                 { label: "URL", value: gateway.url },
-                { label: "Description", value: gateway.description || "N/A" },
+                {
+                    label: "Description",
+                    value: decodeHtml(gateway.description) || "N/A",
+                },
                 { label: "Visibility", value: gateway.visibility || "private" },
             ];
 
@@ -5440,7 +5552,7 @@ async function editGateway(gatewayId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = gateway.description || "";
+            descField.value = decodeHtml(gateway.description || "");
         }
 
         // Set tags field
@@ -5786,7 +5898,7 @@ async function viewServer(serverId) {
                 const serverDesc = document.createElement("p");
                 serverDesc.className =
                     "text-sm text-gray-600 dark:text-gray-400 mt-1";
-                serverDesc.textContent = server.description;
+                serverDesc.textContent = decodeHtml(server.description);
                 headerTextDiv.appendChild(serverDesc);
             }
 
@@ -6319,7 +6431,7 @@ async function editServer(serverId) {
             urlField.value = urlValidation.value;
         }
         if (descField) {
-            descField.value = server.description || "";
+            descField.value = decodeHtml(server.description || "");
         }
 
         const idField = safeGetElement("edit-server-id");
@@ -6605,6 +6717,178 @@ async function editServer(serverId) {
         console.error("Error fetching server for editing:", error);
         const errorMessage = handleFetchError(error, "load server for editing");
         showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * SECURE: View Root function with safe display
+ */
+async function viewRoot(uri) {
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}`,
+        );
+
+        if (!response.ok) {
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
+        }
+
+        const root = await response.json();
+
+        const rootDetailsDiv = safeGetElement("root-details");
+        if (rootDetailsDiv) {
+            // Create safe display elements
+            const container = document.createElement("div");
+            container.className =
+                "space-y-2 dark:bg-gray-900 dark:text-gray-100";
+
+            // Add each piece of information safely
+            const fields = [
+                { label: "URI", value: root.uri },
+                { label: "Name", value: root.name || "N/A" },
+            ];
+
+            fields.forEach((field) => {
+                const p = document.createElement("p");
+                const strong = document.createElement("strong");
+                strong.textContent = field.label + ": ";
+                p.appendChild(strong);
+                p.appendChild(document.createTextNode(field.value));
+                container.appendChild(p);
+            });
+
+            // Replace content safely
+            rootDetailsDiv.innerHTML = "";
+            rootDetailsDiv.appendChild(container);
+        }
+
+        openModal("root-details-modal");
+    } catch (error) {
+        console.error("Error fetching root details:", error);
+        const errorMessage = handleFetchError(error, "load root details");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * SECURE: Edit Root function with validation
+ */
+async function editRoot(uri) {
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}`,
+        );
+
+        if (!response.ok) {
+            let errorDetail = "";
+            try {
+                const errorJson = await response.json();
+                errorDetail = errorJson.detail || "";
+            } catch (_) {}
+
+            throw new Error(
+                `HTTP ${response.status}: ${errorDetail || response.statusText}`,
+            );
+        }
+
+        const root = await response.json();
+
+        // Ensure hidden inactive flag is preserved
+        const isInactiveCheckedBool = isInactiveChecked("roots");
+        let hiddenField = safeGetElement("edit-root-show-inactive");
+        const editForm = safeGetElement("edit-root-form");
+
+        if (!hiddenField && editForm) {
+            hiddenField = document.createElement("input");
+            hiddenField.type = "hidden";
+            hiddenField.name = "is_inactive_checked";
+            hiddenField.id = "edit-root-show-inactive";
+            editForm.appendChild(hiddenField);
+        }
+        if (hiddenField) {
+            hiddenField.value = isInactiveCheckedBool;
+        }
+
+        // Set form action and populate fields with validation
+        if (editForm) {
+            editForm.action = `${window.ROOT_PATH}/admin/roots/${encodeURIComponent(uri)}/update`;
+        }
+
+        // Validate inputs
+        const nameValidation = validateInputName(root.name || "", "root name");
+        const uriValidation = validateInputName(root.uri, "root URI");
+
+        const uriField = safeGetElement("edit-root-uri");
+        const nameField = safeGetElement("edit-root-name");
+
+        // URI is read-only, just display it
+        if (uriField && uriValidation.valid) {
+            uriField.value = uriValidation.value;
+        }
+
+        // Name is editable
+        if (nameField && nameValidation.valid) {
+            nameField.value = nameValidation.value;
+        } else if (nameField) {
+            // If name is null/empty, set empty string
+            nameField.value = "";
+        }
+
+        openModal("root-edit-modal");
+    } catch (error) {
+        console.error("Error fetching root for editing:", error);
+        const errorMessage = handleFetchError(error, "load root for editing");
+        showErrorMessage(errorMessage);
+    }
+}
+
+/**
+ * Handle export root details
+ */
+async function exportRoot(uri) {
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/admin/roots/export?uri=${encodeURIComponent(uri)}`,
+        );
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        // Trigger download
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+
+        // Safely extract filename from Content-Disposition header
+        const contentDisposition = response.headers.get("Content-Disposition");
+        let filename = `root-export-${Date.now()}.json`;
+        if (contentDisposition) {
+            const filenameMatch = contentDisposition.match(
+                /filename="?([^";\n]+)"?/,
+            );
+            if (filenameMatch && filenameMatch[1]) {
+                filename = filenameMatch[1];
+            }
+        }
+        a.download = filename;
+
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error("Error exporting root:", error);
+        showErrorMessage("Failed to export root");
     }
 }
 
@@ -7246,7 +7530,7 @@ function cleanUpUrlParamsForTab(targetTabName) {
         currentUrl.pathname +
         (newParams.toString() ? "?" + newParams.toString() : "") +
         currentUrl.hash;
-    window.history.replaceState({}, "", newUrl);
+    safeReplaceState({}, "", newUrl);
 }
 
 function showTab(tabName) {
@@ -10629,6 +10913,17 @@ function handleDeleteSubmit(event, type, name = "", inactiveType = "") {
         form.appendChild(purgeField);
     }
 
+    // Inject team_id from URL for RBAC team context derivation (defense-in-depth)
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+    if (teamId) {
+        const form = event.target;
+        const teamField = document.createElement("input");
+        teamField.type = "hidden";
+        teamField.name = "team_id";
+        teamField.value = teamId;
+        form.appendChild(teamField);
+    }
+
     const toggleType = inactiveType || type;
     return handleToggleSubmit(event, toggleType);
 }
@@ -10760,8 +11055,9 @@ async function testTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Escape HTML and then replace newlines with <br/> tags
-                descElement.innerHTML = escapeHtml(tool.description).replace(
+                // Decode HTML entities first, then escape and replace newlines with <br/> tags
+                const decodedDesc = decodeHtml(tool.description);
+                descElement.innerHTML = escapeHtml(decodedDesc).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -11715,12 +12011,15 @@ async function validateTool(toolId) {
         }
         if (descElement) {
             if (tool.description) {
-                // Escape HTML and then replace newlines with <br/> tags
-                tool.description = tool.description.slice(
+                // Decode HTML entities first, then escape and replace newlines with <br/> tags
+                const cleanDesc = tool.description.slice(
                     0,
-                    tool.description.indexOf("*"),
+                    tool.description.indexOf("*") > 0
+                        ? tool.description.indexOf("*")
+                        : tool.description.length,
                 );
-                descElement.innerHTML = escapeHtml(tool.description).replace(
+                const decodedDesc = decodeHtml(cleanDesc);
+                descElement.innerHTML = escapeHtml(decodedDesc).replace(
                     /\n/g,
                     "<br/>",
                 );
@@ -14137,14 +14436,19 @@ async function viewTool(toolId) {
                 ".tool-display-name",
                 tool.displayName || tool.customName || tool.name,
             );
-            tool.description = tool.description.slice(
-                0,
-                tool.description.indexOf("*"),
-            );
+            const cleanDesc = tool.description
+                ? tool.description.slice(
+                      0,
+                      tool.description.indexOf("*") > 0
+                          ? tool.description.indexOf("*")
+                          : tool.description.length,
+                  )
+                : "";
+            const decodedDesc = decodeHtml(cleanDesc);
             setTextSafely(".tool-name", tool.name);
             setTextSafely(".tool-url", tool.url);
             setTextSafely(".tool-type", tool.integrationType);
-            setTextSafely(".tool-description", tool.description);
+            setTextSafely(".tool-description", decodedDesc);
             setTextSafely(".tool-visibility", tool.visibility);
 
             // Set tags as HTML with badges
@@ -14431,7 +14735,11 @@ async function handleGatewayFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add gateway",
+        );
 
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add gateway");
@@ -14514,7 +14822,10 @@ async function handleResourceFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add Resource",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add Resource");
         } else {
@@ -14583,7 +14894,10 @@ async function handlePromptFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add prompt",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add prompt");
         }
@@ -14650,7 +14964,10 @@ async function handleEditPromptFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit Prompt",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit Prompt");
         }
@@ -14714,7 +15031,10 @@ async function handleServerFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add server",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add server.");
         } else {
@@ -14843,7 +15163,10 @@ async function handleA2AFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add A2A Agent",
+        );
 
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add A2A Agent.");
@@ -14939,7 +15262,10 @@ async function handleToolFormSubmit(event) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to add tool",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to add tool");
         } else {
@@ -15006,7 +15332,10 @@ async function handleEditToolFormSubmit(event) {
             headers: { "X-Requested-With": "XMLHttpRequest" },
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit tool",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit tool");
         } else {
@@ -15097,7 +15426,10 @@ async function handleEditGatewayFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit gateway",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit gateway");
         }
@@ -15195,7 +15527,10 @@ async function handleEditA2AAgentFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit A2A agent",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit a2a agent");
         }
@@ -15249,7 +15584,10 @@ async function handleEditServerFormSubmit(e) {
             method: "POST",
             body: formData,
         });
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit server",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit server");
         }
@@ -15321,7 +15659,10 @@ async function handleEditResFormSubmit(e) {
             body: formData,
         });
 
-        const result = await response.json();
+        const result = await safeParseJsonResponse(
+            response,
+            "Failed to edit resource",
+        );
         if (!result || !result.success) {
             throw new Error(result?.message || "Failed to edit resource");
         }
@@ -17464,6 +17805,9 @@ window.testGateway = testGateway;
 window.generateToolTestCases = generateToolTestCases;
 window.generateTestCases = generateTestCases;
 window.enrichTool = enrichTool;
+window.viewRoot = viewRoot;
+window.editRoot = editRoot;
+window.exportRoot = exportRoot;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY
@@ -20843,7 +21187,11 @@ async function getAuthToken() {
 
     // Fallback to localStorage for compatibility
     if (!token) {
-        token = localStorage.getItem("auth_token");
+        try {
+            token = localStorage.getItem("auth_token");
+        } catch (e) {
+            _logRestrictedContext(e);
+        }
     }
     return token || "";
 }
@@ -20923,16 +21271,6 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
-
-    // Handle HTMX events to show/hide modal
-    document.body.addEventListener("htmx:afterRequest", function (event) {
-        if (
-            event.detail.pathInfo.requestPath.includes("/admin/users/") &&
-            event.detail.pathInfo.requestPath.includes("/edit")
-        ) {
-            showUserEditModal();
-        }
-    });
 });
 
 // Expose user modal functions to global scope
@@ -21559,6 +21897,15 @@ function initializeAddMembersForms(root = document) {
     allForms.forEach((form) => initializeAddMembersForm(form));
 }
 
+// Get current pagination state from URL parameters
+function getTeamsCurrentPaginationState() {
+    const urlParams = new URLSearchParams(window.location.search);
+    return {
+        page: Math.max(1, parseInt(urlParams.get("teams_page"), 10) || 1),
+        perPage: Math.max(1, parseInt(urlParams.get("teams_size"), 10) || 10),
+    };
+}
+
 function handleAdminTeamAction(event) {
     const detail = event.detail || {};
     const delayMs = Number(detail.delayMs) || 0;
@@ -21582,21 +21929,14 @@ function handleAdminTeamAction(event) {
             const modals = document.querySelectorAll('[id$="-modal"]');
             modals.forEach((modal) => modal.classList.add("hidden"));
         }
-        if (detail.refreshTeamsList) {
-            const teamsList = safeGetElement("teams-list");
-            if (teamsList && window.htmx) {
-                window.htmx.trigger(teamsList, "load");
-            }
-        }
         if (detail.refreshUnifiedTeamsList && window.htmx) {
             const unifiedList = document.getElementById("unified-teams-list");
             if (unifiedList) {
                 // Preserve current pagination/filter state on refresh
+                const paginationState = getTeamsCurrentPaginationState();
                 const params = new URLSearchParams();
-                params.set("page", "1"); // Reset to first page on action
-                if (typeof getTeamsPerPage === "function") {
-                    params.set("per_page", getTeamsPerPage().toString());
-                }
+                params.set("page", paginationState.page);
+                params.set("per_page", paginationState.perPage);
                 // Preserve search query from input field
                 const searchInput = document.getElementById("team-search");
                 if (searchInput && searchInput.value.trim()) {
@@ -22112,7 +22452,7 @@ window.rejectJoinRequest = rejectJoinRequest;
  * Validate password match in user edit form
  */
 function getPasswordPolicy() {
-    const policyEl = document.getElementById("password-policy-data");
+    const policyEl = document.getElementById("edit-password-policy-data");
     if (!policyEl) {
         return null;
     }
@@ -22154,22 +22494,22 @@ function validatePasswordRequirements() {
 
     const password = passwordField.value || "";
     const lengthCheck = password.length >= policy.minLength;
-    updateRequirementIcon("req-length", lengthCheck);
+    updateRequirementIcon("edit-req-length", lengthCheck);
 
     const uppercaseCheck = !policy.requireUppercase || /[A-Z]/.test(password);
-    updateRequirementIcon("req-uppercase", uppercaseCheck);
+    updateRequirementIcon("edit-req-uppercase", uppercaseCheck);
 
     const lowercaseCheck = !policy.requireLowercase || /[a-z]/.test(password);
-    updateRequirementIcon("req-lowercase", lowercaseCheck);
+    updateRequirementIcon("edit-req-lowercase", lowercaseCheck);
 
     const numbersCheck = !policy.requireNumbers || /[0-9]/.test(password);
-    updateRequirementIcon("req-numbers", numbersCheck);
+    updateRequirementIcon("edit-req-numbers", numbersCheck);
 
     const specialChars = "!@#$%^&*()_+-=[]{};:'\"\\|,.<>`~/?";
     const specialCheck =
         !policy.requireSpecial ||
         [...password].some((char) => specialChars.includes(char));
-    updateRequirementIcon("req-special", specialCheck);
+    updateRequirementIcon("edit-req-special", specialCheck);
 
     const submitButton = document.querySelector(
         '#user-edit-modal-content button[type="submit"]',
@@ -23666,15 +24006,28 @@ function getAuthenticatedUserId() {
 function generateUserId() {
     const authenticatedUserId = getAuthenticatedUserId();
     if (authenticatedUserId) {
-        sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        try {
+            sessionStorage.setItem("llm_chat_user_id", authenticatedUserId);
+        } catch (e) {
+            _logRestrictedContext(e);
+        }
         return authenticatedUserId;
     }
     // Check if user ID exists in session storage
-    let userId = sessionStorage.getItem("llm_chat_user_id");
+    let userId;
+    try {
+        userId = sessionStorage.getItem("llm_chat_user_id");
+    } catch (e) {
+        console.debug("sessionStorage unavailable:", e.message);
+    }
     if (!userId) {
         // Generate a unique ID
         userId = `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        sessionStorage.setItem("llm_chat_user_id", userId);
+        try {
+            sessionStorage.setItem("llm_chat_user_id", userId);
+        } catch (e) {
+            _logRestrictedContext(e);
+        }
     }
     return userId;
 }
@@ -31115,6 +31468,15 @@ async function performTeamSearch(searchTerm) {
     params.set("page", "1");
     params.set("per_page", getTeamsPerPage().toString());
 
+    // Sync URL state so CRUD refresh reads the correct page
+    const currentUrl = new URL(window.location.href);
+    const urlParams = new URLSearchParams(currentUrl.searchParams);
+    urlParams.set("teams_page", "1");
+    urlParams.set("teams_size", getTeamsPerPage().toString());
+    const newUrl =
+        currentUrl.pathname + "?" + urlParams.toString() + currentUrl.hash;
+    window.safeReplaceState({}, "", newUrl);
+
     if (searchTerm && searchTerm.trim() !== "") {
         params.set("q", searchTerm.trim());
     }
@@ -31326,6 +31688,7 @@ window.filterByRelationship = filterByRelationship;
 window.filterTeams = filterTeams;
 window.searchTeamSelector = searchTeamSelector;
 window.selectTeamFromSelector = selectTeamFromSelector;
+window.getTeamsCurrentPaginationState = getTeamsCurrentPaginationState;
 
 /**
  * Handle keydown event when Enter or Space key is pressed
@@ -31341,3 +31704,81 @@ function handleKeydown(event, callback) {
 }
 
 window.handleKeydown = handleKeydown;
+
+/**
+ * Defense-in-depth: audit mutation buttons after every HTMX partial swap.
+ *
+ * Server-side Jinja2 `can_modify` is the authoritative control. This JS
+ * handler is a redundant safety net that hides edit/delete/activate/deactivate
+ * buttons when the client-side user context says the current user should not
+ * be able to mutate a given row.
+ */
+document.body.addEventListener("htmx:afterSettle", function (_evt) {
+    const currentUser = window.CURRENT_USER;
+    const isAdmin = Boolean(window.IS_ADMIN);
+    const userTeams = window.USER_TEAMS || [];
+
+    if (!currentUser) return;
+
+    // Build a quick lookup: team_id -> role (only "owner" matters for modify)
+    const teamRoleMap = {};
+    for (let i = 0; i < userTeams.length; i++) {
+        if (userTeams[i].id && userTeams[i].role) {
+            teamRoleMap[String(userTeams[i].id)] = userTeams[i].role;
+        }
+    }
+
+    // Known panel table body IDs that contain entity rows
+    const tableBodyIds = [
+        "tools-table-body",
+        "servers-table-body",
+        "resources-table-body",
+        "prompts-table-body",
+        "gateways-table-body",
+        "agents-table-body",
+        "toolBody",
+    ];
+
+    for (let t = 0; t < tableBodyIds.length; t++) {
+        const tbody = document.getElementById(tableBodyIds[t]);
+        if (!tbody) continue;
+
+        const rows = tbody.querySelectorAll("tr[data-owner-email]");
+        for (let r = 0; r < rows.length; r++) {
+            const row = rows[r];
+            const ownerEmail = row.getAttribute("data-owner-email") || "";
+            const teamId = row.getAttribute("data-team-id") || "";
+            const visibility = row.getAttribute("data-visibility") || "";
+
+            let canModify = isAdmin;
+            if (!canModify && ownerEmail === currentUser) {
+                canModify = true;
+            }
+            if (
+                !canModify &&
+                visibility === "team" &&
+                teamId &&
+                teamRoleMap[teamId] === "owner"
+            ) {
+                canModify = true;
+            }
+
+            if (!canModify) {
+                // Remove mutation buttons: edit, delete, activate/deactivate, enrich, validate, generate
+                const buttons = row.querySelectorAll(
+                    "button[onclick*='edit'], button[onclick*='Edit'], button[onclick*='enrich'], button[onclick*='Enrich'], button[onclick*='validate'], button[onclick*='Validate'], button[onclick*='generateTool'], button[onclick*='Generate']",
+                );
+                for (let b = 0; b < buttons.length; b++) {
+                    buttons[b].remove();
+                }
+                // Remove delete and state-toggle forms
+                const forms = row.querySelectorAll(
+                    "form[action*='/delete'], form[action*='/state']",
+                );
+                for (let f = 0; f < forms.length; f++) {
+                    forms[f].remove();
+                }
+            }
+        }
+    }
+});

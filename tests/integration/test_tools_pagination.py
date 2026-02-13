@@ -90,14 +90,19 @@ def create_user_context(email: str, is_admin: bool = False, TestSessionLocal=Non
 
     async def mock_user_with_permissions():
         """Mock user context for RBAC."""
-        return {
-            "email": email,
-            "full_name": f"Test User {email}",
-            "is_admin": is_admin,
-            "ip_address": "127.0.0.1",
-            "user_agent": "test-client",
-            "db": TestSessionLocal() if TestSessionLocal else None,
-        }
+        db_session = TestSessionLocal() if TestSessionLocal else None
+        try:
+            yield {
+                "email": email,
+                "full_name": f"Test User {email}",
+                "is_admin": is_admin,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": db_session,
+            }
+        finally:
+            if db_session is not None:
+                db_session.close()
 
     return mock_user_with_permissions
 

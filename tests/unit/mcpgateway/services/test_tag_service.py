@@ -8,7 +8,7 @@ Tests for Tag Service.
 """
 
 # Standard
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.services.tag_service import TagService
+import mcpgateway.services.tag_service as tag_service_module
 
 
 @pytest.fixture(autouse=True)
@@ -697,3 +698,105 @@ def test_get_tag_id_with_empty_dict():
     # Returns string representation of dict when neither id nor label present
     result = service._get_tag_id({})
     assert result == "{}"
+
+
+def test_get_tag_id_with_non_string_non_dict():
+    """Test _get_tag_id fallback for unsupported types."""
+    service = TagService()
+    assert service._get_tag_id(123) == "123"
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_uses_cached_value(tag_service, mock_db, monkeypatch):
+    """Test cache hit path reconstructs TagInfo entries."""
+    cache = MagicMock()
+    cache.get_tags = AsyncMock(
+        return_value=[
+            {
+                "name": "api",
+                "stats": {"tools": 1, "resources": 0, "prompts": 0, "servers": 0, "gateways": 0, "total": 1},
+                "entities": [],
+            }
+        ]
+    )
+    monkeypatch.setattr(tag_service_module, "_get_admin_stats_cache", lambda: cache)
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["tools"], include_entities=False)
+
+    assert len(tags) == 1
+    assert tags[0].name == "api"
+    assert not mock_db.execute.called
+
+
+@pytest.mark.asyncio
+async def test_get_all_tags_include_entities_name_fallbacks(tag_service, mock_db):
+    """Cover URI and entity_id fallback name branches in include_entities flow."""
+
+    class _ResourceNoName:
+        id = None
+        uri = "resource://name-fallback"
+        name = None
+        original_name = None
+        description = "resource"
+        tags = ["api"]
+
+    class _ToolUnknownName:
+        id = None
+        name = None
+        original_name = None
+        description = "tool"
+        tags = ["api"]
+
+    res_result = MagicMock()
+    res_result.scalars.return_value = [_ResourceNoName()]
+    tool_result = MagicMock()
+    tool_result.scalars.return_value = [_ToolUnknownName()]
+    mock_db.execute.side_effect = [res_result, tool_result]
+
+    tags = await tag_service.get_all_tags(mock_db, entity_types=["resources", "tools"], include_entities=True)
+    api_tag = next(t for t in tags if t.name == "api")
+    names = [e.name for e in api_tag.entities]
+    assert "resource://name-fallback" in names
+    assert "unknown" in names
+
+
+@pytest.mark.asyncio
+async def test_get_entities_by_tag_covers_id_and_name_fallback_branches(tag_service, mock_db):
+    """Cover get_entities_by_tag fallback branches for id/name resolution."""
+    mock_db.get_bind.return_value.dialect.name = "sqlite"
+
+    class _ResourceEntity:
+        id = None
+        name = None
+        original_name = None
+        uri = "resource://tagged"
+        description = "resource"
+        tags = ["api"]
+
+    class _ServerNamedEntity:
+        id = None
+        name = "srv-1"
+        original_name = None
+        description = "server"
+        tags = ["api"]
+
+    class _ServerUnknownEntity:
+        id = None
+        name = None
+        original_name = None
+        description = "server"
+        tags = ["api"]
+
+    res_result = MagicMock()
+    res_result.scalars.return_value = [_ResourceEntity()]
+    srv_result = MagicMock()
+    srv_result.scalars.return_value = [_ServerNamedEntity(), _ServerUnknownEntity()]
+    mock_db.execute.side_effect = [res_result, srv_result]
+
+    entities = await tag_service.get_entities_by_tag(mock_db, "api", entity_types=["resources", "servers"])
+
+    names = [e.name for e in entities]
+    ids = [e.id for e in entities]
+    assert "resource://tagged" in names
+    assert "srv-1" in ids
+    assert "unknown" in names

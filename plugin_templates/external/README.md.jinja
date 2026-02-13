@@ -44,18 +44,65 @@ make lint-fix
 
 ## Runtime (server)
 
-This project uses [chuck-mcp-runtime](https://github.com/chrishayuk/chuk-mcp-runtime) to run external plugins as a standardized MCP server.
+This plugin server supports multiple transport protocols:
+
+| Transport | Performance | Use Case |
+|-----------|-------------|----------|
+| `http` | ~600 calls/sec | Default, broad compatibility |
+| `stdio` | ~600 calls/sec | Subprocess-based plugins |
+| `grpc` | ~4,700 calls/sec | High-performance remote |
+| `unix` | ~9,000 calls/sec | High-performance local IPC |
+
+### Running with MCP (HTTP) - Default
+
+```bash
+# Install base dependencies
+pip install .
+
+# Run server
+PLUGINS_TRANSPORT=http ./run-server.sh
+```
+
+### Running with gRPC (High Performance)
+
+```bash
+# Install with gRPC support
+pip install ".[grpc]"
+
+# Run server
+PLUGINS_TRANSPORT=grpc ./run-server.sh
+```
+
+### Running with Unix Socket (Highest Performance)
+
+```bash
+# Install with gRPC support (for protobuf)
+pip install ".[grpc]"
+
+# Run server
+PLUGINS_TRANSPORT=unix ./run-server.sh
+```
+
+### Container Build
 
 To build the container image:
 
 ```bash
+# Without gRPC support (smaller image)
 make build
+
+# With gRPC support
+docker build --build-arg INSTALL_GRPC=true -t myplugin .
 ```
 
 To run the container:
 
 ```bash
+# Default (MCP/HTTP)
 make start
+
+# With gRPC
+docker run -e PLUGINS_TRANSPORT=grpc -p 50051:50051 myplugin
 ```
 
 To stop the container:

@@ -56,6 +56,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from urllib.parse import urlparse
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -222,6 +223,9 @@ class Settings(BaseSettings):
     )
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
+
+    # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
+    json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
 
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
@@ -436,6 +440,10 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
     )
+    protect_all_admins: bool = Field(
+        default=True,
+        description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
+    )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
     default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
@@ -462,8 +470,8 @@ class Settings(BaseSettings):
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
-    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
-    account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
+    max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
@@ -2137,8 +2145,9 @@ Disallow: /
                     f"http://127.0.0.1:{self.port}",
                 }
             else:
-                # Production origins - construct from app_domain
-                self.allowed_origins = {f"https://{self.app_domain}", f"https://app.{self.app_domain}", f"https://admin.{self.app_domain}"}
+                # Production origins - construct from app_domain (extract hostname from HttpUrl)
+                app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
+                self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:

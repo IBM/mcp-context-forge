@@ -60,7 +60,7 @@ from mcpgateway import __version__
 from mcpgateway import version as version_module
 
 # Authentication and password-related imports
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import get_current_user, get_user_team_roles
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -134,7 +134,7 @@ from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
-from mcpgateway.services.root_service import RootService
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -147,7 +147,7 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
-from mcpgateway.utils.security_cookies import set_auth_cookie
+from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
 
@@ -517,6 +517,39 @@ def get_user_email(user: Union[str, dict, object] = None) -> str:
     return str(user)
 
 
+def _get_user_team_roles(db: Session, user_email: str) -> Dict[str, str]:
+    """Return a {team_id: role} mapping for a user's active memberships.
+
+    Args:
+        db: The SQLAlchemy database session.
+        user_email: Email address of the user to query memberships for.
+
+    Returns:
+        Dict mapping team_id to the user's role in that team.
+    """
+    return get_user_team_roles(db, user_email)
+
+
+def _adjust_pagination_for_conversion_failures(pagination: "PaginationMeta", failed_count: int) -> None:
+    """Adjust pagination metadata to account for DB-to-Pydantic conversion failures.
+
+    When items on the current page fail to convert, the "Showing X of Y" display
+    would otherwise count items that aren't actually displayed. This adjusts
+    total_items and recomputes derived fields (total_pages, has_next, has_prev).
+
+    Args:
+        pagination: The PaginationMeta object to adjust (modified in-place).
+        failed_count: Number of items that failed conversion on the current page.
+    """
+    if failed_count > 0:
+        pagination.total_items = max(0, pagination.total_items - failed_count)
+        pagination.total_pages = math.ceil(pagination.total_items / pagination.per_page) if pagination.total_items > 0 else 0
+        # Do NOT clamp pagination.page — data was already fetched for this page,
+        # so the page number must match the displayed data.
+        pagination.has_next = pagination.page < pagination.total_pages
+        pagination.has_prev = pagination.page > 1
+
+
 def _get_span_entity_performance(
     db: Session,
     cutoff_time: datetime,
@@ -630,30 +663,23 @@ def _get_span_entity_performance(
         """Calculate percentile using linear interpolation (matches PostgreSQL percentile_cont).
 
         Args:
-            data: Sorted list of numeric values.
+            data: Sorted, non-empty list of numeric values.
             p: Percentile to calculate (0.0 to 1.0).
 
         Returns:
-            float: The interpolated percentile value, or 0.0 if data is empty.
+            float: The interpolated percentile value.
         """
-        if not data:
-            return 0.0
         n = len(data)
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     items: List[dict] = []
     for entity, durations in durations_by_entity.items():
         durations_sorted = sorted(durations)
         n = len(durations_sorted)
-        if n == 0:
-            continue
         items.append(
             {
                 result_key: entity,
@@ -1073,15 +1099,15 @@ async def update_global_passthrough_headers(
         # Invalidate cache so changes propagate immediately (Issue #1715)
         global_config_cache.invalidate()
         return GlobalConfigRead(passthrough_headers=config.passthrough_headers)
-    except (IntegrityError, ValidationError, PassthroughHeadersError) as e:
+    except IntegrityError as e:
         db.rollback()
-        if isinstance(e, IntegrityError):
-            raise HTTPException(status_code=409, detail="Passthrough headers conflict")
-        if isinstance(e, ValidationError):
-            raise HTTPException(status_code=422, detail="Invalid passthrough headers format")
-        if isinstance(e, PassthroughHeadersError):
-            raise HTTPException(status_code=500, detail=str(e))
-        raise HTTPException(status_code=500, detail="Unknown error occurred")
+        raise HTTPException(status_code=409, detail="Passthrough headers conflict") from e
+    except ValidationError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Invalid passthrough headers format") from e
+    except PassthroughHeadersError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @admin_router.post("/config/passthrough-headers/invalidate-cache")
@@ -1317,9 +1343,6 @@ async def get_configuration_settings(
                 return settings.masked_auth_value
             if value and str(value) not in ["", "None", "null"]:
                 return settings.masked_auth_value
-        # Handle SecretStr even for non-sensitive keys
-        if isinstance(value, SecretStr):
-            return value.get_secret_value()
         return value
 
     # Group settings by category
@@ -1589,13 +1612,15 @@ async def admin_servers_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/servers/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/servers/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -1610,13 +1635,15 @@ async def admin_servers_partial_html(
     # Batch convert to Pydantic models using server service
     # This eliminates the N+1 query problem from calling get_server_details() in a loop
     servers_pydantic = []
+    failed_count = 0
     for s in servers_db:
         try:
             servers_pydantic.append(server_service.convert_server_to_read(s, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert server {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(servers_pydantic)
-    base_url = f"{settings.app_root_path}/admin/servers/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -1648,6 +1675,8 @@ async def admin_servers_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "servers_partial.html",
@@ -1658,6 +1687,9 @@ async def admin_servers_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -1854,10 +1886,9 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except ServerError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
+    # NOTE: Pydantic validation errors subclass ValueError; CoreValidationError must be handled first.
     except ValueError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
-    except ValidationError as ex:
-        return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -2562,14 +2593,9 @@ async def admin_ui(
             >>> _matches_selected_team({'teams': ['t1', 't2']}, 't1')
             True
 
-            >>> _matches_selected_team({}, '')
-            True
-
             >>> _matches_selected_team(None, 'abc')
             False
         """
-        if not tid:
-            return True
         # If an item is explicitly public, it should be visible to any team
         try:
             vis = getattr(item, "visibility", None)
@@ -2831,7 +2857,7 @@ async def admin_ui(
             admin_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
 
-            # Generate a comprehensive JWT token that matches the email auth format
+            # Generate a lightweight session JWT token
             now = datetime.now(timezone.utc)
             payload = {
                 "sub": admin_email,
@@ -2841,25 +2867,16 @@ async def admin_ui(
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
                 "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
-                "teams": [],  # Teams populated downstream when needed
-                "namespaces": [f"user:{admin_email}", "public"],
+                "token_use": "session",  # nosec B105 - token type marker, not a password
                 "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
             }
 
             # Generate token using centralized token creation
             token = await create_jwt_token(payload)
 
-            # Set HTTP-only cookie for security
-            response.set_cookie(
-                key="jwt_token",
-                value=token,
-                httponly=True,
-                secure=getattr(settings, "secure_cookies", False),
-                samesite=getattr(settings, "cookie_samesite", "lax"),
-                max_age=settings.token_expiry * 60,  # Convert minutes to seconds
-                path=settings.app_root_path or "/",  # Make cookie available for all paths
-            )
-            LOGGER.debug(f"Set comprehensive JWT token cookie for user: {admin_email}")
+            # Set HTTP-only cookie using centralized security cookie utility
+            set_auth_cookie(response, token, remember_me=False)
+            LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
@@ -2912,9 +2929,14 @@ async def admin_login_page(request: Request) -> Response:
     if settings.secure_cookies and settings.environment == "development":
         secure_cookie_warning = "Serving over HTTP with secure cookies enabled. If you have login issues, try disabling secure cookies in your configuration."
 
+    # Preserve email from failed login attempt
+    prefill_email = request.query_params.get("email", "")
+
     # Use external template file
     return request.app.state.templates.TemplateResponse(
-        request, "login.html", {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped}
+        request,
+        "login.html",
+        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
     )
 
 
@@ -2970,7 +2992,10 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
         if not email or not password:
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=missing_fields", status_code=303)
+            params = "error=missing_fields"
+            if email:
+                params += f"&email={urllib.parse.quote(email)}"
+            return RedirectResponse(url=f"{root_path}/admin/login?{params}", status_code=303)
 
         # Authenticate using the email auth service
         auth_service = EmailAuthService(db)
@@ -2984,7 +3009,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if not user:
                 LOGGER.warning(f"Authentication failed for {email} - user is None")
                 root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+                return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
             # Password change enforcement respects master switch and toggles
             needs_password_change = False
@@ -3034,7 +3059,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
 
                 # Set JWT token as secure cookie for the password change process
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    root_path = request.scope.get("root_path", "")
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                        status_code=303,
+                    )
 
                 return response
 
@@ -3046,7 +3078,13 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
             # Set JWT token as secure cookie
-            set_auth_cookie(response, token, remember_me=False)
+            try:
+                set_auth_cookie(response, token, remember_me=False)
+            except CookieTooLargeError:
+                return RedirectResponse(
+                    url=f"{root_path}/admin/login?error=token_too_large&email={urllib.parse.quote(email)}",
+                    status_code=303,
+                )
 
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
@@ -3058,7 +3096,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                 LOGGER.warning("Login failed - set SECURE_COOKIES to false in config for HTTP development")
 
             root_path = request.scope.get("root_path", "")
-            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials", status_code=303)
+            return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
 
     except Exception as e:
         LOGGER.error(f"Login handler error: {e}")
@@ -3123,8 +3161,8 @@ async def _admin_logout(request: Request) -> Response:
         # User-initiated logout: clear cookie and redirect to login
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
-    # Clear JWT token cookie
-    response.delete_cookie("jwt_token", path=settings.app_root_path or "/", secure=True, httponly=True, samesite="lax")
+    # Clear JWT token cookie using centralized security cookie utility
+    clear_auth_cookie(response)
 
     return response
 
@@ -3280,21 +3318,15 @@ async def change_password_required_handler(request: Request, db: Session = Depen
         # Get user from JWT token in cookie
         try:
             jwt_token = request.cookies.get("jwt_token")
-            if not jwt_token:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
-
-            # Authenticate using the token
-            # Create credentials object from cookie
-            credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
-            # get_current_user now uses fresh DB sessions internally
-            current_user = await get_current_user(credentials, request=request)
-
-            if not current_user:
-                root_path = request.scope.get("root_path", "")
-                return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
+            current_user = None
+            if jwt_token:
+                credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=jwt_token)
+                current_user = await get_current_user(credentials, request=request)
         except Exception as e:
             LOGGER.error(f"Authentication error: {e}")
+            current_user = None
+
+        if not current_user:
             root_path = request.scope.get("root_path", "")
             return RedirectResponse(url=f"{root_path}/admin/login?error=session_expired", status_code=303)
 
@@ -3341,7 +3373,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
 
                 # Update JWT token cookie
-                set_auth_cookie(response, token, remember_me=False)
+                try:
+                    set_auth_cookie(response, token, remember_me=False)
+                except CookieTooLargeError:
+                    return RedirectResponse(
+                        url=f"{root_path}/admin/login?error=token_too_large",
+                        status_code=303,
+                    )
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
@@ -3791,11 +3829,15 @@ async def admin_teams_partial_html(
             all_teams = [t for t in all_teams if t.is_active]
 
         total = len(all_teams)
+        total_pages = math.ceil(total / per_page) if per_page else 1
+        # Clamp page to valid range (matches offset_paginate behavior)
+        if total_pages > 0:
+            page = min(page, total_pages)
         start = (page - 1) * per_page
         end = start + per_page
         data = all_teams[start:end]
 
-        pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=math.ceil(total / per_page) if per_page else 1, has_next=end < total, has_prev=page > 1)
+        pagination = PaginationMeta(page=page, per_page=per_page, total_items=total, total_pages=total_pages, has_next=end < total, has_prev=page > 1)
         links = None
 
     if render == "controls":
@@ -3850,23 +3892,19 @@ async def admin_teams_partial_html(
         t.member_count = counts.get(team_id, 0)
 
         # Determine relationship
+        t.relationship = "none"
+        t.pending_request = None
         if t.is_personal:
             t.relationship = "personal"
-            t.pending_request = None
         elif team_id in user_team_ids:
             role = user_roles.get(team_id)
             t.relationship = "owner" if role == "owner" else "member"
-            t.pending_request = None
         elif current_user.is_admin:
             # Admins get admin controls for teams they're not members of
             t.relationship = "none"  # Falls through to admin controls in template
-            t.pending_request = None
         elif team_id in public_team_ids:
             t.relationship = "public"
             t.pending_request = pending_requests.get(team_id)
-        else:
-            t.relationship = "none"
-            t.pending_request = None
 
         enriched_data.append(t)
 
@@ -4015,14 +4053,9 @@ async def admin_create_team(
     if not getattr(settings, "email_auth_enabled", False):
         error_content = '<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Email authentication is disabled</div>'
         response = HTMLResponse(content=error_content, status_code=403)
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
 
     try:
-        # Get root path for URL construction
-        root_path = request.scope.get("root_path", "") if request else ""
-
         form = await request.form()
         name = form.get("name")
         slug = form.get("slug") or None
@@ -4034,8 +4067,6 @@ async def admin_create_team(
                 content='<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Team name is required</div>',
                 status_code=400,
             )
-            response.headers["HX-Retarget"] = "#create-team-error"
-            response.headers["HX-Reswap"] = "innerHTML"
             return response
 
         # Create team
@@ -4049,40 +4080,9 @@ async def admin_create_team(
         # Extract user email from user dict
         user_email = get_user_email(user)
 
-        team = await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
+        await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
 
-        # Return HTML for the new team
-        member_count = 1  # Creator is automatically a member
-        safe_team_name = html.escape(team.name)
-        safe_description = html.escape(team.description) if team.description else ""
-        team_html = f"""
-        <div id="team-card-{team.id}" class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
-            <div class="flex justify-between items-start">
-                <div>
-                    <h4 class="text-lg font-medium text-gray-900 dark:text-white">{safe_team_name}</h4>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Slug: {team.slug}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Visibility: {team.visibility}</p>
-                    <p class="text-sm text-gray-600 dark:text-gray-400">Members: {member_count}</p>
-                    {f'<p class="text-sm text-gray-600 dark:text-gray-400">{safe_description}</p>' if team.description else ""}
-                </div>
-                <div class="flex space-x-2">
-                    <button
-                        hx-get="{root_path}/admin/teams/{team.id}/members"
-                        hx-target="#team-details-{team.id}"
-                        hx-swap="innerHTML"
-                        class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                    >
-                        View Members
-                    </button>
-                    {'<button class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500" hx-delete="{root_path}/admin/teams/' + team.id + '" hx-confirm="Are you sure you want to delete this team?" hx-target="#team-card-' + team.id + '" hx-swap="outerHTML">Delete</button>' if not team.is_personal else ""}
-                </div>
-            </div>
-            <div id="team-details-{team.id}" class="mt-4"></div>
-        </div>
-        """
-
-        response = HTMLResponse(content=team_html, status_code=201)
-        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"resetTeamCreateForm": True, "delayMs": 500}}).decode()
+        response = HTMLResponse(content="", status_code=201)
         return response
 
     except (ValidationError, CoreValidationError) as e:
@@ -4100,9 +4100,6 @@ async def admin_create_team(
             content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">{html.escape(error_text)}</div>',
             status_code=400,
         )
-        # Retarget to error container instead of teams list
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
     except IntegrityError as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
@@ -4111,8 +4108,6 @@ async def admin_create_team(
         else:
             error_content = f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Database error: {html.escape(str(e))}</div>'
         response = HTMLResponse(content=error_content, status_code=400)
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
     except Exception as e:
         LOGGER.error(f"Error creating team for admin {user}: {e}")
@@ -4120,8 +4115,6 @@ async def admin_create_team(
             content=f'<div class="text-red-500 p-3 bg-red-50 dark:bg-red-900/20 rounded-md">Error creating team: {html.escape(str(e))}</div>',
             status_code=400,
         )
-        response.headers["HX-Retarget"] = "#create-team-error"
-        response.headers["HX-Reswap"] = "innerHTML"
         return response
 
 
@@ -4597,7 +4590,7 @@ async def admin_update_team(
             </div>
             """
             response = HTMLResponse(content=success_html)
-            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshTeamsList": True, "delayMs": 1500}}).decode()
+            response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"closeTeamEditModal": True, "refreshUnifiedTeamsList": True, "delayMs": 1500}}).decode()
             return response
         # For regular form submission, redirect to admin page with teams section
         return RedirectResponse(url=f"{root_path}/admin/#teams", status_code=303)
@@ -4759,9 +4752,6 @@ async def admin_add_team_members(
 
         # 1. Handle additions and updates for checked users
         for user_email in user_emails:
-            if not isinstance(user_email, str):
-                continue
-
             user_email = user_email.strip()
             if not user_email:
                 continue
@@ -5725,7 +5715,7 @@ async def admin_users_partial_html(
             )
 
         if render == "controls":
-            base_url = f"{settings.app_root_path}/admin/users/partial"
+            base_url = f"{request.scope.get('root_path', '')}/admin/users/partial"
             return request.app.state.templates.TemplateResponse(
                 request,
                 "pagination_controls.html",
@@ -6008,7 +5998,12 @@ async def admin_create_user(
 
         # Create new user
         new_user = await auth_service.create_user(
-            email=str(form.get("email", "")), password=password, full_name=str(form.get("full_name", "")), is_admin=form.get("is_admin") == "on", auth_provider="local"
+            email=str(form.get("email", "")),
+            password=password,
+            full_name=str(form.get("full_name", "")),
+            is_admin=form.get("is_admin") == "on",
+            auth_provider="local",
+            granted_by=get_user_email(user),  # Pass current admin user for audit trail
         )
 
         # If the user was created with the default password, optionally force password change
@@ -6080,7 +6075,7 @@ async def admin_get_user_edit(
                         <div class="ml-3 flex-1">
                             <h3 class="text-sm font-semibold text-blue-900 dark:text-blue-200">Password Requirements</h3>
                             <div class="mt-2 text-sm text-blue-800 dark:text-blue-300 space-y-1">
-                                <div class="flex items-center" id="req-length">
+                                <div class="flex items-center" id="edit-req-length">
                                     <span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span>
                                     <span>At least {settings.password_min_length} characters long</span>
                                 </div>
@@ -6089,25 +6084,25 @@ async def admin_get_user_edit(
             if settings.password_require_uppercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
+                                <div class="flex items-center" id="edit-req-uppercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains uppercase letters (A-Z)</span></div>
                 """
                 )
             if settings.password_require_lowercase:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
+                                <div class="flex items-center" id="edit-req-lowercase"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains lowercase letters (a-z)</span></div>
                 """
                 )
             if settings.password_require_numbers:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
+                                <div class="flex items-center" id="edit-req-numbers"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains numbers (0-9)</span></div>
                 """
                 )
             if settings.password_require_special:
                 pr_lines.append(
                     """
-                                <div class="flex items-center" id="req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
+                                <div class="flex items-center" id="edit-req-special"><span class="inline-flex items-center justify-center w-4 h-4 bg-gray-400 text-white rounded-full text-xs mr-2">✗</span><span>Contains special characters (!@#$%^&amp;*(),.?&quot;:{{}}|&lt;&gt;)</span></div>
                 """
                 )
             pr_lines.append(
@@ -6128,7 +6123,8 @@ async def admin_get_user_edit(
         edit_form = f"""
         <div class="space-y-4">
             <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">Edit User</h3>
-            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#user-edit-modal-content" class="space-y-4">
+            <div id="edit-user-error"></div>
+            <form hx-post="{root_path}/admin/users/{user_email}/update" hx-target="#edit-user-error" hx-swap="innerHTML" class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">Email</label>
                     <input type="email" name="email" value="{user_obj.email}" readonly
@@ -6160,7 +6156,7 @@ async def admin_get_user_edit(
                 </div>
                 {password_requirements_html}
                 <div
-                    id="password-policy-data"
+                    id="edit-password-policy-data"
                     class="hidden"
                     data-min-length="{settings.password_min_length}"
                     data-require-uppercase="{'true' if settings.password_require_uppercase else 'false'}"
@@ -6226,14 +6222,16 @@ async def admin_update_user(
 
         # Validate password confirmation if password is being changed
         if password and password != confirm_password:
-            return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400)
+            return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
         # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
         if user_obj and user_obj.is_admin and not is_admin:
             # This user is currently an admin and we're trying to remove admin privileges
             if await auth_service.is_last_active_admin(decoded_email):
-                return HTMLResponse(content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400)
+                return HTMLResponse(
+                    content='<div class="text-red-500">Cannot remove administrator privileges from the last remaining admin user</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"}
+                )
 
         # Update user
         fn_val = form.get("full_name")
@@ -6245,9 +6243,9 @@ async def admin_update_user(
         if password:
             is_valid, error_msg = validate_password_strength(password)
             if not is_valid:
-                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400)
+                return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {error_msg}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
-        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password)
+        await auth_service.update_user(email=decoded_email, full_name=full_name, is_admin=is_admin, password=password, admin_origin_source="ui")
 
         # Return success message with auto-close and refresh
         success_html = """
@@ -6261,7 +6259,7 @@ async def admin_update_user(
 
     except Exception as e:
         LOGGER.error(f"Error updating user {user_email}: {e}")
-        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400)
+        return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
 
 @admin_router.post("/users/{user_email}/activate")
@@ -6519,6 +6517,8 @@ async def admin_list_tools(
     """
     LOGGER.debug(f"User {get_user_email(user)} requested tool list (page={page}, per_page={per_page})")
     user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
 
     # Call tool_service.list_tools with page-based pagination
     paginated_result = await tool_service.list_tools(
@@ -6527,6 +6527,9 @@ async def admin_list_tools(
         page=page,
         per_page=per_page,
         user_email=user_email,
+        requesting_user_email=user_email,
+        requesting_user_is_admin=_is_admin,
+        requesting_user_team_roles=_team_roles,
     )
 
     # End the read-only transaction early to avoid idle-in-transaction under load.
@@ -6574,7 +6577,7 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
     team_service = TeamManagementService(db)
@@ -6644,7 +6647,8 @@ async def admin_tools_partial_html(
     query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
 
     # Use unified pagination function (offset-based for UI compatibility)
-    base_url = f"{settings.app_root_path}/admin/tools/partial"
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/tools/partial"
     query_params_dict = {}
     if include_inactive:
         query_params_dict["include_inactive"] = "true"
@@ -6672,12 +6676,26 @@ async def admin_tools_partial_html(
     # Team names are loaded via joinedload(DbTool.email_team) in the query
     # Batch convert to Pydantic models using tool service
     # This eliminates the N+1 query problem from calling get_tool() in a loop
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     tools_pydantic = []
+    failed_count = 0
     for t in tools_db:
         try:
-            tools_pydantic.append(tool_service.convert_tool_to_read(t, include_metrics=False, include_auth=False))
+            tools_pydantic.append(
+                tool_service.convert_tool_to_read(
+                    t,
+                    include_metrics=False,
+                    include_auth=False,
+                    requesting_user_email=user_email,
+                    requesting_user_is_admin=_is_admin,
+                    requesting_user_team_roles=_team_roles,
+                )
+            )
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert tool {getattr(t, 'id', 'unknown')} ({getattr(t, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
 
     # Serialize tools
     data = jsonable_encoder(tools_pydantic)
@@ -6726,6 +6744,130 @@ async def admin_tools_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
+        },
+    )
+
+
+@admin_router.get("/tool-ops/partial", response_class=HTMLResponse)
+@require_permission("tools.read", allow_admin_bypass=False)
+async def admin_tool_ops_partial(
+    request: Request,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
+    include_inactive: bool = False,
+    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
+    team_id: Optional[str] = Depends(_validated_team_id_param),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Return HTML partial for tool operations table.
+
+    Args:
+        request (Request): The request object.
+        page (int): The page number. Defaults to 1.
+        per_page (int): The number of items per page. Defaults to settings.pagination_default_page_size.
+        include_inactive (bool): Whether to include inactive items. Defaults to False.
+        gateway_id (Optional[str]): The gateway ID to filter by. Defaults to None.
+        team_id (Optional[str]): The team ID to filter by. Defaults to None.
+        db (Session): The database session. Defaults to Depends(get_db).
+        user (Any): The current user. Defaults to Depends(get_current_user_with_permissions).
+
+    Returns:
+        HTMLResponse: The HTML partial for the tool operations table.
+    """
+    user_email = get_user_email(user)
+    LOGGER.debug(f"Tool ops partial request - team_id: {team_id}, page: {page}")
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
+
+    query = select(DbTool).options(joinedload(DbTool.email_team))
+
+    if gateway_id:
+        gateway_ids = [gid.strip() for gid in gateway_id.split(",") if gid.strip()]
+        if gateway_ids:
+            null_requested = any(gid.lower() == "null" for gid in gateway_ids)
+            non_null_ids = [gid for gid in gateway_ids if gid.lower() != "null"]
+            if non_null_ids and null_requested:
+                query = query.where(or_(DbTool.gateway_id.in_(non_null_ids), DbTool.gateway_id.is_(None)))
+                LOGGER.debug(f"Filtering tools by gateway IDs (including NULL): {non_null_ids} + NULL")
+            elif null_requested:
+                query = query.where(DbTool.gateway_id.is_(None))
+                LOGGER.debug("Filtering tools by NULL gateway_id (RestTool)")
+            else:
+                query = query.where(DbTool.gateway_id.in_(non_null_ids))
+                LOGGER.debug(f"Filtering tools by gateway IDs: {non_null_ids}")
+
+    if not include_inactive:
+        query = query.where(DbTool.enabled.is_(True))
+
+    if team_id:
+        if team_id in team_ids:
+            team_access = [
+                and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
+                and_(DbTool.team_id == team_id, DbTool.owner_email == user_email),
+            ]
+            query = query.where(or_(*team_access))
+            LOGGER.debug(f"Filtering tools by team_id: {team_id}")
+        else:
+            LOGGER.warning(f"User {user_email} attempted to filter by team {team_id} but is not a member")
+            query = query.where(false())
+    else:
+        access_conditions = []
+        access_conditions.append(DbTool.owner_email == user_email)
+        if team_ids:
+            access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
+        access_conditions.append(DbTool.visibility == "public")
+        query = query.where(or_(*access_conditions))
+
+    query = query.order_by(DbTool.url, DbTool.original_name, DbTool.id)
+
+    paginated_result = await paginate_query(
+        db=db,
+        query=query,
+        page=page,
+        per_page=per_page,
+        cursor=None,
+        base_url=f"{request.scope.get('root_path', '')}/admin/tool-ops/partial",
+        query_params={
+            "include_inactive": "true" if include_inactive else "false",
+            "gateway_id": gateway_id or "",
+            "team_id": team_id or "",
+        },
+        use_cursor_threshold=False,
+    )
+
+    tools_db = paginated_result["data"]
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
+    tools_pydantic = [
+        tool_service.convert_tool_to_read(
+            t,
+            include_metrics=False,
+            include_auth=False,
+            requesting_user_email=user_email,
+            requesting_user_is_admin=_is_admin,
+            requesting_user_team_roles=_team_roles,
+        )
+        for t in tools_db
+    ]
+    db.commit()
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "toolops_partial.html",
+        {
+            "request": request,
+            "tools": tools_pydantic,
+            "root_path": request.scope.get("root_path", ""),
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7154,13 +7296,15 @@ async def admin_prompts_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/prompts/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/prompts/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -7184,14 +7328,16 @@ async def admin_prompts_partial_html(
     # Batch convert to Pydantic models using prompt service
     # This eliminates the N+1 query problem from calling get_prompt_details() in a loop
     prompts_pydantic = []
+    failed_count = 0
     for p in prompts_db:
         try:
             prompts_pydantic.append(prompt_service.convert_prompt_to_read(p, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert prompt {getattr(p, 'id', 'unknown')} ({getattr(p, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
 
     data = jsonable_encoder(prompts_pydantic)
-    base_url = f"{settings.app_root_path}/admin/prompts/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -7224,6 +7370,8 @@ async def admin_prompts_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "prompts_partial.html",
@@ -7234,6 +7382,9 @@ async def admin_prompts_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7276,7 +7427,7 @@ async def admin_gateways_partial_html(
         encoded gateway data when templates expect it.
     """
     user_email = get_user_email(user)
-    LOGGER.info(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
+    LOGGER.debug(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
@@ -7329,13 +7480,15 @@ async def admin_gateways_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/gateways/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/gateways/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -7348,13 +7501,15 @@ async def admin_gateways_partial_html(
     # Batch convert to Pydantic models using gateway service
     # This eliminates the N+1 query problem from calling get_gateway_details() in a loop
     gateways_pydantic = []
+    failed_count = 0
     for g in gateways_db:
         try:
             gateways_pydantic.append(gateway_service.convert_gateway_to_read(g))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert gateway {getattr(g, 'id', 'unknown')} ({getattr(g, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(gateways_pydantic)
-    base_url = f"{settings.app_root_path}/admin/gateways/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -7383,6 +7538,8 @@ async def admin_gateways_partial_html(
             {"request": request, "data": data, "pagination": pagination.model_dump(), "root_path": request.scope.get("root_path", "")},
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "gateways_partial.html",
@@ -7393,6 +7550,9 @@ async def admin_gateways_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -7834,13 +7994,15 @@ async def admin_resources_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/resources/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/resources/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -7863,11 +8025,14 @@ async def admin_resources_partial_html(
 
     # Batch convert to Pydantic models using resource service
     resources_pydantic = []
+    failed_count = 0
     for r in resources_db:
         try:
             resources_pydantic.append(resource_service.convert_resource_to_read(r, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert resource {getattr(r, 'id', 'unknown')} ({getattr(r, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
 
     data = jsonable_encoder(resources_pydantic)
 
@@ -7881,7 +8046,7 @@ async def admin_resources_partial_html(
             {
                 "request": request,
                 "pagination": pagination.model_dump(),
-                "base_url": f"{settings.app_root_path}/admin/resources/partial",
+                "base_url": base_url,
                 "hx_target": "#resources-table-body",
                 "hx_indicator": "#resources-loading",
                 "query_params": query_params,
@@ -7902,6 +8067,8 @@ async def admin_resources_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "resources_partial.html",
@@ -7912,6 +8079,9 @@ async def admin_resources_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8405,13 +8575,15 @@ async def admin_a2a_partial_html(
         query_params["team_id"] = team_id
 
     # Use unified pagination function
+    root_path = request.scope.get("root_path", "")
+    base_url = f"{root_path}/admin/a2a/partial"
     paginated_result = await paginate_query(
         db=db,
         query=query,
         page=page,
         per_page=per_page,
         cursor=None,  # HTMX partials use page-based navigation
-        base_url=f"{settings.app_root_path}/admin/a2a/partial",
+        base_url=base_url,
         query_params=query_params,
         use_cursor_threshold=False,  # Disable auto-cursor switching for UI
     )
@@ -8435,13 +8607,15 @@ async def admin_a2a_partial_html(
     # Batch convert to Pydantic models using a2a service
     # This eliminates the N+1 query problem from calling get_a2a_details() in a loop
     a2a_agents_pydantic = []
+    failed_count = 0
     for a in a2a_agents_db:
         try:
             a2a_agents_pydantic.append(a2a_service.convert_agent_to_read(a, include_metrics=False))
         except (ValidationError, ValueError, KeyError, TypeError, binascii.Error) as e:
+            failed_count += 1
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
+    _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(a2a_agents_pydantic)
-    base_url = f"{settings.app_root_path}/admin/a2a/partial"
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -8474,6 +8648,8 @@ async def admin_a2a_partial_html(
             },
         )
 
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, user_email) if not _is_admin else {}
     return request.app.state.templates.TemplateResponse(
         request,
         "agents_partial.html",
@@ -8484,6 +8660,9 @@ async def admin_a2a_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
+            "current_user_email": user_email,
+            "is_admin": _is_admin,
+            "user_team_roles": _team_roles,
         },
     )
 
@@ -8677,8 +8856,11 @@ async def admin_get_tool(tool_id: str, db: Session = Depends(get_db), user=Depen
         'admin_get_tool'
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for tool ID {tool_id}")
+    _user_email = get_user_email(user)
+    _is_admin = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    _team_roles = _get_user_team_roles(db, _user_email) if not _is_admin else {}
     try:
-        tool = await tool_service.get_tool(db, tool_id)
+        tool = await tool_service.get_tool(db, tool_id, requesting_user_email=_user_email, requesting_user_is_admin=_is_admin, requesting_user_team_roles=_team_roles)
         return tool.model_dump(by_alias=True)
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -9364,12 +9546,13 @@ async def admin_add_gateway(request: Request, db: Session = Depends(get_db), use
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
-    except ValueError as ex:
-        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except RuntimeError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
     except ValidationError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
+    # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+    except ValueError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     except IntegrityError as ex:
         return ORJSONResponse(content=ErrorFormatter.format_database_error(ex), status_code=409)
     except Exception as ex:
@@ -9564,14 +9747,15 @@ async def admin_edit_gateway(
     except Exception as ex:
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
-        if isinstance(ex, ValueError):
-            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         if isinstance(ex, RuntimeError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
         if isinstance(ex, ValidationError):
             return ORJSONResponse(content=ErrorFormatter.format_validation_error(ex), status_code=422)
         if isinstance(ex, IntegrityError):
             return ORJSONResponse(status_code=409, content=ErrorFormatter.format_database_error(ex))
+        # NOTE: Pydantic's ValidationError subclasses ValueError, so ValidationError must be handled first.
+        if isinstance(ex, ValueError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
 
 
@@ -10362,13 +10546,113 @@ async def admin_set_prompt_state(
     return RedirectResponse(f"{root_path}/admin#prompts", status_code=303)
 
 
+@admin_router.get("/roots/export")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_export_root(
+    uri: str,
+    user=Depends(get_current_user_with_permissions),
+):
+    """
+    Export a single root configuration as JSON.
+
+    Args:
+        uri: Root URI to export (query parameter)
+        user: Authenticated user
+
+    Returns:
+        JSON file download with root configuration
+
+    Raises:
+        HTTPException: If root not found or export fails
+    """
+    try:
+        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+
+        # Get the root by URI
+        root = await root_service.get_root_by_uri(uri)
+
+        # Extract username from user
+        username = get_user_email(user)
+
+        # Create export data
+        export_data = {
+            "exported_at": datetime.now().isoformat(),
+            "exported_by": username,
+            "export_type": "root",
+            "version": "1.0",
+            "root": {
+                "uri": str(root.uri),
+                "name": root.name,
+            },
+        }
+
+        # Generate filename - sanitize URI for filename
+        # Remove protocol and special characters
+        safe_uri = uri.replace("://", "_").replace("/", "_").replace("\\", "_")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"root-export-{safe_uri}-{timestamp}.json"
+
+        # Return as downloadable file
+        content = orjson.dumps(export_data, option=orjson.OPT_INDENT_2).decode()
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+            },
+        )
+
+    except RootServiceNotFoundError as e:
+        LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Root export failed: {str(e)}")
+
+
+@admin_router.get("/roots/{uri:path}")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
+    """Get a specific root by URI via the admin UI.
+
+    This endpoint retrieves details for a specific root URI from the system.
+    It requires authentication and logs the operation for audit purposes.
+
+    Args:
+        uri (str): The URI of the root to retrieve.
+        user: Authenticated user dependency.
+
+    Returns:
+        dict: A dictionary containing the root information.
+
+    Raises:
+        HTTPException: If the root is not found.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_get_root)
+        True
+        >>> admin_get_root.__name__
+        'admin_get_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    try:
+        root = await root_service.get_root_by_uri(uri)
+        return root.model_dump(by_alias=True)
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error getting root {uri}: {e}")
+        raise e
+
+
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
-      - path
+      - uri
       - name (optional)
 
     Args:
@@ -10385,16 +10669,97 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         >>> admin_add_root.__name__
         'admin_add_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is adding a new root")
+    error_message = None
+    user_email = get_user_email(user)
+    LOGGER.debug(f"User {user_email} is adding a new root")
+
     form = await request.form()
-    uri = str(form["uri"])
+    uri = str(form.get("uri", ""))
     name_value = form.get("name")
     name: str | None = None
-    if isinstance(name_value, str):
-        name = name_value
-    await root_service.add_root(uri, name)
+    if isinstance(name_value, str) and name_value.strip():
+        name = name_value.strip()
+
+    try:
+        if not uri:
+            raise ValueError("URI is required")
+        await root_service.add_root(str(uri), name)
+
+    except RootServiceError as e:
+        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+        error_message = "Failed to add root. Please check the URI format."
+    except ValueError as e:
+        LOGGER.warning(f"Invalid input from user {user_email}: {e}")
+        error_message = "Invalid input. Please try again."
+    except Exception as e:
+        LOGGER.error(f"Error adding root: {e}")
+        error_message = "Failed to add root. Please try again."
+
     root_path = request.scope.get("root_path", "")
+
+    # Build redirect URL with error message if present
+    if error_message:
+        error_param = f"?error={urllib.parse.quote(error_message)}"
+        return RedirectResponse(f"{root_path}/admin{error_param}#roots", status_code=303)
+
     return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+
+@admin_router.post("/roots/{uri:path}/update")
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+    """Update a root via the admin UI.
+
+    This endpoint updates an existing root URI in the system. It expects form
+    fields for the new values and requires authentication.
+
+    Expects form fields:
+    - name (optional): New name for the root
+    - is_inactive_checked: Whether the root should be marked as inactive
+
+    Args:
+        uri (str): The URI of the root to update.
+        request (Request): FastAPI request object containing form data.
+        user: Authenticated user dependency.
+
+    Returns:
+        RedirectResponse: A redirect response to the roots section of the admin
+        dashboard with a status code of 303 (See Other).
+
+    Raises:
+        HTTPException: If the root is not found (404) or other errors occur.
+        Exception: For any other unexpected errors.
+
+    Examples:
+        >>> callable(admin_update_root)
+        True
+        >>> admin_update_root.__name__
+        'admin_update_root'
+    """
+    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+
+    try:
+        form = await request.form()
+        name_value = form.get("name")
+        name: str | None = None
+
+        if isinstance(name_value, str):
+            name = name_value
+
+        await root_service.update_root(uri, name)
+
+        root_path = request.scope.get("root_path", "")
+        is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
+
+        if is_inactive_checked.lower() == "true":
+            return RedirectResponse(f"{root_path}/admin/?include_inactive=true#roots", status_code=303)
+        return RedirectResponse(f"{root_path}/admin#roots", status_code=303)
+
+    except RootServiceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        LOGGER.error(f"Error updating root {uri}: {e}")
+        raise e
 
 
 @admin_router.post("/roots/{uri:path}/delete")
@@ -10715,12 +11080,7 @@ async def admin_test_gateway(
             if content_type == "application/x-www-form-urlencoded":
                 # Set proper content type header and use data parameter for form encoding
                 headers["Content-Type"] = "application/x-www-form-urlencoded"
-                if isinstance(request.body, str):
-                    # Body is already form-encoded
-                    request_kwargs["data"] = request.body
-                else:
-                    # Body is a dict, convert to form data
-                    request_kwargs["data"] = request.body
+                request_kwargs["data"] = request.body
             else:
                 # Default to JSON
                 headers["Content-Type"] = "application/json"
@@ -12320,12 +12680,6 @@ async def admin_add_a2a_agent(
     except A2AAgentError as ex:
         LOGGER.error(f"A2A agent error: {ex}")
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
-    except ValidationError as ex:
-        LOGGER.error(f"Validation error while creating A2A agent: {ex}")
-        return ORJSONResponse(
-            content=ErrorFormatter.format_validation_error(ex),
-            status_code=422,
-        )
     except IntegrityError as ex:
         return ORJSONResponse(
             content=ErrorFormatter.format_database_error(ex),
@@ -12579,17 +12933,14 @@ async def admin_set_a2a_agent_state(
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
+    user_email = get_user_email(user)
     error_message = None
     try:
         form = await request.form()
         act_val = form.get("activate", "false")
         activate = act_val.lower() == "true" if isinstance(act_val, str) else False
 
-        user_email = get_user_email(user)
-
         await a2a_service.set_agent_state(db, agent_id, activate, user_email=user_email)
-        root_path = request.scope.get("root_path", "")
-        return RedirectResponse(f"{root_path}/admin#a2a-agents", status_code=303)
 
     except PermissionError as e:
         LOGGER.warning(f"Permission denied for user {user_email} setting A2A agent state {agent_id}: {e}")
@@ -12709,7 +13060,15 @@ async def admin_test_a2a_agent(
             # JSONRPC format for agents that expect it
             test_params = {
                 "method": "message/send",
-                "params": {"message": {"messageId": f"admin-test-{int(time.time())}", "role": "user", "parts": [{"type": "text", "text": user_query}]}},
+                # A2A v0.3.x: message.parts use "kind" (not "type").
+                "params": {
+                    "message": {
+                        "kind": "message",
+                        "messageId": f"admin-test-{int(time.time())}",
+                        "role": "user",
+                        "parts": [{"kind": "text", "text": user_query}],
+                    }
+                },
             }
         else:
             # Generic test format
@@ -14694,16 +15053,11 @@ def _get_latency_percentiles_python(db: Session, cutoff_time: datetime, interval
             float: Interpolated percentile value.
         """
         n = len(data)
-        if n == 0:
-            return 0.0
-        if n == 1:
-            return data[0]
         k = p * (n - 1)
         f = int(k)
         c = k - f
-        if f + 1 < n:
-            return data[f] + c * (data[f + 1] - data[f])
-        return data[f]
+        next_i = min(f + 1, n - 1)
+        return data[f] + c * (data[next_i] - data[f])
 
     for bucket_time in sorted(buckets.keys()):
         durations = sorted(buckets[bucket_time])

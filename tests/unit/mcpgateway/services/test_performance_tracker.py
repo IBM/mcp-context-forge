@@ -9,6 +9,9 @@ SPDX-License-Identifier: Apache-2.0
 from collections import deque
 from unittest.mock import patch
 
+# Third-Party
+import pytest
+
 # First-Party
 from mcpgateway.services.performance_tracker import get_performance_tracker, PerformanceTracker
 
@@ -555,3 +558,70 @@ class TestSummaryCaching:
                 assert ("test_op", 9) in tracker._summary_cache
             finally:
                 tracker._MAX_CACHE_ENTRIES = original_max
+
+
+class TestPerformanceTrackerExtraCoverage:
+    def test_track_operation_reraises_exception_and_records_timing(self):
+        tracker = PerformanceTracker()
+        operation = "test_op_error"
+
+        with pytest.raises(RuntimeError, match="boom"):
+            with tracker.track_operation(operation, log_slow=False):
+                raise RuntimeError("boom")
+
+        assert len(tracker._operation_timings[operation]) == 1
+
+    def test_track_operation_logs_when_threshold_exceeded_and_merges_extra_context(self):
+        tracker = PerformanceTracker()
+        operation = "database_query"
+        tracker.performance_thresholds[operation] = 0.0  # Force threshold_exceeded
+
+        with patch("mcpgateway.services.performance_tracker.get_correlation_id", return_value="cid"), patch("mcpgateway.services.performance_tracker.time.time", side_effect=[0.0, 1.0]), patch(
+            "mcpgateway.services.performance_tracker.logger.warning"
+        ) as warn:
+            with tracker.track_operation(operation, component="svc", extra_context={"foo": "bar"}):
+                pass
+
+        warn.assert_called()
+        extra = warn.call_args.kwargs.get("extra", {})
+        assert extra.get("foo") == "bar"
+        assert extra.get("error_occurred") is False
+
+    def test_record_timing_logs_and_merges_extra_context(self):
+        tracker = PerformanceTracker()
+        tracker.performance_thresholds["op"] = 0.0
+
+        with patch("mcpgateway.services.performance_tracker.get_correlation_id", return_value="cid"), patch("mcpgateway.services.performance_tracker.logger.warning") as warn:
+            tracker.record_timing("op", 1.0, component="svc", extra_context={"foo": "bar"})
+
+        warn.assert_called()
+        extra = warn.call_args.kwargs.get("extra", {})
+        assert extra.get("foo") == "bar"
+
+    def test_get_performance_summary_cache_eviction_handles_popitem_errors(self):
+        tracker = PerformanceTracker()
+        tracker._MAX_CACHE_ENTRIES = 0
+        tracker.get_performance_summary()
+        assert tracker._summary_cache
+
+    def test_get_operation_stats_returns_none_for_unknown_or_empty(self):
+        tracker = PerformanceTracker()
+        assert tracker.get_operation_stats("missing") is None
+        tracker._operation_timings["empty_op"]  # create empty deque
+        assert tracker.get_operation_stats("empty_op") is None
+
+    def test_check_performance_degradation_no_data_and_insufficient_samples(self):
+        tracker = PerformanceTracker()
+        assert tracker.check_performance_degradation("missing") == {"degraded": False, "reason": "no_data"}
+
+        for _ in range(9):
+            tracker.record_timing("op", 0.1)
+
+        assert tracker.check_performance_degradation("op") == {"degraded": False, "reason": "insufficient_samples"}
+
+    def test_check_performance_degradation_insufficient_historical_data(self):
+        tracker = PerformanceTracker()
+        for _ in range(10):
+            tracker.record_timing("op", 0.1)
+
+        assert tracker.check_performance_degradation("op") == {"degraded": False, "reason": "insufficient_historical_data"}

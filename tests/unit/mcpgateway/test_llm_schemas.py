@@ -15,19 +15,31 @@ from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.llm_schemas import (
+    ChatChoice,
+    ChatCompletionChunk,
     ChatCompletionRequest,
+    ChatCompletionResponse,
     ChatMessage,
+    EmbeddingData,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    FunctionDefinition,
     GatewayModelInfo,
     GatewayModelsResponse,
     HealthStatus,
     LLMModelCreate,
+    LLMModelListResponse,
     LLMModelResponse,
     LLMModelUpdate,
     LLMProviderCreate,
+    LLMProviderListResponse,
     LLMProviderResponse,
     LLMProviderTypeEnum,
     LLMProviderUpdate,
     ProviderHealthCheck,
+    RequestStatus,
+    RequestType,
+    ToolDefinition,
     UsageStats,
 )
 
@@ -244,3 +256,199 @@ class TestHealthCheckSchemas:
         )
         assert check.status == HealthStatus.UNHEALTHY
         assert check.error == "Connection refused"
+
+
+class TestValidateProviderConfig:
+    """Tests for validate_provider_config method."""
+
+    def test_validate_provider_config_known_type_no_required(self):
+        """Test validation passes for known type with no required config fields."""
+        provider = LLMProviderCreate(
+            name="Test",
+            provider_type=LLMProviderTypeEnum.OPENAI,
+        )
+        # Should not raise
+        provider.validate_provider_config()
+
+    def test_validate_provider_config_unknown_type(self):
+        """Test validation passes for unknown provider type (returns early)."""
+        provider = LLMProviderCreate(
+            name="Test",
+            provider_type=LLMProviderTypeEnum.OPENAI,
+        )
+        # Patch the type to something not in PROVIDER_CONFIGS
+        from unittest.mock import patch
+
+        with patch("mcpgateway.llm_provider_configs.get_provider_config", return_value=None):
+            provider.validate_provider_config()
+
+    def test_validate_provider_config_missing_required_field(self):
+        """Test validation raises ValueError for missing required config field."""
+        from mcpgateway.llm_provider_configs import ProviderConfigDefinition, ProviderFieldDefinition
+
+        fake_config = ProviderConfigDefinition(
+            provider_type="google_vertex",
+            display_name="Test Provider",
+            description="Test",
+            requires_api_key=True,
+            config_fields=[
+                ProviderFieldDefinition(
+                    name="project_id",
+                    label="Project ID",
+                    field_type="text",
+                    required=True,
+                ),
+            ],
+        )
+        provider = LLMProviderCreate(
+            name="Test",
+            provider_type=LLMProviderTypeEnum.GOOGLE_VERTEX,
+            config={},
+        )
+        from unittest.mock import patch
+
+        with patch("mcpgateway.llm_provider_configs.get_provider_config", return_value=fake_config):
+            with pytest.raises(ValueError, match="Required configuration field"):
+                provider.validate_provider_config()
+
+    def test_validate_provider_config_with_required_field_present(self):
+        """Test validation passes when required config fields are present."""
+        from mcpgateway.llm_provider_configs import ProviderConfigDefinition, ProviderFieldDefinition
+
+        fake_config = ProviderConfigDefinition(
+            provider_type="google_vertex",
+            display_name="Test Provider",
+            description="Test",
+            requires_api_key=True,
+            config_fields=[
+                ProviderFieldDefinition(
+                    name="project_id",
+                    label="Project ID",
+                    field_type="text",
+                    required=True,
+                ),
+            ],
+        )
+        provider = LLMProviderCreate(
+            name="Test",
+            provider_type=LLMProviderTypeEnum.GOOGLE_VERTEX,
+            config={"project_id": "my-project"},
+        )
+        from unittest.mock import patch
+
+        with patch("mcpgateway.llm_provider_configs.get_provider_config", return_value=fake_config):
+            provider.validate_provider_config()
+
+
+class TestProviderConfigFunctions:
+    """Tests for get_provider_config and get_all_provider_configs."""
+
+    def test_get_provider_config_known(self):
+        from mcpgateway.llm_provider_configs import get_provider_config
+
+        result = get_provider_config("openai")
+        assert result is not None
+        assert result.display_name == "OpenAI"
+
+    def test_get_provider_config_unknown(self):
+        from mcpgateway.llm_provider_configs import get_provider_config
+
+        result = get_provider_config("nonexistent_provider")
+        assert result is None
+
+    def test_get_all_provider_configs(self):
+        from mcpgateway.llm_provider_configs import get_all_provider_configs
+
+        configs = get_all_provider_configs()
+        assert isinstance(configs, dict)
+        assert "openai" in configs
+        assert "ollama" in configs
+
+
+class TestAdditionalSchemas:
+    """Tests for schemas not covered by other test classes."""
+
+    def test_function_definition(self):
+        func = FunctionDefinition(name="get_weather", description="Get weather", parameters={"type": "object"})
+        assert func.name == "get_weather"
+
+    def test_tool_definition(self):
+        func = FunctionDefinition(name="get_weather")
+        tool = ToolDefinition(function=func)
+        assert tool.type == "function"
+        assert tool.function.name == "get_weather"
+
+    def test_chat_choice(self):
+        msg = ChatMessage(role="assistant", content="Hello")
+        choice = ChatChoice(index=0, message=msg, finish_reason="stop")
+        assert choice.finish_reason == "stop"
+
+    def test_chat_completion_response(self):
+        msg = ChatMessage(role="assistant", content="Hello")
+        choice = ChatChoice(index=0, message=msg)
+        resp = ChatCompletionResponse(id="resp-1", created=1234567890, model="gpt-4", choices=[choice])
+        assert resp.object == "chat.completion"
+
+    def test_chat_completion_chunk(self):
+        chunk = ChatCompletionChunk(id="chunk-1", created=1234567890, model="gpt-4", choices=[{"delta": {"content": "hi"}}])
+        assert chunk.object == "chat.completion.chunk"
+
+    def test_embedding_request_string(self):
+        req = EmbeddingRequest(model="text-embedding-3-small", input="hello world")
+        assert req.model == "text-embedding-3-small"
+
+    def test_embedding_request_list(self):
+        req = EmbeddingRequest(model="text-embedding-3-small", input=["hello", "world"])
+        assert len(req.input) == 2
+
+    def test_embedding_data(self):
+        data = EmbeddingData(embedding=[0.1, 0.2, 0.3], index=0)
+        assert data.object == "embedding"
+
+    def test_embedding_response(self):
+        data = EmbeddingData(embedding=[0.1, 0.2], index=0)
+        usage = UsageStats(prompt_tokens=10, total_tokens=10)
+        resp = EmbeddingResponse(data=[data], model="text-embedding-3-small", usage=usage)
+        assert resp.object == "list"
+
+    def test_chat_message_tool(self):
+        msg = ChatMessage(role="tool", content="result", tool_call_id="call-1")
+        assert msg.tool_call_id == "call-1"
+
+    def test_chat_message_with_tool_calls(self):
+        msg = ChatMessage(role="assistant", content=None, tool_calls=[{"id": "call-1", "type": "function"}])
+        assert msg.tool_calls is not None
+
+    def test_chat_completion_request_full(self):
+        func = FunctionDefinition(name="get_weather")
+        tool = ToolDefinition(function=func)
+        req = ChatCompletionRequest(
+            model="gpt-4",
+            messages=[ChatMessage(role="user", content="hi")],
+            tools=[tool],
+            tool_choice="auto",
+            top_p=0.9,
+            frequency_penalty=0.5,
+            presence_penalty=0.5,
+            stop=["END"],
+            user="user-1",
+        )
+        assert req.tools is not None
+        assert req.tool_choice == "auto"
+
+    def test_request_status_enum(self):
+        assert RequestStatus.PENDING == "pending"
+        assert RequestStatus.COMPLETED == "completed"
+
+    def test_request_type_enum(self):
+        assert RequestType.CHAT == "chat"
+        assert RequestType.EMBEDDING == "embedding"
+
+    def test_provider_list_response(self):
+        resp = LLMProviderListResponse(providers=[], total=0)
+        assert resp.page == 1
+        assert resp.page_size == 50
+
+    def test_model_list_response(self):
+        resp = LLMModelListResponse(models=[], total=0)
+        assert resp.page == 1

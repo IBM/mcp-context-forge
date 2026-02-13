@@ -1,0 +1,271 @@
+# -*- coding: utf-8 -*-
+"""Coverage tests for mcpgateway.plugins.framework.manager — invoke_hook_for_plugin, _execute_with_timeout, permissive mode."""
+
+# Standard
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
+import pytest
+
+# First-Party
+from mcpgateway.plugins.framework.base import HookRef, Plugin, PluginRef
+from mcpgateway.plugins.framework.errors import PluginError, PluginViolationError
+from mcpgateway.plugins.framework.manager import PluginExecutor, PluginManager
+from mcpgateway.plugins.framework.models import (
+    Config,
+    GlobalContext,
+    PluginCondition,
+    PluginConfig,
+    PluginContext,
+    PluginMode,
+    PluginPayload,
+    PluginResult,
+    PluginSettings,
+    PluginViolation,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_config(name="test", priority=100, mode=PluginMode.ENFORCE, hooks=None):
+    return PluginConfig(
+        name=name,
+        kind="test.Plugin",
+        version="1.0",
+        hooks=hooks or ["test_hook"],
+        mode=mode,
+        priority=priority,
+    )
+
+
+class ConcretePlugin(Plugin):
+    async def test_hook(self, payload: PluginPayload, context: PluginContext) -> PluginResult:
+        return PluginResult(continue_processing=True)
+
+
+def _make_hook_ref(plugin=None, mode=PluginMode.ENFORCE):
+    plugin = plugin or ConcretePlugin(_make_config(mode=mode))
+    ref = PluginRef(plugin)
+    return HookRef("test_hook", ref)
+
+
+# ===========================================================================
+# invoke_hook_for_plugin
+# ===========================================================================
+
+
+class TestInvokeHookForPlugin:
+    @pytest.fixture(autouse=True)
+    def reset_manager(self):
+        PluginManager.reset()
+        yield
+        PluginManager.reset()
+
+    @pytest.mark.asyncio
+    async def test_success(self):
+        manager = PluginManager()
+        manager._initialized = True
+        hook_ref = _make_hook_ref()
+
+        manager._registry = MagicMock()
+        manager._registry.get_plugin_hook_by_name.return_value = hook_ref
+
+        payload = MagicMock(spec=PluginPayload)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+
+        result = await manager.invoke_hook_for_plugin("test", "test_hook", payload, context)
+        assert result.continue_processing is True
+
+    @pytest.mark.asyncio
+    async def test_not_found_raises(self):
+        manager = PluginManager()
+        manager._initialized = True
+        manager._registry = MagicMock()
+        manager._registry.get_plugin_hook_by_name.return_value = None
+
+        payload = MagicMock(spec=PluginPayload)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+
+        with pytest.raises(PluginError, match="Unable to find"):
+            await manager.invoke_hook_for_plugin("missing", "test_hook", payload, context)
+
+    @pytest.mark.asyncio
+    async def test_json_payload_dict(self):
+        manager = PluginManager()
+        manager._initialized = True
+
+        plugin = ConcretePlugin(_make_config())
+        plugin.json_to_payload = MagicMock(return_value=MagicMock(spec=PluginPayload))
+        hook_ref = _make_hook_ref(plugin)
+
+        manager._registry = MagicMock()
+        manager._registry.get_plugin_hook_by_name.return_value = hook_ref
+
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+
+        result = await manager.invoke_hook_for_plugin(
+            "test", "test_hook", {"key": "val"}, context, payload_as_json=True
+        )
+        plugin.json_to_payload.assert_called_once_with("test_hook", {"key": "val"})
+        assert result.continue_processing is True
+
+    @pytest.mark.asyncio
+    async def test_json_payload_wrong_type_raises(self):
+        manager = PluginManager()
+        manager._initialized = True
+
+        hook_ref = _make_hook_ref()
+        manager._registry = MagicMock()
+        manager._registry.get_plugin_hook_by_name.return_value = hook_ref
+
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+
+        with pytest.raises(ValueError, match="must be str or dict"):
+            await manager.invoke_hook_for_plugin(
+                "test", "test_hook", 12345, context, payload_as_json=True
+            )
+
+    @pytest.mark.asyncio
+    async def test_wrong_payload_type_raises(self):
+        manager = PluginManager()
+        manager._initialized = True
+
+        hook_ref = _make_hook_ref()
+        manager._registry = MagicMock()
+        manager._registry.get_plugin_hook_by_name.return_value = hook_ref
+
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+
+        with pytest.raises(ValueError, match="must be a PluginPayload"):
+            await manager.invoke_hook_for_plugin(
+                "test", "test_hook", "not-a-payload", context, payload_as_json=False
+            )
+
+    @pytest.mark.asyncio
+    async def test_global_context_auto_wrap(self):
+        manager = PluginManager()
+        manager._initialized = True
+        hook_ref = _make_hook_ref()
+
+        manager._registry = MagicMock()
+        manager._registry.get_plugin_hook_by_name.return_value = hook_ref
+
+        payload = MagicMock(spec=PluginPayload)
+        global_context = GlobalContext(request_id="1")
+
+        result = await manager.invoke_hook_for_plugin("test", "test_hook", payload, global_context)
+        assert result.continue_processing is True
+
+
+# ===========================================================================
+# _execute_with_timeout observability
+# ===========================================================================
+
+
+class TestExecuteWithTimeout:
+    @pytest.mark.asyncio
+    async def test_with_trace_id(self):
+        executor = PluginExecutor(timeout=30)
+        hook_ref = _make_hook_ref()
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        mock_db = MagicMock()
+        mock_service = MagicMock()
+        mock_service.start_span.return_value = "span-123"
+        mock_trace = MagicMock()
+        mock_trace.get.return_value = "trace-abc"
+
+        with patch("mcpgateway.services.observability_service.current_trace_id", mock_trace), \
+             patch("mcpgateway.db.SessionLocal", return_value=mock_db), \
+             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service):
+            result = await executor._execute_with_timeout(hook_ref, payload, context)
+
+        assert result.continue_processing is True
+        mock_service.start_span.assert_called_once()
+        mock_service.end_span.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_no_trace(self):
+        executor = PluginExecutor(timeout=30)
+        hook_ref = _make_hook_ref()
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        mock_trace = MagicMock()
+        mock_trace.get.return_value = None
+
+        with patch("mcpgateway.services.observability_service.current_trace_id", mock_trace), \
+             patch("mcpgateway.db.SessionLocal"), \
+             patch("mcpgateway.services.observability_service.ObservabilityService"):
+            result = await executor._execute_with_timeout(hook_ref, payload, context)
+
+        assert result.continue_processing is True
+
+    @pytest.mark.asyncio
+    async def test_observability_import_failure(self):
+        executor = PluginExecutor(timeout=30)
+        hook_ref = _make_hook_ref()
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        with patch("mcpgateway.db.SessionLocal", side_effect=Exception("import fail")):
+            result = await executor._execute_with_timeout(hook_ref, payload, context)
+
+        assert result.continue_processing is True
+
+
+# ===========================================================================
+# Permissive mode with no violation
+# ===========================================================================
+
+
+class TestPermissiveBlocking:
+    @pytest.mark.asyncio
+    async def test_permissive_no_violation(self):
+        """Plugin returns continue_processing=False in permissive mode with no violation object."""
+        plugin = ConcretePlugin(_make_config(mode=PluginMode.PERMISSIVE))
+
+        # Override to return blocking result with no violation
+        async def blocking_hook(payload, context):
+            return PluginResult(continue_processing=False, violation=None)
+
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+        hook_ref._func = blocking_hook
+
+        executor = PluginExecutor(timeout=30)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        result = await executor.execute_plugin(hook_ref, payload, context, False)
+        # In permissive mode, should still return the result (just log warning)
+        assert result.continue_processing is False
+
+    @pytest.mark.asyncio
+    async def test_permissive_with_violation_description(self):
+        """Plugin returns violation with description in permissive mode."""
+        plugin = ConcretePlugin(_make_config(mode=PluginMode.PERMISSIVE))
+
+        async def blocking_hook(payload, context):
+            return PluginResult(
+                continue_processing=False,
+                violation=PluginViolation(reason="test", description="detailed", code="V1"),
+            )
+
+        ref = PluginRef(plugin)
+        hook_ref = HookRef("test_hook", ref)
+        hook_ref._func = blocking_hook
+
+        executor = PluginExecutor(timeout=30)
+        context = PluginContext(global_context=GlobalContext(request_id="1"))
+        payload = MagicMock(spec=PluginPayload)
+
+        result = await executor.execute_plugin(hook_ref, payload, context, False)
+        assert result.continue_processing is False
+        assert result.violation.plugin_name == "test"

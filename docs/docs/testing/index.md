@@ -12,7 +12,7 @@ This section covers the testing strategy and tools for MCP Gateway.
 | **Integration tests** | pytest | `tests/integration/` | Implemented |
 | **End-to-end tests** | pytest | `tests/e2e/` | Implemented |
 | **UI automation** | Playwright | `tests/playwright/` | Implemented |
-| **Load testing** | Locust | `tests/locust/` | Implemented |
+| **Load testing** | Locust | `tests/loadtest/` | Implemented |
 | **JS unit tests** | - | - | Not yet implemented |
 
 ---
@@ -75,11 +75,15 @@ Tests cover login flows, CRUD operations, and UI state management.
 Locust is used for performance and load testing:
 
 ```bash
+# Containerized load testing (recommended for docker-compose users)
+make testing-up
+# Locust UI: http://localhost:8089 (targets http://nginx:80 by default)
+
 # Start Locust web UI
-locust -f tests/locust/locustfile.py --host=http://localhost:4444
+locust -f tests/loadtest/locustfile.py --host=http://localhost:8080
 
 # Headless load test
-locust -f tests/locust/locustfile.py --host=http://localhost:4444 \
+locust -f tests/loadtest/locustfile.py --host=http://localhost:8080 \
   --headless -u 100 -r 10 -t 60s
 ```
 

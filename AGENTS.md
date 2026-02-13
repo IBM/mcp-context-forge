@@ -36,6 +36,7 @@ plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 charts/                     # Helm charts (see charts/AGENTS.md)
 deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
+a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
