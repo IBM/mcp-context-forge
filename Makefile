@@ -6141,15 +6141,7 @@ sri-generate:                       ## 🔐 Generate SRI hashes for CDN resource
 	@python3 scripts/generate-sri-hashes.py
 
 sri-verify:                         ## ✅ Verify SRI hashes match current CDN content
-	@echo "✅ Verifying SRI hashes against CDN content..."
-	@python3 scripts/generate-sri-hashes.py > /dev/null 2>&1
-	@if [ -f mcpgateway/sri_hashes.json ]; then \
-		echo "✅ All SRI hashes are up to date!"; \
-	else \
-		echo "❌ SRI hashes file not found!"; \
-		echo "💡 Run 'make sri-generate' to generate hashes"; \
-		exit 1; \
-	fi
+	@python3 scripts/verify-sri-hashes.py
 
 ## --------------------------------------------------------------------------- ##
 ##  Security reporting and advanced targets
