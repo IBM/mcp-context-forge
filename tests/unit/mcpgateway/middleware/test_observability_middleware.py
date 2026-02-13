@@ -114,3 +114,40 @@ async def test_dispatch_close_db_failure(mock_request, mock_call_next):
          patch.object(middleware.service, "end_trace"):
         response = await middleware.dispatch(mock_request, mock_call_next)
         assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_rollback_and_close_fail_on_setup_error(mock_request, mock_call_next):
+    """Test rollback and close failure handling during trace setup exception."""
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    db_mock = MagicMock()
+    db_mock.rollback.side_effect = Exception("rollback fail")
+    db_mock.close.side_effect = Exception("close fail")
+    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=db_mock), \
+         patch.object(middleware.service, "start_trace", side_effect=Exception("trace setup fail")):
+        response = await middleware.dispatch(mock_request, mock_call_next)
+        # Should still return 200 from call_next even though trace setup failed
+        assert response.status_code == 200
+        db_mock.rollback.assert_called_once()
+        db_mock.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_finally_rollback_failure(mock_request):
+    """Test finally block handles rollback failure gracefully."""
+    async def _call_next(request):
+        return Response("OK", status_code=200)
+
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    db_mock = MagicMock()
+    db_mock.in_transaction.return_value = True
+    db_mock.rollback.side_effect = Exception("finally rollback fail")
+    with patch("mcpgateway.middleware.observability_middleware.SessionLocal", return_value=db_mock), \
+         patch.object(middleware.service, "start_trace", return_value="trace123"), \
+         patch.object(middleware.service, "start_span", return_value="span123"), \
+         patch.object(middleware.service, "end_span"), \
+         patch.object(middleware.service, "end_trace"):
+        response = await middleware.dispatch(mock_request, _call_next)
+        assert response.status_code == 200
+        # Rollback should be called in the finally block
+        db_mock.in_transaction.assert_called()

@@ -2549,3 +2549,247 @@ def test_slug_listeners_gateway_a2a_agent_email_team(monkeypatch):
     team = Target("Team Name")
     db.set_email_team_slug(None, None, team)
     assert team.slug == "team-name"
+
+
+# --- close_request_session() tests ---
+def test_close_request_session_no_session(monkeypatch):
+    """Test close_request_session returns early when no session exists."""
+    token = db._request_session.set(None)
+    try:
+        db.close_request_session()  # Should return early, no exception
+    finally:
+        db._request_session.reset(token)
+
+
+# --- get_request_session() tests ---
+def test_get_request_session_creates_session_when_none(monkeypatch):
+    """Test get_request_session creates a new session when none exists."""
+    class DummySession:
+        pass
+
+    dummy = DummySession()
+    monkeypatch.setattr(db, "SessionLocal", lambda: dummy)
+
+    # Ensure no session exists
+    token = db._request_session.set(None)
+    try:
+        session = db.get_request_session()
+        assert session is dummy
+        # Verify the session was stored in the ContextVar
+        assert db._request_session.get() is dummy
+    finally:
+        db._request_session.reset(token)
+
+
+def test_get_request_session_returns_existing_session():
+    """Test get_request_session returns existing session when one exists."""
+    class DummySession:
+        pass
+
+    dummy = DummySession()
+    token = db._request_session.set(dummy)
+    try:
+        session = db.get_request_session()
+        assert session is dummy
+    finally:
+        db._request_session.reset(token)
+
+
+def test_close_request_session_rollback_failure(monkeypatch):
+    """Test close_request_session handles rollback failure gracefully."""
+    class DummySession:
+        def __init__(self):
+            self.closed = False
+        def in_transaction(self):
+            return True
+        def rollback(self):
+            raise RuntimeError("rollback failed")
+        def close(self):
+            self.closed = True
+
+    dummy = DummySession()
+    token = db._request_session.set(dummy)
+    try:
+        db.close_request_session()  # Should not raise despite rollback failure
+        assert dummy.closed is True
+        assert db._request_session.get() is None
+    finally:
+        db._request_session.reset(token)
+
+
+def test_close_request_session_close_failure(monkeypatch):
+    """Test close_request_session handles close failure gracefully."""
+    class DummySession:
+        def __init__(self):
+            self.rolled_back = False
+        def in_transaction(self):
+            return True
+        def rollback(self):
+            self.rolled_back = True
+        def close(self):
+            raise RuntimeError("close failed")
+
+    dummy = DummySession()
+    token = db._request_session.set(dummy)
+    try:
+        db.close_request_session()  # Should not raise despite close failure
+        assert dummy.rolled_back is True
+        assert db._request_session.get() is None
+    finally:
+        db._request_session.reset(token)
+
+
+def test_close_request_session_not_in_transaction(monkeypatch):
+    """Test close_request_session skips rollback when not in transaction."""
+    class DummySession:
+        def __init__(self):
+            self.closed = False
+            self.rollback_called = False
+        def in_transaction(self):
+            return False
+        def rollback(self):
+            self.rollback_called = True
+        def close(self):
+            self.closed = True
+
+    dummy = DummySession()
+    token = db._request_session.set(dummy)
+    try:
+        db.close_request_session()
+        assert dummy.closed is True
+        assert dummy.rollback_called is False
+        assert db._request_session.get() is None
+    finally:
+        db._request_session.reset(token)
+
+
+# --- is_expired fallback path tests (when .timestamp() fails) ---
+def test_email_team_join_request_is_expired_timestamp_exception(monkeypatch):
+    """Test EmailTeamJoinRequest.is_expired() fallback when timestamp() raises."""
+    # Use timezone-naive expires_at to exercise the tzinfo fixup path
+    expires_at = datetime(2030, 1, 1, 12, 0, 0)  # naive datetime
+    join_request = db.EmailTeamJoinRequest(team_id="team-1", user_email="user@example.com", expires_at=expires_at)
+
+    # Create a datetime subclass where timestamp() raises
+    class BadTimestampDateTime(datetime):
+        def timestamp(self):
+            raise OSError("timestamp overflow")
+
+    # Patch utc_now to return a BadTimestampDateTime whose timestamp() will raise
+    bad_now = BadTimestampDateTime(2025, 1, 1, 12, 0, 0)
+    monkeypatch.setattr(db, "utc_now", lambda: bad_now)
+
+    # The fallback path will coerce both to UTC and compare: 2025 < 2030, so not expired
+    assert join_request.is_expired() is False
+
+
+def test_pending_user_approval_is_expired_timestamp_exception(monkeypatch):
+    """Test PendingUserApproval.is_expired() fallback when timestamp() raises."""
+    # Use timezone-naive expires_at
+    expires_at = datetime(2030, 1, 1, 12, 0, 0)  # naive datetime
+    approval = db.PendingUserApproval(email="user@example.com", full_name="User", auth_provider="github", expires_at=expires_at, status="pending")
+
+    class BadTimestampDateTime(datetime):
+        def timestamp(self):
+            raise OSError("timestamp overflow")
+
+    bad_now = BadTimestampDateTime(2025, 1, 1, 12, 0, 0)
+    monkeypatch.setattr(db, "utc_now", lambda: bad_now)
+
+    assert approval.is_expired() is False
+
+
+def test_sso_auth_session_is_expired_timestamp_exception(monkeypatch):
+    """Test SSOAuthSession.is_expired fallback when timestamp() raises."""
+    session = db.SSOAuthSession(provider_id="github", state="state3", redirect_uri="http://example.com")
+    # Use timezone-naive expires_at
+    session.expires_at = datetime(2030, 1, 1, 12, 0, 0)  # naive datetime
+
+    class BadTimestampDateTime(datetime):
+        def timestamp(self):
+            raise OSError("timestamp overflow")
+
+    bad_now = BadTimestampDateTime(2025, 1, 1, 12, 0, 0)
+    monkeypatch.setattr(db, "utc_now", lambda: bad_now)
+
+    assert session.is_expired is False
+
+
+# --- get_db() request session re-use and close failure tests ---
+def test_get_db_reuses_request_session(monkeypatch):
+    """Test get_db() reuses existing request-scoped session."""
+    class DummySession:
+        def __init__(self):
+            self.committed = False
+            self.closed = False
+        def commit(self):
+            self.committed = True
+        def close(self):
+            self.closed = True
+
+    dummy = DummySession()
+    token = db._request_session.set(dummy)
+    try:
+        gen = db.get_db()
+        session = next(gen)
+        assert session is dummy
+        try:
+            next(gen)
+        except StopIteration:
+            pass
+        # Should NOT close the request session (middleware will do that)
+        assert dummy.closed is False
+        assert dummy.committed is True
+    finally:
+        db._request_session.reset(token)
+
+
+def test_get_db_close_failure_on_ephemeral_session(monkeypatch, caplog):
+    """Test get_db() logs but does not raise on close failure for ephemeral session."""
+    class DummySession:
+        def commit(self):
+            pass
+        def rollback(self):
+            pass
+        def close(self):
+            raise RuntimeError("close failed")
+
+    dummy = DummySession()
+    monkeypatch.setattr(db, "SessionLocal", lambda: dummy)
+    # Ensure no request session is set
+    token = db._request_session.set(None)
+    try:
+        with caplog.at_level(logging.DEBUG):
+            gen = db.get_db()
+            _ = next(gen)
+            try:
+                next(gen)
+            except StopIteration:
+                pass
+        assert any("Failed to close ephemeral DB session" in record.message for record in caplog.records)
+    finally:
+        db._request_session.reset(token)
+
+
+# --- SessionMiddleware tests ---
+@pytest.mark.asyncio
+async def test_session_middleware_close_failure(monkeypatch, caplog):
+    """Test SessionMiddleware handles close_request_session failure gracefully."""
+    from mcpgateway.middleware.session_middleware import SessionMiddleware
+
+    async def dummy_app(scope, receive, send):
+        pass
+
+    middleware = SessionMiddleware(dummy_app)
+
+    # Patch close_request_session to raise an exception
+    monkeypatch.setattr(
+        "mcpgateway.middleware.session_middleware.close_request_session",
+        lambda: (_ for _ in ()).throw(RuntimeError("session close failed"))
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        await middleware({}, None, None)
+
+    assert any("Failed to close request-scoped DB session" in record.message for record in caplog.records)
+
