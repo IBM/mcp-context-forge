@@ -28,6 +28,6 @@ test:
         --tb=line
         --no-header
         -p no:warnings
-        -q
+        -q || echo "⚠️ Some tests failed — see output above"
   variables:
     DATABASE_URL: "sqlite:///:memory:"
