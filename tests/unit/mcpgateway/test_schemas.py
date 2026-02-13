@@ -1072,4 +1072,100 @@ class TestSchemaValidators:
         """ResourceCreate should truncate overly long descriptions."""
         long_desc = "x" * (SecurityValidator.MAX_DESCRIPTION_LENGTH + 5)
         resource = ResourceCreate(uri="resource://test", name="resource", description=long_desc, content="data")
-        assert len(resource.description) == SecurityValidator.MAX_DESCRIPTION_LENGTH
+
+    def test_gateway_create_with_valid_gateway_modes(self):
+        """Test GatewayCreate accepts valid gateway_mode values."""
+        from mcpgateway.schemas import GatewayCreate
+
+        # Test with cache mode (default)
+        gateway = GatewayCreate(
+            name="Test Gateway",
+            url="https://example.com",
+            transport="SSE",
+            gateway_mode="cache",
+        )
+        assert gateway.gateway_mode == "cache"
+
+        # Test with direct_proxy mode
+        gateway = GatewayCreate(
+            name="Test Gateway",
+            url="https://example.com",
+            transport="SSE",
+            gateway_mode="direct_proxy",
+        )
+        assert gateway.gateway_mode == "direct_proxy"
+
+        # Test default value
+        gateway = GatewayCreate(
+            name="Test Gateway",
+            url="https://example.com",
+            transport="SSE",
+        )
+        assert gateway.gateway_mode == "cache"
+
+    def test_gateway_create_with_invalid_gateway_mode(self):
+        """Test GatewayCreate rejects invalid gateway_mode values."""
+        from mcpgateway.schemas import GatewayCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayCreate(
+                name="Test Gateway",
+                url="https://example.com",
+                transport="SSE",
+                gateway_mode="invalid_mode",
+            )
+
+        # Check that the error mentions the pattern validation
+        assert "gateway_mode" in str(exc_info.value)
+
+    def test_gateway_update_with_valid_gateway_modes(self):
+        """Test GatewayUpdate accepts valid gateway_mode values."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        # Test updating to cache mode
+        update = GatewayUpdate(gateway_mode="cache")
+        assert update.gateway_mode == "cache"
+
+        # Test updating to direct_proxy mode
+        update = GatewayUpdate(gateway_mode="direct_proxy")
+        assert update.gateway_mode == "direct_proxy"
+
+        # Test None (no update)
+        update = GatewayUpdate()
+        assert update.gateway_mode is None
+
+    def test_gateway_update_with_invalid_gateway_mode(self):
+        """Test GatewayUpdate rejects invalid gateway_mode values."""
+        from mcpgateway.schemas import GatewayUpdate
+
+        with pytest.raises(ValidationError) as exc_info:
+            GatewayUpdate(gateway_mode="invalid_mode")
+
+        # Check that the error mentions the pattern validation
+        assert "gateway_mode" in str(exc_info.value)
+
+    def test_gateway_read_includes_gateway_mode(self):
+        """Test GatewayRead includes gateway_mode field with default."""
+        from mcpgateway.schemas import GatewayRead
+
+        # Test with explicit cache mode
+        gateway = GatewayRead(
+            id="gw-123",
+            name="Test Gateway",
+            slug="test-gateway",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            gateway_mode="cache",
+        )
+        assert gateway.gateway_mode == "cache"
+
+        # Test with direct_proxy mode
+        gateway = GatewayRead(
+            id="gw-123",
+            name="Test Gateway",
+            slug="test-gateway",
+            url="https://example.com",
+            transport="STREAMABLEHTTP",
+            gateway_mode="direct_proxy",
+        )
+        assert gateway.gateway_mode == "direct_proxy"

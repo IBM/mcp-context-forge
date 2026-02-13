@@ -44,7 +44,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
@@ -64,6 +64,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -1967,7 +1968,7 @@ class ResourceService:
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
-    ) -> ResourceContent:
+    ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
         Args:
@@ -2163,6 +2164,9 @@ class ResourceService:
 
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
+
+                # Check if resource's gateway is in direct_proxy mode
+                # First, try to find the resource to get its gateway
                 # Check for template
 
                 if resource_db is None and uri is not None:  # and "{" in uri and "}" in uri:
@@ -2173,8 +2177,57 @@ class ResourceService:
                     if include_inactive:
                         query = select(DbResource).where(DbResource.uri == str(uri))
                     resource_db = db.execute(query).scalar_one_or_none()
-                    if resource_db:
-                        # resource_id = resource_db.id
+
+                    # Check for direct_proxy mode
+                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, resource_db.gateway, user, token_teams):
+                            raise ResourceNotFoundError(f"Resource not found: {uri}")
+
+                        logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
+
+                        try:  # First-Party
+                            # First-Party
+                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
+
+                            gateway = resource_db.gateway
+
+                            # Prepare headers with gateway auth
+                            headers = build_gateway_auth_headers(gateway)
+
+                            # Use MCP SDK to connect and read resource
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+
+                                    # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
+                                    result = await session.read_resource(uri=uri)
+
+                                    # Convert MCP result to MCP-compliant content models
+                                    # result.contents is a list of TextResourceContents or BlobResourceContents
+                                    if result.contents:
+                                        first_content = result.contents[0]
+                                        if hasattr(first_content, "text"):
+                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
+                                        elif hasattr(first_content, "blob"):
+                                            content = BlobResourceContents(
+                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
+                                            )
+                                        else:
+                                            content = TextResourceContents(uri=uri, text="")
+                                    else:
+                                        content = TextResourceContents(uri=uri, text="")
+
+                                    success = True
+                                    logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                                    # Skip the rest of the DB lookup logic
+
+                        except Exception as e:
+                            logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
+                            raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
+
+                    elif resource_db:
+                        # Normal cache mode - resource found in DB
                         content = resource_db.content
                     else:
                         # Check the inactivity first
@@ -2265,7 +2318,10 @@ class ResourceService:
                 # ═══════════════════════════════════════════════════════════════════════════
                 # If content is a Pydantic content model, invoke gateway
 
-                if isinstance(content, (ResourceContent, TextContent)):
+                # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
+                # ResourceContent is the legacy model for backwards compatibility
+
+                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     resource_response = await self.invoke_resource(
                         db=db,
                         resource_id=getattr(content, "id"),

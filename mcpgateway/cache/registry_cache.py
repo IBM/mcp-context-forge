@@ -220,7 +220,7 @@ class RegistryCache:
         # Sort keys for consistent hashing
         sorted_items = sorted(kwargs.items())
         filter_str = str(sorted_items)
-        return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324 # noqa: DUO130
+        return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324  # noqa: DUO130
 
     async def _get_redis_client(self):
         """Get Redis client if available.
