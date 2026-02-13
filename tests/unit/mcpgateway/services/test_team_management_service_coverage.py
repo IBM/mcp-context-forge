@@ -108,6 +108,70 @@ class TestFireAndForgetHelper:
 
 
 # ===========================================================================
+# add_member_to_team - TeamMemberAddError exception path
+# ===========================================================================
+
+
+class TestAddMemberToTeamExceptionPath:
+    """Test the exception handling path in add_member_to_team that raises TeamMemberAddError."""
+
+    @pytest.mark.asyncio
+    async def test_add_member_generic_exception_raises_team_member_add_error(self, db):
+        """Test that a generic exception during add_member_to_team raises TeamMemberAddError."""
+        from mcpgateway.services.team_management_service import TeamMemberAddError
+
+        svc = TeamManagementService(db)
+        
+        # Mock the team to exist
+        mock_team = _mock_team(id="t1", max_members=100)
+        
+        # Mock the user to exist
+        mock_user = MagicMock(spec=EmailUser)
+        mock_user.email = "newuser@example.com"
+        
+        # Create separate mock chains for different query types
+        mock_query_chain_first = MagicMock()
+        mock_query_chain_count = MagicMock()
+        
+        # Setup first() calls for team, user, and existing member check
+        mock_query_chain_first.filter.return_value.first.side_effect = [
+            mock_team,  # First call for team lookup
+            mock_user,  # Second call for user lookup
+            None,       # Third call for existing member check (no existing member)
+        ]
+        
+        # Setup count() call for member count check (return integer, not MagicMock)
+        mock_query_chain_count.filter.return_value.count.return_value = 50
+        
+        # Configure db.query to return appropriate chain based on call
+        def query_side_effect(model):
+            if model == EmailTeamMember:
+                # First EmailTeamMember query is for existing member check (uses first())
+                # Second EmailTeamMember query is for count check (uses count())
+                # We need to track which call this is
+                if not hasattr(query_side_effect, 'emailteammember_call_count'):
+                    query_side_effect.emailteammember_call_count = 0
+                query_side_effect.emailteammember_call_count += 1
+                
+                if query_side_effect.emailteammember_call_count == 1:
+                    return mock_query_chain_first  # For existing member check
+                else:
+                    return mock_query_chain_count  # For count check
+            return mock_query_chain_first  # For EmailTeam and EmailUser queries
+        
+        db.query.side_effect = query_side_effect
+        
+        # Make db.add raise an exception to trigger the exception handler
+        db.add.side_effect = RuntimeError("Database error during add")
+        
+        with pytest.raises(TeamMemberAddError) as exc_info:
+            await svc.add_member_to_team("t1", "newuser@example.com", "member", invited_by="admin@example.com")
+        
+        assert "Failed to add member to team" in str(exc_info.value)
+        db.rollback.assert_called_once()
+
+
+# ===========================================================================
 # create_team — reactivate inactive team paths
 # ===========================================================================
 
