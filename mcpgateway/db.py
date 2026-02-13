@@ -1488,7 +1488,7 @@ class EmailTeam(Base):
     __tablename__ = "email_teams"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Basic team information
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1633,7 +1633,7 @@ class EmailTeamMember(Base):
     __tablename__ = "email_team_members"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Foreign keys
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
@@ -1699,7 +1699,7 @@ class EmailTeamMemberHistory(Base):
 
     __tablename__ = "email_team_member_history"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     team_member_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_team_members.id", ondelete="CASCADE"), nullable=False)
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id"), nullable=False)
     user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=False)
@@ -1768,7 +1768,7 @@ class EmailTeamInvitation(Base):
     __tablename__ = "email_team_invitations"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Foreign keys
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
@@ -1871,7 +1871,7 @@ class EmailTeamJoinRequest(Base):
     __tablename__ = "email_team_join_requests"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Foreign keys
     team_id: Mapped[str] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="CASCADE"), nullable=False)
@@ -2817,7 +2817,7 @@ class Tool(Base):
 
     __tablename__ = "tools"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=True)
     original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -3236,7 +3236,7 @@ class Resource(Base):
 
     __tablename__ = "resources"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     uri: Mapped[str] = mapped_column(String(767), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -3652,7 +3652,7 @@ class Prompt(Base):
 
     __tablename__ = "prompts"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     custom_name: Mapped[str] = mapped_column(String(255), nullable=False)
     custom_name_slug: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -4025,7 +4025,7 @@ class Server(Base):
 
     __tablename__ = "servers"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     icon: Mapped[Optional[str]] = mapped_column(String(767), nullable=True)
@@ -4350,7 +4350,7 @@ class Gateway(Base):
 
     __tablename__ = "gateways"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=False)
@@ -4543,7 +4543,7 @@ class A2AAgent(Base):
 
     __tablename__ = "a2a_agents"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -4730,7 +4730,7 @@ class GrpcService(Base):
 
     __tablename__ = "grpc_services"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     description: Mapped[Optional[str]] = mapped_column(Text)
@@ -4821,7 +4821,7 @@ class OAuthToken(Base):
 
     __tablename__ = "oauth_tokens"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)  # OAuth provider's user ID
     app_user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False)  # MCP Gateway user
@@ -4846,7 +4846,7 @@ class OAuthState(Base):
 
     __tablename__ = "oauth_states"
 
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     gateway_id: Mapped[str] = mapped_column(String(36), ForeignKey("gateways.id", ondelete="CASCADE"), nullable=False)
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
@@ -5631,7 +5631,7 @@ class StructuredLogEntry(Base):
     __tablename__ = "structured_log_entries"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Timestamps
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
@@ -5701,7 +5701,7 @@ class PerformanceMetric(Base):
     __tablename__ = "performance_metrics"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Timestamp
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
@@ -5748,7 +5748,7 @@ class SecurityEvent(Base):
     __tablename__ = "security_events"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Timestamps
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
@@ -5973,7 +5973,7 @@ class LLMProvider(Base):
     __tablename__ = "llm_providers"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Basic info
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -6056,7 +6056,7 @@ class LLMModel(Base):
     __tablename__ = "llm_models"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Provider relationship
     provider_id: Mapped[str] = mapped_column(String(36), ForeignKey("llm_providers.id", ondelete="CASCADE"), nullable=False)
@@ -6114,7 +6114,7 @@ class AuditTrail(Base):
     __tablename__ = "audit_trails"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
     # Timestamps
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True, default=utc_now)
