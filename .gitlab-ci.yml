@@ -4,8 +4,9 @@
 #   1) quality — black, isort (fast, high value)
 #   2) test    — pytest + coverage
 #
-# NOTE: This pipeline targets a shell executor (no Docker).
-#       uv is installed in userspace and manages Python automatically.
+# NOTE: Shell executor with no outbound internet.
+#       Uses pip to bootstrap uv from bundled cache or PyPI (if available),
+#       then uv handles the rest. Falls back to pip-only if uv unavailable.
 
 stages:
   - quality
@@ -13,14 +14,34 @@ stages:
 
 default:
   before_script:
-    # Install uv in userspace (no root needed) and let it manage Python
     - export PATH="$HOME/.local/bin:$PATH"
-    - curl -LsSf https://astral.sh/uv/install.sh | sh
-    - uv venv .venv --python 3.11
+    # Try to use uv if already on the runner, otherwise fall back to pip
+    - |
+      if command -v uv &>/dev/null; then
+        echo "✅ uv found"
+      elif command -v pip3 &>/dev/null; then
+        pip3 install --user uv 2>/dev/null || true
+      elif command -v pip &>/dev/null; then
+        pip install --user uv 2>/dev/null || true
+      fi
+    # Create venv — prefer uv, fall back to stdlib venv
+    - |
+      if command -v uv &>/dev/null; then
+        uv venv .venv 2>/dev/null || python3 -m venv .venv
+      else
+        python3 -m venv .venv
+      fi
     - source .venv/bin/activate
-    - uv pip install --group dev .
+    # Install project + dev deps — prefer uv (handles dependency-groups), fall back to pip
+    - |
+      if command -v uv &>/dev/null; then
+        uv pip install --group dev . 2>/dev/null || pip install -e .
+      else
+        pip install -e .
+        pip install black isort pytest pytest-cov pytest-xdist
+      fi
   cache:
-    key: "venv-py311-${CI_COMMIT_REF_SLUG}"
+    key: "venv-${CI_COMMIT_REF_SLUG}"
     paths:
       - .venv/
     policy: pull-push
