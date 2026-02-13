@@ -460,7 +460,7 @@ class TestTeamInvitationService:
 
             result = await service.accept_invitation("secure_token_123")
 
-            assert result is True
+            assert result is mock_membership_instance
             assert mock_invitation.is_active is False
             mock_db.add.assert_called_once_with(mock_membership_instance)
             mock_db.commit.assert_called_once()

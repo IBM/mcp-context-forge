@@ -548,17 +548,13 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     # Tier 3: Try to derive team from create payload / form
                     if team_id is None:
                         team_id = await _derive_team_from_payload(kwargs)
-                # If still no team_id: Tier 2 for read/list, fail-closed-for-teams for mutate
+                # If still no team_id, check permission across all of the user's teams.
+                # This separates authorization ("does this user have the permission?")
+                # from resource scoping ("which team owns this resource?"). Team
+                # assignment is enforced downstream by endpoint logic (e.g.
+                # verify_team_for_user, token team membership checks).
                 if not team_id:
-                    if _is_mutate_permission(permission):
-                        # Mutate without team context: proceed with team_id=None which
-                        # restricts RBAC to global + personal roles only. Team-scoped
-                        # roles cannot match (fail-closed for team grants), but global
-                        # roles (e.g. platform_admin) still work as intended.
-                        pass
-                    else:
-                        # List/read endpoint: check if user has permission in any team
-                        check_any_team = True
+                    check_any_team = True
 
             # First, check if any plugins want to handle permission checking
             # First-Party
@@ -814,12 +810,11 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                     # Tier 3: Try to derive team from create payload / form
                     if team_id is None:
                         team_id = await _derive_team_from_payload(kwargs)
-                # If still no team_id: check if any permission is read-only
+                # If still no team_id, check permission across all of the user's teams.
+                # Authorization ("does this user have the permission?") is separate
+                # from resource scoping ("which team owns this resource?").
                 if not team_id:
-                    # If ALL permissions are mutating, fail closed (team_id=None, global+personal only)
-                    # If ANY permission is non-mutating, use check_any_team for broader access
-                    if any(not _is_mutate_permission(p) for p in permissions):
-                        check_any_team = True
+                    check_any_team = True
 
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")

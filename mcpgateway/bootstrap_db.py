@@ -404,6 +404,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
 
             # Assign platform_admin role to admin user
             platform_admin_role = next((r for r in created_roles if r.name == "platform_admin"), None)
+            if not platform_admin_role:
+                # Role not in created_roles (creation may have failed) — look up from DB as fallback
+                platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
             if platform_admin_role:
                 try:
                     # Check if assignment already exists
@@ -416,7 +419,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         logger.info("Admin user already has platform_admin role")
 
                 except Exception as e:
-                    logger.error(f"Failed to assign platform_admin role: {e}")
+                    logger.error(f"Failed to assign platform_admin role to {admin_user.email}: {e}. Admin UI routes using allow_admin_bypass=False will return 403.")
+            else:
+                logger.error(f"platform_admin role not found — could not assign to {admin_user.email}. Admin UI routes using allow_admin_bypass=False will return 403.")
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 
