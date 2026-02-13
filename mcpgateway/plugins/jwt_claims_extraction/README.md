@@ -130,6 +130,14 @@ Run tests with:
 pytest tests/unit/mcpgateway/plugins/test_jwt_claims_extraction.py -v
 ```
 
+## Security Considerations
+
+**Token Verification Assumption**: This plugin assumes JWT tokens have already been verified by the authentication system before reaching the `http_auth_resolve_user` hook. The plugin uses `verify_signature=False` because signature validation is completed upstream.
+
+**Important**: Always ensure this plugin runs AFTER JWT verification in the authentication flow. If hook ordering changes or misconfiguration allows this plugin to run before auth verification, unverified tokens would be accepted.
+
+**Logging**: The plugin logs at DEBUG level to avoid leaking PII or sensitive claim data in production logs. Only claim counts and non-sensitive metadata are logged at INFO level.
+
 ## Related Issues
 
 - Issue #1439: Create JWT claims and metadata extraction plugin
