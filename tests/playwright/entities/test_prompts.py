@@ -11,7 +11,7 @@ CRUD tests for Prompts entity in MCP Gateway Admin UI.
 import json
 
 # Local
-from ..pages.admin_utils import delete_prompt, find_prompt
+from ..pages.admin_utils import delete_prompt, find_prompt, wait_for_entity_deleted
 from ..pages.prompts_page import PromptsPage
 
 
@@ -88,5 +88,5 @@ class TestPromptsCRUD:
         # Delete using API helper
         assert delete_prompt(prompts_page.page, created_prompt["id"])
 
-        # Verify deletion
-        assert find_prompt(prompts_page.page, test_prompt_data["name"]) is None
+        # Verify deletion (retry to handle DB commit propagation lag)
+        assert wait_for_entity_deleted(prompts_page.page, "prompts", test_prompt_data["name"]), f"Prompt '{test_prompt_data['name']}' still exists after deletion"

@@ -44,7 +44,6 @@ class TestExport:
         resp = admin_api.get("/export?include_inactive=true")
         assert resp.status == 200
 
-    @pytest.mark.xfail(reason="Server bug: 'Tool' object has no attribute 'rate_limit' (#2916)", strict=True)
     def test_selective_export(self, admin_api: APIRequestContext):
         """Admin can perform a selective export by entity IDs."""
         name = f"export-tool-{uuid.uuid4().hex[:8]}"
