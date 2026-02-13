@@ -119,7 +119,7 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_scalar_tool.scalar_one_or_none.return_value = mock_tool
     mock_scalar_tool.scalars.return_value = mock_scalar_tool
     mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
-    
+
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
@@ -199,14 +199,14 @@ class TestToolServiceHelpersExtended:
         monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: DummyProgram())
 
         result = extract_using_jq({"a": 1}, ".a")
-        assert result == "Error applying jsonpath filter"
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
 
     def test_extract_using_jq_returns_exception_message(self, monkeypatch):
-        """Exceptions during jq execution should return message string."""
+        """Exceptions during jq execution should return list with TextContent error."""
         monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: (_ for _ in ()).throw(RuntimeError("boom")))
 
         result = extract_using_jq({"a": 1}, ".a")
-        assert result == "Error applying jsonpath filter: boom"
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter: boom")]
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag should override settings."""
@@ -1957,6 +1957,40 @@ class TestToolService:
         )
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rest_jq_filter_error_returns_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Test REST tool invocation marks result as error when jq filter returns TextContent error."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ".invalid_path"
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "some data"})
+        tool_service._http_client.request.return_value = mock_response
+
+        # extract_using_jq returns TextContent error list (error case)
+        jq_error = [TextContent(type="text", text="Error applying jsonpath filter")]
+
+        mock_metrics_buffer = Mock()
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value=jq_error),
+        ):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert result.is_error is True
+        assert result.content[0].text == "Error applying jsonpath filter"
+        # Verify metrics recorded as failure
+        mock_metrics_buffer.record_tool_metric.assert_called_once()
+        call_kwargs = mock_metrics_buffer.record_tool_metric.call_args[1]
+        assert call_kwargs["success"] is False
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution_missed_input(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         """Test invoking a REST tool."""
         # Configure tool as REST
@@ -2083,6 +2117,90 @@ class TestToolService:
         assert metric.is_success is True
         assert metric.error_message is None
         assert metric.response_time >= 0  # You can check with a tolerance if needed
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_mcp_isError_fallback(self, tool_service, mock_tool, test_db):
+        """Test MCP tool invocation falls back to isError when is_error is None."""
+        # Standard
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+
+        mock_gateway = SimpleNamespace(
+            id="42",
+            name="test_gateway",
+            slug="test-gateway",
+            url="http://fake-mcp:8080/mcp",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value="Bearer abc123",
+            capabilities={"prompts": {"listChanged": True}, "resources": {"listChanged": True}, "tools": {"listChanged": True}},
+            transport="STREAMABLEHTTP",
+            passthrough_headers=[],
+        )
+        mock_tool.integration_type = "MCP"
+        mock_tool.request_type = "StreamableHTTP"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = None
+        mock_tool.auth_value = None
+        mock_tool.original_name = "dummy_tool"
+        mock_tool.headers = {}
+        mock_tool.name = "test-gateway-dummy-tool"
+        mock_tool.gateway_slug = "test-gateway"
+        mock_tool.gateway_id = mock_gateway.id
+
+        returns = [mock_tool, mock_gateway, mock_gateway]
+
+        def execute_side_effect(*_args, **_kwargs):
+            if returns:
+                value = returns.pop(0)
+            else:
+                value = None
+            m = Mock()
+            m.scalar_one_or_none.return_value = value
+            m.scalars.return_value = m
+            m.all.return_value = [value] if value else []
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+        # Create a result where is_error is None but isError is True
+        # This triggers the fallback at line 3684
+        call_result = MagicMock()
+        call_result.is_error = None
+        call_result.isError = True
+        call_result.content = [TextContent(type="text", text="error from remote")]
+        call_result.model_dump.return_value = {
+            "content": [{"type": "text", "text": "error from remote"}],
+            "isError": True,
+            "structuredContent": None,
+            "structured_content": None,
+        }
+        call_result.meta = None
+
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=call_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
+
+        # is_error should be True from the isError fallback
+        assert result.is_error is True
+        assert result.content[0].text == "error from remote"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_non_standard(self, tool_service, mock_tool, test_db):
@@ -5433,3 +5551,654 @@ class TestConvertToolToReadHeaderMasking:
             requesting_user_is_admin=False,
         )
         assert result.headers == {}
+
+
+class TestInvokeToolDirect:
+    """Tests for ToolService.invoke_tool_direct() method.
+
+    This method bypasses all gateway processing (caching, plugins, validation) and
+    forwards tool calls directly to a remote MCP server in direct_proxy mode.
+    """
+
+    @pytest.fixture
+    def tool_service(self):
+        """Create a tool service instance for direct proxy tests."""
+        service = ToolService()
+        service._http_client = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_direct_gateway(self):
+        """Create a mock gateway in direct_proxy mode."""
+        gw = MagicMock(spec=DbGateway)
+        gw.id = "gw-direct-1"
+        gw.name = "direct_gateway"
+        gw.slug = "direct-gateway"
+        gw.url = "http://remote-mcp:8080/mcp"
+        gw.gateway_mode = "direct_proxy"
+        gw.auth_type = "bearer"
+        gw.auth_value = {"Authorization": "Bearer remote-token"}
+        gw.passthrough_headers = None
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.owner_email = None
+        return gw
+
+    def _make_fresh_db_session(self, gateway, tool_row=None):
+        """Create a mock fresh_db_session context manager.
+
+        The DB session handles two sequential queries:
+        1. Gateway lookup by ID → returns gateway
+        2. Tool lookup by name + gateway_id → returns tool_row (default None)
+        """
+        # Standard
+        from contextlib import contextmanager
+
+        @contextmanager
+        def mock_fresh_session():
+            mock_db = MagicMock()
+            gateway_result = MagicMock()
+            gateway_result.scalar_one_or_none.return_value = gateway
+            tool_result = MagicMock()
+            tool_result.scalar_one_or_none.return_value = tool_row
+            mock_db.execute.side_effect = [gateway_result, tool_result]
+            yield mock_db
+
+        return mock_fresh_session
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_success(self, tool_service, mock_direct_gateway):
+        """Happy path: gateway found, direct_proxy mode, access allowed, tool call succeeds."""
+        expected_result = MagicMock()
+        expected_result.content = [MagicMock(text="direct result")]
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={"key": "value"},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"key": "value"})
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_with_meta(self, tool_service, mock_direct_gateway):
+        """Meta data should be forwarded to session.call_tool when provided."""
+        expected_result = MagicMock()
+        meta_data = {"request_id": "abc-123"}
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={"arg": "val"},
+                meta_data=meta_data,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        session_mock.call_tool.assert_awaited_once_with(name="remote_tool", arguments={"arg": "val"}, meta=meta_data)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_gateway_not_found(self, tool_service):
+        """Gateway not in DB should raise ToolNotFoundError."""
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(None)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+
+            with pytest.raises(ToolNotFoundError, match="Gateway gw-missing not found"):
+                await tool_service.invoke_tool_direct(
+                    gateway_id="gw-missing",
+                    name="some_tool",
+                    arguments={},
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_not_direct_proxy_mode(self, tool_service, mock_direct_gateway):
+        """Gateway with mode != direct_proxy should raise ToolInvocationError."""
+        mock_direct_gateway.gateway_mode = "cache"
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+
+            with pytest.raises(ToolInvocationError, match="is not in direct_proxy mode"):
+                await tool_service.invoke_tool_direct(
+                    gateway_id="gw-direct-1",
+                    name="some_tool",
+                    arguments={},
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_access_denied(self, tool_service, mock_direct_gateway):
+        """Access denied by check_gateway_access should raise ToolNotFoundError."""
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=False),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+
+            with pytest.raises(ToolNotFoundError, match="Tool not found: secret_tool"):
+                await tool_service.invoke_tool_direct(
+                    gateway_id="gw-direct-1",
+                    name="secret_tool",
+                    arguments={},
+                    user_email="intruder@example.com",
+                    token_teams=[],
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_connection_error(self, tool_service, mock_direct_gateway):
+        """Connection failure in streamablehttp_client should raise ToolInvocationError."""
+
+        @asynccontextmanager
+        async def mock_streamable_client_error(*_args, **_kwargs):
+            raise ConnectionError("Connection refused")
+            yield  # pragma: no cover
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client_error),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            with pytest.raises(ToolInvocationError, match="Direct proxy tool invocation failed"):
+                await tool_service.invoke_tool_direct(
+                    gateway_id="gw-direct-1",
+                    name="remote_tool",
+                    arguments={},
+                    user_email="user@example.com",
+                    token_teams=["team-1"],
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_passthrough_headers(self, tool_service, mock_direct_gateway):
+        """Passthrough headers from gateway config should be forwarded from request_headers."""
+        mock_direct_gateway.passthrough_headers = ["X-Tenant-Id", "X-Request-Id"]
+
+        captured_headers = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured_headers.update(kwargs.get("headers", {}))
+            yield ("read", "write", None)
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=MagicMock())
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                request_headers={"x-tenant-id": "tenant-42", "X-Request-Id": "req-999", "x-other": "ignored"},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # Auth header from build_gateway_auth_headers
+        assert captured_headers["Authorization"] == "Bearer xyz"
+        # Passthrough headers forwarded (case-insensitive lookup)
+        assert captured_headers["X-Tenant-Id"] == "tenant-42"
+        assert captured_headers["X-Request-Id"] == "req-999"
+        # Non-passthrough header should NOT be forwarded
+        assert "x-other" not in captured_headers
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_configurable_timeout(self, tool_service, mock_direct_gateway):
+        """Timeout passed to streamablehttp_client should match settings.mcpgateway_direct_proxy_timeout."""
+        captured_kwargs = {}
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **kwargs):
+            captured_kwargs.update(kwargs)
+            yield ("read", "write", None)
+
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=MagicMock())
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 120  # Custom timeout
+
+            await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert captured_kwargs["timeout"] == 120
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_resolves_original_name(self, tool_service, mock_direct_gateway):
+        """Prefixed tool name should be resolved to original_name from DB for the remote call."""
+        expected_result = MagicMock()
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        # Create a mock tool row with original_name different from slugified name
+        mock_tool = MagicMock()
+        mock_tool.original_name = "get_system_time"
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=mock_tool)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="direct-gateway-get-system-time",
+                arguments={"timezone": "UTC"},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        # The remote call should use the original_name, not the slugified prefixed name
+        session_mock.call_tool.assert_awaited_once_with(name="get_system_time", arguments={"timezone": "UTC"})
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_slug_fallback_when_not_in_db(self, tool_service, mock_direct_gateway):
+        """When tool is not in DB, fall back to stripping the gateway slug prefix."""
+        expected_result = MagicMock()
+        session_mock = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=None)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.gateway_tool_name_separator = "-"
+
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="direct-gateway-my-tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        assert result == expected_result
+        # Fallback: strip slug prefix "direct-gateway-" → "my-tool"
+        session_mock.call_tool.assert_awaited_once_with(name="my-tool", arguments={})
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_feature_flag_disabled(self, tool_service, mock_direct_gateway):
+        """Feature flag disabled should raise ToolInvocationError even if gateway is direct_proxy."""
+        with (
+            patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = False
+
+            with pytest.raises(ToolInvocationError, match="is not in direct_proxy mode"):
+                await tool_service.invoke_tool_direct(
+                    gateway_id="gw-direct-1",
+                    name="some_tool",
+                    arguments={},
+                )
+
+
+class TestInvokeToolDirectProxyViaHeader:
+    """Tests for the direct_proxy branch inside invoke_tool() triggered by X-Context-Forge-Gateway-Id header.
+
+    When the header is present and gateway is in direct_proxy mode, invoke_tool handles
+    the tool call inline using the MCP transport, returning results as-is.
+    When the gateway is not direct_proxy or not found, it falls through to normal tool lookup.
+    """
+
+    @pytest.fixture
+    def tool_service(self):
+        """Create a tool service instance."""
+        service = ToolService()
+        service._http_client = AsyncMock()
+        return service
+
+    @pytest.fixture
+    def mock_direct_gateway(self):
+        """Create a mock gateway in direct_proxy mode using SimpleNamespace for attribute access."""
+        return SimpleNamespace(
+            id="gw-dp-1",
+            name="direct_proxy_gw",
+            slug="direct-proxy-gw",
+            url="http://remote-mcp:8080/mcp",
+            gateway_mode="direct_proxy",
+            enabled=True,
+            reachable=True,
+            auth_type="bearer",
+            auth_value={"Authorization": "Bearer remote-token"},
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            signing_algorithm=None,
+            transport="STREAMABLEHTTP",
+        )
+
+    @pytest.fixture
+    def mock_cache_gateway(self):
+        """Create a mock gateway in cache mode (not direct_proxy)."""
+        return SimpleNamespace(
+            id="gw-cache-1",
+            name="cache_gw",
+            slug="cache-gw",
+            url="http://remote-mcp:8080/mcp",
+            gateway_mode="cache",
+            enabled=True,
+            reachable=True,
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            passthrough_headers=[],
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            signing_algorithm=None,
+            transport="STREAMABLEHTTP",
+        )
+
+    def _setup_db_for_header_lookup(self, test_db, gateway, tool=None):
+        """Set up test_db.execute to return gateway for the first call, then tool for subsequent calls."""
+        call_count = [0]
+
+        def execute_side_effect(*_args, **_kwargs):
+            call_count[0] += 1
+            m = Mock()
+            if call_count[0] == 1:
+                # First call: gateway lookup from header
+                m.scalar_one_or_none.return_value = gateway
+            else:
+                # Subsequent calls: tool lookup (for fall-through path)
+                m.scalar_one_or_none.return_value = tool
+                m.scalars.return_value = m
+                if tool:
+                    m.all.return_value = [tool]
+                else:
+                    m.all.return_value = []
+            return m
+
+        test_db.execute = Mock(side_effect=execute_side_effect)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_proxy_via_header(self, tool_service, mock_direct_gateway, test_db):
+        """Header present with direct_proxy gateway and feature enabled should invoke via direct proxy path.
+
+        The direct_proxy path in invoke_tool sets is_direct_proxy=True, builds a minimal tool payload,
+        then invokes the MCP transport. The result is returned as-is (no content splitting).
+        """
+        expected_result = ToolResult(content=[TextContent(type="text", text="direct proxy result")])
+
+        # Set up DB to return the direct_proxy gateway
+        self._setup_db_for_header_lookup(test_db, mock_direct_gateway)
+
+        # Mock the MCP transport layer
+        session_mock = AsyncMock()
+        session_mock.initialize = AsyncMock()
+        session_mock.call_tool = AsyncMock(return_value=expected_result)
+
+        client_session_cm = AsyncMock()
+        client_session_cm.__aenter__.return_value = session_mock
+        client_session_cm.__aexit__.return_value = AsyncMock()
+
+        @asynccontextmanager
+        async def mock_streamable_client(*_args, **_kwargs):
+            yield ("read", "write", None)
+
+        # Mock global_config_cache to prevent DB calls
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+
+        # Mock metrics buffer (lazy import inside invoke_tool)
+        mock_metrics_buffer = MagicMock()
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
+            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
+            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
+            patch("mcpgateway.services.tool_service.get_performance_tracker", return_value=MagicMock()),
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.mcpgateway_direct_proxy_timeout = 30
+            mock_settings.tool_timeout = 60
+            mock_settings.mcp_session_pool_enabled = False
+            mock_settings.default_passthrough_headers = []
+
+            request_headers = {"x-context-forge-gateway-id": "gw-dp-1"}
+
+            result = await tool_service.invoke_tool(
+                test_db,
+                "my_remote_tool",
+                {"arg": "value"},
+                request_headers=request_headers,
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+        # The result should come from the direct proxy path (returned as-is)
+        assert result.content[0].text == "direct proxy result"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_header_gateway_not_direct_proxy(self, tool_service, mock_cache_gateway, test_db):
+        """Header present but gateway_mode=cache should fall through to normal tool lookup."""
+        # Set up DB: first call returns cache gateway, subsequent calls return no tool (to trigger ToolNotFoundError)
+        self._setup_db_for_header_lookup(test_db, mock_cache_gateway, tool=None)
+
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.default_passthrough_headers = []
+
+            request_headers = {"x-context-forge-gateway-id": "gw-cache-1"}
+
+            # Should fall through to normal lookup, which finds no tool
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.invoke_tool(
+                    test_db,
+                    "some_tool",
+                    {},
+                    request_headers=request_headers,
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_header_gateway_not_found(self, tool_service, test_db):
+        """Header present but gateway not in DB should fall through to normal tool lookup."""
+        # Set up DB: first call returns None (no gateway), subsequent calls return no tool
+        self._setup_db_for_header_lookup(test_db, gateway=None, tool=None)
+
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            mock_settings.default_passthrough_headers = []
+
+            request_headers = {"x-context-forge-gateway-id": "gw-nonexistent"}
+
+            # Should fall through to normal lookup, which finds no tool
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.invoke_tool(
+                    test_db,
+                    "some_tool",
+                    {},
+                    request_headers=request_headers,
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_proxy_access_denied(self, tool_service, mock_direct_gateway, test_db):
+        """Header present with direct_proxy gateway but access denied should raise ToolNotFoundError."""
+        # Set up DB to return the direct_proxy gateway
+        self._setup_db_for_header_lookup(test_db, mock_direct_gateway)
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=False),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+
+            request_headers = {"x-context-forge-gateway-id": "gw-dp-1"}
+
+            with pytest.raises(ToolNotFoundError, match="Tool not found: protected_tool"):
+                await tool_service.invoke_tool(
+                    test_db,
+                    "protected_tool",
+                    {},
+                    request_headers=request_headers,
+                    user_email="intruder@example.com",
+                    token_teams=[],
+                )
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_direct_proxy_disabled(self, tool_service, mock_direct_gateway, test_db):
+        """Header present, gateway is direct_proxy, but feature flag disabled should fall through."""
+        # Set up DB: first call returns direct_proxy gateway, subsequent calls return no tool
+        self._setup_db_for_header_lookup(test_db, mock_direct_gateway, tool=None)
+
+        mock_gc = MagicMock()
+        mock_gc.get_passthrough_headers.return_value = []
+
+        with (
+            patch("mcpgateway.services.tool_service.settings") as mock_settings,
+            patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
+        ):
+            mock_settings.mcpgateway_direct_proxy_enabled = False
+            mock_settings.default_passthrough_headers = []
+
+            request_headers = {"x-context-forge-gateway-id": "gw-dp-1"}
+
+            # Should fall through to normal lookup because feature is disabled
+            with pytest.raises(ToolNotFoundError, match="Tool not found"):
+                await tool_service.invoke_tool(
+                    test_db,
+                    "some_tool",
+                    {},
+                    request_headers=request_headers,
+                )

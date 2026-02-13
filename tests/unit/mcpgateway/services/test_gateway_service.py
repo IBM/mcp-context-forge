@@ -88,12 +88,20 @@ def _make_gateway(**overrides):
         "auth_headers": None,
         "auth_query_param_key": None,
         "auth_query_param_value": None,
+        "auth_query_params": None,
         "oauth_config": None,
         "one_time_auth": False,
         "ca_certificate": None,
         "ca_certificate_sig": None,
         "signing_algorithm": None,
         "visibility": "public",
+        "enabled": True,
+        "team_id": None,
+        "tools": [],
+        "resources": [],
+        "prompts": [],
+        "capabilities": {},
+        "version": 1,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -134,7 +142,7 @@ class _PassthroughMasked:
 @pytest.fixture(autouse=True)
 def _bypass_gatewayread_validation(monkeypatch):
     """
-    The real GatewayService returns ``GatewayRead.model_validate(db_obj)``.
+    The real GatewayService returns ``GatewayRead.model_validate(db_obj).masked()``.
     The DB objects we feed in here are MagicMocks, not real models, and
     Pydantic hates that.  We therefore stub out `GatewayRead.model_validate`
     so it returns a thin wrapper that supports ``.masked()``.
@@ -1857,6 +1865,182 @@ class TestGatewayService:
                 # finally, your service should return the list produced by mock_db.execute(...)
                 assert isinstance(result, list)
                 assert result == [mocked_gateway_read]
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_cache_mode(self, gateway_service):
+        """Test registering a gateway with explicit cache mode (default behavior)."""
+        gateway_data = GatewayCreate(
+            name="Cache Mode Gateway",
+            url="https://cache-gateway.example.com",
+            description="Gateway with cache mode",
+            transport="SSE",
+            auth_type="bearer",
+            auth_token="test-token",
+            gateway_mode="cache",  # Explicit cache mode
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        session.add = MagicMock()
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Mock _initialize_gateway to return empty lists
+        async def mock_init(*args, **kwargs):
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = mock_init
+
+        await gateway_service.register_gateway(
+            session,
+            gateway_data,
+            created_by="test@example.com",
+        )
+
+        # Verify gateway_mode was set to cache
+        add_call_args = session.add.call_args[0][0]
+        assert hasattr(add_call_args, "gateway_mode")
+        assert add_call_args.gateway_mode == "cache"
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_with_direct_proxy_mode(self, gateway_service):
+        """Test registering a gateway with direct_proxy mode."""
+        gateway_data = GatewayCreate(
+            name="Direct Proxy Gateway",
+            url="https://proxy-gateway.example.com",
+            description="Gateway with direct proxy mode",
+            transport="STREAMABLEHTTP",
+            auth_type="bearer",
+            auth_token="test-token",
+            gateway_mode="direct_proxy",  # Direct proxy mode
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        session.add = MagicMock()
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Mock _initialize_gateway to return empty lists
+        async def mock_init(*args, **kwargs):
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = mock_init
+
+        # Enable direct_proxy feature flag
+        mock_settings = MagicMock()
+        mock_settings.mcpgateway_direct_proxy_enabled = True
+        with patch("mcpgateway.services.gateway_service.settings", mock_settings):
+            await gateway_service.register_gateway(
+                session,
+                gateway_data,
+                created_by="test@example.com",
+            )
+
+        # Verify gateway_mode was set to direct_proxy
+        add_call_args = session.add.call_args[0][0]
+        assert hasattr(add_call_args, "gateway_mode")
+        assert add_call_args.gateway_mode == "direct_proxy"
+
+    @pytest.mark.asyncio
+    async def test_register_gateway_default_mode_is_cache(self, gateway_service):
+        """Test that gateway_mode defaults to 'cache' when not specified."""
+        gateway_data = GatewayCreate(
+            name="Default Mode Gateway",
+            url="https://default-gateway.example.com",
+            description="Gateway without explicit mode",
+            transport="SSE",
+            auth_type="bearer",
+            auth_token="test-token",
+            # gateway_mode not specified - should default to "cache"
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=None)
+        session.add = MagicMock()
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Mock _initialize_gateway to return empty lists
+        async def mock_init(*args, **kwargs):
+            return {}, [], [], []
+
+        gateway_service._initialize_gateway = mock_init
+
+        await gateway_service.register_gateway(
+            session,
+            gateway_data,
+            created_by="test@example.com",
+        )
+
+        # Verify gateway_mode defaults to cache
+        add_call_args = session.add.call_args[0][0]
+        assert hasattr(add_call_args, "gateway_mode")
+        assert add_call_args.gateway_mode == "cache"
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_mode_from_cache_to_direct_proxy(self, gateway_service):
+        """Test updating gateway mode from cache to direct_proxy."""
+        # Existing gateway with cache mode
+        existing_gateway = _make_gateway(
+            id="gw-update-123",
+            name="Update Test Gateway",
+            url="https://update-gateway.example.com",
+            gateway_mode="cache",
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=existing_gateway)
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Update to direct_proxy mode
+        update_data = GatewayUpdate(gateway_mode="direct_proxy")
+
+        # Enable direct_proxy feature flag
+        mock_settings = MagicMock()
+        mock_settings.mcpgateway_direct_proxy_enabled = True
+        with patch("mcpgateway.services.gateway_service.settings", mock_settings):
+            await gateway_service.update_gateway(
+                session,
+                "gw-update-123",
+                update_data,
+                modified_by="admin@example.com",
+            )
+
+        # Verify gateway_mode was updated
+        assert existing_gateway.gateway_mode == "direct_proxy"
+        session.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_mode_from_direct_proxy_to_cache(self, gateway_service):
+        """Test updating gateway mode from direct_proxy to cache."""
+        # Existing gateway with direct_proxy mode
+        existing_gateway = _make_gateway(
+            id="gw-update-456",
+            name="Proxy to Cache Gateway",
+            url="https://proxy-to-cache.example.com",
+            gateway_mode="direct_proxy",
+        )
+
+        session = MagicMock()
+        session.execute.return_value = _make_execute_result(scalar=existing_gateway)
+        session.commit = MagicMock()
+        session.refresh = MagicMock()
+
+        # Update to cache mode
+        update_data = GatewayUpdate(gateway_mode="cache")
+
+        await gateway_service.update_gateway(
+            session,
+            "gw-update-456",
+            update_data,
+            modified_by="admin@example.com",
+        )
+
+        # Verify gateway_mode was updated
+        assert existing_gateway.gateway_mode == "cache"
+        session.commit.assert_called()
+
 
 
 class TestGatewayRefresh:
@@ -6115,3 +6299,117 @@ class TestRunLeaderHeartbeat:
         gateway_service._leader_heartbeat_interval = 0
         await gateway_service._run_leader_heartbeat()
         gateway_service._redis_client.expire.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# direct_proxy feature flag guard tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_direct_proxy_rejected_when_disabled(gateway_service, monkeypatch):
+    """register_gateway raises GatewayError when direct_proxy mode is used but the feature flag is off."""
+    # Bypass slug-conflict check so we reach the feature-flag guard
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+
+    gateway_data = GatewayCreate(
+        name="Proxy Disabled Gateway",
+        url="https://proxy-disabled.example.com",
+        description="Should be rejected",
+        transport="SSE",
+        gateway_mode="direct_proxy",
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcpgateway_direct_proxy_enabled = False
+    mock_settings.masked_auth_value = "***MASKED***"
+
+    db = MagicMock()
+
+    with patch("mcpgateway.services.gateway_service.settings", mock_settings):
+        with pytest.raises(GatewayError, match="disabled"):
+            await gateway_service.register_gateway(db, gateway_data)
+
+
+@pytest.mark.asyncio
+async def test_register_gateway_direct_proxy_allowed_when_enabled(gateway_service, monkeypatch):
+    """register_gateway does NOT raise GatewayError for the feature flag when direct_proxy is enabled."""
+    # Bypass slug-conflict check
+    monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", lambda *_args, **_kwargs: None)
+
+    gateway_data = GatewayCreate(
+        name="Proxy Enabled Gateway",
+        url="https://proxy-enabled.example.com",
+        description="Should pass the feature flag check",
+        transport="SSE",
+        gateway_mode="direct_proxy",
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcpgateway_direct_proxy_enabled = True
+    mock_settings.masked_auth_value = "***MASKED***"
+
+    db = MagicMock()
+    db.add = MagicMock()
+    db.flush = MagicMock()
+    db.refresh = MagicMock()
+
+    # Let the rest of the method proceed past the guard
+    gateway_service._check_gateway_uniqueness = MagicMock(return_value=None)
+    gateway_service._initialize_gateway = AsyncMock(return_value=({}, [], [], []))
+    gateway_service._notify_gateway_added = AsyncMock()
+
+    with patch("mcpgateway.services.gateway_service.settings", mock_settings):
+        # Should NOT raise GatewayError for the feature-flag check.
+        # It may raise other errors downstream; we only care that the
+        # "disabled" guard did not fire.
+        try:
+            await gateway_service.register_gateway(db, gateway_data)
+        except GatewayError as exc:
+            assert "disabled" not in str(exc).lower(), f"Feature-flag guard should not fire when enabled, but got: {exc}"
+
+
+@pytest.mark.asyncio
+async def test_update_gateway_direct_proxy_rejected_when_disabled(gateway_service, monkeypatch):
+    """update_gateway raises GatewayError when switching to direct_proxy with the feature flag off."""
+    existing_gateway = MagicMock()
+    existing_gateway.id = "gw-flag-test"
+    existing_gateway.name = "Existing Cache Gateway"
+    existing_gateway.url = "https://existing.example.com"
+    existing_gateway.enabled = True
+    existing_gateway.gateway_mode = "cache"
+    existing_gateway.tools = []
+    existing_gateway.resources = []
+    existing_gateway.prompts = []
+    existing_gateway.email_team = None
+
+    # get_for_update returns the existing gateway (first call) and None (slug-check)
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service.get_for_update",
+        MagicMock(side_effect=[existing_gateway, None]),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service._get_registry_cache",
+        lambda: MagicMock(invalidate_gateways=AsyncMock()),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.gateway_service._get_tool_lookup_cache",
+        lambda: MagicMock(invalidate_gateway=AsyncMock()),
+    )
+    monkeypatch.setattr(
+        "mcpgateway.cache.admin_stats_cache.admin_stats_cache",
+        MagicMock(invalidate_tags=AsyncMock()),
+    )
+
+    mock_settings = MagicMock()
+    mock_settings.mcpgateway_direct_proxy_enabled = False
+    mock_settings.masked_auth_value = "***MASKED***"
+
+    update_data = GatewayUpdate(gateway_mode="direct_proxy")
+
+    db = MagicMock()
+    db.rollback = MagicMock()
+
+    with patch("mcpgateway.services.gateway_service.settings", mock_settings):
+        with pytest.raises(GatewayError, match="disabled"):
+            await gateway_service.update_gateway(db, "gw-flag-test", update_data)
