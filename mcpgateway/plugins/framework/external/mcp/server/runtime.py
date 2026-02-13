@@ -299,7 +299,7 @@ class SSLCapableFastMCP(FastMCP):
         from starlette.routing import Route  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.utils.orjson_response import ORJSONResponse  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.utils import ORJSONResponse  # pylint: disable=import-outside-toplevel
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.
@@ -371,7 +371,7 @@ class SSLCapableFastMCP(FastMCP):
         from starlette.routing import Route  # pylint: disable=import-outside-toplevel
 
         # First-Party
-        from mcpgateway.utils.orjson_response import ORJSONResponse  # pylint: disable=import-outside-toplevel
+        from mcpgateway.plugins.framework.utils import ORJSONResponse  # pylint: disable=import-outside-toplevel
 
         async def health_check(_request: Request):
             """Health check endpoint for container orchestration.

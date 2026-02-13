@@ -143,6 +143,8 @@ class SearchReplacePlugin(Plugin):
                         value = pattern.sub(replacement, payload.result[key])
                         payload.result[key] = value
         elif payload.result and isinstance(payload.result, str):
+            result = payload.result
             for pattern, replacement in self.__patterns:
-                payload.result = pattern.sub(replacement, payload.result)
+                result = pattern.sub(replacement, result)
+            payload = payload.model_copy(update={"result": result})
         return ToolPostInvokeResult(modified_payload=payload)
