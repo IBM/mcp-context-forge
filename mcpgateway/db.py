@@ -4403,6 +4403,11 @@ class Gateway(Base):
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
 
+    # Gateway mode: 'cache' (default) or 'direct_proxy'
+    # - 'cache': Tools/resources/prompts are cached in database upon gateway registration (current behavior)
+    # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
+    gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 

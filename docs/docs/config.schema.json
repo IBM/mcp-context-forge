@@ -1139,6 +1139,16 @@
       "title": "Mcpgateway Grpc Tls Enabled",
       "type": "boolean"
     },
+    "mcpgateway_direct_proxy_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable direct_proxy gateway mode for pass-through MCP operations"
+    },
+    "mcpgateway_direct_proxy_timeout": {
+      "type": "integer",
+      "default": 30,
+      "description": "Default timeout in seconds for direct proxy MCP operations"
+    },
     "mcpgateway_performance_tracking": {
       "default": false,
       "description": "Enable performance tracking tab in admin UI",

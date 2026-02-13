@@ -275,6 +275,20 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### Direct Proxy Mode
+
+| Setting                              | Description                                    | Default | Options |
+| ------------------------------------ | ---------------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_DIRECT_PROXY_ENABLED`    | Enable direct_proxy gateway mode               | `false` | bool    |
+| `MCPGATEWAY_DIRECT_PROXY_TIMEOUT`    | Timeout for direct proxy operations (seconds)  | `30`    | int     |
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=false` (default): Gateways cannot use `gateway_mode=direct_proxy`; existing ones fall back to cache mode
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`: Enables pass-through MCP operations bypassing the caching layer
+
+**Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
+
 ### ToolOps
 
 ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.

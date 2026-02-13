@@ -509,6 +509,10 @@ class Settings(BaseSettings):
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
 
+    # Direct Proxy Configuration (disabled by default)
+    mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
+    mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")
+
     # ===================================
     # Performance Monitoring Configuration
     # ===================================

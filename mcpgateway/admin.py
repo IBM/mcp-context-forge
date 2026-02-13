@@ -1402,9 +1402,11 @@ async def get_configuration_settings(
             "mcpgateway_catalog_enabled": settings.mcpgateway_catalog_enabled,
             "plugins_enabled": settings.plugins_enabled,
             "well_known_enabled": settings.well_known_enabled,
+            "mcpgateway_direct_proxy_enabled": settings.mcpgateway_direct_proxy_enabled,
         },
         "Connection Timeouts": {
             "federation_timeout": settings.federation_timeout,  # Gateway/server HTTP request timeout
+            "mcpgateway_direct_proxy_timeout": settings.mcpgateway_direct_proxy_timeout,
         },
         "Transport": {
             "transport_type": settings.transport_type,
