@@ -83,6 +83,21 @@ class TeamManagementService:
             'TeamManagementService'
         """
         self.db = db
+        self._role_service = None  # Lazy initialization to avoid circular imports
+
+    @property
+    def role_service(self):
+        """Lazy-initialized RoleService to avoid circular imports.
+
+        Returns:
+            RoleService: Instance of RoleService
+        """
+        if self._role_service is None:
+            # First-Party
+            from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+            self._role_service = RoleService(self.db)
+        return self._role_service
 
     @staticmethod
     def _fire_and_forget(coro: Any) -> None:
@@ -528,6 +543,21 @@ class TeamManagementService:
                 self.db.commit()
                 self._log_team_member_action(membership.id, team_id, user_email, role, "added", invited_by)
 
+            # Assign team-scoped RBAC role to new/reactivated member
+            try:
+                team_member_role = await self.role_service.get_role_by_name(settings.default_team_member_role, scope="team")
+                if team_member_role:
+                    existing = await self.role_service.get_user_role_assignment(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id)
+                    if not existing:
+                        await self.role_service.assign_role_to_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id, granted_by=invited_by or user_email)
+                        logger.info(f"Assigned {settings.default_team_member_role} role to {user_email} for team {team_id}")
+                    else:
+                        logger.debug(f"User {user_email} already has {settings.default_team_member_role} role for team {team_id}")
+                else:
+                    logger.warning(f"Role '{settings.default_team_member_role}' not found. User {user_email} added without RBAC role.")
+            except Exception as role_error:
+                logger.warning(f"Failed to assign role to {user_email}: {role_error}")
+
             # Invalidate auth cache for user's team membership and role
             try:
                 self._fire_and_forget(auth_cache.invalidate_team(user_email))
@@ -597,6 +627,20 @@ class TeamManagementService:
             membership.is_active = False
             self.db.commit()
             self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
+
+            # Revoke team-scoped RBAC role from removed member
+            try:
+                team_member_role = await self.role_service.get_role_by_name(settings.default_team_member_role, scope="team")
+                if team_member_role:
+                    revoked = await self.role_service.revoke_role_from_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id)
+                    if revoked:
+                        logger.info(f"Revoked {settings.default_team_member_role} role from {user_email} for team {team_id}")
+                    else:
+                        logger.debug(f"No {settings.default_team_member_role} role to revoke for {user_email} on team {team_id}")
+                else:
+                    logger.warning(f"Role '{settings.default_team_member_role}' not found. Cannot revoke role from {user_email}.")
+            except Exception as role_error:
+                logger.warning(f"Failed to revoke role from {user_email}: {role_error}")
 
             # Invalidate auth cache for user's team membership and role
             try:
@@ -1351,6 +1395,23 @@ class TeamManagementService:
             self._log_team_member_action(member.id, join_request.team_id, join_request.user_email, member.role, "added", approved_by)
 
             self.db.refresh(member)
+
+            # Assign team-scoped RBAC role to approved member
+            try:
+                team_member_role = await self.role_service.get_role_by_name(settings.default_team_member_role, scope="team")
+                if team_member_role:
+                    existing = await self.role_service.get_user_role_assignment(user_email=join_request.user_email, role_id=team_member_role.id, scope="team", scope_id=join_request.team_id)
+                    if not existing:
+                        await self.role_service.assign_role_to_user(
+                            user_email=join_request.user_email, role_id=team_member_role.id, scope="team", scope_id=join_request.team_id, granted_by=approved_by
+                        )
+                        logger.info(f"Assigned {settings.default_team_member_role} role to {join_request.user_email} for team {join_request.team_id}")
+                    else:
+                        logger.debug(f"User {join_request.user_email} already has {settings.default_team_member_role} role for team {join_request.team_id}")
+                else:
+                    logger.warning(f"Role '{settings.default_team_member_role}' not found. User {join_request.user_email} added without RBAC role.")
+            except Exception as role_error:
+                logger.warning(f"Failed to assign role to {join_request.user_email}: {role_error}")
 
             # Invalidate auth cache for user's team membership and role
             try:

@@ -546,6 +546,11 @@ class TestTeamManagementService:
         mock_query.filter.return_value.first.return_value = mock_membership
         mock_db.query.return_value = mock_query
 
+        # Mock role service to avoid role revocation calls
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(return_value=None)  # No role found
+        service._role_service = mock_role_service
+
         with patch.object(service, "get_team_by_id", return_value=mock_team):
             result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com")
 
@@ -726,7 +731,7 @@ class TestTeamManagementService:
         mock_memberships = []
         for i in range(2):
             mock_member = MagicMock(spec=EmailTeamMember)
-            mock_member.id = f"member-{i+3}"
+            mock_member.id = f"member-{i + 3}"
             mock_member.joined_at = datetime(2024, 1, 15, 9, 0, i, tzinfo=timezone.utc)
             mock_member.user = MagicMock(spec=EmailUser)
             mock_memberships.append(mock_member)
@@ -788,7 +793,6 @@ class TestTeamManagementService:
             # Verify offset was applied to query manually if offset > 0
             # In this test call offset=0, so manually application might be skipped or 0
             # But we passed offset to service.
-
 
     @pytest.mark.asyncio
     async def test_list_teams_with_visibility_filter(self, service, mock_db):
@@ -1175,7 +1179,6 @@ class TestTeamManagementService:
 
         assert result is False
         mock_db.rollback.assert_called_once()
-
 
     # =========================================================================
     # Error Handling Tests
@@ -1630,3 +1633,146 @@ class TestTeamManagementService:
         result = await service.get_user_teams("user@test.com")
         # Should fall through to full query and succeed
         assert len(result) >= 0  # Just verify no exception
+
+    # =========================================================================
+    # RBAC Role Assignment Tests
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_add_member_assigns_rbac_role(self, service, mock_db, mock_team, mock_user):
+        """Test that adding a member assigns the configured RBAC role."""
+        # Setup mocks - use side_effect like the existing test
+        mock_team_query = MagicMock()
+        mock_team_query.filter.return_value.first.return_value = mock_team
+
+        mock_user_query = MagicMock()
+        mock_user_query.filter.return_value.first.return_value = mock_user
+
+        mock_existing_query = MagicMock()
+        mock_existing_query.filter.return_value.first.return_value = None
+
+        mock_count_query = MagicMock()
+        mock_count_query.filter.return_value.count.return_value = 1
+
+        def side_effect(model):
+            if model == EmailTeam:
+                return mock_team_query
+            elif model == EmailUser:
+                return mock_user_query
+            elif model == EmailTeamMember:
+                if not hasattr(side_effect, "call_count"):
+                    side_effect.call_count = 0
+                side_effect.call_count += 1
+                if side_effect.call_count == 1:
+                    return mock_existing_query
+                else:
+                    return mock_count_query
+
+        mock_db.query.side_effect = side_effect
+
+        # Mock role service - set _role_service directly since role_service is a property
+        mock_role = MagicMock()
+        mock_role.id = "role123"
+        mock_role.is_active = True
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+        mock_role_service.get_user_role_assignment = AsyncMock(return_value=None)
+        mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
+        service._role_service = mock_role_service
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            # Execute
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+
+            # Verify
+            assert result is True
+            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
+            mock_role_service.assign_role_to_user.assert_called_once()
+            call_args = mock_role_service.assign_role_to_user.call_args[1]
+            assert call_args["user_email"] == "user@example.com"
+            assert call_args["role_id"] == "role123"
+            assert call_args["scope"] == "team"
+            assert call_args["scope_id"] == "team123"
+
+    @pytest.mark.asyncio
+    async def test_add_member_skips_role_if_already_assigned(self, service, mock_db, mock_team, mock_user):
+        """Test that adding a member skips role assignment if already has role."""
+        # Setup mocks
+        mock_team_query = MagicMock()
+        mock_team_query.filter.return_value.first.return_value = mock_team
+
+        mock_user_query = MagicMock()
+        mock_user_query.filter.return_value.first.return_value = mock_user
+
+        mock_existing_query = MagicMock()
+        mock_existing_query.filter.return_value.first.return_value = None
+
+        mock_count_query = MagicMock()
+        mock_count_query.filter.return_value.count.return_value = 1
+
+        def side_effect(model):
+            if model == EmailTeam:
+                return mock_team_query
+            elif model == EmailUser:
+                return mock_user_query
+            elif model == EmailTeamMember:
+                if not hasattr(side_effect, "call_count"):
+                    side_effect.call_count = 0
+                side_effect.call_count += 1
+                if side_effect.call_count == 1:
+                    return mock_existing_query
+                else:
+                    return mock_count_query
+
+        mock_db.query.side_effect = side_effect
+
+        # Mock role service
+        mock_role = MagicMock()
+        mock_role.id = "role123"
+        mock_role.is_active = True
+        existing_assignment = MagicMock()
+        existing_assignment.is_active = True
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+        mock_role_service.get_user_role_assignment = AsyncMock(return_value=existing_assignment)
+        mock_role_service.assign_role_to_user = AsyncMock(return_value=MagicMock())
+        service._role_service = mock_role_service
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            # Execute
+            result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
+
+            # Verify - should NOT assign role again
+            assert result is True
+            mock_role_service.get_role_by_name.assert_called_once()
+            mock_role_service.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_remove_member_revokes_rbac_role(self, service, mock_db, mock_team):
+        """Test that removing a member revokes the RBAC role."""
+        # Setup membership mock
+        mock_membership = MagicMock(spec=EmailTeamMember)
+        mock_membership.role = "member"
+        mock_membership.is_active = True
+
+        # Mock role service
+        mock_role = MagicMock()
+        mock_role.id = "role123"
+        mock_role.is_active = True
+        mock_role_service = MagicMock()
+        mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+        mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
+        service._role_service = mock_role_service
+
+        # Patch get_team_by_id
+        with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
+            mock_get_team.return_value = mock_team
+            mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
+
+            # Execute
+            result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
+
+            # Verify
+            assert result is True
+            mock_role_service.get_role_by_name.assert_called_once_with("developer", scope="team")
+            mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@example.com", role_id="role123", scope="team", scope_id="team123")
