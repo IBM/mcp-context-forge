@@ -106,6 +106,8 @@ async def test_update_user_revoke_admin_role(mock_db):
         # Mock settings.protect_all_admins to False
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.protect_all_admins = False
+            mock_settings.default_admin_role = "platform_admin"
+            mock_settings.default_user_role = "platform_viewer"
 
             # Mock RoleService
             with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
