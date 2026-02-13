@@ -110,7 +110,9 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         try:
             # Create or get request-scoped database session
-            db = get_request_session()
+            # Use the backwards-compatible alias `SessionLocal` so tests
+            # and older modules can patch the session factory.
+            db = SessionLocal()
 
             # Start trace (use external trace_id if provided for distributed tracing)
             trace_id = self.service.start_trace(
@@ -148,12 +150,19 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             # If trace setup failed, log and continue without tracing
             logger.warning(f"Failed to setup observability trace: {e}")
-            # Close db if it was created
+            # Close db if it was created. Rollback any partial transaction
+            # then close the session. Tests patch `SessionLocal` and expect
+            # both `rollback` and `close` to be called (and for close
+            # failures to be logged at debug level).
             if db:
                 try:
                     db.rollback()  # Error path - rollback any partial transaction
                 except Exception as e:  # pylint: disable=redefined-outer-name
                     logger.debug("Failed to rollback DB session during observability setup: %s", e)
+                try:
+                    db.close()
+                except Exception as e:  # pylint: disable=redefined-outer-name
+                    logger.debug("Failed to close DB session during observability setup: %s", e)
             # Continue without tracing
             return await call_next(request)
 
