@@ -41,3 +41,4 @@ nav:
   - 36 Bootstrap Custom Roles: 036-bootstrap-custom-roles.md
   - 37 External Plugin Stdio Launch: 037-external-plugin-stdio-launch.md
   - 38b Multi-Worker Session Affinity: 038-multi-worker-session-affinity.md
+  - 39 Adopt Fully Independent Plugin Crates Architecture: 039-adopt-fully-independent-plugin-crates-architecture.md
