@@ -7,9 +7,12 @@ from __future__ import annotations
 # Standard
 from dataclasses import dataclass
 import importlib
+from importlib import machinery, util
 import inspect
 import os
+from pathlib import Path
 import re
+import sys
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 # First-Party
@@ -27,6 +30,37 @@ class RustStreamableRequestContext:
     headers: Dict[str, str]
     server_id: Optional[str]
     is_mcp_path: bool
+
+
+def _import_transport_module() -> Any:
+    """Import compiled Rust transport module, bypassing source-tree namespace shadowing.
+
+    Returns:
+        Imported Python module exposing Rust transport functions.
+
+    Raises:
+        ImportError: If the Rust extension module cannot be loaded.
+    """
+    module = importlib.import_module("mcpgateway_transport_rs")
+
+    if hasattr(module, "prepare_streamable_http_context") and hasattr(module, "start_streamable_http_transport"):
+        return module
+
+    cwd = Path.cwd().resolve()
+    filtered_paths = [
+        path_entry
+        for path_entry in sys.path
+        if path_entry and Path(path_entry).resolve() != cwd
+    ]
+
+    spec = machinery.PathFinder.find_spec("mcpgateway_transport_rs", filtered_paths)
+    if spec and spec.loader and spec.origin:
+        reloaded_module = util.module_from_spec(spec)
+        spec.loader.exec_module(reloaded_module)
+        if hasattr(reloaded_module, "prepare_streamable_http_context") and hasattr(reloaded_module, "start_streamable_http_transport"):
+            return reloaded_module
+
+    raise ImportError("module 'mcpgateway_transport_rs' does not expose Rust transport functions")
 
 
 def _extract_server_id(path: str) -> Optional[str]:
@@ -72,7 +106,7 @@ class RustStreamableHTTPTransportBridge:
             return cls(enabled=False, context_fn=None, request_handler_fn=None)
 
         try:
-            transport_module = importlib.import_module("mcpgateway_transport_rs")
+            transport_module = _import_transport_module()
             prepare_streamable_http_context = getattr(transport_module, "prepare_streamable_http_context")
             start_streamable_http_transport = getattr(transport_module, "start_streamable_http_transport")
             logger.info("🦀 Experimental Rust streamable HTTP transport enabled")
