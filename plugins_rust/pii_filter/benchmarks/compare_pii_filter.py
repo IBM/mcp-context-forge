@@ -15,18 +15,19 @@ Usage:
 
 import argparse
 import json
-import time
-import sys
 import os
 import statistics
-from typing import Dict, List, Tuple
-from dataclasses import dataclass, asdict
+import sys
+import time
+from dataclasses import asdict, dataclass
+from typing import List
 
 # Add project root to path (go up 3 levels: benchmarks -> pii_filter -> plugins_rust -> project_root)
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, project_root)
 
-from plugins.pii_filter.pii_filter import PIIDetector as PythonPIIDetector, PIIFilterConfig
+from plugins.pii_filter.pii_filter import PIIDetector as PythonPIIDetector  # noqa: E402
+from plugins.pii_filter.pii_filter import PIIFilterConfig  # noqa: E402
 
 try:
     from plugins.pii_filter.pii_filter_rust import RustPIIDetector, RUST_AVAILABLE
@@ -60,6 +61,7 @@ class BenchmarkSuite:
     """Comprehensive benchmark suite comparing Python and Rust implementations."""
 
     def __init__(self):
+        """Initialize benchmark suite with Python and Rust detectors."""
         self.config = PIIFilterConfig()
         self.python_detector = PythonPIIDetector(self.config)
         self.rust_detector = RustPIIDetector(self.config) if RUST_AVAILABLE else None
@@ -90,7 +92,7 @@ class BenchmarkSuite:
 
         # Python benchmark
         py_time, py_latencies = self.measure_time(self.python_detector.detect, text, iterations=iterations)
-        py_latencies_ms = [l * 1000 for l in py_latencies]
+        py_latencies_ms = [latency * 1000 for latency in py_latencies]
         py_result = BenchmarkResult(
             name=f"{name}_python",
             implementation="Python",
@@ -111,7 +113,7 @@ class BenchmarkSuite:
         # Rust benchmark
         if self.rust_detector:
             rust_time, rust_latencies = self.measure_time(self.rust_detector.detect, text, iterations=iterations)
-            rust_latencies_ms = [l * 1000 for l in rust_latencies]
+            rust_latencies_ms = [latency * 1000 for latency in rust_latencies]
             rust_result = BenchmarkResult(
                 name=f"{name}_rust",
                 implementation="Rust",
@@ -144,7 +146,7 @@ class BenchmarkSuite:
             return self.python_detector.mask(txt, detections)
 
         py_time, py_latencies = self.measure_time(python_full, text, iterations=iterations)
-        py_latencies_ms = [l * 1000 for l in py_latencies]
+        py_latencies_ms = [latency * 1000 for latency in py_latencies]
         py_result = BenchmarkResult(
             name=f"{name}_full_python",
             implementation="Python",
@@ -170,7 +172,7 @@ class BenchmarkSuite:
                 return self.rust_detector.mask(txt, detections)
 
             rust_time, rust_latencies = self.measure_time(rust_full, text, iterations=iterations)
-            rust_latencies_ms = [l * 1000 for l in rust_latencies]
+            rust_latencies_ms = [latency * 1000 for latency in rust_latencies]
             rust_result = BenchmarkResult(
                 name=f"{name}_full_rust",
                 implementation="Rust",
