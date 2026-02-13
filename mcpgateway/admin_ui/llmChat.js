@@ -1477,7 +1477,7 @@ export const sendChatMessage = async function (event) {
  * Parse content with <think> tags and separate thinking from final answer
  * Returns: { thinkingSteps: [{content: string}], finalAnswer: string, rawContent: string }
  */
-const parseThinkTags = function (content) {
+export const parseThinkTags = function (content) {
   const thinkingSteps = [];
   let finalAnswer = "";
   const rawContent = content;

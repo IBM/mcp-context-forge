@@ -2,7 +2,7 @@
 // ENHANCED FORM VALIDATION for All Forms
 // ===================================================================
 
-import { validateInputName } from "./security.js";
+import { validateInputName, validateUrl } from "./security.js";
 
 export const setupFormValidation = function () {
   // Add validation to all forms on the page

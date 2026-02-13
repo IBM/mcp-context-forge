@@ -23,12 +23,18 @@ import {
   handleKeydown,
   refreshLogs,
   safeGetElement,
+  showErrorMessage,
+  showNotification,
+  showSuccessMessage,
 } from "./utils.js";
 
 Admin.copyToClipboard = copyToClipboard;
 Admin.handleKeydown = handleKeydown;
 Admin.refreshLogs = refreshLogs;
 Admin.safeGetElement = safeGetElement;
+Admin.showErrorMessage = showErrorMessage;
+Admin.showNotification = showNotification;
+Admin.showSuccessMessage = showSuccessMessage;
 
 // AppState
 import { AppState } from "./appState.js";
@@ -366,6 +372,7 @@ Admin.clearTagFilter = clearTagFilter;
 // Teams
 import {
   approveJoinRequest,
+  dedupeSelectorItems,
   filterByRelationship,
   filterTeams,
   leaveTeam,
@@ -373,9 +380,11 @@ import {
   requestToJoinTeam,
   serverSideTeamSearch,
   validatePasswordMatch,
+  validatePasswordRequirements,
 } from "./teams.js";
 
 Admin.approveJoinRequest = approveJoinRequest;
+Admin.dedupeSelectorItems = dedupeSelectorItems;
 Admin.filterByRelationship = filterByRelationship;
 Admin.filterTeams = filterTeams;
 Admin.leaveTeam = leaveTeam;
@@ -383,6 +392,7 @@ Admin.rejectJoinRequest = rejectJoinRequest;
 Admin.requestToJoinTeam = requestToJoinTeam;
 Admin.serverSideTeamSearch = serverSideTeamSearch;
 Admin.validatePasswordMatch = validatePasswordMatch;
+Admin.validatePasswordRequirements = validatePasswordRequirements;
 
 // Tokens
 import { getAuthToken, getTeamNameById } from "./tokens.js";
