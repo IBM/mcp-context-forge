@@ -25,9 +25,10 @@ from typing import Any, Dict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import httpx
 import mcp.types as mcp_types
+import orjson
 import pytest
-import pytest_asyncio
 from mcp import ClientSession
 
 # First-Party
@@ -1131,6 +1132,179 @@ class TestMultiWorkerSessionAffinityE2E:
             await pool.close_all()
 
     @pytest.mark.asyncio
+    async def test_execute_forwarded_request_handles_timeout(self):
+        """Verify _execute_forwarded_request handles timeout exceptions."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock httpx.AsyncClient to raise TimeoutException
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("Request timeout"))
+
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                result = await pool._execute_forwarded_request({
+                    "method": "tools/call",
+                    "params": {"name": "test_tool"},
+                    "headers": {},
+                })
+
+                # Should return error response
+                assert "error" in result
+                assert result["error"]["code"] == -32603
+                assert "timeout" in result["error"]["message"].lower()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_handles_general_exception(self):
+        """Verify _execute_forwarded_request handles general exceptions."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock httpx.AsyncClient to raise general exception
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.post = AsyncMock(side_effect=Exception("Network error"))
+
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                result = await pool._execute_forwarded_request({
+                    "method": "resources/list",
+                    "params": {},
+                    "headers": {},
+                })
+
+                # Should return error response
+                assert "error" in result
+                assert result["error"]["code"] == -32603
+                assert "Network error" in result["error"]["message"]
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_request_returns_error_response(self):
+        """Verify _execute_forwarded_request handles error responses from internal call."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock httpx.AsyncClient to return error response
+            mock_response = MagicMock()
+            mock_response.json.return_value = {
+                "error": {
+                    "code": -32601,
+                    "message": "Method not found"
+                }
+            }
+            
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.post = AsyncMock(return_value=mock_response)
+
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                result = await pool._execute_forwarded_request({
+                    "method": "invalid/method",
+                    "params": {},
+                    "headers": {},
+                })
+
+                # Should return error from response
+                assert "error" in result
+                assert result["error"]["code"] == -32601
+                assert result["error"]["message"] == "Method not found"
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_http_request(self):
+        """Verify _execute_forwarded_http_request handles HTTP forwarding."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock Redis client
+            mock_redis = AsyncMock()
+            mock_redis.publish = AsyncMock()
+
+            # Mock httpx.AsyncClient for internal HTTP call
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.headers = {"content-type": "application/json"}
+            mock_response.content = b'{"result": "success"}'
+            
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request = AsyncMock(return_value=mock_response)
+
+            request_data = {
+                "type": "http_forward",
+                "response_channel": "test-response-channel",
+                "mcp_session_id": "test-session-http",
+                "method": "POST",
+                "path": "/mcp",
+                "query_string": "",
+                "headers": {"content-type": "application/json"},
+                "body": b'{"jsonrpc": "2.0", "method": "tools/list"}'.hex(),
+            }
+
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                await pool._execute_forwarded_http_request(request_data, mock_redis)
+
+                # Verify response was published to Redis
+                mock_redis.publish.assert_called_once()
+                call_args = mock_redis.publish.call_args
+                assert call_args[0][0] == "test-response-channel"
+                
+                # Verify response structure
+                response_data = orjson.loads(call_args[0][1])
+                assert response_data["status"] == 200
+                assert "headers" in response_data
+                assert "body" in response_data
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_execute_forwarded_http_request_handles_exception(self):
+        """Verify _execute_forwarded_http_request handles exceptions gracefully."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock Redis client
+            mock_redis = AsyncMock()
+            mock_redis.publish = AsyncMock()
+
+            # Mock httpx.AsyncClient to raise exception
+            mock_client = AsyncMock()
+            mock_client.__aenter__.return_value = mock_client
+            mock_client.__aexit__.return_value = None
+            mock_client.request = AsyncMock(side_effect=Exception("Connection failed"))
+
+            request_data = {
+                "type": "http_forward",
+                "response_channel": "test-response-channel",
+                "mcp_session_id": "test-session-error",
+                "method": "GET",
+                "path": "/mcp",
+                "query_string": "",
+                "headers": {},
+                "body": "",
+            }
+
+            with patch("httpx.AsyncClient", return_value=mock_client):
+                await pool._execute_forwarded_http_request(request_data, mock_redis)
+
+                # Verify error response was published
+                mock_redis.publish.assert_called_once()
+                call_args = mock_redis.publish.call_args
+                response_data = orjson.loads(call_args[0][1])
+                assert response_data["status"] == 500
+                assert "error" in bytes.fromhex(response_data["body"]).decode().lower()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
     async def test_start_rpc_listener_returns_when_affinity_disabled(self):
         """Verify start_rpc_listener returns immediately when affinity disabled."""
         pool = MCPSessionPool()
@@ -1158,6 +1332,206 @@ class TestMultiWorkerSessionAffinityE2E:
 
                 with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
                     # Should return immediately without hanging
+                    await pool.start_rpc_listener()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_processes_rpc_messages(self):
+        """Verify start_rpc_listener processes RPC forward messages."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock Redis pubsub
+            mock_pubsub = AsyncMock()
+            mock_pubsub.subscribe = AsyncMock()
+            mock_pubsub.unsubscribe = AsyncMock()
+            
+            # Simulate receiving one RPC message then stopping
+            call_count = 0
+            async def mock_get_message(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    # Return RPC forward message
+                    return {
+                        "type": "message",
+                        "data": orjson.dumps({
+                            "type": "rpc_forward",
+                            "response_channel": "test-response",
+                            "method": "tools/list",
+                            "params": {},
+                            "headers": {},
+                            "mcp_session_id": "test-session",
+                            "req_id": 1,
+                        })
+                    }
+                # Stop the loop by closing pool
+                pool._closed = True
+                return None
+            
+            mock_pubsub.get_message = mock_get_message
+
+            mock_redis = AsyncMock()
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+            mock_redis.publish = AsyncMock()
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    # Mock _execute_forwarded_request
+                    with patch.object(pool, '_execute_forwarded_request', new_callable=AsyncMock) as mock_execute:
+                        mock_execute.return_value = {"result": []}
+                        
+                        await pool.start_rpc_listener()
+
+                        # Verify message was processed
+                        mock_execute.assert_called_once()
+                        mock_redis.publish.assert_called_once()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_processes_http_messages(self):
+        """Verify start_rpc_listener processes HTTP forward messages."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock Redis pubsub
+            mock_pubsub = AsyncMock()
+            mock_pubsub.subscribe = AsyncMock()
+            mock_pubsub.unsubscribe = AsyncMock()
+            
+            # Simulate receiving one HTTP message then stopping
+            call_count = 0
+            async def mock_get_message(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    # Return HTTP forward message
+                    return {
+                        "type": "message",
+                        "data": orjson.dumps({
+                            "type": "http_forward",
+                            "response_channel": "test-http-response",
+                            "method": "POST",
+                            "path": "/mcp",
+                            "query_string": "",
+                            "headers": {},
+                            "body": "",
+                            "mcp_session_id": "test-http-session",
+                        })
+                    }
+                # Stop the loop
+                pool._closed = True
+                return None
+            
+            mock_pubsub.get_message = mock_get_message
+
+            mock_redis = AsyncMock()
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    # Mock _execute_forwarded_http_request
+                    with patch.object(pool, '_execute_forwarded_http_request', new_callable=AsyncMock) as mock_execute:
+                        await pool.start_rpc_listener()
+
+                        # Verify message was processed
+                        mock_execute.assert_called_once()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_handles_unknown_forward_type(self):
+        """Verify start_rpc_listener handles unknown forward types gracefully."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock Redis pubsub
+            mock_pubsub = AsyncMock()
+            mock_pubsub.subscribe = AsyncMock()
+            mock_pubsub.unsubscribe = AsyncMock()
+            
+            # Simulate receiving unknown message type
+            call_count = 0
+            async def mock_get_message(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return {
+                        "type": "message",
+                        "data": orjson.dumps({
+                            "type": "unknown_forward",
+                            "response_channel": "test-response",
+                        })
+                    }
+                pool._closed = True
+                return None
+            
+            mock_pubsub.get_message = mock_get_message
+
+            mock_redis = AsyncMock()
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    # Should not raise, just log warning
+                    await pool.start_rpc_listener()
+        finally:
+            await pool.close_all()
+
+    @pytest.mark.asyncio
+    async def test_start_rpc_listener_handles_processing_errors(self):
+        """Verify start_rpc_listener handles message processing errors gracefully."""
+        pool = MCPSessionPool()
+
+        try:
+            # Mock Redis pubsub
+            mock_pubsub = AsyncMock()
+            mock_pubsub.subscribe = AsyncMock()
+            mock_pubsub.unsubscribe = AsyncMock()
+            
+            # Simulate receiving message that causes processing error
+            call_count = 0
+            async def mock_get_message(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    return {
+                        "type": "message",
+                        "data": b"invalid json"  # Will cause orjson.loads to fail
+                    }
+                pool._closed = True
+                return None
+            
+            mock_pubsub.get_message = mock_get_message
+
+            mock_redis = AsyncMock()
+            mock_redis.pubsub = MagicMock(return_value=mock_pubsub)
+
+            with patch("mcpgateway.services.mcp_session_pool.settings") as mock_settings:
+                mock_settings.mcpgateway_session_affinity_enabled = True
+
+                async def mock_get_redis():
+                    return mock_redis
+
+                with patch("mcpgateway.utils.redis_client.get_redis_client", side_effect=mock_get_redis):
+                    # Should not raise, just log warning and continue
                     await pool.start_rpc_listener()
         finally:
             await pool.close_all()

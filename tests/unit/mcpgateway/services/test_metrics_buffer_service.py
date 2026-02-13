@@ -827,3 +827,117 @@ class TestImmediateWriteMethods:
         )
         service = MetricsBufferService(enabled=False)
         service._write_a2a_agent_metric_immediately("a1", time.monotonic(), False, "invoke", "err")
+
+
+class TestShutdownCancelledError:
+    """Tests for shutdown handling CancelledError from flush task."""
+
+    @pytest.mark.asyncio
+    async def test_shutdown_handles_cancelled_error(self):
+        """Shutdown should catch CancelledError from flush task (lines 164-165)."""
+        service = MetricsBufferService(enabled=True)
+
+        class CancelledTask:
+            def __init__(self):
+                self.cancel_called = False
+
+            def cancel(self):
+                self.cancel_called = True
+
+            def __await__(self):
+                async def _raise():
+                    raise asyncio.CancelledError()
+                return _raise().__await__()
+
+        task = CancelledTask()
+        service._flush_task = task
+        service._flush_all = AsyncMock()
+
+        await service.shutdown()
+
+        assert task.cancel_called is True
+        service._flush_all.assert_awaited()
+
+
+class TestFlushLoopCancelled:
+    """Tests for _flush_loop CancelledError path."""
+
+    @pytest.mark.asyncio
+    async def test_flush_loop_cancelled_error_reraises(self, monkeypatch):
+        """_flush_loop should re-raise CancelledError (lines 401-403)."""
+        service = MetricsBufferService(enabled=True, flush_interval=1)
+
+        async def fake_wait_for(awaitable, timeout=None):
+            if hasattr(awaitable, "close"):
+                awaitable.close()
+            raise asyncio.CancelledError()
+
+        monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+
+        with pytest.raises(asyncio.CancelledError):
+            await service._flush_loop()
+
+
+class TestFlushAllEmpty:
+    """Tests for _flush_all early return on empty buffers."""
+
+    @pytest.mark.asyncio
+    async def test_flush_all_returns_early_when_empty(self):
+        """_flush_all should return early when all buffers are empty (line 426)."""
+        service = MetricsBufferService(enabled=True)
+
+        # Ensure buffers are empty
+        assert len(service._tool_metrics) == 0
+
+        await service._flush_all()
+
+        # No flush should have occurred
+        assert service._flush_count == 0
+        assert service._total_flushed == 0
+
+
+class TestFlushAllCacheInvalidation:
+    """Tests for _flush_all cache invalidation error handling."""
+
+    @pytest.mark.asyncio
+    async def test_flush_all_cache_invalidation_error_swallowed(self, monkeypatch):
+        """_flush_all should swallow cache invalidation errors (lines 460-461)."""
+        service = MetricsBufferService(enabled=True)
+
+        service.record_tool_metric("tool-1", start_time=time.monotonic() - 0.1, success=True)
+
+        async def _fake_to_thread(func, *args, **kwargs):
+            pass  # Simulate successful flush
+
+        monkeypatch.setattr(asyncio, "to_thread", _fake_to_thread)
+
+        # Mock metrics_cache to raise on invalidate_async
+        mock_cache = MagicMock()
+        mock_cache.invalidate_async = AsyncMock(side_effect=RuntimeError("cache error"))
+        monkeypatch.setattr("mcpgateway.cache.metrics_cache.metrics_cache", mock_cache)
+
+        # Should not raise
+        await service._flush_all()
+
+        assert service._flush_count == 1
+
+
+class TestFlushToDbError:
+    """Tests for _flush_to_db error handling."""
+
+    def test_flush_to_db_swallows_db_error(self, monkeypatch):
+        """_flush_to_db should swallow database errors (lines 565-566)."""
+        service = MetricsBufferService(enabled=True)
+
+        monkeypatch.setattr(
+            "mcpgateway.services.metrics_buffer_service.fresh_db_session",
+            MagicMock(side_effect=Exception("connection lost")),
+        )
+
+        tool_metric = SimpleNamespace(
+            tool_id="t1", timestamp=time.time(), response_time=0.1,
+            is_success=True, error_message=None,
+        )
+
+        # Should not raise
+        service._flush_to_db([tool_metric], [], [], [], [])
