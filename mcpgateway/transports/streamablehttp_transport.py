@@ -710,6 +710,11 @@ async def call_tool(name: str, arguments: dict) -> Union[
 
                 gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
                 if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy":
+                    # SECURITY: Check gateway access before allowing direct proxy
+                    if not await check_gateway_access(check_db, gateway, user_email, token_teams):
+                        logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
+                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], isError=True)
+
                     logger.info(f"Using direct_proxy mode for tool '{name}' via gateway {gateway_id_from_header}")
 
                     # Use direct proxy method - returns raw CallToolResult from remote server
@@ -720,6 +725,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         arguments=arguments,
                         request_headers=request_headers,
                         meta_data=meta_data,
+                        user_email=user_email,
+                        token_teams=token_teams,
                     )
         except Exception as e:  # pragma: no cover - integration test
             logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")

@@ -2561,6 +2561,8 @@ class ToolService:
         arguments: Dict[str, Any],
         request_headers: Optional[Dict[str, str]] = None,
         meta_data: Optional[Dict[str, Any]] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -2574,12 +2576,14 @@ class ToolService:
             arguments: Tool arguments.
             request_headers: Headers from the request to pass through.
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
+            user_email: Email of the requesting user for access control.
+            token_teams: Team IDs from the user's token for access control.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
 
         Raises:
-            ToolNotFoundError: If gateway not found.
+            ToolNotFoundError: If gateway not found or access denied.
             ToolInvocationError: If invocation fails.
         """
         logger.info(f"Direct proxy tool invocation: {name} via gateway {gateway_id}")  # pragma: no cover - integration test
@@ -2593,6 +2597,11 @@ class ToolService:
 
             if getattr(gateway, "gateway_mode", "cache") != "direct_proxy":
                 raise ToolInvocationError(f"Gateway {gateway_id} is not in direct_proxy mode")
+
+            # SECURITY: Defensive access check — callers should also check,
+            # but enforce here to prevent RBAC bypass if called from a new context.
+            if not await check_gateway_access(db, gateway, user_email, token_teams):  # pragma: no cover - integration test
+                raise ToolNotFoundError(f"Tool not found: {name}")
 
             # Prepare headers with gateway auth
             headers = build_gateway_auth_headers(gateway)

@@ -2,7 +2,7 @@
 """add_gateway_mode_field
 
 Revision ID: 207d8bbddd61
-Revises: 04cda6733305
+Revises: c1c2c3c4c5c6
 Create Date: 2026-01-21 09:48:44.636655
 
 """

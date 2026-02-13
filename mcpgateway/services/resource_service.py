@@ -64,7 +64,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -2180,6 +2180,10 @@ class ResourceService:
 
                     # Check for direct_proxy mode
                     if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy":  # pragma: no cover - integration test
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, resource_db.gateway, user, token_teams):  # pragma: no cover - integration test
+                            raise ResourceNotFoundError(f"Resource not found: {uri}")
+
                         logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
 
                         try:  # pragma: no cover - integration test

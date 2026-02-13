@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.utils.services_auth import decode_auth
 
+# Header name used by clients to target a specific gateway for direct_proxy mode.
+# Defined once here to avoid string literal repetition across the codebase.
+GATEWAY_ID_HEADER = "X-Context-Forge-Gateway-Id"
+
 
 async def check_gateway_access(
     db: Session,
@@ -138,5 +142,3 @@ def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
 
     return headers
 
-# Made with Bob
-# Co-authored by Venkat (010gvr@gmail.com)
