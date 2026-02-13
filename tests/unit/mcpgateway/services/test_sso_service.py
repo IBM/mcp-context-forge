@@ -731,6 +731,7 @@ class TestMapGroupsToRoles:
             mock_settings.sso_entra_admin_groups = ["admin-grp"]
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
             result = await sso_service._map_groups_to_roles("user@test.com", ["admin-grp"], provider)
         assert len(result) == 1
         assert result[0]["role_name"] == "platform_admin"
@@ -743,6 +744,7 @@ class TestMapGroupsToRoles:
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
             result = await sso_service._map_groups_to_roles("user@test.com", ["super-group"], provider)
         assert any(r["role_name"] == "platform_admin" for r in result)
 
@@ -1201,6 +1203,7 @@ class TestEntraLegacyRoleMappings:
             mock_settings.sso_entra_admin_groups = ["admin-grp"]
             mock_settings.sso_entra_default_role = None
             mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
             role_svc = AsyncMock()
             MockRoleService.return_value = role_svc
             result = await sso_service._map_groups_to_roles("user@test.com", ["admin-grp", "other"], provider)

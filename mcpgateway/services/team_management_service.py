@@ -628,17 +628,18 @@ class TeamManagementService:
             self.db.commit()
             self._log_team_member_action(membership.id, team_id, user_email, membership.role, "removed", removed_by)
 
-            # Revoke team-scoped RBAC role from removed member
+            # Revoke team-scoped RBAC role from removed member based on their actual role
             try:
-                team_member_role = await self.role_service.get_role_by_name(settings.default_team_member_role, scope="team")
-                if team_member_role:
-                    revoked = await self.role_service.revoke_role_from_user(user_email=user_email, role_id=team_member_role.id, scope="team", scope_id=team_id)
+                role_name_to_revoke = settings.default_team_owner_role if membership.role == "owner" else settings.default_team_member_role
+                rbac_role = await self.role_service.get_role_by_name(role_name_to_revoke, scope="team")
+                if rbac_role:
+                    revoked = await self.role_service.revoke_role_from_user(user_email=user_email, role_id=rbac_role.id, scope="team", scope_id=team_id)
                     if revoked:
-                        logger.info(f"Revoked {settings.default_team_member_role} role from {user_email} for team {team_id}")
+                        logger.info(f"Revoked {role_name_to_revoke} role from {user_email} for team {team_id}")
                     else:
-                        logger.debug(f"No {settings.default_team_member_role} role to revoke for {user_email} on team {team_id}")
+                        logger.debug(f"No {role_name_to_revoke} role to revoke for {user_email} on team {team_id}")
                 else:
-                    logger.warning(f"Role '{settings.default_team_member_role}' not found. Cannot revoke role from {user_email}.")
+                    logger.warning(f"Role '{role_name_to_revoke}' not found. Cannot revoke role from {user_email}.")
             except Exception as role_error:
                 logger.warning(f"Failed to revoke role from {user_email}: {role_error}")
 
