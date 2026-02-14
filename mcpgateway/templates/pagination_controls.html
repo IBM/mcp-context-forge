@@ -78,7 +78,7 @@
     newParams.set(prefix + 'page', page);
     newParams.set(prefix + 'size', this.perPage);
     if (includeInactive !== undefined) {
-      newParams.set(prefix + 'inactive', includeInactive);
+      newParams.set(prefix + 'inactive', includeInactive.toString());
     }
 
     const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
@@ -120,6 +120,14 @@
     {% endif %}
     {% endfor %}
     {% endif %}
+
+    // Preserve team_id from current URL (if present) - this ensures team filter
+    // is maintained during pagination
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    const teamIdFromUrl = currentUrlParams.get('team_id');
+    if (teamIdFromUrl) {
+      url.searchParams.set('team_id', teamIdFromUrl);
+    }
 
     // Update browser URL for bookmarking/sharing (with namespaced params)
     this.updateBrowserUrl(page, includeInactive);
