@@ -58,7 +58,7 @@ func handlePandoc(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolRe
         args = append(args, "--toc")
     }
 
-    cmd := exec.CommandContext(ctx, "pandoc", args...)
+    cmd := exec.CommandContext(ctx, "pandoc", args...) // #nosec G204 -- Arguments are passed without a shell and are intended user-controlled conversion options.
     cmd.Stdin = strings.NewReader(input)
     var out strings.Builder
     cmd.Stdout = &out
