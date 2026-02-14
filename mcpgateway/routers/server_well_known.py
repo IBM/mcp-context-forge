@@ -16,7 +16,7 @@ metadata specific to individual virtual servers.
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -25,14 +25,10 @@ from mcpgateway.db import get_db
 from mcpgateway.db import Server as DbServer
 from mcpgateway.routers.well_known import get_base_url_with_protocol, get_well_known_file_content
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.server_service import ServerService
 
 # Get logger instance
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
-
-# Initialize services
-server_service = ServerService()
 
 # Router without prefix - will be mounted at /servers in main.py
 router = APIRouter(tags=["Servers"])
@@ -42,8 +38,7 @@ router = APIRouter(tags=["Servers"])
 async def server_oauth_protected_resource(
     request: Request,
     server_id: str,
-    db: Session = Depends(get_db),
-) -> JSONResponse:
+):
     """
     DEPRECATED: OAuth 2.0 Protected Resource Metadata endpoint (server-scoped, non-compliant).
 
@@ -58,18 +53,20 @@ async def server_oauth_protected_resource(
     Args:
         request: FastAPI request object for building redirect URL.
         server_id: The ID of the server.
-        db: Database session (unused).
 
     Raises:
-        HTTPException: 301 redirect to compliant endpoint.
+        HTTPException: 404 if well-known disabled, 301 redirect to compliant endpoint.
     """
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
     # Build RFC 9728 compliant redirect URL
     base_url = get_base_url_with_protocol(request)
     compliant_url = f"{base_url}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
 
     logger.warning(f"Deprecated server-scoped OAuth metadata endpoint called for server {server_id}. " f"Redirecting to RFC 9728 compliant endpoint: {compliant_url}")
 
-    # Return 301 Permanent Redirect per implementation plan
+    # Return 301 Permanent Redirect
     raise HTTPException(status_code=301, detail="Moved Permanently", headers={"Location": compliant_url})
 
 

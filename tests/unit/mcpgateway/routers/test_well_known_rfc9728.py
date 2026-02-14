@@ -58,7 +58,7 @@ class TestRFC9728CompliantEndpoint:
 
         client = TestClient(app)
 
-        with patch("mcpgateway.services.server_service.server_service", mock_service_instance):
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service_instance):
             response = client.get("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000/mcp")
 
             assert response.status_code == 200
@@ -96,7 +96,7 @@ class TestRFC9728CompliantEndpoint:
 
         client = TestClient(app)
 
-        with patch("mcpgateway.services.server_service.server_service", mock_service_instance):
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service_instance):
             response = client.get("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000")
 
             assert response.status_code == 200
@@ -175,7 +175,7 @@ class TestRFC9728CompliantEndpoint:
 
         client = TestClient(app)
 
-        with patch("mcpgateway.services.server_service.server_service", mock_service_instance):
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service_instance):
             response = client.get("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000/mcp")
 
             assert response.status_code == 404
@@ -197,7 +197,7 @@ class TestRFC9728CompliantEndpoint:
 
         client = TestClient(app)
 
-        with patch("mcpgateway.services.server_service.server_service", mock_service_instance):
+        with patch("mcpgateway.routers.well_known.ServerService", return_value=mock_service_instance):
             response = client.get("/.well-known/oauth-protected-resource/servers/550e8400-e29b-41d4-a716-446655440000/mcp")
 
             assert response.status_code == 404

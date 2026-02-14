@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.server_service import ServerError, ServerNotFoundError
+from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Get logger instance
@@ -183,10 +183,7 @@ async def get_oauth_protected_resource_rfc9728(
     base_url = get_base_url_with_protocol(request)
     resource_url = f"{base_url}/servers/{server_id}/mcp"
 
-    # Delegate to server_service for RFC 9728 compliant metadata
-    # Import lazily to use the module-level singleton
-    from mcpgateway.services.server_service import server_service
-
+    server_service = ServerService()
     try:
         response_data = server_service.get_oauth_protected_resource_metadata(db=db, server_id=server_id, resource_base_url=resource_url)
     except ServerNotFoundError:
@@ -205,7 +202,6 @@ async def get_oauth_protected_resource_rfc9728(
 async def get_oauth_protected_resource(
     request: Request,
     server_id: Optional[str] = None,
-    db: Session = Depends(get_db),
 ):
     """
     DEPRECATED: OAuth 2.0 Protected Resource Metadata endpoint (query parameter based).
@@ -219,11 +215,13 @@ async def get_oauth_protected_resource(
     Args:
         request: FastAPI request object (unused).
         server_id: Server ID query parameter (ignored).
-        db: Database session (unused).
 
     Raises:
         HTTPException: Always raises 404 with deprecation notice.
     """
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
     logger.warning("Deprecated query-param OAuth metadata endpoint called. " "Use RFC 9728 compliant path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
     raise HTTPException(
         status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. " "Use the path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")

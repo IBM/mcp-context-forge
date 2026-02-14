@@ -199,11 +199,11 @@ async def test_server_oauth_protected_resource_redirects_to_rfc9728():
     request.headers = {}
     request.url.scheme = "https"
     request.base_url = "https://example.com/"
-    mock_db = MagicMock()
 
-    # Deprecated endpoint now returns 301 redirect regardless of other conditions
-    with pytest.raises(HTTPException) as exc_info:
-        await server_oauth_protected_resource(request, "server-1", db=mock_db)
+    with patch("mcpgateway.routers.server_well_known.settings") as mock_settings:
+        mock_settings.well_known_enabled = True
+        with pytest.raises(HTTPException) as exc_info:
+            await server_oauth_protected_resource(request, "server-1")
 
     assert exc_info.value.status_code == 301
     assert "Location" in exc_info.value.headers
@@ -300,13 +300,12 @@ async def test_root_oauth_protected_resource_deprecated():
     request.headers = {}
     request.url.scheme = "https"
     request.base_url = "https://example.com/"
-    mock_db = MagicMock()
 
     with patch("mcpgateway.routers.well_known.settings") as mock_settings:
         mock_settings.well_known_enabled = True
         # Deprecated endpoint now returns 404 regardless of server state
         with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
+            await get_oauth_protected_resource(request, server_id="s1")
 
     assert exc_info.value.status_code == 404
     assert "deprecated" in exc_info.value.detail.lower()
