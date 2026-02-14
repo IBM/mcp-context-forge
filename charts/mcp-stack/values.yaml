@@ -1421,6 +1421,13 @@ mcpFastTimeServer:
     tag: "latest"
     pullPolicy: IfNotPresent
   port: 8080
+  # Docker Compose parity flags (optional override)
+  command: []
+  args:
+    - -transport=dual
+    - -listen=0.0.0.0
+    - -port=8080
+    - -log-level=info
 
   # Ingress example (leave as-is if you already have it)
   ingress:
@@ -1465,3 +1472,586 @@ mcpFastTimeServer:
     requests:
       cpu: 25m
       memory: 10Mi
+
+########################################################################
+# COMPOSE PARITY - Optional docker-compose profile components
+# All sections below are disabled by default and can be enabled selectively.
+########################################################################
+
+########################################################################
+# NGINX PROXY - Reverse proxy / cache layer in front of the gateway
+########################################################################
+nginxProxy:
+  enabled: false
+
+  image:
+    repository: mcpgateway/nginx-cache
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Nginx cache persistence
+  persistence:
+    enabled: true
+    storageClassName: ""
+    accessModes: [ReadWriteOnce]
+    size: 2Gi
+
+  # Optional sysctls applied to the nginx pod
+  sysctls:
+    - net.ipv4.tcp_fin_timeout=15
+    - net.ipv4.ip_local_port_range=1024 65535
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 1Gi
+    requests:
+      cpu: "2"
+      memory: 512Mi
+
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    liveness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+  config:
+    workerConnections: 8192
+    keepaliveTimeout: 65
+    clientMaxBodySize: 25m
+    proxyReadTimeout: 300s
+    proxySendTimeout: 300s
+    sendTimeout: 300s
+
+    cache:
+      enabled: true
+      path: /var/cache/nginx
+      maxSize: 1g
+      inactive: 10m
+
+########################################################################
+# MONITORING STACK - Prometheus/Grafana/Loki/Tempo + exporters
+########################################################################
+monitoring:
+  enabled: false
+
+  postgresExporter:
+    enabled: true
+    image:
+      repository: quay.io/prometheuscommunity/postgres-exporter
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 9187
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  redisExporter:
+    enabled: true
+    image:
+      repository: oliver006/redis_exporter
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 9121
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  pgbouncerExporter:
+    enabled: true
+    image:
+      repository: prometheuscommunity/pgbouncer-exporter
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 9127
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  nginxExporter:
+    enabled: true
+    image:
+      repository: nginx/nginx-prometheus-exporter
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 9113
+    # If empty, chart auto-targets in-cluster nginx proxy service
+    scrapeUri: ""
+    resources:
+      limits:
+        cpu: 200m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  cadvisor:
+    enabled: true
+    image:
+      repository: gcr.io/cadvisor/cadvisor
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 8080
+    privileged: true
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+  prometheus:
+    enabled: true
+    image:
+      repository: prom/prometheus
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 9090
+    retention: 7d
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+
+  loki:
+    enabled: true
+    image:
+      repository: grafana/loki
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 3100
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  tempo:
+    enabled: true
+    image:
+      repository: grafana/tempo
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      queryPort: 3200
+      grpcPort: 4317
+      httpPort: 4318
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  promtail:
+    enabled: true
+    image:
+      repository: grafana/promtail
+      tag: latest
+      pullPolicy: IfNotPresent
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+  grafana:
+    enabled: true
+    image:
+      repository: grafana/grafana
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 3000
+    adminPassword: changeme
+    allowSignUp: false
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 5Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+########################################################################
+# TESTING PROFILE - fast-test server, A2A echo agent, locust, auto-register
+########################################################################
+testing:
+  enabled: false
+
+  registration:
+    enabled: true
+    image:
+      repository: mcpgateway/mcpgateway
+      tag: latest
+      pullPolicy: IfNotPresent
+    backoffLimit: 2
+    activeDeadlineSeconds: 600
+    restartPolicy: Never
+    jwt:
+      username: admin@example.com
+      expirationMinutes: 10080
+      secret: my-test-key
+
+  fastTime:
+    register:
+      enabled: false
+      gatewayName: fast_time
+      gatewayPath: /http
+      transport: STREAMABLEHTTP
+      createVirtualServer: true
+      virtualServerId: 9779b6698cbd4b4995ee04a4fab38737
+      virtualServerName: Fast Time Server
+      virtualServerDescription: Virtual server exposing Fast Time MCP tools/resources/prompts
+
+  fastTestServer:
+    enabled: true
+    image:
+      repository: mcpgateway/fast-test-server
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 8880
+    env:
+      BIND_ADDRESS: 0.0.0.0:8880
+      RUST_LOG: info
+    resources:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 128Mi
+    probes:
+      readiness:
+        type: http
+        path: /health
+        port: 8880
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+      liveness:
+        type: http
+        path: /health
+        port: 8880
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+
+  fastTest:
+    register:
+      enabled: true
+      gatewayName: fast_test
+      gatewayPath: /mcp
+      transport: STREAMABLEHTTP
+
+  a2aEchoAgent:
+    enabled: true
+    image:
+      repository: mcpgateway/a2a-echo-agent
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 9100
+    env:
+      A2A_ECHO_ADDR: 0.0.0.0:9100
+      A2A_ECHO_NAME: a2a-echo-agent
+      A2A_ECHO_LOG_LEVEL: info
+    resources:
+      limits:
+        cpu: "1"
+        memory: 256Mi
+      requests:
+        cpu: 250m
+        memory: 64Mi
+    probes:
+      readiness:
+        type: http
+        path: /health
+        port: 9100
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+      liveness:
+        type: http
+        path: /health
+        port: 9100
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+
+  a2a:
+    register:
+      enabled: true
+      name: a2a-echo-agent
+      description: Lightweight A2A echo agent for Kubernetes testing
+      endpointPath: /
+      protocolVersion: 0.3.0
+      visibility: public
+
+  locust:
+    enabled: true
+    image:
+      repository: locustio/locust
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      port: 8089
+    mode: master
+    users: 100
+    spawnRate: 10
+    runTime: 5m
+    expectWorkers: 1
+    host: ""
+    worker:
+      enabled: true
+      replicaCount: 1
+    script:
+      existingConfigMap: ""
+      key: locustfile.py
+      inline: |
+        from locust import HttpUser, between, task
+
+        class MCPGatewaySmokeUser(HttpUser):
+            wait_time = between(1, 3)
+
+            @task(3)
+            def health(self):
+                self.client.get("/health", name="GET /health")
+
+            @task(2)
+            def ready(self):
+                self.client.get("/ready", name="GET /ready")
+
+            @task(1)
+            def version(self):
+                self.client.get("/version", name="GET /version")
+
+    resources:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 128Mi
+
+########################################################################
+# BENCHMARK PROFILE - benchmark MCP server + auto registration
+########################################################################
+benchmark:
+  enabled: false
+
+  server:
+    enabled: true
+    image:
+      repository: mcpgateway/benchmark-server
+      tag: latest
+      pullPolicy: IfNotPresent
+    service:
+      type: ClusterIP
+      startPort: 9000
+      serverCount: 10
+    transport: http
+    tools: 50
+    resources: 20
+    prompts: 10
+    resourcesLimits:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 256Mi
+
+  register:
+    enabled: true
+    gatewayPrefix: benchmark-
+    transport: STREAMABLEHTTP
+    startPort: 9000
+    serverCount: 10
+
+########################################################################
+# TLS PROFILE - TLS-enabled nginx frontend and cert management
+########################################################################
+tls:
+  enabled: false
+
+  forceHttps: false
+
+  image:
+    repository: mcpgateway/nginx-cache
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    httpPort: 80
+    httpsPort: 443
+
+  persistence:
+    enabled: true
+    storageClassName: ""
+    accessModes: [ReadWriteOnce]
+    size: 2Gi
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 1Gi
+    requests:
+      cpu: "2"
+      memory: 512Mi
+
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    liveness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+  sysctls:
+    - net.ipv4.tcp_fin_timeout=15
+    - net.ipv4.ip_local_port_range=1024 65535
+
+  certificate:
+    existingSecret: ""
+    certKey: tls.crt
+    privateKeyKey: tls.key
+    selfSigned:
+      enabled: true
+      commonName: localhost
+      dnsNames:
+        - localhost
+        - gateway
+        - nginx
+      ipAddresses:
+        - 127.0.0.1
+      durationDays: 365
+
+########################################################################
+# INSPECTOR PROFILE - MCP Inspector client UI
+########################################################################
+inspector:
+  enabled: false
+
+  image:
+    repository: ghcr.io/modelcontextprotocol/inspector
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  service:
+    type: ClusterIP
+    uiPort: 6274
+    apiPort: 6277
+
+  env:
+    HOST: 0.0.0.0
+    MCP_AUTO_OPEN_ENABLED: "false"
+    DANGEROUSLY_OMIT_AUTH: "true"
+
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi

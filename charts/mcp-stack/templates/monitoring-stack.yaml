@@ -1,0 +1,858 @@
+{{- if .Values.monitoring.enabled }}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+{{- $postgresSecretName := include "mcp-stack.postgresSecretName" . | trim -}}
+{{- $postgresHost := "" -}}
+{{- $postgresPort := "" -}}
+{{- $postgresDB := "" -}}
+{{- if .Values.postgres.external.enabled -}}
+  {{- if .Values.postgres.external.existingSecret -}}
+    {{- $postgresHost = "$(POSTGRES_HOST)" -}}
+    {{- $postgresPort = "$(POSTGRES_PORT)" -}}
+    {{- $postgresDB = "$(POSTGRES_DB)" -}}
+  {{- else -}}
+    {{- $postgresHost = .Values.postgres.external.host -}}
+    {{- $postgresPort = (.Values.postgres.external.port | toString) -}}
+    {{- $postgresDB = .Values.postgres.external.database -}}
+  {{- end -}}
+{{- else -}}
+  {{- $postgresHost = printf "%s-postgres" $fullName -}}
+  {{- $postgresPort = (.Values.postgres.service.port | toString) -}}
+  {{- $postgresDB = .Values.mcpContextForge.env.postgres.db -}}
+{{- end -}}
+
+{{- $redisAddr := "" -}}
+{{- if .Values.redis.external.enabled -}}
+  {{- if .Values.redis.external.url -}}
+    {{- $redisAddr = .Values.redis.external.url -}}
+  {{- else if .Values.redis.external.host -}}
+    {{- $redisAddr = printf "redis://%s:%v" .Values.redis.external.host .Values.redis.external.port -}}
+  {{- end -}}
+{{- else -}}
+  {{- $redisAddr = printf "redis://%s-redis:%v" $fullName .Values.redis.service.port -}}
+{{- end -}}
+
+{{- $pgbouncerHost := printf "%s-pgbouncer" $fullName -}}
+{{- $pgbouncerPort := .Values.pgbouncer.service.port -}}
+
+{{- $nginxScrapeUri := .Values.monitoring.nginxExporter.scrapeUri -}}
+{{- if not $nginxScrapeUri -}}
+  {{- if .Values.tls.enabled -}}
+    {{- $nginxScrapeUri = printf "http://%s-nginx-tls:%v/nginx_status" $fullName .Values.tls.service.httpPort -}}
+  {{- else -}}
+    {{- $nginxScrapeUri = printf "http://%s-nginx:%v/nginx_status" $fullName .Values.nginxProxy.service.port -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if and .Values.monitoring.postgresExporter.enabled (or .Values.postgres.enabled .Values.postgres.external.enabled) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-postgres-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-postgres-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-postgres-exporter
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-postgres-exporter
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: postgres-exporter
+          image: "{{ .Values.monitoring.postgresExporter.image.repository }}:{{ .Values.monitoring.postgresExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.postgresExporter.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.postgresExporter.service.port }}
+          env:
+            {{- if and .Values.postgres.external.enabled .Values.postgres.external.existingSecret }}
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+            - name: POSTGRES_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.external.portKey | default "port" }}
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
+            {{- end }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+            - name: DATA_SOURCE_NAME
+              value: "postgresql://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@{{ $postgresHost }}:{{ $postgresPort }}/{{ $postgresDB }}?sslmode=disable"
+            - name: PG_EXPORTER_AUTO_DISCOVER_DATABASES
+              value: "true"
+          resources:
+{{- toYaml .Values.monitoring.postgresExporter.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-postgres-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-postgres-exporter
+spec:
+  type: {{ .Values.monitoring.postgresExporter.service.type }}
+  selector:
+    app: {{ $fullName }}-postgres-exporter
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.postgresExporter.service.port }}
+      targetPort: {{ .Values.monitoring.postgresExporter.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if and .Values.monitoring.redisExporter.enabled (or .Values.redis.enabled .Values.redis.external.enabled) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-redis-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-redis-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-redis-exporter
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-redis-exporter
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: redis-exporter
+          image: "{{ .Values.monitoring.redisExporter.image.repository }}:{{ .Values.monitoring.redisExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.redisExporter.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.redisExporter.service.port }}
+          env:
+            - name: REDIS_ADDR
+              value: {{ $redisAddr | quote }}
+          resources:
+{{- toYaml .Values.monitoring.redisExporter.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-redis-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-redis-exporter
+spec:
+  type: {{ .Values.monitoring.redisExporter.service.type }}
+  selector:
+    app: {{ $fullName }}-redis-exporter
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.redisExporter.service.port }}
+      targetPort: {{ .Values.monitoring.redisExporter.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if and .Values.monitoring.pgbouncerExporter.enabled .Values.pgbouncer.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-pgbouncer-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-pgbouncer-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-pgbouncer-exporter
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-pgbouncer-exporter
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: pgbouncer-exporter
+          image: "{{ .Values.monitoring.pgbouncerExporter.image.repository }}:{{ .Values.monitoring.pgbouncerExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.pgbouncerExporter.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.pgbouncerExporter.service.port }}
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $postgresSecretName }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+            - name: PGBOUNCER_EXPORTER_CONNECTION_STRING
+              value: "postgres://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@{{ $pgbouncerHost }}:{{ $pgbouncerPort }}/pgbouncer?sslmode=disable"
+          resources:
+{{- toYaml .Values.monitoring.pgbouncerExporter.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-pgbouncer-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-pgbouncer-exporter
+spec:
+  type: {{ .Values.monitoring.pgbouncerExporter.service.type }}
+  selector:
+    app: {{ $fullName }}-pgbouncer-exporter
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.pgbouncerExporter.service.port }}
+      targetPort: {{ .Values.monitoring.pgbouncerExporter.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if and .Values.monitoring.nginxExporter.enabled (or .Values.nginxProxy.enabled .Values.tls.enabled .Values.monitoring.nginxExporter.scrapeUri) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-nginx-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-nginx-exporter
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-nginx-exporter
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: nginx-exporter
+          image: "{{ .Values.monitoring.nginxExporter.image.repository }}:{{ .Values.monitoring.nginxExporter.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.nginxExporter.image.pullPolicy }}
+          args:
+            - "-nginx.scrape-uri={{ $nginxScrapeUri }}"
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.nginxExporter.service.port }}
+          resources:
+{{- toYaml .Values.monitoring.nginxExporter.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-nginx-exporter
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-exporter
+spec:
+  type: {{ .Values.monitoring.nginxExporter.service.type }}
+  selector:
+    app: {{ $fullName }}-nginx-exporter
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.nginxExporter.service.port }}
+      targetPort: {{ .Values.monitoring.nginxExporter.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if .Values.monitoring.cadvisor.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-cadvisor
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-cadvisor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-cadvisor
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-cadvisor
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: cadvisor
+          image: "{{ .Values.monitoring.cadvisor.image.repository }}:{{ .Values.monitoring.cadvisor.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.cadvisor.image.pullPolicy }}
+          securityContext:
+            privileged: {{ .Values.monitoring.cadvisor.privileged }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.cadvisor.service.port }}
+          volumeMounts:
+            - name: rootfs
+              mountPath: /rootfs
+              readOnly: true
+            - name: var-run
+              mountPath: /var/run
+              readOnly: true
+            - name: sys
+              mountPath: /sys
+              readOnly: true
+            - name: docker
+              mountPath: /var/lib/docker
+              readOnly: true
+          resources:
+{{- toYaml .Values.monitoring.cadvisor.resources | nindent 12 }}
+      volumes:
+        - name: rootfs
+          hostPath:
+            path: /
+        - name: var-run
+          hostPath:
+            path: /var/run
+        - name: sys
+          hostPath:
+            path: /sys
+        - name: docker
+          hostPath:
+            path: /var/lib/docker
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-cadvisor
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-cadvisor
+spec:
+  type: {{ .Values.monitoring.cadvisor.service.type }}
+  selector:
+    app: {{ $fullName }}-cadvisor
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.cadvisor.service.port }}
+      targetPort: {{ .Values.monitoring.cadvisor.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if .Values.monitoring.prometheus.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-prometheus
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-prometheus
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-prometheus
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: prometheus
+          image: "{{ .Values.monitoring.prometheus.image.repository }}:{{ .Values.monitoring.prometheus.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.prometheus.image.pullPolicy }}
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time={{ .Values.monitoring.prometheus.retention }}"
+            - "--web.enable-lifecycle"
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.prometheus.service.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/prometheus/prometheus.yml
+              subPath: prometheus.yml
+            - name: data
+              mountPath: /prometheus
+          resources:
+{{- toYaml .Values.monitoring.prometheus.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullName }}-prometheus-config
+        - name: data
+          {{- if .Values.monitoring.prometheus.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-prometheus-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-prometheus
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-prometheus
+spec:
+  type: {{ .Values.monitoring.prometheus.service.type }}
+  selector:
+    app: {{ $fullName }}-prometheus
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.prometheus.service.port }}
+      targetPort: {{ .Values.monitoring.prometheus.service.port }}
+      protocol: TCP
+{{- if .Values.monitoring.prometheus.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-prometheus-data
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-prometheus
+spec:
+  accessModes:
+    {{- range .Values.monitoring.prometheus.persistence.accessModes }}
+    - {{ . }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.monitoring.prometheus.persistence.size }}
+  {{- if .Values.monitoring.prometheus.persistence.storageClassName }}
+  storageClassName: {{ .Values.monitoring.prometheus.persistence.storageClassName }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.monitoring.loki.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-loki
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-loki
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-loki
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-loki
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: loki
+          image: "{{ .Values.monitoring.loki.image.repository }}:{{ .Values.monitoring.loki.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.loki.image.pullPolicy }}
+          args:
+            - "-config.file=/etc/loki/local-config.yaml"
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.loki.service.port }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/loki/local-config.yaml
+              subPath: loki-config.yaml
+            - name: data
+              mountPath: /loki
+          resources:
+{{- toYaml .Values.monitoring.loki.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullName }}-loki-config
+        - name: data
+          {{- if .Values.monitoring.loki.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-loki-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-loki
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-loki
+spec:
+  type: {{ .Values.monitoring.loki.service.type }}
+  selector:
+    app: {{ $fullName }}-loki
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.loki.service.port }}
+      targetPort: {{ .Values.monitoring.loki.service.port }}
+      protocol: TCP
+{{- if .Values.monitoring.loki.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-loki-data
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-loki
+spec:
+  accessModes:
+    {{- range .Values.monitoring.loki.persistence.accessModes }}
+    - {{ . }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.monitoring.loki.persistence.size }}
+  {{- if .Values.monitoring.loki.persistence.storageClassName }}
+  storageClassName: {{ .Values.monitoring.loki.persistence.storageClassName }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.monitoring.tempo.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-tempo
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-tempo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-tempo
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-tempo
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: tempo
+          image: "{{ .Values.monitoring.tempo.image.repository }}:{{ .Values.monitoring.tempo.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.tempo.image.pullPolicy }}
+          args:
+            - "-config.file=/etc/tempo/tempo.yaml"
+          ports:
+            - name: query
+              containerPort: {{ .Values.monitoring.tempo.service.queryPort }}
+            - name: otlp-grpc
+              containerPort: {{ .Values.monitoring.tempo.service.grpcPort }}
+            - name: otlp-http
+              containerPort: {{ .Values.monitoring.tempo.service.httpPort }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/tempo/tempo.yaml
+              subPath: tempo.yaml
+            - name: data
+              mountPath: /var/tempo
+          resources:
+{{- toYaml .Values.monitoring.tempo.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullName }}-tempo-config
+        - name: data
+          {{- if .Values.monitoring.tempo.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-tempo-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-tempo
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-tempo
+spec:
+  type: {{ .Values.monitoring.tempo.service.type }}
+  selector:
+    app: {{ $fullName }}-tempo
+  ports:
+    - name: query
+      port: {{ .Values.monitoring.tempo.service.queryPort }}
+      targetPort: {{ .Values.monitoring.tempo.service.queryPort }}
+      protocol: TCP
+    - name: grpc
+      port: {{ .Values.monitoring.tempo.service.grpcPort }}
+      targetPort: {{ .Values.monitoring.tempo.service.grpcPort }}
+      protocol: TCP
+    - name: http
+      port: {{ .Values.monitoring.tempo.service.httpPort }}
+      targetPort: {{ .Values.monitoring.tempo.service.httpPort }}
+      protocol: TCP
+{{- if .Values.monitoring.tempo.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-tempo-data
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-tempo
+spec:
+  accessModes:
+    {{- range .Values.monitoring.tempo.persistence.accessModes }}
+    - {{ . }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.monitoring.tempo.persistence.size }}
+  {{- if .Values.monitoring.tempo.persistence.storageClassName }}
+  storageClassName: {{ .Values.monitoring.tempo.persistence.storageClassName }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.monitoring.promtail.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-promtail
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-promtail
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-promtail
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-promtail
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: promtail
+          image: "{{ .Values.monitoring.promtail.image.repository }}:{{ .Values.monitoring.promtail.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.promtail.image.pullPolicy }}
+          args:
+            - "-config.file=/etc/promtail/promtail.yaml"
+          volumeMounts:
+            - name: config
+              mountPath: /etc/promtail/promtail.yaml
+              subPath: promtail.yaml
+          resources:
+{{- toYaml .Values.monitoring.promtail.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullName }}-promtail-config
+{{- end }}
+
+{{- if .Values.monitoring.grafana.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-grafana
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-grafana
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-grafana
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-grafana
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: grafana
+          image: "{{ .Values.monitoring.grafana.image.repository }}:{{ .Values.monitoring.grafana.image.tag }}"
+          imagePullPolicy: {{ .Values.monitoring.grafana.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.monitoring.grafana.service.port }}
+          env:
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: {{ .Values.monitoring.grafana.adminPassword | quote }}
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: {{ .Values.monitoring.grafana.allowSignUp | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/grafana
+            - name: datasources
+              mountPath: /etc/grafana/provisioning/datasources/datasources.yaml
+              subPath: datasources.yaml
+            - name: dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards/dashboards.yaml
+              subPath: dashboards.yaml
+          resources:
+{{- toYaml .Values.monitoring.grafana.resources | nindent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.monitoring.grafana.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-grafana-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: datasources
+          configMap:
+            name: {{ $fullName }}-grafana-datasources
+        - name: dashboard-provider
+          configMap:
+            name: {{ $fullName }}-grafana-dashboards
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-grafana
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-grafana
+spec:
+  type: {{ .Values.monitoring.grafana.service.type }}
+  selector:
+    app: {{ $fullName }}-grafana
+  ports:
+    - name: http
+      port: {{ .Values.monitoring.grafana.service.port }}
+      targetPort: {{ .Values.monitoring.grafana.service.port }}
+      protocol: TCP
+{{- if .Values.monitoring.grafana.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-grafana-data
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-grafana
+spec:
+  accessModes:
+    {{- range .Values.monitoring.grafana.persistence.accessModes }}
+    - {{ . }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.monitoring.grafana.persistence.size }}
+  {{- if .Values.monitoring.grafana.persistence.storageClassName }}
+  storageClassName: {{ .Values.monitoring.grafana.persistence.storageClassName }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- end }}

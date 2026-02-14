@@ -1,0 +1,76 @@
+{{- if .Values.nginxProxy.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-nginx
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-nginx
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-nginx
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      {{- if .Values.nginxProxy.sysctls }}
+      securityContext:
+        sysctls:
+          {{- range .Values.nginxProxy.sysctls }}
+          {{- $parts := splitList "=" . }}
+          - name: {{ index $parts 0 | quote }}
+            value: {{ index $parts 1 | quote }}
+          {{- end }}
+      {{- end }}
+      containers:
+        - name: nginx
+          image: "{{ .Values.nginxProxy.image.repository }}:{{ .Values.nginxProxy.image.tag }}"
+          imagePullPolicy: {{ .Values.nginxProxy.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+
+          {{- with .Values.nginxProxy.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.nginxProxy.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          resources:
+{{- toYaml .Values.nginxProxy.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-nginx-config
+        - name: nginx-cache
+          {{- if .Values.nginxProxy.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-stack.fullname" . }}-nginx-cache
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+{{- end }}
