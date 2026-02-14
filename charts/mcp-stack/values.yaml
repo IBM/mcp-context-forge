@@ -934,6 +934,12 @@ mcpContextForge:
     SSO_GENERIC_ISSUER: ""                 # OIDC issuer URL
     SSO_GENERIC_SCOPE: "openid profile email" # OAuth scopes (space-separated)
 
+    # ─ Default Role Configuration ─
+    DEFAULT_ADMIN_ROLE: platform_admin     # global role assigned to admin users
+    DEFAULT_USER_ROLE: platform_viewer     # global role assigned to non-admin users
+    DEFAULT_TEAM_OWNER_ROLE: team_admin    # team-scoped role assigned to team owners
+    DEFAULT_TEAM_MEMBER_ROLE: viewer       # team-scoped role assigned to team members
+
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
     PERSONAL_TEAM_PREFIX: personal         # personal team naming prefix

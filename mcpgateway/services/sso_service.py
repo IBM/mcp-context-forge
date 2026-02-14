@@ -978,13 +978,13 @@ class SSOService:
             logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
             return role_assignments
 
-        # Handle EntraID admin groups -> platform_admin
+        # Handle EntraID admin groups -> admin role
         if has_entra_admin_groups:
             admin_groups_lower = [g.lower() for g in settings.sso_entra_admin_groups]
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
-                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped EntraID admin group to platform_admin role for {user_email}")
+                    role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {user_email}")
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
@@ -992,7 +992,7 @@ class SSOService:
         for group in user_groups:
             if group in role_mappings:
                 role_name = role_mappings[group]
-                if role_name not in ["admin", "platform_admin"]:
+                if role_name not in ["admin", settings.default_admin_role]:
                     role_names_to_lookup.add(role_name)
 
         # Add default role to lookup if needed
@@ -1014,10 +1014,10 @@ class SSOService:
         for group in user_groups:
             if group in role_mappings:
                 role_name = role_mappings[group]
-                # Special case for "admin"/"platform_admin" shorthand
-                if role_name in ["admin", "platform_admin"]:
-                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped group to platform_admin role for {user_email}")
+                # Special case for "admin" shorthand or configured admin role name
+                if role_name in ["admin", settings.default_admin_role]:
+                    role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {user_email}")
                     continue
 
                 # Use pre-fetched role from cache
