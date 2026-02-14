@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, field_serializer, field_validator, model_
 from mcpgateway.common.models import TransportType
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.plugins.framework.constants import CMD, CWD, ENV, EXTERNAL_PLUGIN_TYPE, IGNORE_CONFIG_EXTERNAL, PYTHON_SUFFIX, SCRIPT, UDS, URL
-from mcpgateway.plugins.framework.settings import PluginsSettings
+from mcpgateway.plugins.framework.settings import get_settings
 
 T = TypeVar("T")
 
@@ -291,7 +291,7 @@ class MCPClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPClientTLSConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.client_mtls_certfile:
@@ -329,7 +329,7 @@ class MCPServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             MCPServerTLSConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.server_ssl_keyfile:
@@ -426,7 +426,7 @@ class MCPServerConfig(BaseModel):
         Returns:
             MCPServerConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.server_host:
@@ -676,7 +676,7 @@ class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCClientTLSConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_client_mtls_certfile:
@@ -731,7 +731,7 @@ class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
         Returns:
             GRPCServerTLSConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_server_ssl_keyfile:
@@ -965,7 +965,7 @@ class GRPCServerConfig(BaseModel):
         Returns:
             GRPCServerConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.grpc_server_host:
@@ -1051,7 +1051,7 @@ class UnixSocketServerConfig(BaseModel):
         Returns:
             UnixSocketServerConfig instance or None if no environment variables are set.
         """
-        s = PluginsSettings()
+        s = get_settings()
         data: dict[str, Any] = {}
 
         if s.unix_socket_path:

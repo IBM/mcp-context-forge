@@ -10,6 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from mcpgateway.plugins.framework.settings import get_settings
+
 # Save original RBAC decorator functions at conftest import time.
 # Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
@@ -54,3 +56,11 @@ def mock_permission_service(monkeypatch):
     MockPermissionService.check_admin_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", MockPermissionService)
     return MockPermissionService
+
+
+@pytest.fixture(autouse=True)
+def _clear_plugins_settings_cache():
+    """Clear the get_settings LRU cache so env changes take effect per test."""
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
