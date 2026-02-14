@@ -14770,8 +14770,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         const teamName = button.getAttribute('data-team-name');
         if (confirm(`Leave team "${teamName}"? You will lose access to team resources.`)) {
           htmx.ajax('POST', window.ROOT_PATH + '/admin/teams/' + teamId + '/leave', {
-            target: '#unified-teams-list',
-            swap: 'innerHTML'
+            target: 'body',
+            swap: 'none'
           });
           // Backend HX-Trigger handles refresh with proper delay for DB commit
         }
@@ -14828,8 +14828,8 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       function cancelJoinRequest(teamId, requestId) {
         if (confirm('Cancel your join request?')) {
           htmx.ajax('DELETE', window.ROOT_PATH + '/admin/teams/' + teamId + '/join-request/' + requestId, {
-            target: '#unified-teams-list',
-            swap: 'innerHTML'
+            target: 'body',
+            swap: 'none'
           });
           // Backend HX-Trigger handles refresh with proper delay for DB commit
         }
