@@ -1,0 +1,109 @@
+[license]
+# A package is valid if all parsed license terms are matched by allowed patterns.
+# Unknown/missing terms fail by default unless explicitly allowlisted.
+allow_unknown = false
+
+# SPDX-like patterns that are treated as acceptable for this repo.
+# Note: _compile_patterns() applies re.IGNORECASE, so no inline (?i) needed.
+allowed_license_patterns = [
+  "^apache-2\\.0$",
+  "^apache-2\\.0-with-llvm-exception$",
+  "^mit$",
+  "^mit-0$",
+  "^bsd-2-clause$",
+  "^bsd-3-clause$",
+  "^bsd$",
+  "^0bsd$",
+  "^bsl-1\\.0$",
+  "^isc$",
+  "^iscl$",
+  "^unlicense$",
+  "^public-domain$",
+  "^cdla-permissive-1\\.0$",
+  "^cdla-permissive-2\\.0$",
+  "^dfsg$",
+  "^approved$",
+  "^psf-2\\.0$",
+  "^mpl-2\\.0$",
+  "^zpl-2\\.1$",
+  "^unicode-3\\.0$",
+  "^llvm-exception$",
+  "^zlib$",
+  "^openssl$",
+  "^cc0-1\\.0$",
+  "^wtfpl$",
+  "^artistic-2\\.0$",
+  "^ncsa$",
+  "^postgresql$",
+  "^curl$",
+  "^x11$",
+  "^cnri-python$",
+  "^hpnd$",
+  "^dual-license$",
+]
+
+# Local repository files (e.g. pyproject.toml in this repo) must be Apache-2.0 only.
+allowed_local_license_patterns = [
+  "^apache-2\\.0$",
+]
+
+# SPDX-like patterns that are likely incompatible with Apache-2.0 / commercial use.
+# Note: _compile_patterns() applies re.IGNORECASE, so no inline (?i) needed.
+disallowed_license_patterns = [
+  "\\bagpl",
+  "\\bgpl",
+  "\\blgpl",
+  "sspl",
+  "rpl",
+  "cpal",
+  "\\bosp",
+  "cc-by-nc",
+]
+
+# Explicit package exceptions.
+# Add entries as inline tables, e.g.:
+#   allowlist = [
+#     { name = "example-package", license = "MIT", reason = "approved by legal review" },
+#     { name = "example-*", reason = "all example packages approved" },
+#   ]
+allowlist = [
+  # Dev-only tools (pylint ecosystem) — GPL/LGPL licensed but never shipped to production.
+  { name = "astroid", license = "LGPL", reason = "pylint dependency, dev-only" },
+  { name = "pylint-celery", license = "GPL", reason = "pylint plugin, dev-only" },
+  { name = "pylint-django", license = "GPL", reason = "pylint plugin, dev-only" },
+  { name = "pylint-plugin-utils", license = "GPL", reason = "pylint plugin, dev-only" },
+  # chardet: LGPL licensed, pulled in by older dependencies; dev-only transitive dep.
+  { name = "chardet", license = "LGPL", reason = "legacy encoding detector, dev-only transitive dep" },
+  # pyphen: GPL-licensed hyphenation library, used only in mcp_eval_server for text analysis.
+  { name = "pyphen", license = "GPL", reason = "hyphenation library, evaluation server only" },
+  # zeroconf: LGPL-licensed, used in OPA plugin for service discovery.
+  { name = "zeroconf", license = "LGPL", reason = "service discovery, OPA plugin only" },
+  # jinja2-ansible-filters: GPL-licensed, used in OPA plugin.
+  { name = "jinja2-ansible-filters", license = "GPL", reason = "Ansible filters, OPA plugin only" },
+  # NVIDIA CUDA runtime packages — proprietary but standard CUDA toolkit.
+  { name = "nvidia-*", reason = "NVIDIA CUDA toolkit, proprietary but standard runtime" },
+  { name = "cuda-bindings", reason = "NVIDIA CUDA bindings, proprietary but standard runtime" },
+  # Packages with missing/broken license metadata in sub-venvs (verified licenses manually).
+  { name = "docutils", reason = "BSD/Public-Domain dual-licensed; metadata missing in sub-venvs" },
+  { name = "mergedeep", reason = "MIT licensed; metadata missing in some installs" },
+  { name = "ptyprocess", reason = "ISC licensed; metadata missing in some installs" },
+  { name = "matplotlib-inline", reason = "BSD-3-Clause; metadata missing in some installs" },
+  { name = "uuid", reason = "stdlib backport; metadata missing" },
+  { name = "cedarpy", reason = "Apache-2.0; AWS Cedar policy engine bindings" },
+  # Local Rust crate missing license declaration in Cargo.toml.
+  { name = "filesystem-server", reason = "local crate, Apache-2.0 (repo license)" },
+]
+
+[scan]
+check_pyproject_licenses = true
+check_pip_dependencies = true
+check_go_dependencies = true
+check_rust_dependencies = true
+ignore_dev_dependency_group_names = [
+  "dev",
+  "development",
+  "developer",
+]
+
+[report]
+max_unknown_terms_to_show = 5
