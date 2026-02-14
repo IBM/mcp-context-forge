@@ -1,0 +1,33 @@
+[workspace]
+
+[package]
+name = "secrets_detection"
+version = "1.0.0-BETA-2"
+edition = "2024"
+authors = ["MCP Gateway Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+description = "Secret detection plugin"
+
+[lib]
+name = "secret_detection"
+crate-type = ["rlib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["abi3-py311"] }
+regex = "1.12"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+[[bench]]
+name = "secrets_detection"
+harness = false
