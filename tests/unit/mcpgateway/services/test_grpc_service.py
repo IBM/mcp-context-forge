@@ -125,13 +125,20 @@ class TestGrpcService:
                 mock_db,
                 sample_service_create,
                 user_email="test@example.com",
-                metadata={"ip": "127.0.0.1"},
+                metadata={"created_by": "test@example.com", "created_from_ip": "127.0.0.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1},
             )
 
         assert result.name == "test-grpc-service"
         assert result.target == "localhost:50051"
         mock_db.add.assert_called_once()
         mock_db.commit.assert_called()
+
+        # Verify audit metadata was persisted on the DB object
+        db_obj = mock_db.add.call_args[0][0]
+        assert db_obj.created_by == "test@example.com"
+        assert db_obj.created_from_ip == "127.0.0.1"
+        assert db_obj.created_via == "ui"
+        assert db_obj.created_user_agent == "test/1.0"
 
     async def test_register_service_name_conflict(self, service, mock_db, sample_service_create, sample_db_service):
         """Test registration with conflicting name."""

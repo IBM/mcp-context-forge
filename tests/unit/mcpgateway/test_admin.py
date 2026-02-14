@@ -9206,7 +9206,8 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.capture = MagicMock(return_value={"ip": "1.1.1.1"})
+    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
+    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -9254,7 +9255,7 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.capture = MagicMock(return_value={"ip": "1.1.1.1"})
+    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -9288,7 +9289,7 @@ async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.capture = MagicMock(return_value={"ip": "1.1.1.1"})
+    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
