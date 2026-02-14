@@ -1311,7 +1311,6 @@ class TestAdminToolRoutes:
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
 
-
     @patch.object(ToolService, "update_tool")
     # @pytest.mark.skip("Need to investigate")
     async def test_admin_edit_tool_with_empty_optional_fields(self, mock_update_tool, mock_request, mock_db):
@@ -3995,7 +3994,6 @@ class TestOAuthFunctionality:
         assert isinstance(response, JSONResponse)
         assert response.status_code == 200
 
-
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_oauth_assembled_from_form_fields(self, mock_register_gateway, mock_request, mock_db):
         """Test adding gateway with OAuth config assembled from individual UI form fields."""
@@ -4263,7 +4261,6 @@ class TestOAuthFunctionality:
         gateway_update = mock_update_gateway.call_args.args[2]
         assert gateway_update.oauth_config == {"grant_type": "client_credentials"}
 
-
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_ca_certificate_signed(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
         """Test adding gateway with CA certificate signing enabled."""
@@ -4331,7 +4328,6 @@ class TestOAuthFunctionality:
             assert gateway_create.ca_certificate == "CERT"
             assert gateway_create.ca_certificate_sig is None
             assert gateway_create.signing_algorithm is None
-
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_ca_certificate_signing_failure(self, mock_register_gateway, mock_request, mock_db, monkeypatch):
@@ -6063,10 +6059,7 @@ async def test_admin_teams_partial_html_relationship_filters_and_query_params(mo
     team_member = SimpleNamespace(id="team-2", name="Beta Team", slug="beta", description="Beta", visibility="private", is_active=True, is_personal=False)
 
     # Hit the discover_public_teams limit branch (>= 500) without blowing up runtime.
-    public_teams = [
-        SimpleNamespace(id=f"pub-{i}", name=f"Public {i}", slug=f"pub-{i}", description="", visibility="public", is_active=True, is_personal=False)
-        for i in range(500)
-    ]
+    public_teams = [SimpleNamespace(id=f"pub-{i}", name=f"Public {i}", slug=f"pub-{i}", description="", visibility="public", is_active=True, is_personal=False) for i in range(500)]
 
     team_service = MagicMock()
     team_service.get_user_teams = AsyncMock(return_value=[team_owner, team_member])
@@ -6282,7 +6275,11 @@ async def test_admin_users_partial_html_selector_team_members_fetch_exception(mo
     auth_service = MagicMock()
     auth_service.list_users = AsyncMock(
         return_value=SimpleNamespace(
-            data=[SimpleNamespace(email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)],
+            data=[
+                SimpleNamespace(
+                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False
+                )
+            ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
         )
     )
@@ -9195,7 +9192,18 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
 
     mgr = MagicMock()
-    mgr.list_services = AsyncMock(return_value=[{"id": "svc-1"}])
+    # Mock paginated response from list_services
+    mock_service = MagicMock()
+    mock_service.model_dump = MagicMock(return_value={"id": "svc-1"})
+    from mcpgateway.schemas import PaginationMeta, PaginationLinks
+
+    mgr.list_services = AsyncMock(
+        return_value={
+            "data": [mock_service],
+            "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False),
+            "links": PaginationLinks(self="/admin/grpc?page=1&per_page=50", first="/admin/grpc?page=1&per_page=50", last="/admin/grpc?page=1&per_page=50"),
+        }
+    )
     mgr.register_service = AsyncMock(return_value={"id": "svc-1"})
     mgr.get_service = AsyncMock(return_value=SimpleNamespace(enabled=True))
     mgr.update_service = AsyncMock(return_value={"id": "svc-1", "name": "updated"})
@@ -9217,8 +9225,11 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     service = GrpcServiceCreate(name="grpc-service", target="localhost:50051")
     update = GrpcServiceUpdate(name="grpc-service-updated")
 
-    result = await admin_list_grpc_services(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
-    assert result == [{"id": "svc-1"}]
+    result = await admin_list_grpc_services(page=1, per_page=50, include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    assert "data" in result
+    assert len(result["data"]) == 1
+    assert result["data"][0]["id"] == "svc-1"
+    assert "pagination" in result
 
     response = await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response.media_type == "application/json"
@@ -9488,7 +9499,6 @@ async def test_admin_team_members_partial_html_invalid_team_id(monkeypatch, mock
 async def test_admin_team_members_partial_html_team_not_found(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     team_id = str(uuid4())
-    normalized_id = UUID(team_id).hex
 
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=None)
@@ -9572,7 +9582,6 @@ async def test_admin_team_non_members_partial_html_invalid_team_id(monkeypatch, 
 async def test_admin_team_non_members_partial_html_team_not_found(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     team_id = str(uuid4())
-    normalized_id = UUID(team_id).hex
 
     auth_service = MagicMock()
     auth_service.list_users_not_in_team = AsyncMock(return_value=SimpleNamespace(data=[], pagination=make_pagination_meta(page=1, per_page=5, total_items=0)))
@@ -11667,7 +11676,9 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
     team_service = MagicMock()
     team_service.verify_team_for_user = AsyncMock(return_value=str(uuid4()))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-    monkeypatch.setattr("mcpgateway.admin.MetadataCapture.extract_modification_metadata", lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None})
+    monkeypatch.setattr(
+        "mcpgateway.admin.MetadataCapture.extract_modification_metadata", lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None}
+    )
 
     response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
     assert response.status_code == 200
@@ -14450,7 +14461,7 @@ class TestAdminGetToolPassesTeamRoles:
             patch.object(ToolService, "get_tool", new_callable=AsyncMock, return_value=tool_read) as mock_get,
             patch("mcpgateway.admin._get_user_team_roles", return_value={"team-1": "owner"}) as mock_roles,
         ):
-            result = await admin_get_tool("tool-1", mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_get_tool("tool-1", mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_get.assert_called_once()
@@ -14471,7 +14482,7 @@ class TestAdminGetToolPassesTeamRoles:
         )
 
         with patch("mcpgateway.admin.tool_service", mock_tool_svc), patch("mcpgateway.admin._get_user_team_roles", return_value={"team-2": "member"}) as mock_roles:
-            result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_tool_svc.list_tools.assert_called_once()

@@ -13292,21 +13292,32 @@ async def admin_test_a2a_agent(
 @admin_router.get("/grpc", response_model=PaginatedResponse)
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_list_grpc_services(
+    page: int = Query(1, ge=1, description="Page number (1-indexed)"),
+    per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
     team_id: Optional[str] = Depends(_validated_team_id_param),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
-):
-    """List all gRPC services.
+) -> Dict[str, Any]:
+    """List all gRPC services for the admin UI with pagination support.
+
+    This endpoint retrieves a paginated list of gRPC services. Administrators can
+    optionally include inactive services for management or auditing purposes.
+    Uses offset-based (page/per_page) pagination.
 
     Args:
-        include_inactive: Include disabled services
-        team_id: Filter by team ID
-        db: Database session
-        user: Authenticated user
+        page: Page number (1-indexed) for offset pagination
+        per_page: Number of items per page
+        include_inactive: Whether to include inactive services in the results
+        team_id: Optional team ID to filter by specific team
+        db: Database session dependency
+        user: Authenticated user dependency
 
     Returns:
-        List of gRPC services
+        Dict[str, Any]: A dictionary containing:
+            - data: List of gRPC service records formatted with by_alias=True
+            - pagination: Pagination metadata
+            - links: Pagination links (optional)
 
     Raises:
         HTTPException: If gRPC support is disabled or not available
@@ -13315,7 +13326,23 @@ async def admin_list_grpc_services(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     user_email = get_user_email(user)
-    return await grpc_service_mgr.list_services(db, include_inactive, user_email, team_id)
+
+    # Call grpc_service_mgr.list_services with page-based pagination
+    paginated_result = await grpc_service_mgr.list_services(
+        db=db,
+        include_inactive=include_inactive,
+        page=page,
+        per_page=per_page,
+        user_email=user_email,
+        team_id=team_id,
+    )
+
+    # Return standardized paginated response
+    return {
+        "data": [service.model_dump(by_alias=True) for service in paginated_result["data"]],
+        "pagination": paginated_result["pagination"].model_dump(),
+        "links": paginated_result["links"].model_dump() if paginated_result["links"] else None,
+    }
 
 
 @admin_router.post("/grpc")
