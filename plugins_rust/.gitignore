@@ -22,6 +22,12 @@ benchmarks/results/*.csv
 coverage/
 htmlcov/
 
+# Flamegraph profiling
+flamegraph.svg
+cargo-flamegraph.trace
+perf.data
+perf.data.old
+
 # IDE
 .vscode/
 .idea/
