@@ -42,7 +42,7 @@ repos:
       - id: detect-private-key
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
-        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py
+        exclude: (mcpgateway/utils/generate_keys|tests/unit/mcpgateway/utils/test_generate_keys|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils)\.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs
         types: [text]
 
   #   - repo: https://github.com/Yelp/detect-secrets
@@ -262,6 +262,7 @@ repos:
         name: ✅ Check Shebang Scripts Are Executable
         description: Ensures that (non-binary) files with a shebang are executable.
         types: [text]
+        exclude: plugins_rust/secrets_detection/compare_performance\.py
         stages: [pre-commit, pre-push, manual]
 
       - id: forbid-new-submodules
