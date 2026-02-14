@@ -7,15 +7,11 @@ Playwright E2E tests verifying autocomplete attributes on rendered password
 inputs to prevent browser autofill on API key, secret, and token fields.
 """
 
-# Standard
-import re
-
 # Third-Party
 from playwright.sync_api import expect
 import pytest
 
 # Local
-from .conftest import BASE_URL
 from .pages.admin_page import AdminPage
 from .pages.gateways_page import GatewaysPage
 from .pages.login_page import LoginPage

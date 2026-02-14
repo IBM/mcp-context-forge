@@ -36,11 +36,6 @@ class _PasswordInputCollector(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
         self.fields: List[Dict[str, Optional[str]]] = []
-        self._in_comment = False
-
-    def handle_comment(self, data: str) -> None:
-        # We don't collect anything from commented-out markup.
-        pass
 
     def handle_starttag(self, tag: str, attrs: List[Tuple[str, Optional[str]]]) -> None:
         if tag != "input":
@@ -165,7 +160,7 @@ class TestPasswordAutocompleteAttributes:
 
         missing: List[str] = []
         for field in parser.fields:
-            if "autocomplete" not in field:
+            if "autocomplete" not in field:  # pragma: no cover
                 ident = field.get("id") or field.get("name") or "(anonymous)"
                 missing.append(f"admin.html (commented)#{ident}")
 
