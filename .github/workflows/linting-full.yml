@@ -1,0 +1,63 @@
+name: linting-full
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  linting-full:
+    name: linting-full
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Run pre-commit
+        run: make --no-print-directory pre-commit
+
+      - name: Determine commitlint range
+        id: commit_range
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            echo "from=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+            echo "to=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            echo "from=${{ github.event.before }}" >> "$GITHUB_OUTPUT"
+            echo "to=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "from=HEAD~1" >> "$GITHUB_OUTPUT"
+            echo "to=HEAD" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run linting-full gates
+        run: |
+          make --no-print-directory linting-full \
+            COMMITLINT_FROM="${{ steps.commit_range.outputs.from }}" \
+            COMMITLINT_TO="${{ steps.commit_range.outputs.to }}"
