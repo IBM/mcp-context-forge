@@ -29,10 +29,6 @@ crate-type = ["rlib"]
 pyo3.workspace = true
 pii_filter = { path = "pii_filter" }
 
-
-[dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
-
 [profile.release]
 opt-level = 3
 lto = "fat"
