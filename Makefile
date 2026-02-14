@@ -1424,6 +1424,7 @@ LOADTEST_USERS ?= 4000
 LOADTEST_SPAWN_RATE ?= 200
 LOADTEST_RUN_TIME ?= 5m
 LOADTEST_PROCESSES ?= -1
+LOADTEST_UI_PORT ?= 8090
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
@@ -1473,9 +1474,9 @@ load-test:                                 ## Run HTTP load test (4000 users, 5m
 	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
-load-test-ui:                              ## Start Locust web UI at http://localhost:8089
+load-test-ui:                              ## Start Locust web UI at http://localhost:$(LOADTEST_UI_PORT)
 	@echo "🔥 Starting Locust Web UI (optimized for 4000+ users)..."
-	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🌐 Open http://localhost:$(LOADTEST_UI_PORT) in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
@@ -1509,6 +1510,7 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
 			--processes=$(LOADTEST_PROCESSES) \
+			--web-port=$(LOADTEST_UI_PORT) \
 			--class-picker"
 
 load-test-cli:                             ## Run HTTP load test with live stats (same as UI but headless)
