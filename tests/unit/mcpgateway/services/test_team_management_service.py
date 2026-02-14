@@ -1876,7 +1876,7 @@ class TestTeamManagementService:
                 result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
 
                 # Verify
-                assert result is True
+                assert result is not None
                 mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
                 mock_role_service.assign_role_to_user.assert_called_once()
                 call_args = mock_role_service.assign_role_to_user.call_args[1]
@@ -1934,7 +1934,7 @@ class TestTeamManagementService:
             result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
 
             # Verify - should NOT assign role again
-            assert result is True
+            assert result is not None
             mock_role_service.get_role_by_name.assert_called_once()
             mock_role_service.assign_role_to_user.assert_not_called()
 
@@ -2027,7 +2027,7 @@ class TestTeamManagementService:
                 result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
 
                 # Verify - member should still be added even without role
-                assert result is True
+                assert result is not None
                 mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
                 mock_role_service.assign_role_to_user.assert_not_called()
 
@@ -2077,7 +2077,7 @@ class TestTeamManagementService:
             result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
 
             # Verify - member should still be added
-            assert result is True
+            assert result is not None
 
     @pytest.mark.asyncio
     async def test_add_member_reactivate_assigns_role(self, service, mock_db, mock_team, mock_user, mock_membership):
@@ -2131,7 +2131,7 @@ class TestTeamManagementService:
                 result = await service.add_member_to_team(team_id="team123", user_email="user@example.com", role="member", invited_by="admin@example.com")
 
                 # Verify
-                assert result is True
+                assert result is not None
                 assert mock_membership.is_active is True
                 mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
                 mock_role_service.assign_role_to_user.assert_called_once()

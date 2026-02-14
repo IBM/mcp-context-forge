@@ -279,6 +279,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.add_member_to_team = AsyncMock(return_value=new_member)
             MockService.return_value = mock_service
 
@@ -289,6 +290,23 @@ class TestTeamsRouterV2:
             assert result.team_id == team_id
             assert result.invited_by == mock_user_context["email"]
             mock_service.add_member_to_team.assert_called_once_with(team_id, request.email, request.role, invited_by=mock_user_context["email"])
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_insufficient_permissions(self, mock_user_context, mock_db):
+        """Test adding a team member without owner permissions."""
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="member")
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_add_team_member_add_fails(self, mock_user_context, mock_db):
@@ -358,6 +376,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.add_member_to_team = AsyncMock(side_effect=TeamNotFoundError("Team not found"))
             MockService.return_value = mock_service
 
@@ -377,6 +396,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.add_member_to_team = AsyncMock(side_effect=MemberAlreadyExistsError("Member already exists"))
             MockService.return_value = mock_service
 
@@ -396,6 +416,7 @@ class TestTeamsRouterV2:
 
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
             mock_service.add_member_to_team = AsyncMock(side_effect=TeamMemberLimitExceededError("Team member limit exceeded"))
             MockService.return_value = mock_service
 

@@ -6031,6 +6031,7 @@ class TeamMemberAddRequest(BaseModel):
         email: Email address of user to be added to the team
         role: New role for the team member
     """
+
     email: EmailStr = Field(..., description="Email address of user to be added to the team")
     role: Literal["owner", "member"] = Field(..., description="New role for the team member")
 
