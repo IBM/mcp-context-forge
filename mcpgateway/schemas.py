@@ -6980,6 +6980,7 @@ class GrpcServiceRead(BaseModel):
 
     # Team scoping
     team_id: Optional[str] = Field(None, description="Team ID")
+    team: Optional[str] = Field(None, description="Name of the team that owns this resource")
     owner_email: Optional[str] = Field(None, description="Owner email")
     visibility: str = Field(default="public", description="Visibility level")
 

@@ -227,6 +227,20 @@ class TestGrpcService:
         assert len(result) == 1
         assert next_cursor is None
 
+    async def test_list_services_skips_invalid_record(self, service, mock_db):
+        """Test that a corrupted DB record is gracefully skipped."""
+        bad_svc = MagicMock()
+        bad_svc.team_id = None
+        mock_db.commit = MagicMock()
+
+        with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=ValueError("bad data")):
+            with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+                mock_paginate.return_value = ([bad_svc], None)
+                result, next_cursor = await service.list_services(mock_db, include_inactive=False)
+
+        assert len(result) == 0
+        assert next_cursor is None
+
     async def test_list_services_pagination(self, service, mock_db):
         """Test multi-page pagination for gRPC services."""
         # Create multiple mock services

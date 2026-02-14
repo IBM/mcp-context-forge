@@ -31,6 +31,7 @@ except ImportError:
     reflection_pb2_grpc = None  # type: ignore
 
 # Third-Party
+from pydantic import ValidationError
 from sqlalchemy import and_, desc, select
 from sqlalchemy.orm import Session
 
@@ -226,8 +227,11 @@ class GrpcService:
         # Convert to GrpcServiceRead
         result = []
         for s in services_db:
-            s.team = team_map.get(s.team_id) if s.team_id else None
-            result.append(GrpcServiceRead.model_validate(s))
+            try:
+                s.team = team_map.get(s.team_id) if s.team_id else None
+                result.append(GrpcServiceRead.model_validate(s))
+            except (ValidationError, ValueError, KeyError, TypeError) as e:
+                logger.exception(f"Failed to convert gRPC service {getattr(s, 'id', 'unknown')} ({getattr(s, 'name', 'unknown')}): {e}")
 
         # Return appropriate format based on pagination type
         if page is not None:
