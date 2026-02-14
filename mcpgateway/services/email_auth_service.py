@@ -415,7 +415,7 @@ class EmailAuthService:
                 granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
 
                 # Determine global role based on admin status
-                global_role_name = "platform_admin" if is_admin else "platform_viewer"
+                global_role_name = settings.default_admin_role if is_admin else settings.default_user_role
                 global_role = await self.role_service.get_role_by_name(global_role_name, "global")
 
                 if global_role:
@@ -427,18 +427,19 @@ class EmailAuthService:
                 else:
                     logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
 
-                # Assign team_admin role with team scope (if personal team exists)
+                # Assign team owner role with team scope (if personal team exists)
                 if personal_team_id:
-                    team_admin_role = await self.role_service.get_role_by_name("team_admin", "team")
+                    team_owner_role_name = settings.default_team_owner_role
+                    team_owner_role = await self.role_service.get_role_by_name(team_owner_role_name, "team")
 
-                    if team_admin_role:
+                    if team_owner_role:
                         try:
-                            await self.role_service.assign_role_to_user(user_email=email, role_id=team_admin_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
-                            logger.info(f"Assigned team_admin role (team scope: {personal_team_id}) to user {email}")
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=team_owner_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                            logger.info(f"Assigned {team_owner_role_name} role (team scope: {personal_team_id}) to user {email}")
                         except ValueError as e:
-                            logger.warning(f"Could not assign team_admin role to {email}: {e}")
+                            logger.warning(f"Could not assign {team_owner_role_name} role to {email}: {e}")
                     else:
-                        logger.warning(f"team_admin role not found. User {email} created without team admin role.")
+                        logger.warning(f"{team_owner_role_name} role not found. User {email} created without team owner role.")
 
             except Exception as role_error:
                 logger.error(f"Failed to assign roles to user {email}: {role_error}")
@@ -1132,40 +1133,42 @@ class EmailAuthService:
                     user.admin_origin = admin_origin_source if is_admin else None
 
                     # Sync global role assignment with is_admin flag:
-                    # Promotion: revoke platform_viewer, assign platform_admin
-                    # Demotion: revoke platform_admin, assign platform_viewer
+                    # Promotion: revoke default_user_role, assign default_admin_role
+                    # Demotion: revoke default_admin_role, assign default_user_role
                     try:
-                        platform_admin_role = await self.role_service.get_role_by_name("platform_admin", "global")
-                        platform_viewer_role = await self.role_service.get_role_by_name("platform_viewer", "global")
+                        admin_role_name = settings.default_admin_role
+                        user_role_name = settings.default_user_role
+                        admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+                        user_role = await self.role_service.get_role_by_name(user_role_name, "global")
 
                         if is_admin:
-                            # Promotion: assign platform_admin, revoke platform_viewer
-                            if platform_admin_role:
-                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                            # Promotion: assign admin role, revoke user role
+                            if admin_role:
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
-                                    logger.info(f"Assigned platform_admin role to {email}")
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned {admin_role_name} role to {email}")
                             else:
-                                logger.warning(f"platform_admin role not found, cannot assign to {email}")
+                                logger.warning(f"{admin_role_name} role not found, cannot assign to {email}")
 
-                            if platform_viewer_role:
-                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
+                            if user_role:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                                 if revoked:
-                                    logger.info(f"Revoked platform_viewer role from {email}")
+                                    logger.info(f"Revoked {user_role_name} role from {email}")
                         else:
-                            # Demotion: revoke platform_admin, assign platform_viewer
-                            if platform_admin_role:
-                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                            # Demotion: revoke admin role, assign user role
+                            if admin_role:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
                                 if revoked:
-                                    logger.info(f"Revoked platform_admin role from {email}")
+                                    logger.info(f"Revoked {admin_role_name} role from {email}")
 
-                            if platform_viewer_role:
-                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None)
+                            if user_role:
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
                                 if not existing or not existing.is_active:
-                                    await self.role_service.assign_role_to_user(user_email=email, role_id=platform_viewer_role.id, scope="global", scope_id=None, granted_by=email)
-                                    logger.info(f"Assigned platform_viewer role to {email}")
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned {user_role_name} role to {email}")
                             else:
-                                logger.warning(f"platform_viewer role not found, cannot assign to {email}")
+                                logger.warning(f"{user_role_name} role not found, cannot assign to {email}")
 
                     except Exception as e:
                         logger.warning(f"Failed to sync global roles for {email}: {e}")

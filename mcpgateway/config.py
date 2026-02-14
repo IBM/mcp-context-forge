@@ -481,6 +481,12 @@ class Settings(BaseSettings):
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
 
+    # Default Role Configuration
+    default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
+    default_user_role: str = Field(default="platform_viewer", description="Global role assigned to non-admin users")
+    default_team_owner_role: str = Field(default="team_admin", description="Team-scoped role assigned to team owners (e.g. personal team creator)")
+    default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members")
+
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
