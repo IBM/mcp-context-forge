@@ -884,7 +884,13 @@
                 id="log-stats"
                 class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300"
               >
-                <span class="text-sm">Loading...</span>
+                <div class="flex items-center justify-center p-4">
+                  <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span class="ml-2 text-gray-600 dark:text-gray-400">Loading logs...</span>
+                </div>
               </div>
 
               <!-- Log Table -->
@@ -2052,13 +2058,12 @@
         <div class="container mx-auto">
           <!-- Server Grid (includes filters and overview) -->
           <div id="mcp-registry-servers">
-            <div class="text-center py-8">
-              <div
-                class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-gray-900 dark:border-gray-100"
-              ></div>
-              <p class="mt-2 text-gray-600 dark:text-gray-400">
-                Loading MCP Registry servers...
-              </p>
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading MCP Registry servers...</span>
             </div>
           </div>
         </div>
@@ -5840,23 +5845,24 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
 
           <!-- Loading indicator -->
-          <div id="teams-loading" class="htmx-indicator text-center py-4 hidden">
-            <svg class="animate-spin h-5 w-5 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <p class="mt-2 text-sm text-gray-500">Loading teams...</p>
+          <div id="teams-loading" class="htmx-indicator">
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading teams...</span>
+            </div>
           </div>
 
           <!-- Teams List - loaded via initializeTeamManagement() when tab is shown -->
           <div id="unified-teams-list" class="space-y-4">
-            <div class="text-center py-8">
-              <div class="animate-pulse text-gray-500 dark:text-gray-400">
-                Loading teams...
-              </div>
-              <div class="text-xs text-gray-400 dark:text-gray-500 mt-2">
-                Note: Team management requires email authentication
-              </div>
+            <div class="flex items-center justify-center p-4">
+              <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+              <span class="ml-2 text-gray-600 dark:text-gray-400">Loading teams...</span>
             </div>
           </div>
 
@@ -6365,12 +6371,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                  hx-swap="innerHTML"
                  hx-indicator="#tokens-loading">
               <!-- Loading placeholder -->
-              <div class="flex items-center justify-center p-8">
+              <div class="flex items-center justify-center p-4">
                 <svg class="animate-spin h-8 w-8 text-indigo-600 dark:text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                   <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                 </svg>
-                <span class="ml-3 text-gray-600 dark:text-gray-400">Loading tokens...</span>
+                <span class="ml-2 text-gray-600 dark:text-gray-400">Loading tokens...</span>
               </div>
             </div>
 
