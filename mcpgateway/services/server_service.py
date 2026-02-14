@@ -1921,13 +1921,13 @@ class ServerService:
         Args:
             db: Database session.
             server_id: The ID of the server.
-            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123").
+            resource_base_url: The base URL for the resource (e.g., "https://gateway.example.com/servers/abc123/mcp").
 
         Returns:
             Dict containing RFC 9728 Protected Resource Metadata:
-            - resource: The protected resource identifier (URL)
-            - authorization_servers: List of authorization server issuer URIs
-            - bearer_methods_supported: Supported bearer token methods
+            - resource: The protected resource identifier (URL with /mcp suffix)
+            - authorization_servers: JSON array of authorization server issuer URIs (RFC 9728 Section 2)
+            - bearer_methods_supported: Supported bearer token methods (always ["header"])
             - scopes_supported: Optional list of supported scopes
 
         Raises:
@@ -1962,12 +1962,12 @@ class ServerService:
         if not oauth_config:
             raise ServerError(f"OAuth not configured for server: {server_id}")
 
-        # Extract authorization server(s) - support both list and single value
+        # Extract authorization server(s) - support both list and single value in config
         authorization_servers = oauth_config.get("authorization_servers", [])
         if not authorization_servers:
             auth_server = oauth_config.get("authorization_server")
             if auth_server:
-                authorization_servers = [auth_server]
+                authorization_servers = [auth_server] if isinstance(auth_server, str) else auth_server
 
         if not authorization_servers:
             raise ServerError(f"OAuth authorization_server not configured for server: {server_id}")
