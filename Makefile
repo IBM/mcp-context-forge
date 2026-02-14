@@ -5757,6 +5757,15 @@ PLAYWRIGHT_CI_SMOKE_TESTS := \
 	tests/playwright/test_version_page.py::TestVersionPage::test_version_panel_loads \
 	tests/playwright/test_mcp_registry_page.py::TestMCPRegistryPage::test_registry_panel_loads
 
+# default path when FILE is not provided
+PLAYWRIGHT_TEST_TARGET ?= tests/playwright/
+
+# If FILE is set, use that instead of the whole folder
+ifdef FILE
+  PLAYWRIGHT_TEST_TARGET := $(FILE)
+endif
+
+
 ## --- Playwright Setup -------------------------------------------------------
 playwright-install:
 	@echo "🎭 Installing Playwright browsers (chromium)..."
@@ -5793,7 +5802,7 @@ test-ui: playwright-install
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		python -m pytest tests/playwright/ -v --headed --screenshot=only-on-failure \
+		python -m pytest ${PLAYWRIGHT_TEST_TARGET} -v --headed --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
@@ -5804,7 +5813,7 @@ test-ui-headless: playwright-install
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
+		pytest ${PLAYWRIGHT_TEST_TARGET} -v --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
@@ -5814,7 +5823,7 @@ test-ui-debug: playwright-install
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
+		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest ${PLAYWRIGHT_TEST_TARGET} -v -s --headed \
 		--browser chromium"
 
 test-ui-smoke: playwright-install
