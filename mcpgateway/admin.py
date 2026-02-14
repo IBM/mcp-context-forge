@@ -13344,7 +13344,7 @@ async def admin_create_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
-        metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
+        metadata = MetadataCapture.extract_creation_metadata(request, user)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.register_service(db, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result), status_code=201)
@@ -13413,7 +13413,7 @@ async def admin_update_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
-        metadata = MetadataCapture.capture(request)  # pylint: disable=no-member
+        metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
         user_email = get_user_email(user)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result))
