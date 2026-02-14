@@ -42,12 +42,22 @@ from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, r
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
 
-try:
-    from pgvector.sqlalchemy import Vector
-    HAS_PGVECTOR = True
-except ImportError:
-    HAS_PGVECTOR = False
-    Vector = None  # type: ignore[assignment,misc]
+if TYPE_CHECKING:
+    from pgvector.sqlalchemy import Vector # type: ignore
+else:
+    try:
+        from pgvector.sqlalchemy import Vector  # type: ignore
+        HAS_PGVECTOR = True
+    except ImportError:
+        HAS_PGVECTOR = False
+        
+        class Vector:  # type: ignore[no-redef]  ← Change from 'def' to 'class'
+            """Dummy Vector class when pgvector not installed."""
+            def __init__(self, *args, **kwargs):
+                raise ImportError(
+                    "pgvector is not installed. "
+                    "Install with: pip install mcp-contextforge-gateway[postgres-vector]"
+                )
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -3221,6 +3231,7 @@ class ToolEmbedding(Base):
 
     if HAS_PGVECTOR:
         __table_args__ = (
+            # Vector similarity index (PostgreSQL/pgvector)
             Index(
                 "idx_tool_embeddings_hnsw",
                 "embedding",
@@ -3228,6 +3239,15 @@ class ToolEmbedding(Base):
                 postgresql_with={"m": settings.hnsw_m, "ef_construction": settings.hnsw_ef_construction},
                 postgresql_ops={"embedding": "vector_cosine_ops"},
             ),
+            # Composite indexes for efficient queries
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
+        )
+    else:
+        __table_args__ = (
+            # Composite indexes for efficient queries (SQLite/other)
+            Index("idx_tool_embeddings_toolid_model", "tool_id", "model_name"),
+            Index("idx_tool_embeddings_toolid_created", "tool_id", "created_at"),
         )
 
     def __repr__(self) -> str:
