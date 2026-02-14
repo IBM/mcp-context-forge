@@ -2629,7 +2629,7 @@ class ToolService:
                 if gateway_slug:
                     prefix = f"{gateway_slug}{settings.gateway_tool_name_separator}"
                     if name.startswith(prefix):
-                        remote_name = name[len(prefix):]
+                        remote_name = name[len(prefix) :]
 
         # Use MCP SDK to connect and call tool
         try:
