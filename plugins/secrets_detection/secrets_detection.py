@@ -193,7 +193,7 @@ class SecretsDetectionPlugin(Plugin):
                 ),
             )
         if self._cfg.redact and new_args != (payload.args or {}):
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=new_args), metadata={"secrets_redacted": True, "count": count})
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args), metadata={"secrets_redacted": True, "count": count})
         return PromptPrehookResult(metadata={"secrets_findings": findings, "count": count} if count else {})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:
