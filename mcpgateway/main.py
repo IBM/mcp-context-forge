@@ -46,7 +46,7 @@ from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -1466,7 +1466,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             error_param: Optional error parameter for login redirect URL.
 
         Returns:
-            RedirectResponse for HTML/HTMX requests, ORJSONResponse for API requests.
+            Response with HX-Redirect for HTMX requests, RedirectResponse for HTML requests, ORJSONResponse for API requests.
         """
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
@@ -1474,6 +1474,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
             if error_param:
                 login_url = f"{login_url}?error={error_param}"
+            if is_htmx:
+                return Response(status_code=200, headers={"HX-Redirect": login_url})
             return RedirectResponse(url=login_url, status_code=302)
         return ORJSONResponse(status_code=status_code, content={"detail": detail})
 

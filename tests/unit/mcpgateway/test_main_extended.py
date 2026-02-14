@@ -521,6 +521,44 @@ class TestAdminAuthMiddleware:
         assert "token_revoked" in response.headers.get("location", "")
 
     @pytest.mark.asyncio
+    async def test_admin_auth_htmx_request_returns_hx_redirect(self, monkeypatch):
+        """HTMX partial requests must receive HX-Redirect header instead of 302 redirect (issue #2874)."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"Authorization": "Bearer token", "accept": "text/html", "hx-request": "true"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        with (
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com", "jti": "abc"})),
+            patch("mcpgateway.main._check_token_revoked_sync", return_value=True),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 200
+        assert "/admin/login" in response.headers.get("hx-redirect", "")
+        assert "token_revoked" in response.headers.get("hx-redirect", "")
+
+    @pytest.mark.asyncio
+    async def test_admin_auth_htmx_no_auth_returns_hx_redirect(self, monkeypatch):
+        """HTMX requests without valid auth must get HX-Redirect, not 302 (issue #2874)."""
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request(
+            "/admin/tools",
+            headers={"hx-request": "true"},
+        )
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        with patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={})):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 200
+        assert "/admin/login" in response.headers.get("hx-redirect", "")
+
+    @pytest.mark.asyncio
     async def test_admin_auth_api_token_expired(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", headers={"Authorization": "Bearer token"})
