@@ -9,12 +9,17 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from pgvector.sqlalchemy import Vector
+try:
+    from pgvector.sqlalchemy import Vector
+    HAS_PGVECTOR = True
+except ImportError:
+    HAS_PGVECTOR = False
+    Vector = None  # type: ignore[assignment]
 
 
 # revision identifiers, used by Alembic.
 revision: str = 'bab4694b3e90'
-down_revision: Union[str, Sequence[str], None] = 'b1b2b3b4b5b6'
+down_revision: Union[str, Sequence[str], None] = '5126ced48fd0'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

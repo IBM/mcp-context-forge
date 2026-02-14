@@ -42,7 +42,12 @@ from sqlalchemy.orm import DeclarativeBase, joinedload, Mapped, mapped_column, r
 from sqlalchemy.orm.attributes import get_history
 from sqlalchemy.pool import NullPool, QueuePool
 
-from pgvector.sqlalchemy import Vector
+try:
+    from pgvector.sqlalchemy import Vector
+    HAS_PGVECTOR = True
+except ImportError:
+    HAS_PGVECTOR = False
+    Vector = None  # type: ignore[assignment,misc]
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -3180,12 +3185,12 @@ class ToolEmbedding(Base):
         index=True,
     )
     
-    if backend == "postgresql":
+    if HAS_PGVECTOR:
         embedding: Mapped[list[float]] = mapped_column(
             Vector(1536),
             nullable=False,
         )
-    else:  # SQLite and others
+    else:
         embedding: Mapped[list[float]] = mapped_column(
             JSON,
             nullable=False,
@@ -3214,7 +3219,7 @@ class ToolEmbedding(Base):
         passive_deletes=True,
     )
 
-    if backend == "postgresql":
+    if HAS_PGVECTOR:
         __table_args__ = (
             Index(
                 "idx_tool_embeddings_hnsw",
@@ -5647,7 +5652,7 @@ def init_db():
         if backend == "postgresql":
             with engine.connect() as conn:
                 try:
-                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgvector"))
+                    conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
                     conn.commit()
                 except Exception as e:
                     logger.warning(f"Could not create pgvector extension: {e}")
