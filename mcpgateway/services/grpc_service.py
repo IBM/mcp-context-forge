@@ -129,9 +129,9 @@ class GrpcService:
         # Set audit metadata if provided
         if metadata:
             db_service.created_by = user_email
-            db_service.created_from_ip = metadata.get("ip")
-            db_service.created_via = metadata.get("via")
-            db_service.created_user_agent = metadata.get("user_agent")
+            db_service.created_from_ip = metadata.get("created_from_ip")
+            db_service.created_via = metadata.get("created_via")
+            db_service.created_user_agent = metadata.get("created_user_agent")
 
         db.add(db_service)
         db.commit()
@@ -267,9 +267,9 @@ class GrpcService:
         # Set audit metadata
         if metadata and user_email:
             service.modified_by = user_email
-            service.modified_from_ip = metadata.get("ip")
-            service.modified_via = metadata.get("via")
-            service.modified_user_agent = metadata.get("user_agent")
+            service.modified_from_ip = metadata.get("modified_from_ip")
+            service.modified_via = metadata.get("modified_via")
+            service.modified_user_agent = metadata.get("modified_user_agent")
 
         service.version += 1
 
