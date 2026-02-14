@@ -1,0 +1,50 @@
+name: License Check
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+  schedule:
+    - cron: "15 10 * * 6"  # Weekly Saturday 10:15 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  license-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-licenses
+        run: pip install pip-licenses
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "stable"
+
+      - name: Install go-licenses
+        run: go install github.com/google/go-licenses@latest
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-license
+        run: cargo install cargo-license
+
+      - name: Run license checker
+        run: |
+          python scripts/license_checker.py \
+            --config license-policy.toml \
+            --report-json license-check-report.json
+
+      - name: Upload license report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: license-check-report
+          path: license-check-report.json
