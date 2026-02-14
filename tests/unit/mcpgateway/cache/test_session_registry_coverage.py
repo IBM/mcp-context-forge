@@ -347,7 +347,8 @@ class TestReapStuckTasksEdgeCases:
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
             with patch("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for):
-                await registry._reap_stuck_tasks()
+                with pytest.raises(asyncio.CancelledError):
+                    await registry._reap_stuck_tasks()
 
         assert "can_cancel" not in registry._stuck_tasks
 
@@ -383,7 +384,8 @@ class TestReapStuckTasksEdgeCases:
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
             with patch("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for):
-                await registry._reap_stuck_tasks()
+                with pytest.raises(asyncio.CancelledError):
+                    await registry._reap_stuck_tasks()
 
         assert "ce_stuck" not in registry._stuck_tasks
 
@@ -420,7 +422,8 @@ class TestReapStuckTasksEdgeCases:
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
             with patch("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for):
-                await registry._reap_stuck_tasks()
+                with pytest.raises(asyncio.CancelledError):
+                    await registry._reap_stuck_tasks()
 
         assert "Error during stuck task reap for ue_stuck" in caplog.text
 
@@ -446,7 +449,8 @@ class TestReapStuckTasksEdgeCases:
                 raise asyncio.CancelledError()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
-            await registry._reap_stuck_tasks()
+            with pytest.raises(asyncio.CancelledError):
+                await registry._reap_stuck_tasks()
 
         # Should have slept at least once (continue path)
         assert call_count["n"] >= 1
@@ -474,7 +478,8 @@ class TestReapStuckTasksEdgeCases:
                 raise asyncio.CancelledError()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
-            await registry._reap_stuck_tasks()
+            with pytest.raises(asyncio.CancelledError):
+                await registry._reap_stuck_tasks()
 
         assert "done_ok" not in registry._stuck_tasks
         assert "Reaped 1 completed stuck tasks" in caplog.text
@@ -510,7 +515,8 @@ class TestReapStuckTasksEdgeCases:
             registry._stuck_tasks = MagicMock()
             registry._stuck_tasks.__bool__ = Mock(return_value=True)
             registry._stuck_tasks.items = Mock(side_effect=RuntimeError("reaper boom"))
-            await registry._reap_stuck_tasks()
+            with pytest.raises(asyncio.CancelledError):
+                await registry._reap_stuck_tasks()
 
         assert "Error in stuck task reaper" in caplog.text
 
@@ -540,7 +546,8 @@ class TestReapStuckTasksEdgeCases:
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
             with patch("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for):
-                await registry._reap_stuck_tasks()
+                with pytest.raises(asyncio.CancelledError):
+                    await registry._reap_stuck_tasks()
 
         assert "Stuck tasks remaining: 1" in caplog.text
 
@@ -2392,7 +2399,8 @@ class TestReapStuckTasksDoneException:
                 raise asyncio.CancelledError()
 
         with patch("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep):
-            await registry._reap_stuck_tasks()
+            with pytest.raises(asyncio.CancelledError):
+                await registry._reap_stuck_tasks()
 
         assert "failed_done" not in registry._stuck_tasks
         assert "Reaped 1 completed stuck tasks" in caplog.text

@@ -11390,6 +11390,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
                 for logging error messages.
 
         Raises:
+            asyncio.CancelledError: If the task is cancelled externally.
             Exception: Any unexpected exception raised while iterating over the
                 generator will be caught, logged, and suppressed.
 
@@ -11418,8 +11419,6 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
         try:
             async for event in generator:
                 await event_queue.put(event)
-        except asyncio.CancelledError:
-            pass  # Task cancelled normally
         except Exception as e:
             LOGGER.error(f"Error in {source_name} event subscription: {e}")
 
@@ -11528,6 +11527,7 @@ async def admin_events(request: Request, _user=Depends(get_current_user_with_per
 
         except asyncio.CancelledError:
             LOGGER.debug("SSE Stream cancelled")
+            raise
         except Exception as e:
             LOGGER.error(f"SSE Stream error: {e}")
         finally:

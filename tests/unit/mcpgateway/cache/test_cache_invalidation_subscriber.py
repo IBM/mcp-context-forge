@@ -363,7 +363,7 @@ class TestCacheInvalidationSubscriber:
         sleep.assert_awaited()
 
     @pytest.mark.asyncio
-    async def test_listen_loop_cancelled_error_is_swallowed(self, cache_subscriber):
+    async def test_listen_loop_cancelled_error_is_reraised(self, cache_subscriber):
         stop_event = asyncio.Event()
 
         class CancelPubSub:
@@ -374,7 +374,8 @@ class TestCacheInvalidationSubscriber:
         cache_subscriber._stop_event = stop_event
         cache_subscriber._started = True
 
-        await cache_subscriber._listen_loop()
+        with pytest.raises(asyncio.CancelledError):
+            await cache_subscriber._listen_loop()
 
     @pytest.mark.asyncio
     async def test_process_invalidation_error_path(self, cache_subscriber):

@@ -695,6 +695,9 @@ class SSETransport(Transport):
 
             Yields:
                 SSE event as bytes (pre-formatted SSE frame)
+
+            Raises:
+                asyncio.CancelledError: If the generator is cancelled.
             """
             # Send the endpoint event first
             yield _build_sse_frame(b"endpoint", endpoint_url.encode(), settings.sse_retry_timeout)
@@ -806,6 +809,7 @@ class SSETransport(Transport):
             except asyncio.CancelledError:
                 logger.info("SSE event generator cancelled: %s", self._session_id)
                 self._client_gone.set()
+                raise
             except GeneratorExit:
                 logger.info("SSE generator exit: %s", self._session_id)
                 self._client_gone.set()
