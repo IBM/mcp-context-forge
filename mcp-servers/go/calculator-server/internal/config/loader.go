@@ -3,7 +3,6 @@ package config
 import (
     "encoding/json"
     "fmt"
-    "io/ioutil"
     "os"
     "path/filepath"
     "strings"
@@ -106,7 +105,9 @@ func (l *Loader) findConfigFile() (string, error) {
 
 // loadFromFile loads configuration from a file (YAML or JSON)
 func (l *Loader) loadFromFile(configPath string) (*Config, error) {
-    data, err := ioutil.ReadFile(configPath)
+    cleanConfigPath := filepath.Clean(configPath)
+    // #nosec G304 -- config path is an explicit operator-controlled input.
+    data, err := os.ReadFile(cleanConfigPath)
     if err != nil {
         return nil, fmt.Errorf("failed to read config file: %w", err)
     }
@@ -114,7 +115,7 @@ func (l *Loader) loadFromFile(configPath string) (*Config, error) {
     config := &Config{}
 
     // Determine file format by extension
-    ext := strings.ToLower(filepath.Ext(configPath))
+    ext := strings.ToLower(filepath.Ext(cleanConfigPath))
 
     switch ext {
     case ".yaml", ".yml":

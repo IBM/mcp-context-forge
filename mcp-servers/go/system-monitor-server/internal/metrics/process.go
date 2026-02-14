@@ -3,6 +3,7 @@ package metrics
 import (
     "context"
     "fmt"
+    "math"
     "sort"
     "strings"
     "time"
@@ -177,7 +178,12 @@ func (pc *ProcessCollector) getProcessInfo(ctx context.Context, p *process.Proce
     if includeThreads {
         threads, err := p.ThreadsWithContext(ctx)
         if err == nil {
-            threadCount = int32(len(threads))
+            threadLen := int64(len(threads))
+            if threadLen > math.MaxInt32 {
+                threadCount = math.MaxInt32
+            } else {
+                threadCount = int32(threadLen)
+            }
         }
     }
 

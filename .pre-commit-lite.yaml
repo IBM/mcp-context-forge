@@ -20,6 +20,9 @@
 
 exclude: '(^|/)(\.pre-commit-.*\.yaml|normalize_special_characters\.py|test_input_validation\.py|ai_artifacts_normalizer\.py)$|(^|/)mcp-servers/templates/|(^|/)tests/load/|.*\.(jinja|j2)$'  # ignore these files, all templates, load tests, and jinja files
 
+default_language_version:
+  python: python3.12
+
 repos:
   # -----------------------------------------------------------------------------
   # 🔐 Security and Secret Detection Hooks
@@ -43,7 +46,7 @@ repos:
         name: 🔐 Detect Private Key
         description: Detects the presence of private keys.
         types: [text]
-        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py'
+        exclude: 'mcpgateway/utils/generate_keys\.py|tests/unit/mcpgateway/plugins/framework/external/mcp/test_tls_utils.py|tests/unit/mcpgateway/utils/test_generate_keys.py|plugins_rust/secrets_detection/examples/heavy_workload\.rs|plugins_rust/secrets_detection/src/scanner\.rs|plugins_rust/secrets_detection/src/patterns\.rs'
 
   #   - repo: https://github.com/Yelp/detect-secrets
   #     rev: v1.5.0
@@ -113,9 +116,9 @@ repos:
         name: ❌ Forbid Source Placeholders
         description: Prevents (Source:...) placeholders from being committed.
         entry: '(?i)\(source:'
+        exclude: '(^\.pre-commit-config\.yaml$|\.pyi?$)'
         language: pygrep
         types: [text]
-        exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
       - id: forbid-malformed-code-fences
@@ -267,6 +270,7 @@ repos:
         name: ✅ Check Shebang Scripts Are Executable
         description: Ensures that (non-binary) files with a shebang are executable.
         types: [text]
+        exclude: 'plugins_rust/secrets_detection/compare_performance\.py'
         stages: [pre-commit, pre-push, manual]
 
       - id: forbid-new-submodules

@@ -86,7 +86,7 @@ func (hc *HealthChecker) checkHTTPService(ctx context.Context, service types.Ser
         return result
     }
 
-    resp, err := hc.httpClient.Do(req)
+    resp, err := hc.httpClient.Do(req) // #nosec G704 -- Target endpoint comes from operator-supplied health-check configuration.
     if err != nil {
         result.Status = "unhealthy"
         result.Message = fmt.Sprintf("request failed: %v", err)
