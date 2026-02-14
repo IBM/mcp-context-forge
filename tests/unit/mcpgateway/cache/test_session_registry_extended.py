@@ -1044,7 +1044,8 @@ class TestRespondTaskCancellation:
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep)
         monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for)
 
-        await registry._reap_stuck_tasks()
+        with pytest.raises(asyncio.CancelledError):
+            await registry._reap_stuck_tasks()
 
         assert "done" not in registry._stuck_tasks
         assert "pending" in registry._stuck_tasks

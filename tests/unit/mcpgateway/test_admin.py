@@ -13434,8 +13434,9 @@ class TestMaintenanceMisc:
         monkeypatch.setattr("mcpgateway.admin.asyncio.wait_for", fake_wait_for, raising=True)
 
         response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
-        chunks = [chunk async for chunk in response.body_iterator]
-        assert chunks == []
+        with pytest.raises(asyncio.CancelledError):
+            async for _ in response.body_iterator:
+                pass
 
     @pytest.mark.asyncio
     async def test_admin_events_unexpected_exception_logged(self, monkeypatch, allow_permission, mock_db):

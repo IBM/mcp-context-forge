@@ -408,6 +408,9 @@ class SessionRegistry(SessionBackend):
 
         This prevents memory leaks from tasks that eventually complete after
         being moved to _stuck_tasks during escalation.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         reap_interval = 30.0  # seconds
         retry_timeout = 2.0  # seconds for retry cancellation
@@ -460,7 +463,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.debug("Stuck task reaper cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in stuck task reaper: {e}")
 
@@ -1517,6 +1520,9 @@ class SessionRegistry(SessionBackend):
 
         The task also verifies that local sessions still exist in the database
         and removes them locally if they've been deleted elsewhere.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("Starting database cleanup task")
         while True:
@@ -1569,7 +1575,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.info("Database cleanup task cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in database cleanup task: {e}")
                 await asyncio.sleep(600)  # Sleep longer on error
@@ -1666,6 +1672,9 @@ class SessionRegistry(SessionBackend):
         Runs periodically (every minute) to check all local sessions and remove
         those that are no longer connected. This prevents memory leaks from
         accumulating disconnected transport objects.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("Starting memory cleanup task")
         while True:
@@ -1687,7 +1696,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.info("Memory cleanup task cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in memory cleanup task: {e}")
                 await asyncio.sleep(300)  # Sleep longer on error

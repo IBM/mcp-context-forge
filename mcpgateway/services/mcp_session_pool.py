@@ -1491,32 +1491,31 @@ class MCPSessionPool:  # pylint: disable=too-many-instance-attributes
             await pubsub.subscribe(rpc_channel, http_channel)
             logger.info(f"RPC/HTTP listener started for worker {WORKER_ID} on channels: {rpc_channel}, {http_channel}")
 
-            while not self._closed:
-                try:
-                    msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-                    if msg and msg["type"] == "message":
-                        request = orjson.loads(msg["data"])
-                        forward_type = request.get("type")
-                        response_channel = request.get("response_channel")
+            try:
+                while not self._closed:
+                    try:
+                        msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+                        if msg and msg["type"] == "message":
+                            request = orjson.loads(msg["data"])
+                            forward_type = request.get("type")
+                            response_channel = request.get("response_channel")
 
-                        if response_channel:
-                            if forward_type == "rpc_forward":
-                                # Execute forwarded RPC request for SSE transport
-                                response = await self._execute_forwarded_request(request)
-                                await redis.publish(response_channel, orjson.dumps(response))
-                                logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
-                            elif forward_type == "http_forward":
-                                # Execute forwarded HTTP request for Streamable HTTP transport
-                                await self._execute_forwarded_http_request(request, redis)
-                            else:
-                                logger.warning(f"Unknown forward type: {forward_type}")
-                except asyncio.CancelledError:
-                    break
-                except Exception as e:
-                    logger.warning(f"Error processing forwarded request: {e}")
-
-            await pubsub.unsubscribe(rpc_channel, http_channel)
-            logger.info(f"RPC/HTTP listener stopped for worker {WORKER_ID}")
+                            if response_channel:
+                                if forward_type == "rpc_forward":
+                                    # Execute forwarded RPC request for SSE transport
+                                    response = await self._execute_forwarded_request(request)
+                                    await redis.publish(response_channel, orjson.dumps(response))
+                                    logger.debug(f"Processed forwarded RPC request, response sent to {response_channel}")
+                                elif forward_type == "http_forward":
+                                    # Execute forwarded HTTP request for Streamable HTTP transport
+                                    await self._execute_forwarded_http_request(request, redis)
+                                else:
+                                    logger.warning(f"Unknown forward type: {forward_type}")
+                    except Exception as e:
+                        logger.warning(f"Error processing forwarded request: {e}")
+            finally:
+                await pubsub.unsubscribe(rpc_channel, http_channel)
+                logger.info(f"RPC/HTTP listener stopped for worker {WORKER_ID}")
 
         except Exception as e:
             logger.warning(f"RPC/HTTP listener failed: {e}")
