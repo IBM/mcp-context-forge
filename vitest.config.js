@@ -4,11 +4,13 @@ export default defineConfig({
     test: {
         environment: "jsdom",
         globals: true,
-        include: ["tests/js/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}"],
+        include: [
+            "tests/js/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}",
+            "tests/unit/js/**/*.{test,spec}.{js,mjs,cjs,ts,mts,cts,jsx,tsx}",
+        ],
         exclude: [
             "**/node_modules/**",
             "**/tests/playwright/**",
-            "**/tests/unit/**",
             "**/tests/integration/**",
             "**/tests/e2e/**",
             "**/tests/performance/**",
