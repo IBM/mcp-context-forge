@@ -1930,23 +1930,34 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_remove_member_revokes_rbac_role(self, service, mock_db, mock_team):
-        """Test that removing a member revokes the RBAC role."""
+        """Test that removing a member revokes both team RBAC roles defensively."""
         # Setup membership mock
         mock_membership = MagicMock(spec=EmailTeamMember)
         mock_membership.role = "member"
         mock_membership.is_active = True
 
-        # Mock role service
-        mock_role = MagicMock()
-        mock_role.id = "role123"
-        mock_role.is_active = True
+        # Mock role service with distinct role IDs for owner vs member
+        mock_owner_role = MagicMock()
+        mock_owner_role.id = "owner_role_123"
+        mock_member_role = MagicMock()
+        mock_member_role.id = "member_role_456"
+
         mock_role_service = MagicMock()
-        mock_role_service.get_role_by_name = AsyncMock(return_value=mock_role)
+
+        def get_role_by_name_side_effect(name, scope="team"):
+            if name == "team_admin":
+                return mock_owner_role
+            elif name == "viewer":
+                return mock_member_role
+            return None
+
+        mock_role_service.get_role_by_name = AsyncMock(side_effect=get_role_by_name_side_effect)
         mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
         service._role_service = mock_role_service
 
         # Patch get_team_by_id
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_owner_role = "team_admin"
             mock_settings.default_team_member_role = "viewer"
 
             with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
@@ -1956,10 +1967,10 @@ class TestTeamManagementService:
                 # Execute
                 result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
 
-                # Verify
+                # Verify - both owner and member roles are revoked defensively
                 assert result is True
-                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
-                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="user@example.com", role_id="role123", scope="team", scope_id="team123")
+                assert mock_role_service.get_role_by_name.call_count == 2
+                assert mock_role_service.revoke_role_from_user.call_count == 2
 
     @pytest.mark.asyncio
     async def test_add_member_role_not_found(self, service, mock_db, mock_team, mock_user):
@@ -2117,7 +2128,7 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_remove_member_role_not_found(self, service, mock_db, mock_team):
-        """Test that removing a member works when role is not found."""
+        """Test that removing a member works when roles are not found."""
         # Setup membership mock
         mock_membership = MagicMock(spec=EmailTeamMember)
         mock_membership.role = "member"
@@ -2130,6 +2141,7 @@ class TestTeamManagementService:
 
         # Patch get_team_by_id
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_owner_role = "team_admin"
             mock_settings.default_team_member_role = "viewer"
 
             with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
@@ -2139,9 +2151,9 @@ class TestTeamManagementService:
                 # Execute
                 result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
 
-                # Verify - member should still be removed
+                # Verify - member should still be removed even when roles not found
                 assert result is True
-                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
+                assert mock_role_service.get_role_by_name.call_count == 2
                 mock_role_service.revoke_role_from_user.assert_not_called()
 
     @pytest.mark.asyncio
@@ -2163,6 +2175,7 @@ class TestTeamManagementService:
 
         # Patch get_team_by_id
         with patch("mcpgateway.services.team_management_service.settings") as mock_settings:
+            mock_settings.default_team_owner_role = "team_admin"
             mock_settings.default_team_member_role = "viewer"
 
             with patch.object(service, "get_team_by_id", new_callable=AsyncMock) as mock_get_team:
@@ -2172,10 +2185,10 @@ class TestTeamManagementService:
                 # Execute
                 result = await service.remove_member_from_team(team_id="team123", user_email="user@example.com", removed_by="admin@example.com")
 
-                # Verify
+                # Verify - both roles attempted for revocation
                 assert result is True
-                mock_role_service.get_role_by_name.assert_called_once_with("viewer", scope="team")
-                mock_role_service.revoke_role_from_user.assert_called_once()
+                assert mock_role_service.get_role_by_name.call_count == 2
+                assert mock_role_service.revoke_role_from_user.call_count == 2
 
     @pytest.mark.asyncio
     async def test_remove_member_role_revocation_exception(self, service, mock_db, mock_team):
