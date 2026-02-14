@@ -15772,6 +15772,7 @@ async function handleGrpcServiceFormSubmit(e) {
     const form = e.target;
     const formData = new FormData(form);
     const status = safeGetElement("grpcFormError");
+    const loading = safeGetElement("add-grpc-loading");
     const submitButton = form.querySelector('button[type="submit"]');
 
     try {
@@ -15784,13 +15785,17 @@ async function handleGrpcServiceFormSubmit(e) {
             throw new Error(nameValidation.error);
         }
 
-        if (!target || !target.includes(":")) {
-            throw new Error("Target must be in host:port format");
+        if (!target || !/^[\w.\-]+:\d+$/.test(target)) {
+            throw new Error("Target must be in host:port format (e.g. localhost:50051)");
         }
 
         // Disable submit button during request
         if (submitButton) {
             submitButton.disabled = true;
+        }
+
+        if (loading) {
+            loading.classList.remove("hidden");
         }
 
         if (status) {
@@ -15809,7 +15814,7 @@ async function handleGrpcServiceFormSubmit(e) {
             tls_key_path: formData.get("tls_key_path") || null,
             grpc_metadata: {},
             tags: [],
-            visibility: "public",
+            visibility: formData.get("visibility") || "public",
         };
 
         // Add team_id if present
@@ -15839,8 +15844,6 @@ async function handleGrpcServiceFormSubmit(e) {
             );
         }
 
-        await response.json();
-
         // Success - redirect to grpc services panel
         const searchParams = new URLSearchParams();
         if (teamId) {
@@ -15862,6 +15865,9 @@ async function handleGrpcServiceFormSubmit(e) {
     } finally {
         if (submitButton) {
             submitButton.disabled = false;
+        }
+        if (loading) {
+            loading.classList.add("hidden");
         }
     }
 }

@@ -7520,6 +7520,25 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 </select>
               </div>
               {% endif %}
+
+              <!-- Visibility -->
+              <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-400 mb-2">Visibility</label>
+                <div class="flex items-center space-x-4">
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="public" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-public" checked />
+                    <label for="grpc-visibility-public" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Public</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="team" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-team" />
+                    <label for="grpc-visibility-team" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Team</label>
+                  </div>
+                  <div class="flex items-center">
+                    <input type="radio" name="visibility" value="private" class="form-radio h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600" id="grpc-visibility-private" />
+                    <label for="grpc-visibility-private" class="ml-2 text-sm text-gray-700 dark:text-gray-400">Private</label>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div class="mt-6">
@@ -7529,6 +7548,13 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               >
                 Register gRPC Service
               </button>
+            </div>
+            <!-- Loading Indicator -->
+            <div
+              id="add-grpc-loading"
+              class="hidden text-sm text-gray-500 mt-2"
+            >
+              Submitting...
             </div>
           </form>
           <!-- Error Message Display -->
