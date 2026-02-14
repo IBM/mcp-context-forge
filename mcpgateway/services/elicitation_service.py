@@ -220,14 +220,18 @@ class ElicitationService:
         return [e for e in self._pending.values() if session_id in (e.upstream_session_id, e.downstream_session_id)]
 
     async def _cleanup_loop(self):
-        """Background task to periodically clean up expired elicitations."""
+        """Background task to periodically clean up expired elicitations.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
+        """
         while True:
             try:
                 await asyncio.sleep(60)  # Run every minute
                 await self._cleanup_expired()
             except asyncio.CancelledError:
                 logger.info("Elicitation cleanup loop cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in elicitation cleanup loop: {e}", exc_info=True)
 
