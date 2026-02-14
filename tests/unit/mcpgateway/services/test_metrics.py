@@ -19,11 +19,13 @@ from mcpgateway.services.metrics import (
 @pytest.fixture(autouse=True)
 def _clean_prometheus_registry():
     """Clean up any gauge/counter registered during tests to avoid duplicates."""
+    collectors_before = set(REGISTRY._names_to_collectors.values())
     yield
-    # Unregister test collectors to avoid "already registered" errors across tests
-    for name in ["app_info", "database_info", "http_pool_max_connections", "http_pool_max_keepalive_connections"]:
+    # Unregister collectors added during the test
+    collectors_after = set(REGISTRY._names_to_collectors.values())
+    for collector in collectors_after - collectors_before:
         try:
-            REGISTRY.unregister(REGISTRY._names_to_collectors.get(name))
+            REGISTRY.unregister(collector)
         except Exception:
             pass
 
