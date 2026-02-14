@@ -12,6 +12,7 @@ Defaults assume private API deployment with crawling disabled.
 
 # Standard
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Optional
 from urllib.parse import urlparse, urlunparse
 
@@ -23,8 +24,8 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.db import Server as DbServer
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
 from mcpgateway.utils.verify_credentials import require_auth
 
 # Get logger instance
@@ -32,6 +33,9 @@ logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 router = APIRouter(tags=["well-known"])
+
+# UUID validation pattern for RFC 9728 endpoint
+UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$", re.IGNORECASE)
 
 # Well-known URI registry with validation
 WELL_KNOWN_REGISTRY = {
@@ -110,99 +114,118 @@ def validate_security_txt(content: str) -> Optional[str]:
     return "\n".join(validated)
 
 
-@router.get("/.well-known/oauth-protected-resource")
-async def get_oauth_protected_resource(
+@router.get("/.well-known/oauth-protected-resource/{path:path}")
+async def get_oauth_protected_resource_rfc9728(
+    path: str,
     request: Request,
-    server_id: Optional[str] = None,
     db: Session = Depends(get_db),
-):
+) -> JSONResponse:
     """
-    RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint.
+    RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint (path-based).
 
-    Returns OAuth configuration for a server per RFC 9728, enabling MCP clients
-    to discover OAuth authorization servers and authenticate using browser-based SSO.
+    Per RFC 9728 Section 3.1, the well-known URI is constructed by:
+    1. Taking the resource URL: http://localhost:4444/servers/{UUID}/mcp
+    2. Removing trailing slash and inserting /.well-known/oauth-protected-resource/
+    3. Result: http://localhost:4444/.well-known/oauth-protected-resource/servers/{UUID}/mcp
+
+    This endpoint does not require authentication per RFC 9728 requirements.
 
     Args:
-        request: FastAPI request object for building resource URL.
-        server_id: The ID of the server to get OAuth configuration for.
-        db: Database session dependency.
+        path: The resource path after oauth-protected-resource/ (e.g., "servers/{UUID}/mcp")
+        request: FastAPI request object for building resource URL
+        db: Database session dependency
 
     Returns:
-        JSONResponse with RFC 9728 Protected Resource Metadata.
+        JSONResponse with RFC 9728 Protected Resource Metadata:
+        {
+            "resource": "http://localhost:4444/servers/{UUID}/mcp",
+            "authorization_servers": ["https://auth.example.com"],
+            "bearer_methods_supported": ["header"],
+            "scopes_supported": ["read", "write"]
+        }
 
     Raises:
-        HTTPException: 404 if server_id not provided, server not found, disabled,
+        HTTPException: 404 if path format invalid, server not found, disabled,
             non-public, OAuth not enabled, or not configured.
 
     Examples:
         >>> # Request OAuth metadata for a server
-        >>> # GET /.well-known/oauth-protected-resource?server_id=server-123
-        >>> # Returns:
-        >>> # {
-        >>> #   "resource": "https://gateway.example.com/servers/server-123",
-        >>> #   "authorization_servers": ["https://idp.example.com"],
-        >>> #   "bearer_methods_supported": ["header"],
-        >>> #   "scopes_supported": ["openid", "profile"]
-        >>> # }
+        >>> # GET /.well-known/oauth-protected-resource/servers/abc123/mcp
+        >>> # Returns RFC 9728 compliant metadata
     """
     if not settings.well_known_enabled:
-        raise HTTPException(status_code=404, detail="Well-known endpoints are disabled")
-
-    # Return 404 when no server_id to avoid exposing Admin UI SSO configuration
-    if not server_id:
         raise HTTPException(status_code=404, detail="Not found")
 
-    server = db.get(DbServer, server_id)
+    # Parse path to extract server_id with validation
+    # Expected formats:
+    #   - "servers/{UUID}/mcp" (standard MCP endpoint)
+    #   - "servers/{UUID}" (fallback without /mcp suffix)
+    path_parts = path.strip("/").split("/")
 
-    if not server:
-        raise HTTPException(status_code=404, detail="Server not found")
+    # Validate path structure
+    if len(path_parts) < 2 or path_parts[0] != "servers":
+        logger.debug(f"Invalid RFC 9728 path format: {path}")
+        raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
 
-    # Return 404 for disabled servers
-    if not server.enabled:
-        raise HTTPException(status_code=404, detail="Server not found")
+    server_id = path_parts[1]
 
-    # Only expose OAuth metadata for public servers to avoid leaking metadata
-    if getattr(server, "visibility", "public") != "public":
-        raise HTTPException(status_code=404, detail="Server not found")
+    # Validate server_id is a valid UUID (prevents path traversal and injection)
+    if not UUID_PATTERN.match(server_id):
+        logger.warning(f"Invalid server_id format (not a UUID): {server_id}")
+        raise HTTPException(status_code=404, detail="Invalid server_id format. Must be a valid UUID.")
 
-    if not getattr(server, "oauth_enabled", False):
-        raise HTTPException(status_code=404, detail="OAuth not enabled for this server")
+    # Reject paths with extra segments after /mcp (e.g., servers/uuid/mcp/extra)
+    if len(path_parts) > 3:
+        logger.warning(f"RFC 9728 path has unexpected segments: {path}")
+        raise HTTPException(status_code=404, detail="Invalid resource path format. Expected: /.well-known/oauth-protected-resource/servers/{server_id}/mcp")
 
-    oauth_config = getattr(server, "oauth_config", None)
-    if not oauth_config:
-        raise HTTPException(status_code=404, detail="OAuth not configured for this server")
-
-    # Build RFC 9728 Protected Resource Metadata response
-    # Note: get_base_url_with_protocol uses request.base_url which already includes root_path
+    # Build resource URL with /mcp suffix per MCP specification
     base_url = get_base_url_with_protocol(request)
-    resource_url = f"{base_url}/servers/{server_id}"
+    resource_url = f"{base_url}/servers/{server_id}/mcp"
 
-    # Extract authorization server(s) - support both list and single value
-    authorization_servers = oauth_config.get("authorization_servers", [])
-    if not authorization_servers:
-        auth_server = oauth_config.get("authorization_server")
-        if auth_server:
-            authorization_servers = [auth_server]
+    server_service = ServerService()
+    try:
+        response_data = server_service.get_oauth_protected_resource_metadata(db=db, server_id=server_id, resource_base_url=resource_url)
+    except ServerNotFoundError:
+        raise HTTPException(status_code=404, detail="Server not found")
+    except ServerError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
-    if not authorization_servers:
-        raise HTTPException(status_code=404, detail="OAuth authorization_server not configured")
-
-    response_data = {
-        "resource": resource_url,
-        "authorization_servers": authorization_servers,
-        "bearer_methods_supported": ["header"],
-    }
-
-    # Add optional scopes if configured (never echo secrets from oauth_config)
-    scopes = oauth_config.get("scopes_supported") or oauth_config.get("scopes")
-    if scopes:
-        response_data["scopes_supported"] = scopes
-
-    # Add cache headers
+    # Add cache headers per RFC 9728 recommendations
     headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
 
-    logger.debug(f"Returning OAuth protected resource metadata for server {server_id}")
+    logger.debug(f"Served RFC 9728 OAuth metadata for server {server_id}")
     return JSONResponse(content=response_data, headers=headers)
+
+
+@router.get("/.well-known/oauth-protected-resource")
+async def get_oauth_protected_resource(
+    request: Request,
+    server_id: Optional[str] = None,
+):
+    """
+    DEPRECATED: OAuth 2.0 Protected Resource Metadata endpoint (query parameter based).
+
+    This endpoint is deprecated and non-compliant with RFC 9728. It returns 404.
+
+    RFC 9728 requires path-based discovery, not query parameters.
+    Use the RFC 9728 compliant endpoint instead:
+    /.well-known/oauth-protected-resource/servers/{server_id}/mcp
+
+    Args:
+        request: FastAPI request object (unused).
+        server_id: Server ID query parameter (ignored).
+
+    Raises:
+        HTTPException: Always raises 404 with deprecation notice.
+    """
+    if not settings.well_known_enabled:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    logger.warning("Deprecated query-param OAuth metadata endpoint called. " "Use RFC 9728 compliant path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+    raise HTTPException(
+        status_code=404, detail=("This endpoint is deprecated and non-compliant with RFC 9728. " "Use the path-based endpoint: " "/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
+    )
 
 
 def get_well_known_file_content(filename: str) -> PlainTextResponse:

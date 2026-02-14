@@ -226,7 +226,7 @@ class TestOAuthProtectedResourceMetadata:
             },
         )
 
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 404
         assert "OAuth not enabled" in response.json()["detail"]
 
@@ -250,7 +250,7 @@ class TestOAuthProtectedResourceMetadata:
             },
         )
 
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 200
 
         # Verify RFC 9728 required fields
@@ -291,7 +291,7 @@ class TestOAuthProtectedResourceMetadata:
             },
         )
 
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 404
         assert "OAuth not enabled" in response.json()["detail"]
 
@@ -313,7 +313,7 @@ class TestOAuthProtectedResourceMetadata:
             },
         )
 
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 404
         # Should not leak that the server exists (just "not found")
         assert "not found" in response.json()["detail"].lower()
@@ -339,7 +339,7 @@ class TestOAuthProtectedResourceMetadata:
         # Disable the server
         await self._disable_server(client, server_id)
 
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
@@ -347,7 +347,7 @@ class TestOAuthProtectedResourceMetadata:
         """Scenario 6: Non-existent server ID returns 404."""
         nonexistent_id = "00000000000000000000000000000000"
 
-        response = await client.get(f"/servers/{nonexistent_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{nonexistent_id}/mcp")
         assert response.status_code == 404
         assert "not found" in response.json()["detail"].lower()
 
@@ -374,7 +374,7 @@ class TestOAuthProtectedResourceMetadata:
             },
         )
 
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 200
 
         data = response.json()
@@ -403,7 +403,7 @@ class TestOAuthProtectedResourceMetadata:
         )
 
         # Make request WITHOUT auth headers
-        response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+        response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
         assert response.status_code == 200
 
         # Verify the response is valid RFC 9728 metadata
@@ -564,7 +564,7 @@ class TestWellKnownDisabledScenarios:
         original_value = settings.well_known_enabled
         settings.well_known_enabled = False
         try:
-            response = await client.get(f"/servers/{server_id}/.well-known/oauth-protected-resource")
+            response = await client.get(f"/.well-known/oauth-protected-resource/servers/{server_id}/mcp")
             assert response.status_code == 404
             # Should return generic "Not found" to avoid leaking information
             assert response.json()["detail"] == "Not found"

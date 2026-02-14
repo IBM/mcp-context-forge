@@ -1749,11 +1749,15 @@ class MCPPathRewriteMiddleware:
 
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
-        if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
-            # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-            scope["path"] = "/mcp/"
-            await self.application(scope, receive, send)
-            return
+
+        # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
+        # These paths may end with /mcp but should not be rewritten to the MCP transport
+        if not original_path.startswith("/.well-known/"):
+            if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+                # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
+                scope["path"] = "/mcp/"
+                await self.application(scope, receive, send)
+                return
         await self.application(scope, receive, send)
 
 
