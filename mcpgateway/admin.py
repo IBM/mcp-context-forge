@@ -4263,7 +4263,7 @@ async def admin_view_team_members(
                         <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Current Members</h5>
                         <div
                             id="team-members-container-{team.id}"
-                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
                             hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
                             hx-trigger="load delay:100ms"
@@ -4279,7 +4279,7 @@ async def admin_view_team_members(
                         <h5 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Users to Add</h5>
                         <div
                             id="team-non-members-container-{team.id}"
-                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                            class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
                             hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
                             hx-trigger="load delay:200ms"
@@ -4418,7 +4418,7 @@ async def admin_add_team_members_view(
                             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Available Users</label>
                             <div
                                 id="user-selector-container-{team.id}"
-                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-32 overflow-y-auto dark:bg-gray-700"
+                                class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                                 hx-get="{root_path}/admin/users/partial?page=1&per_page=20&render=selector&team_id={team.id}"
                                 hx-trigger="load"
                                 hx-swap="innerHTML"
