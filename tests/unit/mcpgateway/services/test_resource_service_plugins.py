@@ -608,30 +608,26 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_plugin_manager_initialization(self):
         """Test plugin manager initialization in ResourceService."""
-        from mcpgateway.plugins.framework.settings import PluginsSettings
         with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGINS_CONFIG_FILE": "plugins/test.yaml"}):
-            with patch("mcpgateway.plugins.framework.settings.settings", PluginsSettings()):
-                with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
-                    mock_manager = MagicMock()
-                    MockPluginManager.return_value = mock_manager
+            with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
+                mock_manager = MagicMock()
+                MockPluginManager.return_value = mock_manager
 
-                    service = ResourceService()
+                service = ResourceService()
 
-                    assert service._plugin_manager == mock_manager
-                    MockPluginManager.assert_called_once_with("plugins/test.yaml")
+                assert service._plugin_manager == mock_manager
+                MockPluginManager.assert_called_once_with("plugins/test.yaml")
 
     @pytest.mark.asyncio
     async def test_plugin_manager_initialization_failure(self):
         """Test plugin manager initialization failure handling."""
-        from mcpgateway.plugins.framework.settings import PluginsSettings
         with patch.dict(os.environ, {"PLUGINS_ENABLED": "true"}):
-            with patch("mcpgateway.plugins.framework.settings.settings", PluginsSettings()):
-                with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
-                    MockPluginManager.side_effect = ValueError("Invalid config")
+            with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
+                MockPluginManager.side_effect = ValueError("Invalid config")
 
-                    service = ResourceService()
+                service = ResourceService()
 
-                    assert service._plugin_manager is None  # Should fail gracefully
+                assert service._plugin_manager is None  # Should fail gracefully
 
     @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.ssl.create_default_context")
