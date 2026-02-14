@@ -336,6 +336,10 @@ flagged/
 dictionary.dic
 .config
 
+# Generated reports
+license-check-report.json
+docs/docs/test/license-check-report.json
+
 # Generated performance test files
 nginx.conf
 docker-compose.perf.yml
