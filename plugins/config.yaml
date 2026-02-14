@@ -1016,3 +1016,17 @@ plugins:
       performance:
         timeout_ms: 1000
         parallel_evaluation: true
+
+  # JWT Claims Extraction — extracts claims for downstream Cedar/OPA authorization
+  - name: "JwtClaimsExtractionPlugin"
+    kind: "plugins.jwt_claims_extraction.jwt_claims_extraction.JwtClaimsExtractionPlugin"
+    description: "Extracts JWT claims and stores them in global context state for downstream authorization plugins"
+    version: "1.0.0"
+    author: "yiannis2804"
+    hooks: ["http_auth_resolve_user"]
+    tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
+    mode: "disabled"  # set to "permissive" to activate
+    priority: 10  # Run early — before other auth plugins
+    conditions: []
+    config:
+      context_key: jwt_claims
