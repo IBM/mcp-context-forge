@@ -18,7 +18,7 @@ import (
 
 // LogMonitor handles log file monitoring and tailing
 type LogMonitor struct {
-    rootPath     string   // Root directory - all file access restricted within this path (empty = no restriction)
+    rootPath     string // Root directory - all file access restricted within this path (empty = no restriction)
     allowedPaths []string
     maxFileSize  int64
 }
@@ -165,7 +165,7 @@ func (lm *LogMonitor) readLastLines(ctx context.Context, filePath string, lines 
         }
     }
 
-    file, err := os.Open(filePath)
+    file, err := os.Open(filePath) // #nosec G304 -- filePath is validated by validateFilePath before open.
     if err != nil {
         return nil, fmt.Errorf("failed to open file: %w", err)
     }
@@ -342,7 +342,7 @@ func (lm *LogMonitor) AnalyzeLogs(ctx context.Context, filePath string, patterns
         return nil, err
     }
 
-    file, err := os.Open(filePath)
+    file, err := os.Open(filePath) // #nosec G304 -- filePath is validated by validateFilePath before open.
     if err != nil {
         return nil, fmt.Errorf("failed to open file: %w", err)
     }

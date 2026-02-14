@@ -168,6 +168,7 @@ import (
     "fmt"
     "io"
     "log"
+    "math"
     "net"
     "net/http"
     "os"
@@ -310,8 +311,13 @@ func handleListProcesses(ctx context.Context, req mcp.CallToolRequest) (*mcp.Cal
 // handleMonitorProcess monitors a specific process for a given duration
 func handleMonitorProcess(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
     // Parse request parameters
+    pidValue := req.GetInt("pid", 0)
+    if pidValue < 0 || pidValue > math.MaxInt32 {
+        return mcp.NewToolResultError("pid must be between 0 and 2147483647"), nil
+    }
+
     processReq := &types.ProcessMonitorRequest{
-        PID:         int32(req.GetInt("pid", 0)),
+        PID:         int32(pidValue),
         ProcessName: req.GetString("process_name", ""),
         Duration:    req.GetInt("duration", 60),
         Interval:    req.GetInt("interval", 5),
@@ -521,7 +527,7 @@ func main() {
                 ind+"REST: /api/v1/* (REST API only, no MCP)\n\n"+
                 "Environment Variables:\n"+
                 ind+"AUTH_TOKEN - Bearer token for authentication (overrides -auth-token flag)\n",
-            os.Args[0], os.Args[0], os.Args[0], os.Args[0], os.Args[0])
+            appName, appName, appName, appName, appName)
     }
 
     flag.Parse()
@@ -756,7 +762,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("SSE server error: %v", err)
         }
 
@@ -799,7 +805,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("HTTP server error: %v", err)
         }
 
@@ -850,7 +856,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("DUAL server error: %v", err)
         }
 
@@ -883,7 +889,7 @@ func main() {
         }
 
         // Start server
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        if err := serveHTTPWithTimeout(addr, handler); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("REST server error: %v", err)
         }
 
@@ -904,6 +910,15 @@ func effectiveAddr(addrFlag, listen string, port int) string {
         return addrFlag
     }
     return fmt.Sprintf("%s:%d", listen, port)
+}
+
+func serveHTTPWithTimeout(addr string, handler http.Handler) error {
+    srv := &http.Server{
+        Addr:              addr,
+        Handler:           handler,
+        ReadHeaderTimeout: 10 * time.Second,
+    }
+    return srv.ListenAndServe()
 }
 
 // registerHealthAndVersion adds health and version endpoints to the mux
