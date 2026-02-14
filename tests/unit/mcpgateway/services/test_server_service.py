@@ -1886,7 +1886,7 @@ class TestServerService:
             server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
 
     def test_get_oauth_metadata_no_auth_server(self, server_service, mock_server):
-        """Raises ServerError when no authorization_server in config."""
+        """Raises ServerError when no authorization_servers in config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
         mock_server.oauth_config = {"scopes_supported": ["read"]}
@@ -1896,7 +1896,7 @@ class TestServerService:
             server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
 
     def test_get_oauth_metadata_success_single_server(self, server_service, mock_server):
-        """Returns RFC 9728 metadata with single authorization_server."""
+        """Returns RFC 9728 metadata with singular authorization_server config (wrapped in array)."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
         mock_server.oauth_config = {
@@ -1907,12 +1907,14 @@ class TestServerService:
         db.get.return_value = mock_server
         result = server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
         assert result["resource"] == "https://gw.com/1"
+        # RFC 9728 Section 2: authorization_servers is a JSON array
         assert result["authorization_servers"] == ["https://idp.example.com"]
+        assert isinstance(result["authorization_servers"], list)
         assert result["bearer_methods_supported"] == ["header"]
         assert result["scopes_supported"] == ["openid", "profile"]
 
     def test_get_oauth_metadata_success_multiple_servers(self, server_service, mock_server):
-        """Returns RFC 9728 metadata with multiple authorization_servers."""
+        """Returns RFC 9728 metadata preserving all authorization_servers from plural config."""
         mock_server.visibility = "public"
         mock_server.oauth_enabled = True
         mock_server.oauth_config = {
@@ -1921,7 +1923,9 @@ class TestServerService:
         db = MagicMock()
         db.get.return_value = mock_server
         result = server_service.get_oauth_protected_resource_metadata(db, "1", "https://gw.com/1")
+        # RFC 9728 Section 2: authorization_servers preserves all servers
         assert result["authorization_servers"] == ["https://idp1.com", "https://idp2.com"]
+        assert isinstance(result["authorization_servers"], list)
         assert "scopes_supported" not in result
 
     # ---- list_servers_for_user edge cases ---- #
