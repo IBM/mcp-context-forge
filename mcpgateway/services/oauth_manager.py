@@ -991,11 +991,7 @@ class OAuthManager:
         # The resource is the MCP server URL, set by oauth_router.py
         resource = credentials.get("resource")
         if resource:
-            # RFC 8707 allows multiple resource parameters
-            if isinstance(resource, list):
-                params["resource"] = resource  # urlencode with doseq=True handles lists
-            else:
-                params["resource"] = resource
+            params["resource"] = resource  # urlencode with doseq=True handles lists
 
         # Build full URL (doseq=True handles list values like multiple resource params)
         query_string = urlencode(params, doseq=True)
