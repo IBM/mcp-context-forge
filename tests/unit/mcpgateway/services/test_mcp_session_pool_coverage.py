@@ -1402,7 +1402,8 @@ class TestStartRpcListener:
                 with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
                     with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock, return_value={"result": {"ok": True}}) as mock_exec_rpc:
                         with patch.object(pool, "_execute_forwarded_http_request", new_callable=AsyncMock) as mock_exec_http:
-                            await pool.start_rpc_listener()
+                            with pytest.raises(asyncio.CancelledError):
+                                await pool.start_rpc_listener()
 
         # Subscribe/unsubscribe to worker-specific channels
         mock_pubsub.subscribe.assert_awaited_once_with("mcpgw:pool_rpc:worker-1", "mcpgw:pool_http:worker-1")
@@ -1475,7 +1476,8 @@ class TestStartRpcListener:
             with patch("mcpgateway.utils.redis_client.get_redis_client", new_callable=AsyncMock, return_value=mock_redis):
                 with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
                     with patch.object(pool, "_execute_forwarded_request", new_callable=AsyncMock) as mock_exec:
-                        await pool.start_rpc_listener()
+                        with pytest.raises(asyncio.CancelledError):
+                            await pool.start_rpc_listener()
 
         mock_exec.assert_not_awaited()
         mock_redis.publish.assert_not_awaited()
