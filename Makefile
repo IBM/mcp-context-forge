@@ -2416,6 +2416,27 @@ images:
 # help: check-manifest       - Verify sdist/wheel completeness
 # help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
+# help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
+# help: linting-workflow-zizmor      - Security-focused linting of GitHub Actions workflows
+# help: linting-workflow-reviewdog   - Run reviewdog locally (non-PR reporter mode)
+# help: linting-workflow-commitlint  - Validate commit messages (Conventional Commits)
+# help: linting-python-fixit         - Run Fixit Python linter (modernization suggestions)
+# help: linting-python-xenon         - Run Xenon complexity threshold checks
+# help: linting-python-refurb        - Run Refurb Python modernization linter
+# help: linting-python-darglint      - Run Darglint docstring checks
+# help: linting-docs-codespell       - Spell-check repository text with codespell
+# help: linting-docs-markdown-links  - Check Markdown links (default: README.md)
+# help: linting-web-depcheck         - Check unused/missing Node.js dependencies
+# help: linting-helm-lint            - Run Helm chart lint
+# help: linting-helm-chart-testing   - Run chart-testing lint (ct) for Helm chart
+# help: linting-helm-unittest        - Run Helm chart unit tests via helm-unittest plugin
+# help: linting-go-gosec             - Run gosec on discovered Go modules
+# help: linting-go-govulncheck       - Run govulncheck on discovered Go modules
+# help: linting-security-checkov     - Run Checkov IaC security scan
+# help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
+# help: linting-security-trufflehog  - Run TruffleHog filesystem secret scan
+# help: linting-coverage-diff-cover  - Run diff-cover against changed lines
+# help: linting-full                 - Run passing linting gates used by CI
 
 # Allow specific file/directory targeting
 DEFAULT_TARGETS := mcpgateway
@@ -2444,7 +2465,16 @@ FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
-	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all
+	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all \
+	lint-actionlint lint-chart-testing lint-helm-unittest lint-commitlint \
+	linting-python-env \
+	linting-workflow-actionlint linting-workflow-zizmor linting-workflow-reviewdog linting-workflow-commitlint \
+	linting-python-fixit linting-python-xenon linting-python-refurb linting-python-darglint \
+	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
+	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
+	linting-go-gosec linting-go-govulncheck \
+	linting-security-checkov linting-security-kube-linter linting-security-trufflehog \
+	linting-coverage-diff-cover linting-full
 
 
 ## --------------------------------------------------------------------------- ##
@@ -2579,6 +2609,286 @@ lint-smart:
 			fi ;; \
 	esac
 
+# Commit range defaults for commitlint
+COMMITLINT_FROM ?= HEAD~1
+COMMITLINT_TO ?= HEAD
+
+# Temporary roots for ad-hoc linting tools
+LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
+LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
+LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
+LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
+LINT_GO_TOOLCHAIN ?= go1.25.7
+
+# Tool target defaults
+LINT_ZIZMOR_TARGET ?= .github/workflows
+LINT_XENON_TARGET ?= mcpgateway
+LINT_FIXIT_TARGET ?= mcpgateway
+LINT_REFURB_TARGET ?= mcpgateway
+LINT_CODESPELL_TARGET ?= .
+LINT_CODESPELL_SKIP ?= ./.git,./.venv,./coverage,./docs/docs/coverage,./uv.lock,./package-lock.json,./docs/docs/design/images/*
+LINT_MARKDOWN_LINKS_TARGET ?= README.md
+LINT_DEPCHECK_TARGET ?= .
+LINT_DARGLINT_TARGET ?= mcpgateway
+LINT_CHECKOV_TARGET ?= .
+LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
+LINT_TRUFFLEHOG_TARGET ?= mcpgateway tests docs charts deployment mcp-servers a2a-agents
+LINT_TRUFFLEHOG_VERSION ?= v3.93.3
+LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
+
+# Passing gates only (used by CI workflow linting-full)
+LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-reviewdog linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-govulncheck
+
+# Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
+
+linting-python-env:
+	@command -v python3 >/dev/null 2>&1 || { echo "❌ python3 not found"; exit 1; }
+	@mkdir -p "$(LINT_TMP_ROOT)"
+	@if [ ! -x "$(LINT_PY_VENV)/bin/python" ]; then \
+		python3 -m venv "$(LINT_PY_VENV)"; \
+	fi
+
+linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
+	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
+
+linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
+	@echo "🔐 zizmor scan of $(LINT_ZIZMOR_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check zizmor
+	@"$(LINT_PY_VENV)/bin/zizmor" "$(LINT_ZIZMOR_TARGET)"
+
+linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
+	@echo "🐶 reviewdog local run (input: actionlint)..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
+		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
+			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
+
+linting-workflow-commitlint:         ## 📝  Conventional Commits linting
+	@echo "📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)..."
+	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
+	@mkdir -p "$(LINT_NODE_ROOT)/commitlint" "$(LINT_NODE_ROOT)/npm-cache"
+	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/commitlint'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional"
+	@NODE_PATH="$(LINT_NODE_ROOT)/commitlint/node_modules" \
+		node "$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js" \
+		--extends @commitlint/config-conventional \
+		--from "$(COMMITLINT_FROM)" \
+		--to "$(COMMITLINT_TO)"
+
+linting-python-fixit:                ## 🧪  Fixit Python linting
+	@echo "🧪 fixit lint of $(LINT_FIXIT_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check fixit
+	@"$(LINT_PY_VENV)/bin/python" -c "import sys; from concurrent.futures import ThreadPoolExecutor; import trailrunner.core; trailrunner.core.Trailrunner.DEFAULT_EXECUTOR = ThreadPoolExecutor; from fixit.cli import main; sys.argv=['fixit','lint','$(LINT_FIXIT_TARGET)']; raise SystemExit(main())"
+
+linting-python-xenon:                ## 📈  Xenon complexity checks
+	@echo "📈 xenon complexity scan of $(LINT_XENON_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check xenon
+	@"$(LINT_PY_VENV)/bin/xenon" --max-absolute C --max-modules C --max-average C "$(LINT_XENON_TARGET)"
+
+linting-python-refurb:               ## 🧼  Refurb modernization checks
+	@echo "🧼 refurb scan of $(LINT_REFURB_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check refurb mypy pydantic
+	@"$(LINT_PY_VENV)/bin/refurb" "$(LINT_REFURB_TARGET)"
+
+linting-python-darglint:             ## 📚  Darglint docstring validation
+	@echo "📚 darglint scan of $(LINT_DARGLINT_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check darglint
+	@while IFS= read -r -d '' file; do \
+		"$(LINT_PY_VENV)/bin/darglint" "$$file"; \
+	done < <(find "$(LINT_DARGLINT_TARGET)" -name '*.py' -not -path '*/__pycache__/*' -print0)
+
+linting-docs-codespell:              ## 🔤  Spell-check repository text
+	@echo "🔤 codespell scan of $(LINT_CODESPELL_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check codespell
+	@"$(LINT_PY_VENV)/bin/codespell" --skip="$(LINT_CODESPELL_SKIP)" "$(LINT_CODESPELL_TARGET)"
+
+linting-docs-markdown-links:         ## 🔗  Markdown link checking
+	@echo "🔗 markdown-link-check on $(LINT_MARKDOWN_LINKS_TARGET)..."
+	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
+	@mkdir -p "$(LINT_NODE_ROOT)/markdown-link-check" "$(LINT_NODE_ROOT)/npm-cache"
+	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/markdown-link-check'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent markdown-link-check"
+	@PATH="$(LINT_NODE_ROOT)/markdown-link-check/node_modules/.bin:$$PATH" \
+		markdown-link-check "$(LINT_MARKDOWN_LINKS_TARGET)"
+
+linting-web-depcheck:                ## 🧩  Node dependency hygiene
+	@echo "🧩 depcheck scan of $(LINT_DEPCHECK_TARGET)..."
+	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
+	@mkdir -p "$(LINT_NODE_ROOT)/depcheck" "$(LINT_NODE_ROOT)/npm-cache"
+	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/depcheck'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent depcheck"
+	@PATH="$(LINT_NODE_ROOT)/depcheck/node_modules/.bin:$$PATH" depcheck "$(LINT_DEPCHECK_TARGET)"
+
+linting-helm-lint:                   ## ⎈  Helm lint wrapper
+	@$(MAKE) --no-print-directory helm-lint
+
+linting-helm-chart-testing:          ## ⎈  chart-testing lint (relaxed local defaults)
+	@echo "⎈ chart-testing lint..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/helm/chart-testing/v3/ct@latest lint \
+			--charts $(CHART_DIR) \
+			--validate-chart-schema=false \
+			--validate-yaml=false \
+			--validate-maintainers=false \
+			--check-version-increment=false"
+
+linting-helm-unittest:               ## 🧪  Helm template unit tests
+	@echo "🧪 helm-unittest..."
+	@command -v helm >/dev/null 2>&1 || { echo "❌ helm not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export HELM_PLUGINS='$(LINT_HELM_ROOT)/plugins'; \
+		export HELM_DATA_HOME='$(LINT_HELM_ROOT)/data'; \
+		export HELM_CACHE_HOME='$(LINT_HELM_ROOT)/cache'; \
+		export HELM_CONFIG_HOME='$(LINT_HELM_ROOT)/config'; \
+		mkdir -p '$(LINT_HELM_ROOT)/plugins' '$(LINT_HELM_ROOT)/data' '$(LINT_HELM_ROOT)/cache' '$(LINT_HELM_ROOT)/config'; \
+		if ! helm plugin list 2>/dev/null | grep -q '^unittest[[:space:]]'; then \
+			helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 >/dev/null; \
+		fi; \
+		helm unittest $(CHART_DIR)"
+
+linting-go-gosec:                    ## 🔒  Go security static analysis
+	@echo "🔒 gosec scan of discovered Go modules..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest >/dev/null; \
+		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
+		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
+		while IFS= read -r d; do \
+			[ -n "$$d" ] || continue; \
+			echo "→ gosec $$d"; \
+			(cd "$$d" && "$(LINT_GO_ROOT)/bin/gosec" ./...); \
+		done <<< "$$mods"
+
+linting-go-govulncheck:              ## 🔎  Go vulnerability checks
+	@echo "🔎 govulncheck scan of discovered Go modules..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest >/dev/null; \
+		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
+		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
+		while IFS= read -r d; do \
+			[ -n "$$d" ] || continue; \
+			echo "→ govulncheck $$d"; \
+			(cd "$$d" && "$(LINT_GO_ROOT)/bin/govulncheck" ./...); \
+		done <<< "$$mods"
+
+linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
+	@echo "🛡️ checkov scan of $(LINT_CHECKOV_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check checkov
+	@"$(LINT_PY_VENV)/bin/checkov" -d "$(LINT_CHECKOV_TARGET)" --quiet
+
+linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
+	@echo "🧱 kube-linter scan of $(LINT_KUBE_LINTER_TARGET)..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
+		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
+
+linting-security-trufflehog:         ## 🔑  Secret scanning with TruffleHog
+	@echo "🔑 trufflehog filesystem scan of $(LINT_TRUFFLEHOG_TARGET)..."
+	@command -v curl >/dev/null 2>&1 || { echo "❌ curl not found"; exit 1; }
+	@command -v tar >/dev/null 2>&1 || { echo "❌ tar not found"; exit 1; }
+	@version='$(LINT_TRUFFLEHOG_VERSION)'; \
+		version_no_v="$${version#v}"; \
+		os="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
+		arch="$$(uname -m)"; \
+		case "$$arch" in \
+			x86_64) arch='amd64' ;; \
+			aarch64|arm64) arch='arm64' ;; \
+			*) echo "❌ Unsupported architecture: $$arch"; exit 1 ;; \
+		esac; \
+		asset="trufflehog_$${version_no_v}_$${os}_$${arch}.tar.gz"; \
+		url="https://github.com/trufflesecurity/trufflehog/releases/download/$${version}/$${asset}"; \
+		mkdir -p '$(LINT_GO_ROOT)/bin' '$(LINT_TMP_ROOT)'; \
+		curl -fsSL "$$url" -o '$(LINT_TMP_ROOT)/trufflehog.tar.gz'; \
+		tar -xzf '$(LINT_TMP_ROOT)/trufflehog.tar.gz' -C '$(LINT_GO_ROOT)/bin' trufflehog; \
+		chmod +x '$(LINT_GO_ROOT)/bin/trufflehog'; \
+		exclude_file='$(LINT_TMP_ROOT)/trufflehog-exclude-regexes.txt'; \
+		printf '%s\n' \
+			'^\\.git/' \
+			'^\\.venv/' \
+			'^\\.tmp/' \
+			'^\\.npm-cache/' \
+			'^\\.uv-cache/' \
+			'^dist/' \
+			'^coverage/' \
+			'^htmlcov/' \
+			'^mcp_contextforge_gateway\\.egg-info/' \
+			'^\\.pytest_cache/' \
+			'^\\.mypy_cache/' \
+			'^node_modules/' \
+			'^.*__pycache__/' \
+			'^.*\\.pyc$$' \
+			'^z_.*,cover$$' > "$$exclude_file"; \
+		'$(LINT_GO_ROOT)/bin/trufflehog' filesystem --fail --exclude-paths "$$exclude_file" $(LINT_TRUFFLEHOG_TARGET)
+
+linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate
+	@$(MAKE) --no-print-directory diff-cover
+
+linting-full: $(LINTING_FULL_TARGETS) ## ✅ Passing lint gates for CI
+	@echo "✅ linting-full passed"
+
+# Backward-compatible aliases (keep previous names working)
+lint-actionlint: linting-workflow-actionlint
+	@:
+
+lint-chart-testing: linting-helm-chart-testing
+	@:
+
+lint-helm-unittest: linting-helm-unittest
+	@:
+
+lint-commitlint: linting-workflow-commitlint
+	@:
+
 ## --------------------------------------------------------------------------- ##
 ##  Individual targets (alphabetical, updated to use TARGET)
 ## --------------------------------------------------------------------------- ##
@@ -2653,11 +2963,36 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-pre-commit: uv                      ## 🪄  Run pre-commit tool
+pre-commit:                         ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@if [ ! -x "$(VENV_DIR)/bin/pre-commit" ]; then \
+		echo "📦 Installing pre-commit in $(VENV_DIR)..."; \
+		"$(VENV_DIR)/bin/python" -m pip install --quiet pre-commit; \
+	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv run --active pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
+		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
+			'$(CURDIR)/.cache/xdg-cache' \
+			'$(CURDIR)/.cache/xdg-data' \
+			'$(CURDIR)/.cache/virtualenv-app-data' \
+			'$(CURDIR)/.cache/go-cache' \
+			'$(CURDIR)/.cache/go-mod' \
+			'$(CURDIR)/.cache/go-build' \
+			'$(CURDIR)/.cache/pip-cache' \
+			'$(CURDIR)/.cache/tmp'; \
+		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
+		XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
+		XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
+		VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
+		PATH='/usr/bin:$$PATH' \
+		TMPDIR='$(CURDIR)/.cache/tmp' \
+		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
+		PIP_USE_PEP517='0' \
+		PIP_NO_BUILD_ISOLATION='1' \
+		GOPATH='$(CURDIR)/.cache/go-cache' \
+		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
+		GOCACHE='$(CURDIR)/.cache/go-build' \
+		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + (eventually) format
 	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)

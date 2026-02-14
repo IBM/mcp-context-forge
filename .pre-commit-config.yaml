@@ -113,9 +113,9 @@ repos:
         name: ❌ Forbid Source Placeholders
         description: Prevents (Source:...) placeholders from being committed.
         entry: '(?i)\(source:'
+        exclude: '(^\.pre-commit-config\.yaml$|\.pyi?$)'
         language: pygrep
         types: [text]
-        exclude: ^\.pre-commit-config\.yaml$
         stages: [pre-commit, pre-merge-commit, prepare-commit-msg, commit-msg, post-checkout, post-commit, post-merge, pre-push, manual]
 
       - id: forbid-malformed-code-fences
