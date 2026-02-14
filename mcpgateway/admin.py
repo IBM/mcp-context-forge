@@ -3952,7 +3952,7 @@ async def admin_teams_partial_html(
     if visibility:
         query_params_dict["visibility"] = visibility
 
-    return request.app.state.templates.TemplateResponse(
+    response = request.app.state.templates.TemplateResponse(
         request,
         "teams_partial.html",
         {
@@ -3964,6 +3964,11 @@ async def admin_teams_partial_html(
             "query_params": query_params_dict,
         },
     )
+    # Prevent nginx caching for real-time team updates
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @admin_router.get("/teams")
@@ -4303,7 +4308,12 @@ async def admin_view_team_members(
         </div>
         """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
-        return HTMLResponse(content=interface_html)
+        response = HTMLResponse(content=interface_html)
+        # Prevent nginx caching for real-time team member updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error viewing team members {team_id}: {e}")
@@ -4685,6 +4695,10 @@ async def admin_delete_team(
         </div>
         """
         response = HTMLResponse(content=success_html)
+        # Prevent nginx caching for real-time updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
@@ -4891,6 +4905,11 @@ async def admin_add_team_members(
         </script>
         """
         response = HTMLResponse(content=success_html)
+
+        # Prevent nginx caching for real-time updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
 
         # Trigger refresh of teams list (but don't reopen modal)
         response.headers["HX-Trigger"] = orjson.dumps(
@@ -5247,8 +5266,8 @@ async def admin_cancel_join_request(
         if not success:
             return HTMLResponse(content='<div class="text-red-500">Failed to cancel join request</div>', status_code=400)
 
-        # Return the "Request to Join" button
-        return HTMLResponse(
+        # Return the "Request to Join" button with HX-Trigger for list refresh
+        response = HTMLResponse(
             content=f"""
         <button data-team-id="{team_id}" data-team-name="Team" onclick="requestToJoinTeamSafe(this)"
                 class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
@@ -5257,6 +5276,8 @@ async def admin_cancel_join_request(
         """,
             status_code=200,
         )
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error canceling join request {request_id}: {e}")
@@ -5845,7 +5866,7 @@ async def admin_team_members_partial_html(
 
         root_path = request.scope.get("root_path", "")
         next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
-        return request.app.state.templates.TemplateResponse(
+        response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
             {
@@ -5862,6 +5883,11 @@ async def admin_team_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
+        # Prevent nginx caching for real-time member list updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error loading team members partial for team {team_id}: {e}")
@@ -5925,7 +5951,7 @@ async def admin_team_non_members_partial_html(
 
         root_path = request.scope.get("root_path", "")
         next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
-        return request.app.state.templates.TemplateResponse(
+        response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
             {
@@ -5942,6 +5968,11 @@ async def admin_team_non_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
+        # Prevent nginx caching for real-time non-member list updates
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error loading team non-members partial for team {team_id}: {e}")
