@@ -254,24 +254,36 @@ async def test_set_service_state_and_delete(service, db):
 
 @pytest.mark.asyncio
 async def test_list_services_team_filter(service, db):
-    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+    mock_svc = MagicMock()
+    mock_svc.team_id = None
+    db.execute.return_value.scalars.return_value.all.return_value = [mock_svc]
+    db.commit = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
         mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
         with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
-            result = await service.list_services(db, include_inactive=False, user_email="user@example.com", team_id="team-1")
+            with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+                mock_paginate.return_value = ([mock_svc], None)
+                result, next_cursor = await service.list_services(db, include_inactive=False, user_email="user@example.com", team_id="team-1")
 
     assert len(result) == 1
+    assert next_cursor is None
 
 
 @pytest.mark.asyncio
 async def test_list_services_team_id_only(service, db):
-    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+    mock_svc = MagicMock()
+    mock_svc.team_id = None
+    db.execute.return_value.scalars.return_value.all.return_value = [mock_svc]
+    db.commit = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
-        result = await service.list_services(db, include_inactive=True, user_email=None, team_id="team-1")
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = ([mock_svc], None)
+            result, next_cursor = await service.list_services(db, include_inactive=True, user_email=None, team_id="team-1")
 
     assert len(result) == 1
+    assert next_cursor is None
 
 
 @pytest.mark.asyncio
