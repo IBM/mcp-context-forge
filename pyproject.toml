@@ -618,6 +618,7 @@ markers = [
     "api: marks tests as API tests",
     "smoke: marks tests as smoke tests for quick validation",
     "e2e: marks tests as end-to-end tests",
+    "playwright_security_e2e: marks browser-driven security end-to-end tests",
     "fuzz: marks tests as fuzz tests (excluded from main test suite)",
     "benchmark: marks tests as performance benchmarks (migration testing)",
     "integration: marks tests as integration tests (require external services)",
