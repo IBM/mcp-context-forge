@@ -6565,6 +6565,142 @@ async def test_admin_update_user_exception(monkeypatch, mock_db, allow_permissio
 
 
 @pytest.mark.asyncio
+async def test_admin_get_user_edit_hides_admin_checkbox_when_editing_self(monkeypatch, mock_request, mock_db, allow_permission):
+    """Test that Administrator checkbox is hidden when user edits themselves."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="admin@example.com", full_name="Admin User", is_admin=True))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # User editing themselves (same email)
+    response = await admin_get_user_edit("admin%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    body = response.body.decode()
+    assert "Edit User" in body
+    # Administrator checkbox should NOT be present when editing self
+    assert 'name="is_admin"' not in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_user_edit_shows_admin_checkbox_when_editing_other(monkeypatch, mock_request, mock_db, allow_permission):
+    """Test that Administrator checkbox is shown when editing another user."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="other@example.com", full_name="Other User", is_admin=False))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # Admin editing another user (different email)
+    response = await admin_get_user_edit("other%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    body = response.body.decode()
+    assert "Edit User" in body
+    # Administrator checkbox SHOULD be present when editing others
+    assert 'name="is_admin"' in body
+    assert 'type="checkbox"' in body
+
+
+@pytest.mark.asyncio
+async def test_admin_get_user_edit_case_insensitive_self_check(monkeypatch, mock_request, mock_db, allow_permission):
+    """Test that self-editing check is case-insensitive."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="Admin@Example.com", full_name="Admin User", is_admin=True))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # User with different case should still be recognized as self
+    response = await admin_get_user_edit("admin%40example.com", mock_request, db=mock_db, _user={"email": "ADMIN@EXAMPLE.COM", "db": mock_db})
+    assert isinstance(response, HTMLResponse)
+    body = response.body.decode()
+    # Administrator checkbox should NOT be present (case-insensitive match)
+    assert 'name="is_admin"' not in body
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_self_demotion_blocked(monkeypatch, mock_db, allow_permission):
+    """Test that admin status is preserved when user edits themselves (checkbox hidden in UI)."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    # Form without is_admin field (checkbox hidden in UI for self-edit)
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "Admin User"}))
+
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="admin@example.com", is_admin=True))
+    auth_service.update_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # Self-edit should succeed with admin status preserved
+    response = await admin_update_user("admin%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    # Verify update_user was called with is_admin=True (preserved from DB)
+    auth_service.update_user.assert_called_once()
+    call_kwargs = auth_service.update_user.call_args[1]
+    assert call_kwargs["is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_self_demotion_case_insensitive(monkeypatch, mock_db, allow_permission):
+    """Test that admin status preservation is case-insensitive for self-edit."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "Admin User"}))
+
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="Admin@Example.com", is_admin=True))
+    auth_service.update_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # Self-edit with different case should still preserve admin status
+    response = await admin_update_user("admin%40example.com", request=request, db=mock_db, _user={"email": "ADMIN@EXAMPLE.COM", "db": mock_db})
+    assert response.status_code == 200
+    auth_service.update_user.assert_called_once()
+    call_kwargs = auth_service.update_user.call_args[1]
+    assert call_kwargs["is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_can_demote_others(monkeypatch, mock_db, allow_permission):
+    """Test that admin can remove admin privileges from other users."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    # Not checking is_admin checkbox = removing admin status
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "Other User"}))
+
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="other@example.com", is_admin=True))
+    auth_service.is_last_active_admin = AsyncMock(return_value=False)
+    auth_service.update_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # Admin demoting another user (should succeed)
+    response = await admin_update_user("other%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert response.headers.get("HX-Trigger") is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_update_user_self_can_update_other_fields(monkeypatch, mock_db, allow_permission):
+    """Test that user can update their own profile fields (name, password) while keeping admin status."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    # No is_admin field in form (checkbox hidden in UI for self-edit)
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "Updated Name", "password": ""}))
+
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="admin@example.com", is_admin=True))
+    auth_service.update_user = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    # User updating their own name; admin status preserved from DB
+    response = await admin_update_user("admin%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    assert response.status_code == 200
+    assert response.headers.get("HX-Trigger") is not None
+    # Verify admin status was preserved
+    auth_service.update_user.assert_called_once()
+    call_kwargs = auth_service.update_user.call_args[1]
+    assert call_kwargs["is_admin"] is True
+
+
+@pytest.mark.asyncio
 async def test_admin_activate_user_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()

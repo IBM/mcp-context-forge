@@ -6100,6 +6100,10 @@ async def admin_get_user_edit(
         if not user_obj:
             return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
 
+        # Get current user's email to check if editing self
+        current_user_email = get_user_email(_user)
+        is_editing_self = current_user_email.lower() == decoded_email.lower()
+
         # Build Password Requirements HTML separately to avoid backslash issues inside f-strings
         if settings.password_require_uppercase or settings.password_require_lowercase or settings.password_require_numbers or settings.password_require_special:
             pr_lines = []
@@ -6173,12 +6177,12 @@ async def admin_get_user_edit(
                     <input type="text" name="full_name" value="{user_obj.full_name or ""}" required
                            class="mt-1 px-1.5 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
-                <div>
+                {"" if is_editing_self else f'''<div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="is_admin" {"checked" if user_obj.is_admin else ""}
                                class="mr-2"> Administrator
                     </label>
-                </div>
+                </div>'''}
                 <div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">New Password (leave empty to keep current)</label>
                     <input type="password" name="password" id="password-field"
@@ -6262,8 +6266,16 @@ async def admin_update_user(
         if password and password != confirm_password:
             return HTMLResponse(content='<div class="text-red-500">Passwords do not match</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
 
+        # Get current user's email to prevent self-demotion
+        current_user_email = get_user_email(_user)
+
         # Check if trying to remove admin privileges from last admin
         user_obj = await auth_service.get_user_by_email(decoded_email)
+
+        # When editing self, preserve current admin status (checkbox is hidden in UI)
+        if user_obj and current_user_email.lower() == decoded_email.lower():
+            is_admin = user_obj.is_admin
+
         if user_obj and user_obj.is_admin and not is_admin:
             # This user is currently an admin and we're trying to remove admin privileges
             if await auth_service.is_last_active_admin(decoded_email):
