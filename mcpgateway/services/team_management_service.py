@@ -583,6 +583,7 @@ class TeamManagementService:
         Raises:
             InvalidRoleError: If role is invalid
             TeamNotFoundError: If team does not exist
+            TeamManagementError: If team is a personal team
             UserNotFoundError: If user does not exist
             MemberAlreadyExistsError: If user is already a member
             TeamMemberLimitExceededError: If team has reached maximum member limit
