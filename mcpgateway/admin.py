@@ -2849,6 +2849,8 @@ async def admin_ui(
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
+            # Token policy flags
+            "require_token_expiration": getattr(settings, "require_token_expiration", True),
         },
     )
 
