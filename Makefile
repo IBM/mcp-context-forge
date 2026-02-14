@@ -40,6 +40,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 	snakefood.dot packages.dot classes.dot \
 	$(DOCS_DIR)/pstats.png \
 	$(DOCS_DIR)/docs/test/sbom.md \
+	$(LICENSE_CHECK_REPORT) \
 	$(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
 	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
@@ -63,6 +64,10 @@ EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
+LICENSE_CHECK_REPORT ?= $(DOCS_DIR)/docs/test/license-check-report.json
+LICENSE_CHECK_POLICY ?= license-policy.toml
+LICENSE_CHECK_INCLUDE_DEV_GROUPS ?= false
+LICENSE_CHECK_SUMMARY_ONLY ?= false
 METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
 
 # -----------------------------------------------------------------------------
@@ -2260,17 +2265,30 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go, Rust).
+# help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
+# help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
 # help: scc-report           - Generate HTML LoC & per-file metrics with scc
-.PHONY: pip-licenses scc scc-report
+.PHONY: ensure-pip-licenses pip-licenses license-check scc scc-report
 
-pip-licenses:
+ensure-pip-licenses:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q pip-licenses"
+
+pip-licenses: ensure-pip-licenses
 	@mkdir -p $(dir $(LICENSES_MD))
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pip-licenses --format=markdown --with-authors --with-urls > $(LICENSES_MD)"
 	@cat $(LICENSES_MD)
 	@echo "📜  License inventory written to $(LICENSES_MD)"
+
+license-check: ensure-pip-licenses
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 scripts/license_checker.py \
+		--config $(LICENSE_CHECK_POLICY) \
+		--report-json $(LICENSE_CHECK_REPORT) \
+		$(if $(filter true,$(strip $(LICENSE_CHECK_INCLUDE_DEV_GROUPS))),--include-dev-groups) \
+		$(if $(filter true,$(strip $(LICENSE_CHECK_SUMMARY_ONLY))),--summary-only)"
 
 scc:
 	@command -v scc >/dev/null 2>&1 || { \
