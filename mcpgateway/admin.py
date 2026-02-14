@@ -6044,7 +6044,9 @@ async def admin_create_user(
         )
 
         # If the user was created with the default password, optionally force password change
-        if settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value():  # nosec B105
+        if (
+            settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value()
+        ):  # nosec B105
             new_user.password_change_required = True
             db.commit()
 

@@ -106,6 +106,8 @@ async def test_update_user_revoke_admin_role(mock_db):
         # Mock settings.protect_all_admins to False
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.protect_all_admins = False
+            mock_settings.default_admin_role = "platform_admin"
+            mock_settings.default_user_role = "platform_viewer"
 
             # Mock RoleService
             with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
@@ -211,3 +213,53 @@ async def test_update_user_assign_admin_role_inactive_assignment(mock_db):
 
         # Verify platform_viewer was revoked
         mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="viewer-role-456", scope="global", scope_id=None)
+
+
+@pytest.mark.asyncio
+async def test_update_user_demote_admin_user_role_not_found(mock_db):
+    """Test update_user when platform_viewer role not found during demotion (line 1169)."""
+    service = EmailAuthService(mock_db)
+
+    # Create existing admin user
+    existing_user = EmailUser(email="test@example.com", password_hash="hashed", is_admin=True, is_active=True)
+
+    # Mock database query to return existing user
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = existing_user
+    mock_db.execute.return_value = mock_result
+
+    # Mock is_last_active_admin to return False (not last admin)
+    with patch.object(service, "is_last_active_admin", new=AsyncMock(return_value=False)):
+        # Mock settings
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.protect_all_admins = False
+            mock_settings.default_admin_role = "platform_admin"
+            mock_settings.default_user_role = "platform_viewer"
+
+            # Mock RoleService - admin role exists, user role does NOT
+            with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
+                mock_role_service = AsyncMock()
+                mock_admin_role = MagicMock(id="admin-role-123")
+
+                async def get_role_by_name_side_effect(name, scope):
+                    if name == "platform_admin":
+                        return mock_admin_role
+                    if name == "platform_viewer":
+                        return None  # User role not found!
+                    return None
+
+                mock_role_service.get_role_by_name = AsyncMock(side_effect=get_role_by_name_side_effect)
+                mock_role_service.revoke_role_from_user = AsyncMock(return_value=True)
+                mock_role_service_cls.return_value = mock_role_service
+
+                # Update user to non-admin (demote)
+                updated_user = await service.update_user(email="test@example.com", is_admin=False)
+
+                # Verify user was demoted
+                assert updated_user.is_admin is False
+
+                # Verify platform_admin was revoked
+                mock_role_service.revoke_role_from_user.assert_called_once_with(user_email="test@example.com", role_id="admin-role-123", scope="global", scope_id=None)
+
+                # Verify platform_viewer was NOT assigned (because role was not found)
+                mock_role_service.assign_role_to_user.assert_not_called()
