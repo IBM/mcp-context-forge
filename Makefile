@@ -2963,12 +2963,12 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-pre-commit:                         ## 🪄  Run pre-commit tool
+pre-commit: uv                     ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@if [ ! -x "$(VENV_DIR)/bin/pre-commit" ]; then \
 		echo "📦 Installing pre-commit in $(VENV_DIR)..."; \
-		"$(VENV_DIR)/bin/python" -m pip install --quiet pre-commit; \
+		$(UV_BIN) pip install --python "$(VENV_DIR)/bin/python" --quiet pre-commit; \
 	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
