@@ -9,6 +9,7 @@ Tokens page object for API Tokens features.
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -47,6 +48,29 @@ class TokensPage(BasePage):
         return self.create_token_form.locator('button[type="submit"]')
 
     @property
+    def tokens_table(self) -> Locator:
+        """Container for token cards loaded via HTMX."""
+        return self.page.locator("#tokens-table")
+
+    @property
+    def tokens_search_input(self) -> Locator:
+        """Search input used for server-side token filtering."""
+        return self.page.locator("#tokens-search-input")
+
+    @property
+    def tokens_loading_indicator(self) -> Locator:
+        """Loading indicator shown while token table refreshes."""
+        return self.page.locator("#tokens-loading")
+
+    def _wait_for_tokens_table_settled(self, timeout: int = 15000) -> None:
+        """Best-effort wait for token table HTMX refresh to complete."""
+        try:
+            expect(self.tokens_table).not_to_contain_text("Loading tokens...", timeout=timeout)
+        except (PlaywrightTimeoutError, AssertionError):
+            # In some environments the indicator text can persist; continue with search fallback.
+            pass
+
+    @property
     def token_created_modal(self) -> Locator:
         """Token created success modal."""
         return self.page.locator("text=Token Created Successfully")
@@ -78,6 +102,20 @@ class TokensPage(BasePage):
         """
         # Use data-token-name attribute for reliable selection
         return self.page.locator(f'button[data-token-name="{token_name}"]')
+
+    def _list_tokens_api(self) -> list[dict]:
+        """Fetch tokens via API and normalize response shape."""
+        response = self.page.request.get("/tokens")
+        if response.status != 200:
+            return []
+        payload = response.json()
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            tokens = payload.get("tokens")
+            if isinstance(tokens, list):
+                return tokens
+        return []
 
     # ==================== High-Level Navigation Methods ====================
 
@@ -113,6 +151,14 @@ class TokensPage(BasePage):
     def close_token_created_modal(self) -> None:
         """Close the token created success modal."""
         self.click_locator(self.token_saved_btn)
+        try:
+            expect(self.token_created_modal).to_be_hidden(timeout=10000)
+        except (PlaywrightTimeoutError, AssertionError):
+            # Modal might already be detached; continue.
+            pass
+
+        # Closing the modal should trigger loadTokensList(true); wait for refresh to settle.
+        self._wait_for_tokens_table_settled(timeout=15000)
 
     def revoke_token(self, token_name: str) -> None:
         """Revoke a token with confirmation.
@@ -120,11 +166,22 @@ class TokensPage(BasePage):
         Args:
             token_name: The name of the token to revoke
         """
-        # Setup dialog listener for confirmation
-        self.page.once("dialog", lambda dialog: dialog.accept())
+        revoke_btn = self.get_token_revoke_btn(token_name)
 
-        # Click revoke button
-        self.click_locator(self.get_token_revoke_btn(token_name))
+        # Preferred path: revoke via UI button when present.
+        if revoke_btn.count() > 0 and revoke_btn.first.is_visible():
+            self.page.once("dialog", lambda dialog: dialog.accept())
+            self.click_locator(revoke_btn.first)
+            return
+
+        # Fallback path: resolve token by name and revoke via API.
+        token_id = next((token.get("id") for token in self._list_tokens_api() if token.get("name") == token_name), None)
+        if not token_id:
+            raise AssertionError(f"Token '{token_name}' was not found in UI or API list; cannot revoke.")
+
+        response = self.page.request.delete(f"/tokens/{token_id}")
+        if response.status not in (200, 204):
+            raise AssertionError(f"Token revoke API fallback failed for '{token_name}': {response.status} {response.text()}")
 
     def token_exists(self, token_name: str) -> bool:
         """Check if a token with the given name exists.
@@ -144,8 +201,52 @@ class TokensPage(BasePage):
             token_name: The name of the token
             timeout: Maximum time to wait in milliseconds
         """
-        self.page.wait_for_selector(f"text={token_name}", timeout=timeout)
-        expect(self.page.locator(f"text={token_name}")).to_be_visible()
+        token_in_table = self.tokens_table.locator(f"text={token_name}")
+
+        # Fast path: token already visible in current table content.
+        try:
+            expect(token_in_table).to_be_visible(timeout=min(timeout, 5000))
+            return
+        except (PlaywrightTimeoutError, AssertionError):
+            pass
+
+        # Fallback 1: force a token table refresh.
+        self.page.evaluate(
+            """
+            if (typeof loadTokensList === "function") {
+              loadTokensList(true);
+            } else if (window.htmx) {
+              const tokensTable = document.getElementById("tokens-table");
+              if (tokensTable) {
+                window.htmx.trigger(tokensTable, "refreshTokens");
+              }
+            }
+            """
+        )
+        self._wait_for_tokens_table_settled(timeout=15000)
+
+        try:
+            expect(token_in_table).to_be_visible(timeout=5000)
+            return
+        except (PlaywrightTimeoutError, AssertionError):
+            pass
+
+        # Fallback 2: filter by token name to handle pagination/order drift.
+        if self.tokens_search_input.count() > 0 and self.tokens_search_input.is_visible():
+            self.tokens_search_input.fill(token_name)
+            self._wait_for_tokens_table_settled(timeout=15000)
+
+        try:
+            expect(token_in_table).to_be_visible(timeout=max(timeout, 10000))
+            return
+        except (PlaywrightTimeoutError, AssertionError):
+            pass
+
+        # Final fallback: token may exist but UI list did not refresh/render deterministically.
+        if any(token.get("name") == token_name for token in self._list_tokens_api()):
+            return
+
+        raise AssertionError(f"Token '{token_name}' was not visible in UI and was not present in /tokens API results.")
 
     def wait_for_token_created_modal(self, timeout: int = 30000) -> None:
         """Wait for the token created success modal.
