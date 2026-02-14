@@ -179,12 +179,20 @@ class SemanticSearchService:
         # Generate embedding for query
         embedding = await self.embedding_service.embed_query(normalized_query)
 
-        # Perform vector search
-        results = await self.vector_search_service.search_similar_tools(
-            embedding=embedding,
-            limit=limit,
-            threshold=threshold,
-        )
+        # Acquire a database session for vector search
+        from mcpgateway.db import get_db
+
+        db_gen = get_db()
+        db = next(db_gen)
+        try:
+            results = await self.vector_search_service.search_similar_tools(
+                embedding=embedding,
+                limit=limit,
+                threshold=threshold,
+                db=db,
+            )
+        finally:
+            db_gen.close()
 
         # 4. Store cache
         await self._set_redis_cache(cache_key, results)

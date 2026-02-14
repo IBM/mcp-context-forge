@@ -537,3 +537,126 @@ class TestVectorSearchServiceInitialization:
         different_db_session.query.assert_called_once()
         # Verify the original session was not used
         mock_db_session.query.assert_not_called()
+
+
+# ============================================================================
+# TEST _cosine_similarity_numpy
+# ============================================================================
+
+
+class TestCosineSimNumpyFunction:
+    """Tests for the _cosine_similarity_numpy helper."""
+
+    def test_identical_vectors_return_one(self):
+        """Identical vectors should have similarity 1.0."""
+        from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+        vec = [1.0, 0.0, 0.0]
+        assert _cosine_similarity_numpy(vec, vec) == pytest.approx(1.0)
+
+    def test_orthogonal_vectors_return_zero(self):
+        """Orthogonal vectors should have similarity 0.0."""
+        from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+        assert _cosine_similarity_numpy([1, 0, 0], [0, 1, 0]) == pytest.approx(0.0)
+
+    def test_zero_vector_returns_zero(self):
+        """Zero vector should return 0.0 (not NaN)."""
+        from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+        assert _cosine_similarity_numpy([0, 0, 0], [1, 2, 3]) == 0.0
+
+    def test_opposite_vectors_clamped_to_zero(self):
+        """Opposite vectors (cosine = -1) should be clamped to 0.0."""
+        from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+        result = _cosine_similarity_numpy([1, 0], [-1, 0])
+        assert result == 0.0
+
+    def test_similar_vectors_high_score(self):
+        """Nearly identical vectors should have a score close to 1.0."""
+        from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+        result = _cosine_similarity_numpy([1.0, 0.1], [1.0, 0.2])
+        assert result > 0.99
+
+    def test_1536_dimensional_vectors(self):
+        """Should handle full 1536-dimensional embeddings."""
+        from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+        vec_a = [0.1] * 1536
+        vec_b = [0.1] * 1536
+        assert _cosine_similarity_numpy(vec_a, vec_b) == pytest.approx(1.0)
+
+
+# ============================================================================
+# TEST search_similar_tools
+# ============================================================================
+
+
+@pytest.fixture
+def mock_db_session_postgresql():
+    """Create a mock database session that reports PostgreSQL dialect."""
+    session = MagicMock()
+    session.get_bind.return_value.dialect.name = "postgresql"
+    return session
+
+
+@pytest.fixture
+def mock_db_session_sqlite():
+    """Create a mock database session that reports SQLite dialect."""
+    session = MagicMock()
+    session.get_bind.return_value.dialect.name = "sqlite"
+    return session
+
+
+class TestSearchSimilarTools:
+    """Tests for search_similar_tools method."""
+
+    @pytest.mark.asyncio
+    async def test_raises_when_no_db_session(self):
+        """search_similar_tools raises RuntimeError with no session."""
+        service = VectorSearchService(db=None)
+        with pytest.raises(RuntimeError, match="No database session"):
+            await service.search_similar_tools(embedding=[0.1] * 1536)
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_for_empty_embedding(self, mock_db_session_sqlite):
+        """search_similar_tools returns [] for empty embedding vector."""
+        service = VectorSearchService(db=mock_db_session_sqlite)
+        results = await service.search_similar_tools(embedding=[], limit=10)
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_dispatches_to_postgresql(self, mock_db_session_postgresql):
+        """search_similar_tools calls _search_postgresql on PostgreSQL backend."""
+        service = VectorSearchService(db=mock_db_session_postgresql)
+        with patch.object(service, "_search_postgresql", return_value=[]) as mock_pg:
+            results = await service.search_similar_tools(embedding=[0.1] * 1536, limit=5)
+            mock_pg.assert_called_once()
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_dispatches_to_sqlite(self, mock_db_session_sqlite):
+        """search_similar_tools calls _search_sqlite on SQLite backend."""
+        service = VectorSearchService(db=mock_db_session_sqlite)
+        with patch.object(service, "_search_sqlite", return_value=[]) as mock_sq:
+            results = await service.search_similar_tools(embedding=[0.1] * 1536, limit=5)
+            mock_sq.assert_called_once()
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_accepts_explicit_db_parameter(self, mock_db_session_sqlite):
+        """search_similar_tools uses db kwarg over self.db."""
+        service = VectorSearchService(db=None)
+        with patch.object(service, "_search_sqlite", return_value=[]):
+            results = await service.search_similar_tools(embedding=[0.1] * 1536, db=mock_db_session_sqlite)
+            assert results == []
+
+    @pytest.mark.asyncio
+    async def test_wraps_unexpected_errors_in_runtime_error(self, mock_db_session_sqlite):
+        """Unexpected exceptions are wrapped in RuntimeError."""
+        service = VectorSearchService(db=mock_db_session_sqlite)
+        with patch.object(service, "_search_sqlite", side_effect=ValueError("boom")):
+            with pytest.raises(RuntimeError, match="Vector search failed"):
+                await service.search_similar_tools(embedding=[0.1] * 1536)
