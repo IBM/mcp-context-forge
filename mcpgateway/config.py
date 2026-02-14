@@ -249,11 +249,18 @@ class Settings(BaseSettings):
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
+    sso_keycloak_public_base_url: Optional[str] = Field(
+        default=None,
+        description="Browser-facing Keycloak base URL for authorization redirects (e.g., http://localhost:8180)",
+    )
     sso_keycloak_realm: str = Field(default="master", description="Keycloak realm name")
     sso_keycloak_client_id: Optional[str] = Field(default=None, description="Keycloak client ID")
     sso_keycloak_client_secret: Optional[SecretStr] = Field(default=None, description="Keycloak client secret")
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
+    sso_keycloak_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})")
+    sso_keycloak_default_role: Optional[str] = Field(default=None, description="Default Context Forge role for Keycloak users without role mapping")
+    sso_keycloak_resolve_team_scope_to_personal_team: bool = Field(default=False, description="Resolve team-scoped Keycloak role mappings to the user's personal team")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
 
     # Security Validation & Sanitization
