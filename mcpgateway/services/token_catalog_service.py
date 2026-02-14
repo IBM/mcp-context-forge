@@ -813,6 +813,7 @@ class TokenCatalogService:
             if not token or not token.team_id:
                 return False
             # Only team owners (admins) can revoke other members' team tokens
+            # First-Party
             from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
             team_service = TeamManagementService(self.db)
