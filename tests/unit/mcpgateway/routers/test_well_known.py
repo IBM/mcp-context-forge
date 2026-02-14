@@ -191,19 +191,8 @@ def test_get_well_known_strips_leading_slashes():
 
 
 @pytest.mark.asyncio
-async def test_server_oauth_protected_resource_disabled():
-    from mcpgateway.routers.server_well_known import server_oauth_protected_resource
-
-    request = MagicMock()
-    with patch("mcpgateway.routers.server_well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = False
-        with pytest.raises(HTTPException) as exc_info:
-            await server_oauth_protected_resource(request, "server-1")
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_server_oauth_protected_resource_not_found():
+async def test_server_oauth_protected_resource_redirects_to_rfc9728():
+    """Test that deprecated server-scoped endpoint returns 301 redirect to RFC 9728 compliant path."""
     from mcpgateway.routers.server_well_known import server_oauth_protected_resource
 
     request = MagicMock()
@@ -212,62 +201,14 @@ async def test_server_oauth_protected_resource_not_found():
     request.base_url = "https://example.com/"
     mock_db = MagicMock()
 
-    from mcpgateway.services.server_service import ServerNotFoundError
+    # Deprecated endpoint now returns 301 redirect regardless of other conditions
+    with pytest.raises(HTTPException) as exc_info:
+        await server_oauth_protected_resource(request, "server-1", db=mock_db)
 
-    with (
-        patch("mcpgateway.routers.server_well_known.settings") as mock_settings,
-        patch("mcpgateway.routers.server_well_known.server_service") as mock_svc,
-    ):
-        mock_settings.well_known_enabled = True
-        mock_settings.well_known_cache_max_age = 3600
-        mock_svc.get_oauth_protected_resource_metadata.side_effect = ServerNotFoundError("not found")
-        with pytest.raises(HTTPException) as exc_info:
-            await server_oauth_protected_resource(request, "server-1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_server_oauth_protected_resource_server_error():
-    from mcpgateway.routers.server_well_known import server_oauth_protected_resource
-    from mcpgateway.services.server_service import ServerError
-
-    request = MagicMock()
-    request.headers = {}
-    request.url.scheme = "https"
-    request.base_url = "https://example.com/"
-    mock_db = MagicMock()
-
-    with (
-        patch("mcpgateway.routers.server_well_known.settings") as mock_settings,
-        patch("mcpgateway.routers.server_well_known.server_service") as mock_svc,
-    ):
-        mock_settings.well_known_enabled = True
-        mock_settings.well_known_cache_max_age = 3600
-        mock_svc.get_oauth_protected_resource_metadata.side_effect = ServerError("server error")
-        with pytest.raises(HTTPException) as exc_info:
-            await server_oauth_protected_resource(request, "server-1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_server_oauth_protected_resource_success():
-    from mcpgateway.routers.server_well_known import server_oauth_protected_resource
-
-    request = MagicMock()
-    request.headers = {}
-    request.url.scheme = "https"
-    request.base_url = "https://example.com/"
-    mock_db = MagicMock()
-
-    with (
-        patch("mcpgateway.routers.server_well_known.settings") as mock_settings,
-        patch("mcpgateway.routers.server_well_known.server_service") as mock_svc,
-    ):
-        mock_settings.well_known_enabled = True
-        mock_settings.well_known_cache_max_age = 3600
-        mock_svc.get_oauth_protected_resource_metadata.return_value = {"resource": "https://example.com/servers/s1"}
-        response = await server_oauth_protected_resource(request, "s1", db=mock_db)
-    assert response.status_code == 200
+    assert exc_info.value.status_code == 301
+    assert "Location" in exc_info.value.headers
+    redirect_url = exc_info.value.headers["Location"]
+    assert "/.well-known/oauth-protected-resource/servers/server-1/mcp" in redirect_url
 
 
 @pytest.mark.asyncio
@@ -347,177 +288,26 @@ async def test_server_well_known_file_success():
     assert response.status_code == 200
 
 
-# ---------- Root well-known OAuth endpoint ----------
+# ---------- Deprecated OAuth endpoint tests ----------
 
 
 @pytest.mark.asyncio
-async def test_root_oauth_protected_resource_disabled():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_db = MagicMock()
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = False
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_no_server_id():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_db = MagicMock()
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id=None, db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_server_not_found():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_db = MagicMock()
-    mock_db.get.return_value = None
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_server_disabled():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_server = MagicMock()
-    mock_server.enabled = False
-    mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_not_public():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_server = MagicMock()
-    mock_server.enabled = True
-    mock_server.visibility = "private"
-    mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_oauth_disabled():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_server = MagicMock()
-    mock_server.enabled = True
-    mock_server.visibility = "public"
-    mock_server.oauth_enabled = False
-    mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_no_config():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_server = MagicMock()
-    mock_server.enabled = True
-    mock_server.visibility = "public"
-    mock_server.oauth_enabled = True
-    mock_server.oauth_config = None
-    mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_no_auth_servers():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    mock_server = MagicMock()
-    mock_server.enabled = True
-    mock_server.visibility = "public"
-    mock_server.oauth_enabled = True
-    mock_server.oauth_config = {}
-    mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        with pytest.raises(HTTPException) as exc_info:
-            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert exc_info.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_success():
+async def test_root_oauth_protected_resource_deprecated():
+    """Test that deprecated query-parameter endpoint returns 404 with deprecation message."""
     from mcpgateway.routers.well_known import get_oauth_protected_resource
 
     request = MagicMock()
     request.headers = {}
     request.url.scheme = "https"
     request.base_url = "https://example.com/"
-    mock_server = MagicMock()
-    mock_server.enabled = True
-    mock_server.visibility = "public"
-    mock_server.oauth_enabled = True
-    mock_server.oauth_config = {"authorization_servers": ["https://idp.example.com"], "scopes_supported": ["openid"]}
     mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
+
     with patch("mcpgateway.routers.well_known.settings") as mock_settings:
         mock_settings.well_known_enabled = True
-        mock_settings.well_known_cache_max_age = 3600
-        response = await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert response.status_code == 200
+        # Deprecated endpoint now returns 404 regardless of server state
+        with pytest.raises(HTTPException) as exc_info:
+            await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
 
-
-@pytest.mark.asyncio
-async def test_root_oauth_protected_resource_single_auth_server():
-    from mcpgateway.routers.well_known import get_oauth_protected_resource
-
-    request = MagicMock()
-    request.headers = {}
-    request.url.scheme = "https"
-    request.base_url = "https://example.com/"
-    mock_server = MagicMock()
-    mock_server.enabled = True
-    mock_server.visibility = "public"
-    mock_server.oauth_enabled = True
-    mock_server.oauth_config = {"authorization_server": "https://idp.example.com"}
-    mock_db = MagicMock()
-    mock_db.get.return_value = mock_server
-    with patch("mcpgateway.routers.well_known.settings") as mock_settings:
-        mock_settings.well_known_enabled = True
-        mock_settings.well_known_cache_max_age = 3600
-        response = await get_oauth_protected_resource(request, server_id="s1", db=mock_db)
-    assert response.status_code == 200
+    assert exc_info.value.status_code == 404
+    assert "deprecated" in exc_info.value.detail.lower()
+    assert "RFC 9728" in exc_info.value.detail

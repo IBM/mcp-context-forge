@@ -16,6 +16,7 @@ This document describes the design for the Admin UI initiated OAuth 2.0 Authoriz
 
     - [RBAC Configuration](../manage/rbac.md) - Token scoping, permissions, and access control
     - [Multi-Tenancy Architecture](./multitenancy.md) - User authentication flows and team management
+    - [RFC 9728 Compliance](./rfc9728-compliance.md) - OAuth Protected Resource Metadata for MCP client discovery
 
 ## Current Implementation Snapshot
 

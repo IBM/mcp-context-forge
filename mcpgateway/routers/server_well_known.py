@@ -25,7 +25,7 @@ from mcpgateway.db import get_db
 from mcpgateway.db import Server as DbServer
 from mcpgateway.routers.well_known import get_base_url_with_protocol, get_well_known_file_content
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.server_service import ServerError, ServerNotFoundError, ServerService
+from mcpgateway.services.server_service import ServerService
 
 # Get logger instance
 logging_service = LoggingService()
@@ -45,43 +45,32 @@ async def server_oauth_protected_resource(
     db: Session = Depends(get_db),
 ) -> JSONResponse:
     """
-    RFC 9728 OAuth 2.0 Protected Resource Metadata endpoint for a specific server.
+    DEPRECATED: OAuth 2.0 Protected Resource Metadata endpoint (server-scoped, non-compliant).
 
-    Returns OAuth configuration for the server per RFC 9728, enabling MCP clients
-    to discover OAuth authorization servers and authenticate using browser-based SSO.
-    This endpoint does not require authentication per RFC 9728 requirements.
+    This endpoint is deprecated and non-compliant with RFC 9728. It returns a 301 redirect.
+
+    RFC 9728 Section 3.1 requires the well-known path to be constructed by inserting
+    /.well-known/oauth-protected-resource/ into the resource URL, not appending it.
+
+    Old (non-compliant): /servers/{server_id}/.well-known/oauth-protected-resource
+    New (RFC 9728):      /.well-known/oauth-protected-resource/servers/{server_id}/mcp
 
     Args:
-        request: FastAPI request object for building resource URL.
-        server_id: The ID of the server to get OAuth configuration for.
-        db: Database session dependency.
-
-    Returns:
-        JSONResponse with RFC 9728 Protected Resource Metadata.
+        request: FastAPI request object for building redirect URL.
+        server_id: The ID of the server.
+        db: Database session (unused).
 
     Raises:
-        HTTPException: 404 if server not found, disabled, non-public, OAuth not enabled, or not configured.
+        HTTPException: 301 redirect to compliant endpoint.
     """
-    # Check global well-known toggle first to respect admin configuration
-    if not settings.well_known_enabled:
-        raise HTTPException(status_code=404, detail="Not found")
-
-    # Build resource URL using proper protocol detection for proxies
-    # Note: get_base_url_with_protocol uses request.base_url which already includes root_path
+    # Build RFC 9728 compliant redirect URL
     base_url = get_base_url_with_protocol(request)
-    resource_url = f"{base_url}/servers/{server_id}"
+    compliant_url = f"{base_url}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"
 
-    try:
-        response_data = server_service.get_oauth_protected_resource_metadata(db, server_id, resource_url)
-    except ServerNotFoundError:
-        raise HTTPException(status_code=404, detail="Server not found")
-    except ServerError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+    logger.warning(f"Deprecated server-scoped OAuth metadata endpoint called for server {server_id}. " f"Redirecting to RFC 9728 compliant endpoint: {compliant_url}")
 
-    # Add cache headers
-    headers = {"Cache-Control": f"public, max-age={settings.well_known_cache_max_age}"}
-
-    return JSONResponse(content=response_data, headers=headers)
+    # Return 301 Permanent Redirect per implementation plan
+    raise HTTPException(status_code=301, detail="Moved Permanently", headers={"Location": compliant_url})
 
 
 @router.get("/{server_id}/.well-known/{filename:path}", include_in_schema=False)
