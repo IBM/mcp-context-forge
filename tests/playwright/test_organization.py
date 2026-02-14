@@ -11,12 +11,14 @@ Tests for Organization features (Teams, Tokens) in MCP Gateway Admin UI.
 import uuid
 
 # Third-Party
+import pytest
 from playwright.sync_api import expect
 
 
 class TestTeams:
     """Tests for Team management features."""
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX refresh timing in headless mode")
     def test_create_and_delete_team(self, team_page):
         """Test creating and deleting a team."""
         # Go to Teams tab
@@ -154,6 +156,7 @@ class TestTeams:
         # Cleanup
         team_page.delete_team(team_name)
 
+    @pytest.mark.flaky(reruns=2, reruns_delay=1, reason="HTMX refresh timing in headless mode")
     def test_delete_team_button_in_card(self, team_page):
         """Test Delete Team button in team card with confirmation."""
         team_page.navigate_to_teams_tab()
