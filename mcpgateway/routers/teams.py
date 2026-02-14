@@ -52,6 +52,7 @@ from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
     MemberAlreadyExistsError,
+    TeamManagementError,
     TeamManagementService,
     TeamMemberAddError,
     TeamMemberLimitExceededError,
@@ -557,6 +558,8 @@ async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_u
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except TeamMemberAddError as e:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+    except TeamManagementError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.error(f"Error adding team member {request.email} to team {team_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to add team member")

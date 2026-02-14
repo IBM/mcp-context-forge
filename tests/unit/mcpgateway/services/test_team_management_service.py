@@ -473,6 +473,18 @@ class TestTeamManagementService:
         assert "Invalid role" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_add_member_personal_team_rejected(self, service, mock_team):
+        """Test adding member to personal team is rejected."""
+        from mcpgateway.services.team_management_service import TeamManagementError
+
+        mock_team.is_personal = True
+
+        with patch.object(service, "get_team_by_id", return_value=mock_team):
+            with pytest.raises(TeamManagementError) as exc_info:
+                await service.add_member_to_team(team_id="team123", user_email="user@example.com")
+            assert "Cannot add members to personal teams" in str(exc_info.value)
+
+    @pytest.mark.asyncio
     async def test_add_member_team_not_found(self, service):
         """Test adding member to non-existent team."""
         from mcpgateway.services.team_management_service import TeamNotFoundError

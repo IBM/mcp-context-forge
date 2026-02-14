@@ -608,6 +608,11 @@ class TeamManagementService:
             logger.warning(f"Team {team_id} not found")
             raise TeamNotFoundError("Team not found")
 
+        # Prevent adding members to personal teams
+        if team.is_personal:
+            logger.warning(f"Cannot add members to personal team {team_id}")
+            raise TeamManagementError("Cannot add members to personal teams")
+
         # Check if user exists
         user = self.db.query(EmailUser).filter(EmailUser.email == user_email).first()
         if not user:

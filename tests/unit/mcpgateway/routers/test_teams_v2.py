@@ -447,6 +447,26 @@ class TestTeamsRouterV2:
             assert "Failed to add member to team" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_add_team_member_personal_team_rejected(self, mock_user_context, mock_db):
+        """Test adding a team member to a personal team is rejected."""
+        from mcpgateway.services.team_management_service import TeamManagementError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=TeamManagementError("Cannot add members to personal teams"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Cannot add members to personal teams" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
     async def test_add_team_member_as_owner_role(self, mock_user_context, mock_db):
         """Test adding a team member with owner role."""
         team_id = str(uuid4())
