@@ -42,6 +42,7 @@ from pathlib import Path
 import random
 import time
 from typing import Any
+from urllib.parse import quote
 import uuid
 
 # Third-Party
@@ -1000,6 +1001,13 @@ class AdminUIUser(BaseUser):
         """Load logs (JSON API)."""
         with self.client.get("/admin/logs", headers=self.auth_headers, name="/admin/logs", catch_response=True) as response:
             self._validate_json_response(response)
+
+    @task(1)
+    @tag("admin", "events")
+    def admin_events(self):
+        """Load admin events stream metadata."""
+        with self.client.get("/admin/events", headers=self.auth_headers, name="/admin/events", catch_response=True) as response:
+            self._validate_json_response(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
     @task(2)
     @tag("admin", "config")
@@ -2744,7 +2752,7 @@ class ReverseProxyUser(BaseUser):
     Skipped endpoints:
     - DELETE /reverse-proxy/sessions/{session_id} - Write operation
     - POST /reverse-proxy/sessions/{session_id}/request - Write operation
-    - GET /reverse-proxy/sse/{session_id} - SSE streaming
+    - GET /reverse-proxy/sse/{session_id} - Covered by ReverseProxyExtendedUser probe
 
     Weight: Low (administrative operations)
     """
@@ -3337,6 +3345,8 @@ class RootsExtendedUser(BaseUser):
     Endpoints tested:
     - GET /roots - List roots (already covered, included for context)
     - POST /roots - Create root
+    - GET /roots/export - Export a specific root
+    - PUT /roots/{root_uri} - Update root metadata
     - DELETE /roots/{uri} - Delete root
 
     Note: GET /roots/changes was REMOVED - returns SSE stream, not JSON.
@@ -3363,13 +3373,14 @@ class RootsExtendedUser(BaseUser):
             self._validate_json_response(response, allowed_codes=[200])
 
     @task(2)
-    @tag("roots", "write", "create")
-    def create_and_delete_root(self):
-        """POST /roots - Create a root, then DELETE it."""
+    @tag("roots", "write", "create", "update", "export")
+    def create_update_export_delete_root(self):
+        """POST /roots - Create a root, export/update it, then DELETE it."""
         root_uri = f"file:///tmp/loadtest-root-{uuid.uuid4().hex[:8]}"
+        root_name = f"loadtest-root-{uuid.uuid4().hex[:8]}"
         root_data = {
             "uri": root_uri,
-            "name": f"loadtest-root-{uuid.uuid4().hex[:8]}",
+            "name": root_name,
         }
 
         with self.client.post(
@@ -3384,8 +3395,30 @@ class RootsExtendedUser(BaseUser):
             elif response.status_code in (200, 201):
                 try:
                     time.sleep(0.1)
-                    # URL-encode the URI for deletion
-                    encoded_uri = root_uri.replace("/", "%2F").replace(":", "%3A")
+                    encoded_uri = quote(root_uri, safe="")
+                    encoded_query_uri = quote(root_uri, safe="")
+
+                    with self.client.get(
+                        f"/roots/export?uri={encoded_query_uri}",
+                        headers=self.auth_headers,
+                        name="/roots/export",
+                        catch_response=True,
+                    ) as export_response:
+                        self._validate_json_response(export_response, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+
+                    update_data = {
+                        "uri": root_uri,
+                        "name": f"{root_name}-updated",
+                    }
+                    with self.client.put(
+                        f"/roots/{encoded_uri}",
+                        json=update_data,
+                        headers={**self.auth_headers, "Content-Type": "application/json"},
+                        name="/roots/[root_uri] [update]",
+                        catch_response=True,
+                    ) as update_response:
+                        self._validate_json_response(update_response, allowed_codes=[200, 404, 409, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+
                     # Delete may return 404 (already deleted) or 500 (server bug)
                     with self.client.delete(
                         f"/roots/{encoded_uri}",
@@ -5236,6 +5269,7 @@ class WellKnownExtendedUser(BaseUser):
     Endpoints tested:
     - GET /.well-known/oauth-protected-resource - OAuth resource metadata
     - GET /openapi.json - OpenAPI specification
+    - GET /sse - Utility SSE endpoint (connection/status probe)
 
     Weight: Very low (metadata endpoints)
     """
@@ -5255,6 +5289,18 @@ class WellKnownExtendedUser(BaseUser):
         ) as response:
             # 404=Not configured
             self._validate_status(response, allowed_codes=[200, 404])
+
+    @task(1)
+    @tag("sse", "utility")
+    def utility_sse_probe(self):
+        """GET /sse - Utility SSE endpoint probe."""
+        with self.client.get(
+            "/sse",
+            headers={"Accept": "application/json"},
+            name="/sse",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AuthEmailExtendedUser(BaseUser):
@@ -5342,9 +5388,7 @@ class AdminLogsExtendedUser(BaseUser):
     Endpoints tested:
     - GET /admin/logs/export - Export logs
     - GET /admin/logs/file - Get log file
-
-    Skipped endpoints:
-    - GET /admin/logs/stream - SSE streaming (not suitable for load test)
+    - GET /admin/logs/stream - Logs stream endpoint (connection/status probe)
 
     Weight: Very low (admin operations)
     """
@@ -5375,6 +5419,18 @@ class AdminLogsExtendedUser(BaseUser):
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 404, 500])
+
+    @task(1)
+    @tag("admin", "logs", "stream")
+    def logs_stream_probe(self):
+        """GET /admin/logs/stream - Logs stream endpoint probe."""
+        with self.client.get(
+            "/admin/logs/stream",
+            headers={"Accept": "application/json"},
+            name="/admin/logs/stream",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 401, 403, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class AdminLLMExtendedUser(BaseUser):
@@ -5813,6 +5869,7 @@ class ServerWellKnownUser(BaseUser):
     Endpoints tested:
     - GET /servers/{id}/.well-known/oauth-protected-resource - Server OAuth metadata
     - POST /servers/{id}/message - Send message to server
+    - GET /servers/{id}/sse - Server SSE endpoint (connection/status probe)
 
     Weight: Very low
     """
@@ -5849,6 +5906,19 @@ class ServerWellKnownUser(BaseUser):
                 catch_response=True,
             ) as response:
                 self._validate_status(response, allowed_codes=[200, 400, 404, 500])
+
+    @task(1)
+    @tag("servers", "sse")
+    def server_sse_probe(self):
+        """GET /servers/{id}/sse - Server SSE endpoint probe."""
+        fake_server_id = f"loadtest-sse-{uuid.uuid4().hex[:8]}"
+        with self.client.get(
+            f"/servers/{fake_server_id}/sse",
+            headers={"Accept": "application/json"},
+            name="/servers/[id]/sse",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class ImportExtendedUser(BaseUser):
@@ -5898,10 +5968,8 @@ class OAuthExtendedUser(BaseUser):
     Endpoints tested:
     - GET /oauth/status/{gateway_id} - OAuth status for gateway
     - GET /oauth/registered-clients/{gateway_id} - Registered clients for gateway
-
-    Skipped endpoints (browser redirect flows):
-    - GET /oauth/authorize/{gateway_id} - Browser redirect flow
-    - GET /oauth/callback - Browser redirect callback
+    - GET /oauth/authorize/{gateway_id} - OAuth browser flow initiation probe
+    - GET /oauth/callback - OAuth callback validation probe
 
     Weight: Very low
     """
@@ -5936,6 +6004,33 @@ class OAuthExtendedUser(BaseUser):
                 catch_response=True,
             ) as response:
                 self._validate_json_response(response, allowed_codes=[200, 404])
+
+    @task(1)
+    @tag("oauth", "authorize")
+    def oauth_authorize_probe(self):
+        """GET /oauth/authorize/{gateway_id} - OAuth authorization flow probe."""
+        gateway_id = random.choice(GATEWAY_IDS) if GATEWAY_IDS else f"loadtest-{uuid.uuid4().hex[:8]}"
+        with self.client.get(
+            f"/oauth/authorize/{gateway_id}",
+            headers=self.auth_headers,
+            name="/oauth/authorize/[id]",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 302, 303, 307, 400, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+
+    @task(1)
+    @tag("oauth", "callback")
+    def oauth_callback_probe(self):
+        """GET /oauth/callback - OAuth callback probe with synthetic code/state."""
+        code = quote(f"loadtest-code-{uuid.uuid4().hex[:8]}", safe="")
+        state = quote(f"loadtest-state-{uuid.uuid4().hex[:8]}", safe="")
+        with self.client.get(
+            f"/oauth/callback?code={code}&state={state}",
+            headers=self.auth_headers,
+            name="/oauth/callback",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 302, 303, 307, 400, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 class LLMChatUser(BaseUser):
@@ -6941,6 +7036,7 @@ class ReverseProxyExtendedUser(BaseUser):
     Endpoints tested:
     - DELETE /reverse-proxy/sessions/{session_id} - Delete session
     - POST /reverse-proxy/sessions/{session_id}/request - Send request via proxy
+    - GET /reverse-proxy/sse/{session_id} - SSE endpoint (connection/status probe)
 
     Weight: Very low (proxy operations)
     """
@@ -6974,6 +7070,19 @@ class ReverseProxyExtendedUser(BaseUser):
             catch_response=True,
         ) as response:
             self._validate_status(response, allowed_codes=[200, 400, 401, 403, 404, 500, *INFRASTRUCTURE_ERROR_CODES])
+
+    @task(1)
+    @tag("reverse-proxy", "sessions", "sse")
+    def reverse_proxy_sse_probe(self):
+        """GET /reverse-proxy/sse/{session_id} - Reverse proxy SSE endpoint probe."""
+        fake_id = f"loadtest-sse-{uuid.uuid4().hex[:8]}"
+        with self.client.get(
+            f"/reverse-proxy/sse/{fake_id}",
+            headers={"Accept": "application/json"},
+            name="/reverse-proxy/sse/[id]",
+            catch_response=True,
+        ) as response:
+            self._validate_status(response, allowed_codes=[200, 400, 401, 403, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
 
 
 # =============================================================================
@@ -7837,6 +7946,9 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     - POST /admin/gateways/{id}/edit - Edit gateway via admin
     - POST /admin/gateways/{id}/delete - Delete gateway via admin
     - POST /admin/roots - Create root via admin
+    - GET /admin/roots/{uri} - Read root via admin
+    - POST /admin/roots/{uri}/update - Update root via admin
+    - GET /admin/roots/export - Export root via admin
     - POST /admin/roots/{uri}/delete - Delete root via admin
 
     Weight: Very low (admin HTMX)
@@ -8089,8 +8201,10 @@ class AdminHTMXEntityCRUDUser(BaseUser):
     @task(1)
     @tag("admin", "roots", "htmx", "crud")
     def admin_roots_lifecycle(self):
-        """POST /admin/roots -> delete - Roots lifecycle via admin."""
+        """POST /admin/roots -> get/update/export/delete - Roots lifecycle via admin."""
         uri = f"file:///tmp/loadtest-{uuid.uuid4().hex[:8]}"
+        encoded_uri = quote(uri, safe="")
+        encoded_query_uri = quote(uri, safe="")
         with self.client.post(
             "/admin/roots",
             data=f"uri={uri}&name=loadtest-root",
@@ -8100,8 +8214,36 @@ class AdminHTMXEntityCRUDUser(BaseUser):
         ) as response:
             if response.status_code in (200, 201, 302):
                 time.sleep(0.05)
+                with self.client.get(
+                    f"/admin/roots/{encoded_uri}",
+                    headers=self.auth_headers,
+                    name="/admin/roots/[uri]",
+                    catch_response=True,
+                ) as get_resp:
+                    self._validate_status(get_resp, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+
+                time.sleep(0.05)
                 with self.client.post(
-                    f"/admin/roots/{uri}/delete",
+                    f"/admin/roots/{encoded_uri}/update",
+                    data=f"uri={uri}&name=loadtest-root-updated",
+                    headers={**self.admin_headers, "Content-Type": "application/x-www-form-urlencoded", "HX-Request": "true"},
+                    name="/admin/roots/[uri]/update",
+                    catch_response=True,
+                ) as upd_resp:
+                    self._validate_status(upd_resp, allowed_codes=[200, 302, 303, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+
+                time.sleep(0.05)
+                with self.client.get(
+                    f"/admin/roots/export?uri={encoded_query_uri}",
+                    headers=self.auth_headers,
+                    name="/admin/roots/export",
+                    catch_response=True,
+                ) as export_resp:
+                    self._validate_status(export_resp, allowed_codes=[200, 404, 422, 500, *INFRASTRUCTURE_ERROR_CODES])
+
+                time.sleep(0.05)
+                with self.client.post(
+                    f"/admin/roots/{encoded_uri}/delete",
                     headers={**self.admin_headers, "HX-Request": "true"},
                     name="/admin/roots/[uri]/delete",
                     catch_response=True,
