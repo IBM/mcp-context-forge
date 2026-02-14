@@ -30,8 +30,12 @@ def client(monkeypatch):
     """Provides a FastAPI TestClient with metrics enabled."""
     monkeypatch.setenv("ENABLE_METRICS", "true")
 
-    # Clear the prometheus registry to avoid duplicates
     from prometheus_client import REGISTRY
+
+    # Snapshot registry state before clearing
+    saved_collectors = dict(REGISTRY._names_to_collectors)
+    saved_reverse = dict(REGISTRY._collector_to_names)
+
     REGISTRY._collector_to_names.clear()
     REGISTRY._names_to_collectors.clear()
 
@@ -42,7 +46,13 @@ def client(monkeypatch):
     app = FastAPI()
     setup_metrics(app)
 
-    return TestClient(app)
+    yield TestClient(app)
+
+    # Restore registry to pre-test state
+    REGISTRY._collector_to_names.clear()
+    REGISTRY._names_to_collectors.clear()
+    REGISTRY._names_to_collectors.update(saved_collectors)
+    REGISTRY._collector_to_names.update(saved_reverse)
 
 
 def test_metrics_endpoint(client):
@@ -86,30 +96,41 @@ def test_metrics_excluded_paths(monkeypatch):
     monkeypatch.setenv("ENABLE_METRICS", "true")
     monkeypatch.setenv("METRICS_EXCLUDED_HANDLERS", ".*health.*")
 
-    # Clear the prometheus registry to avoid duplicates
     from prometheus_client import REGISTRY
+
+    # Snapshot registry state before clearing
+    saved_collectors = dict(REGISTRY._names_to_collectors)
+    saved_reverse = dict(REGISTRY._collector_to_names)
+
     REGISTRY._collector_to_names.clear()
     REGISTRY._names_to_collectors.clear()
 
-    # Create fresh app with exclusions
-    from fastapi import FastAPI
-    from mcpgateway.services.metrics import setup_metrics
+    try:
+        # Create fresh app with exclusions
+        from fastapi import FastAPI
+        from mcpgateway.services.metrics import setup_metrics
 
-    app = FastAPI()
+        app = FastAPI()
 
-    @app.get("/health")
-    async def health():
-        return {"status": "ok"}
+        @app.get("/health")
+        async def health():
+            return {"status": "ok"}
 
-    setup_metrics(app)
-    client = TestClient(app)
+        setup_metrics(app)
+        client = TestClient(app)
 
-    # Hit the /health endpoint
-    client.get("/health")
-    resp = client.get("/metrics/prometheus")
+        # Hit the /health endpoint
+        client.get("/health")
+        resp = client.get("/metrics/prometheus")
 
-    # Just verify we get a response - exclusion testing is complex
-    assert resp.status_code == 200, "Metrics endpoint should be accessible"
+        # Just verify we get a response - exclusion testing is complex
+        assert resp.status_code == 200, "Metrics endpoint should be accessible"
+    finally:
+        # Restore registry to pre-test state
+        REGISTRY._collector_to_names.clear()
+        REGISTRY._names_to_collectors.clear()
+        REGISTRY._names_to_collectors.update(saved_collectors)
+        REGISTRY._collector_to_names.update(saved_reverse)
 
 
 # ----------------------------------------------------------------------
