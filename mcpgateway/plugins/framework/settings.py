@@ -138,7 +138,7 @@ class LazySettingsWrapper:
         env_flag = os.getenv("PLUGINS_ENABLED")
         if env_flag is not None:
             return env_flag.strip().lower() in {"1", "true", "yes", "on"}
-        return False
+        return get_settings().enabled
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it
