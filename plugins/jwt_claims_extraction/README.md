@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plugin extracts JWT claims and metadata from access tokens and makes them available to downstream authorization plugins (Cedar, OPA, etc.) via a reserved context key.
+Extracts JWT claims and metadata from access tokens and makes them available to downstream authorization plugins (Cedar, OPA, etc.) via `global_context.state`.
 
 ## Purpose
 
@@ -11,50 +11,56 @@ JWT tokens can include:
 - **Private claims**: Roles, permissions, groups, attributes
 - **RFC 9396 Rich Authorization Requests**: Fine-grained permissions for specific operations
 
-This plugin extracts these claims after JWT verification and stores them in `global_context.metadata["jwt_claims"]` for use by policy enforcement plugins.
+This plugin extracts these claims and stores them in `global_context.state["jwt_claims"]` for use by policy enforcement plugins.
 
 ## Features
 
-- ✅ Extracts standard JWT claims (sub, iss, aud, exp, iat, nbf, jti)
-- ✅ Extracts custom claims (roles, permissions, groups, attributes)
-- ✅ Supports RFC 9396 authorization_details
-- ✅ Non-blocking (permissive mode)
-- ✅ Error handling (logs errors without blocking auth)
+- Extracts standard JWT claims (sub, iss, aud, exp, iat, nbf, jti)
+- Extracts custom claims (roles, permissions, groups, attributes)
+- Supports RFC 9396 authorization_details
+- Non-blocking (permissive mode)
+- Error handling (logs errors without blocking auth)
 
 ## Configuration
 
-The plugin is configured via `config.yaml`:
+Register the plugin in `plugins/config.yaml`:
 ```yaml
-name: jwt_claims_extraction
-version: 1.0.0
-enabled: true
-mode: permissive  # Non-blocking mode
-priority: 10      # Runs early in the hook chain
-hooks:
-  - http_auth_resolve_user
+- name: "JwtClaimsExtractionPlugin"
+  kind: "plugins.jwt_claims_extraction.jwt_claims_extraction.JwtClaimsExtractionPlugin"
+  description: "Extracts JWT claims for downstream authorization plugins."
+  version: "1.0.0"
+  author: "Ioannis Ioannou"
+  hooks: ["http_auth_resolve_user"]
+  tags: ["auth", "jwt", "claims"]
+  mode: "permissive"
+  priority: 10
+  config:
+    context_key: jwt_claims
 ```
+
+## Security Model
+
+The `http_auth_resolve_user` hook fires **before** standard JWT signature verification in the authentication flow. This plugin decodes the token without verification because the standard auth system verifies the signature immediately after this hook returns.
+
+Claims stored in `global_context.state` are only consumed by downstream hooks (e.g. `http_auth_check_permission`) which fire **after** authentication is established. If the JWT is invalid, the request is rejected with 401 and no downstream hook ever reads the unverified claims.
 
 ## Usage
 
-### For Downstream Plugins
+### For Downstream Plugins (Cedar, OPA, etc.)
 
-Access extracted claims in your plugin:
+Access extracted claims in an `http_auth_check_permission` hook:
 ```python
 class MyAuthPlugin(Plugin):
-    async def handle_auth_check(self, payload, context):
-        # Access JWT claims from global context
-        claims = self._global_context.metadata.get("jwt_claims", {})
-        
-        # Use claims for authorization
+    async def http_auth_check_permission(self, payload, context):
+        claims = context.global_context.state.get("jwt_claims", {})
+
         user_roles = claims.get("roles", [])
-        user_permissions = claims.get("permissions", [])
-        
         if "admin" in user_roles:
             return PluginResult(
                 modified_payload=HttpAuthCheckPermissionResultPayload(
                     granted=True,
-                    reason="User has admin role"
-                )
+                    reason="User has admin role",
+                ),
             )
 ```
 
@@ -127,16 +133,8 @@ allow {
 
 Run tests with:
 ```bash
-pytest tests/unit/mcpgateway/plugins/test_jwt_claims_extraction.py -v
+pytest tests/unit/plugins/test_jwt_claims_extraction.py -v
 ```
-
-## Security Considerations
-
-**Token Verification Assumption**: This plugin assumes JWT tokens have already been verified by the authentication system before reaching the `http_auth_resolve_user` hook. The plugin uses `verify_signature=False` because signature validation is completed upstream.
-
-**Important**: Always ensure this plugin runs AFTER JWT verification in the authentication flow. If hook ordering changes or misconfiguration allows this plugin to run before auth verification, unverified tokens would be accepted.
-
-**Logging**: The plugin logs at DEBUG level to avoid leaking PII or sensitive claim data in production logs. Only claim counts and non-sensitive metadata are logged at INFO level.
 
 ## Related Issues
 
