@@ -15785,8 +15785,10 @@ async function handleGrpcServiceFormSubmit(e) {
             throw new Error(nameValidation.error);
         }
 
-        if (!target || !/^[\w.\-]+:\d+$/.test(target)) {
-            throw new Error("Target must be in host:port format (e.g. localhost:50051)");
+        if (!target || !/^[\w.-]+:\d+$/.test(target)) {
+            throw new Error(
+                "Target must be in host:port format (e.g. localhost:50051)",
+            );
         }
 
         // Disable submit button during request

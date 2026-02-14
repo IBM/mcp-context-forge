@@ -16,18 +16,26 @@ from mcpgateway.services.metrics import (
 )
 
 
+_METRIC_GAUGE_NAMES = ("app_info", "database_info", "http_pool_max_connections", "http_pool_max_keepalive_connections")
+
+
+def _unregister_metric_gauges():
+    """Remove known metric gauges from the global registry."""
+    for name in _METRIC_GAUGE_NAMES:
+        collector = REGISTRY._names_to_collectors.get(name)
+        if collector is not None:
+            try:
+                REGISTRY.unregister(collector)
+            except Exception:
+                pass
+
+
 @pytest.fixture(autouse=True)
 def _clean_prometheus_registry():
-    """Clean up any gauge/counter registered during tests to avoid duplicates."""
-    collectors_before = set(REGISTRY._names_to_collectors.values())
+    """Clean up metric gauges before and after each test to avoid duplicates."""
+    _unregister_metric_gauges()
     yield
-    # Unregister collectors added during the test
-    collectors_after = set(REGISTRY._names_to_collectors.values())
-    for collector in collectors_after - collectors_before:
-        try:
-            REGISTRY.unregister(collector)
-        except Exception:
-            pass
+    _unregister_metric_gauges()
 
 
 # ---------- Global counters ----------
