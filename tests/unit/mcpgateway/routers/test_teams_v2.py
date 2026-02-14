@@ -48,6 +48,7 @@ with patch("mcpgateway.middleware.rbac.require_permission", mock_require_permiss
         from mcpgateway.schemas import (
             EmailUserResponse,
             TeamCreateRequest,
+            TeamMemberAddRequest,
             TeamMemberUpdateRequest,
             TeamUpdateRequest,
         )
@@ -259,6 +260,239 @@ class TestTeamsRouterV2:
             assert len(result) == 1
             assert result[0].user_email == mock_team_member.user_email
             assert result[0].role == mock_team_member.role
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_success(self, mock_user_context, mock_db, mock_team_member):
+        """Test adding a team member successfully."""
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        # Create a new member object for the added member
+        new_member = MagicMock(spec=EmailTeamMember)
+        new_member.id = str(uuid4())
+        new_member.team_id = team_id
+        new_member.user_email = request.email
+        new_member.role = request.role
+        new_member.joined_at = datetime.now(timezone.utc)
+        new_member.invited_by = mock_user_context["email"]
+        new_member.is_active = True
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(return_value=new_member)
+            MockService.return_value = mock_service
+
+            result = await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert result.user_email == request.email
+            assert result.role == request.role
+            assert result.team_id == team_id
+            assert result.invited_by == mock_user_context["email"]
+            mock_service.add_member_to_team.assert_called_once_with(team_id, request.email, request.role, invited_by=mock_user_context["email"])
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_insufficient_permissions(self, mock_user_context, mock_db):
+        """Test adding a team member without owner permissions."""
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="member")
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+            assert "Insufficient permissions" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_add_fails(self, mock_user_context, mock_db):
+        """Test adding a team member when add operation fails."""
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        from mcpgateway.services.team_management_service import UserNotFoundError
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=UserNotFoundError("User not found"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+            assert exc_info.value.detail == "User not found"
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_not_found_after_adding(self, mock_user_context, mock_db):
+        """Test adding a team member when member not found after adding."""
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(return_value=None)  # Returns None to simulate failure
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert "Failed to add team member" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_value_error(self, mock_user_context, mock_db):
+        """Test adding a team member with invalid role."""
+        from mcpgateway.services.team_management_service import InvalidRoleError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=InvalidRoleError("Invalid role 'invalid'"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Invalid role" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_team_not_found(self, mock_user_context, mock_db):
+        """Test adding a team member when team is not found."""
+        from mcpgateway.services.team_management_service import TeamNotFoundError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=TeamNotFoundError("Team not found"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_404_NOT_FOUND
+            assert "Team not found" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_already_exists(self, mock_user_context, mock_db):
+        """Test adding a team member when member already exists."""
+        from mcpgateway.services.team_management_service import MemberAlreadyExistsError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="existing@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=MemberAlreadyExistsError("Member already exists"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "Member already exists" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_limit_exceeded(self, mock_user_context, mock_db):
+        """Test adding a team member when team member limit is exceeded."""
+        from mcpgateway.services.team_management_service import TeamMemberLimitExceededError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=TeamMemberLimitExceededError("Team member limit exceeded"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Team member limit exceeded" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_database_error(self, mock_user_context, mock_db):
+        """Test adding a team member with database error."""
+        from mcpgateway.services.team_management_service import TeamMemberAddError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=TeamMemberAddError("Failed to add member to team"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
+            assert "Failed to add member to team" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_personal_team_rejected(self, mock_user_context, mock_db):
+        """Test adding a team member to a personal team is rejected."""
+        from mcpgateway.services.team_management_service import TeamManagementError
+
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newmember@example.com", role="member")
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(side_effect=TeamManagementError("Cannot add members to personal teams"))
+            MockService.return_value = mock_service
+
+            with pytest.raises(HTTPException) as exc_info:
+                await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "Cannot add members to personal teams" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_add_team_member_as_owner_role(self, mock_user_context, mock_db):
+        """Test adding a team member with owner role."""
+        team_id = str(uuid4())
+        request = TeamMemberAddRequest(email="newowner@example.com", role="owner")
+
+        # Create a new owner member
+        new_owner = MagicMock(spec=EmailTeamMember)
+        new_owner.id = str(uuid4())
+        new_owner.team_id = team_id
+        new_owner.user_email = request.email
+        new_owner.role = "owner"
+        new_owner.joined_at = datetime.now(timezone.utc)
+        new_owner.invited_by = mock_user_context["email"]
+        new_owner.is_active = True
+
+        with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            mock_service.add_member_to_team = AsyncMock(return_value=new_owner)
+            MockService.return_value = mock_service
+
+            result = await teams.add_team_member(team_id, request, current_user=mock_user_context, db=mock_db)
+
+            assert result.user_email == request.email
+            assert result.role == "owner"
+            mock_service.add_member_to_team.assert_called_once_with(team_id, request.email, "owner", invited_by=mock_user_context["email"])
 
     @pytest.mark.asyncio
     async def test_update_team_member_success(self, mock_user_context, mock_db, mock_team_member):
