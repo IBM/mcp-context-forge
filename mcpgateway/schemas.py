@@ -5912,6 +5912,8 @@ class TeamMemberResponse(BaseModel):
         'member'
     """
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str = Field(..., description="Member UUID")
     team_id: str = Field(..., description="Team UUID")
     user_email: str = Field(..., description="Member email address")
@@ -6022,6 +6024,18 @@ class TeamInvitationResponse(BaseModel):
     token: str = Field(..., description="Invitation token")
     is_active: bool = Field(..., description="Whether the invitation is active")
     is_expired: bool = Field(..., description="Whether the invitation has expired")
+
+
+class TeamMemberAddRequest(BaseModel):
+    """Schema for adding a team member.
+
+    Attributes:
+        email: Email address of user to be added to the team
+        role: New role for the team member
+    """
+
+    email: EmailStr = Field(..., description="Email address of user to be added to the team")
+    role: Literal["owner", "member"] = Field(..., description="New role for the team member")
 
 
 class TeamMemberUpdateRequest(BaseModel):
