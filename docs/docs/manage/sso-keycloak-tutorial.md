@@ -2,6 +2,35 @@
 
 This tutorial walks you through setting up Keycloak Single Sign-On (SSO) authentication for MCP Gateway, enabling enterprise identity management with the popular open-source identity and access management solution.
 
+## Quick Start (Docker Compose)
+
+Use the preconfigured local SSO stack to test Keycloak end-to-end without external IdP setup:
+
+```bash
+make compose-sso
+make sso-test-login
+```
+
+Or run directly with compose:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+```
+
+Preconfigured local endpoints and credentials:
+
+- Gateway UI: `http://localhost:8080/admin/login`
+- Keycloak admin console: `http://localhost:8180` (`admin` / `changeme`)
+- Keycloak realm: `mcp-gateway`
+- Keycloak client: `mcp-gateway`
+- Callback URL: `http://localhost:8080/auth/sso/callback/keycloak`
+- Compose wiring: internal Keycloak URL `http://keycloak:8080`, browser URL `http://localhost:8180`
+- Test users (all password `changeme`):
+  - `admin@example.com`
+  - `developer@example.com`
+  - `viewer@example.com`
+  - `newuser@example.com`
+
 ## Prerequisites
 
 - MCP Gateway installed and running
@@ -374,6 +403,7 @@ SSO_KEYCLOAK_CLIENT_ID=mcp-gateway-prod
 |----------|----------|---------|-------------|
 | `SSO_KEYCLOAK_ENABLED` | Yes | `false` | Enable Keycloak SSO provider |
 | `SSO_KEYCLOAK_BASE_URL` | Yes | - | Base URL of Keycloak instance |
+| `SSO_KEYCLOAK_PUBLIC_BASE_URL` | No | _unset_ | Browser-facing Keycloak URL used for authorization redirects when gateway uses an internal URL |
 | `SSO_KEYCLOAK_REALM` | Yes | `master` | Keycloak realm name |
 | `SSO_KEYCLOAK_CLIENT_ID` | Yes | - | OAuth client ID from Keycloak |
 | `SSO_KEYCLOAK_CLIENT_SECRET` | Yes | - | OAuth client secret from Keycloak |
@@ -382,6 +412,9 @@ SSO_KEYCLOAK_CLIENT_ID=mcp-gateway-prod
 | `SSO_KEYCLOAK_USERNAME_CLAIM` | No | `preferred_username` | JWT claim for username |
 | `SSO_KEYCLOAK_EMAIL_CLAIM` | No | `email` | JWT claim for email |
 | `SSO_KEYCLOAK_GROUPS_CLAIM` | No | `groups` | JWT claim for group membership |
+| `SSO_KEYCLOAK_ROLE_MAPPINGS` | No | `{}` | JSON map of Keycloak roles/groups to Gateway RBAC roles |
+| `SSO_KEYCLOAK_DEFAULT_ROLE` | No | _unset_ | Fallback role when no mapping matches |
+| `SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM` | No | `false` | Resolve team-scoped mapped roles to the user's personal team |
 
 ## Step 7: Restart and Verify Gateway
 

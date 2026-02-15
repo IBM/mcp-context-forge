@@ -14,6 +14,7 @@
 #  DOCKER COMPOSE PROFILES
 #
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
+#  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
 #  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
@@ -51,6 +52,7 @@ volumes:                # Named volumes survive podman-compose down/up
   lokidata:
   tempodata:
   locust_token:
+  keycloakdata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -230,6 +232,24 @@ services:
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
+      # ═══════════════════════════════════════════════════════════════════════════
+      # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - SSO_ENABLED=${SSO_ENABLED:-false}
+      - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
+      - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
+      - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
+      - SSO_KEYCLOAK_REALM=${SSO_KEYCLOAK_REALM:-mcp-gateway}
+      - SSO_KEYCLOAK_CLIENT_ID=${SSO_KEYCLOAK_CLIENT_ID:-mcp-gateway}
+      - SSO_KEYCLOAK_CLIENT_SECRET=${SSO_KEYCLOAK_CLIENT_SECRET:-keycloak-dev-secret}
+      - SSO_KEYCLOAK_MAP_REALM_ROLES=${SSO_KEYCLOAK_MAP_REALM_ROLES:-true}
+      - SSO_KEYCLOAK_MAP_CLIENT_ROLES=${SSO_KEYCLOAK_MAP_CLIENT_ROLES:-false}
+      - SSO_KEYCLOAK_GROUPS_CLAIM=${SSO_KEYCLOAK_GROUPS_CLAIM:-groups}
+      - SSO_KEYCLOAK_ROLE_MAPPINGS=${SSO_KEYCLOAK_ROLE_MAPPINGS:-{}}
+      - SSO_KEYCLOAK_DEFAULT_ROLE=${SSO_KEYCLOAK_DEFAULT_ROLE:-}
+      - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
+      - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
+      - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
@@ -572,6 +592,52 @@ services:
     # 1. Generate keys: make certs-jwt
     # 2. Uncomment volumes mount above
     # 3. Switch JWT_ALGORITHM to RS256 and uncomment JWT_*_KEY_PATH variables
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Keycloak - Local Identity Provider for SSO development/testing
+  # Admin Console: http://localhost:8180 (admin/changeme)
+  # Usage: docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+  # ──────────────────────────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    restart: unless-stopped
+    profiles: ["sso"]
+    networks: [mcpnet]
+    ports:
+      - "8180:8080"
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-changeme}
+      - KC_HOSTNAME=${KC_HOSTNAME:-localhost}
+      - KC_HOSTNAME_PORT=${KC_HOSTNAME_PORT:-8180}
+      - KC_HOSTNAME_STRICT=${KC_HOSTNAME_STRICT:-false}
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+      - KC_METRICS_ENABLED=false
+    command: ["start-dev", "--import-realm"]
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloakdata:/opt/keycloak/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bash",
+          "-ec",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -Eq '\"status\"[[:space:]]*:[[:space:]]*\"UP\"' <&3"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
 ###############################################################################
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
@@ -1409,7 +1475,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing", "monitoring"]
+    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
   # Auto-registration service - registers fast_test_server with gateway
@@ -1475,7 +1541,7 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing", "monitoring"]
+    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
   # A2A Echo Agent - Lightweight A2A-compatible agent for end-to-end testing
@@ -1509,7 +1575,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 64M
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Auto-registration service - registers a2a_echo_agent with gateway
@@ -1578,7 +1644,7 @@ services:
         print(f'✅ Registered a2a_echo_agent: {result.get(\"id\", \"unknown\")}')
         "
         echo "✅ Registration complete!"
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Locust JWT token generator - produces a gateway JWT for containerized load tests
@@ -1602,7 +1668,7 @@ services:
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo ""
         echo "✅ Token written to /tokens/gateway.jwt"
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Locust - Containerized load testing with web UI (master + optional workers)
@@ -1669,7 +1735,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   locust_worker:
     image: locustio/locust:latest
@@ -1704,7 +1770,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool
@@ -2003,4 +2069,4 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
-    profiles: ["inspector"]
+    profiles: ["inspector", "sso"]

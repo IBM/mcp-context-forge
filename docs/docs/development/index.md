@@ -9,6 +9,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 | Page                                                                              | Description                                                                    |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Building Locally](building.md)                                                   | How to install dependencies, set up a virtual environment, and run the gateway |
+| [Developer Workstation](developer-workstation.md)                                 | Local workstation setup, troubleshooting, and Keycloak SSO development login   |
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
 | [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |

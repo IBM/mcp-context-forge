@@ -2,9 +2,13 @@
 """Tests for mcpgateway.admin helpers and auth flows."""
 
 # Standard
+import base64
 from datetime import datetime, timezone
 import inspect
+import json
+import time
 from types import SimpleNamespace
+from urllib.parse import parse_qs, urlparse
 from uuid import UUID, uuid4
 
 # Third-Party
@@ -18,6 +22,13 @@ from mcpgateway import admin
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.server_service import ServerNotFoundError
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+
+
+def _make_id_token(exp_offset: int = 3600) -> str:
+    """Create a minimal unsigned JWT with the given expiry offset from now."""
+    header = base64.urlsafe_b64encode(json.dumps({"alg": "none"}).encode()).rstrip(b"=").decode()
+    payload = base64.urlsafe_b64encode(json.dumps({"exp": int(time.time()) + exp_offset}).encode()).rstrip(b"=").decode()
+    return f"{header}.{payload}.sig"
 
 
 def _make_request(root_path: str = "/admin") -> MagicMock:
@@ -41,6 +52,55 @@ def _allow_permissions(monkeypatch):
         return True
 
     monkeypatch.setattr(PermissionService, "check_permission", _ok)
+
+
+def _configure_admin_ui_test_dependencies(monkeypatch):
+    monkeypatch.setattr(admin.settings, "email_auth_enabled", True)
+    monkeypatch.setattr(admin.settings, "mcpgateway_a2a_enabled", False)
+    monkeypatch.setattr(admin.settings, "mcpgateway_grpc_enabled", False)
+    monkeypatch.setattr(admin.settings, "app_root_path", "/root")
+    monkeypatch.setattr(admin.settings, "token_expiry", 60)
+    monkeypatch.setattr(admin.settings, "secure_cookies", False)
+    monkeypatch.setattr(admin.settings, "cookie_samesite", "lax")
+
+    class FakeTeamService:
+        def __init__(self, db):
+            self.db = db
+
+        async def get_user_teams(self, email):
+            return []
+
+        async def get_member_counts_batch_cached(self, team_ids):
+            return {}
+
+        def get_user_roles_batch(self, email, team_ids):
+            return {}
+
+    async def list_tools(db, include_inactive=False, user_email=None, limit=0, team_id=None):
+        return []
+
+    async def list_servers(db, include_inactive=False, user_email=None, limit=0):
+        return ([], None)
+
+    async def list_resources(db, include_inactive=False, user_email=None, limit=0, team_id=None):
+        return []
+
+    async def list_prompts(db, include_inactive=False, user_email=None, limit=0, team_id=None):
+        return []
+
+    async def list_gateways(db, include_inactive=False, user_email=None, limit=0, team_id=None):
+        return []
+
+    async def list_roots():
+        return []
+
+    monkeypatch.setattr(admin, "TeamManagementService", FakeTeamService)
+    monkeypatch.setattr(admin.tool_service, "list_tools", list_tools)
+    monkeypatch.setattr(admin.server_service, "list_servers", list_servers)
+    monkeypatch.setattr(admin.resource_service, "list_resources", list_resources)
+    monkeypatch.setattr(admin.prompt_service, "list_prompts", list_prompts)
+    monkeypatch.setattr(admin.gateway_service, "list_gateways", list_gateways)
+    monkeypatch.setattr(admin.root_service, "list_roots", list_roots)
 
 
 def _unwrap(func):
@@ -424,8 +484,249 @@ async def test_admin_logout_paths():
 
 
 @pytest.mark.asyncio
+async def test_admin_logout_keycloak_redirect(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_client_id", "mcp-gateway-admin")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    location = response.headers["location"]
+    parsed = urlparse(location)
+    params = parse_qs(parsed.query)
+    assert parsed.path.endswith("/realms/mcp-gateway/protocol/openid-connect/logout")
+    assert params["client_id"] == ["mcp-gateway-admin"]
+    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/admin/login"]
+    assert "jwt_token=" in response.headers.get("set-cookie", "")
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_provider_from_nested_user_payload(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "keycloak"}}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_client_id", "mcp-gateway-admin")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert "/protocol/openid-connect/logout" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_redirect_includes_id_token_hint(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    valid_id_token = _make_id_token(exp_offset=3600)
+    request.cookies = {"jwt_token": "jwt-token", "sso_id_token_hint": valid_id_token}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_client_id", "mcp-gateway-admin")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    location = response.headers["location"]
+    params = parse_qs(urlparse(location).query)
+    assert params["id_token_hint"] == [valid_id_token]
+    set_cookie_headers = [value.decode() for key, value in response.raw_headers if key.lower() == b"set-cookie"]
+    assert any("sso_id_token_hint=" in header for header in set_cookie_headers)
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_omits_expired_id_token_hint(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    expired_id_token = _make_id_token(exp_offset=-60)  # expired 60s ago
+    request.cookies = {"jwt_token": "jwt-token", "sso_id_token_hint": expired_id_token}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_client_id", "mcp-gateway-admin")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    location = response.headers["location"]
+    params = parse_qs(urlparse(location).query)
+    assert "id_token_hint" not in params
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_without_absolute_login_url_falls_back(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="", netloc="")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", None)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_client_id", "mcp-gateway-admin")
+    monkeypatch.setattr(admin.settings, "app_domain", None)
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_verify_jwt_failure_defaults_to_keycloak_when_enabled(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(side_effect=RuntimeError("token decode error")))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    # With Keycloak SSO enabled, JWT failure defaults to keycloak logout redirect
+    assert "realms/mcp-gateway/protocol/openid-connect/logout" in response.headers["location"]
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_verify_jwt_failure_falls_back_to_local_when_keycloak_disabled(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(side_effect=RuntimeError("token decode error")))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", False)
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_without_auth_provider_falls_back_to_local_redirect(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {}}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_uses_app_domain_fallback_for_login_url(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="", netloc="")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "mcp-gateway")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_client_id", "mcp-gateway-admin")
+    monkeypatch.setattr(admin.settings, "app_domain", "http://localhost:4444/")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    location = response.headers["location"]
+    params = parse_qs(urlparse(location).query)
+    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/admin/login"]
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_disabled_falls_back_to_local_redirect(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", False)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+
+@pytest.mark.asyncio
+async def test_admin_logout_keycloak_missing_realm_falls_back_to_local_redirect(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.method = "POST"
+    request.cookies = {"jwt_token": "jwt-token"}
+    request.url = SimpleNamespace(scheme="http", netloc="localhost:4444")
+
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": "keycloak"}))
+    monkeypatch.setattr(admin.settings, "sso_keycloak_enabled", True)
+    monkeypatch.setattr(admin.settings, "sso_keycloak_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_public_base_url", "http://localhost:8080")
+    monkeypatch.setattr(admin.settings, "sso_keycloak_realm", "")
+
+    response = await admin._admin_logout(request)
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 303
+    assert response.headers["location"] == "/root/admin/login"
+
+
+@pytest.mark.asyncio
 async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
     mock_db = MagicMock()
     mock_db.commit = MagicMock()
     user = {"email": "user@example.com", "is_admin": True, "db": mock_db}
@@ -484,7 +785,9 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     monkeypatch.setattr(admin.prompt_service, "list_prompts", list_prompts)
     monkeypatch.setattr(admin.gateway_service, "list_gateways", list_gateways)
     monkeypatch.setattr(admin.root_service, "list_roots", list_roots)
-    monkeypatch.setattr(admin, "create_jwt_token", AsyncMock(return_value="jwt"))
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"user": {"auth_provider": "keycloak"}}))
+    create_jwt = AsyncMock(return_value="jwt")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
 
     response = await admin.admin_ui(request, "team-1", True, mock_db, user=user)
     assert isinstance(response, HTMLResponse)
@@ -492,6 +795,91 @@ async def test_admin_ui_with_team_filter_and_cookie(monkeypatch):
     context = request.app.state.templates.TemplateResponse.call_args[0][2]
     assert context["selected_team_id"] == "team-1"
     assert len(context["tools"]) == 1
+    refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["auth_provider"] == "keycloak"
+    assert refreshed_payload["user"]["auth_provider"] == "keycloak"
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_refresh_uses_dict_user_auth_provider(monkeypatch):
+    request = _make_request(root_path="/root")
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "user@example.com", "is_admin": True, "auth_provider": "  keycloak  ", "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+
+    create_jwt = AsyncMock(return_value="jwt")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+
+    assert isinstance(response, HTMLResponse)
+    refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["auth_provider"] == "keycloak"
+    assert refreshed_payload["user"]["auth_provider"] == "keycloak"
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_refresh_uses_object_user_full_name_and_provider(monkeypatch):
+    request = _make_request(root_path="/root")
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = SimpleNamespace(email="user@example.com", full_name="Object User", auth_provider=" keycloak ", is_admin=True, db=mock_db)
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+
+    create_jwt = AsyncMock(return_value="jwt")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+
+    admin_ui_func = _unwrap(admin.admin_ui)
+    response = await admin_ui_func(request, None, False, mock_db, user=user)
+
+    assert isinstance(response, HTMLResponse)
+    refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["user"]["full_name"] == "Object User"
+    assert refreshed_payload["auth_provider"] == "keycloak"
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_refresh_falls_back_to_top_level_provider_from_existing_cookie(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "user@example.com", "is_admin": True, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(return_value={"auth_provider": " keycloak "}))
+    create_jwt = AsyncMock(return_value="jwt")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+
+    assert isinstance(response, HTMLResponse)
+    refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["auth_provider"] == "keycloak"
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_refresh_provider_lookup_failure_keeps_local_provider(monkeypatch):
+    request = _make_request(root_path="/root")
+    request.cookies = {"jwt_token": "existing-jwt"}
+    mock_db = MagicMock()
+    mock_db.commit = MagicMock()
+    user = {"email": "user@example.com", "is_admin": True, "db": mock_db}
+
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    monkeypatch.setattr(admin, "verify_jwt_token_cached", AsyncMock(side_effect=RuntimeError("boom")))
+    create_jwt = AsyncMock(return_value="jwt")
+    monkeypatch.setattr(admin, "create_jwt_token", create_jwt)
+
+    response = await admin.admin_ui(request, None, False, mock_db, user=user)
+
+    assert isinstance(response, HTMLResponse)
+    refreshed_payload = create_jwt.await_args.args[0]
+    assert refreshed_payload["auth_provider"] == "local"
+    assert refreshed_payload["user"]["auth_provider"] == "local"
 
 
 @pytest.mark.asyncio
