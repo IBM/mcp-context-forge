@@ -226,17 +226,18 @@ class OAuthManager:
         token_url = credentials["token_url"]
         scopes = credentials.get("scopes", [])
 
-        # Decrypt client secret if it's encrypted
-        if len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
+        if client_secret:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                if decrypted_secret:
-                    client_secret = decrypted_secret
-                    logger.debug("Successfully decrypted client secret")
-                else:
-                    logger.warning("Failed to decrypt client secret, using encrypted version")
+                if encryption.is_encrypted(client_secret):
+                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted_secret is None:
+                        logger.warning("Failed to decrypt client secret, using encrypted version")
+                    else:
+                        client_secret = decrypted_secret
+                        logger.debug("Successfully decrypted client secret")
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
@@ -317,17 +318,18 @@ class OAuthManager:
         if not username or not password:
             raise OAuthError("Username and password are required for password grant type")
 
-        # Decrypt client secret if it's encrypted and present
-        if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
+        if client_secret:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                if decrypted_secret:
-                    client_secret = decrypted_secret
-                    logger.debug("Successfully decrypted client secret")
-                else:
-                    logger.warning("Failed to decrypt client secret, using encrypted version")
+                if encryption.is_encrypted(client_secret):
+                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted_secret is None:
+                        logger.warning("Failed to decrypt client secret, using encrypted version")
+                    else:
+                        client_secret = decrypted_secret
+                        logger.debug("Successfully decrypted client secret")
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
@@ -434,17 +436,18 @@ class OAuthManager:
         token_url = credentials["token_url"]
         redirect_uri = credentials["redirect_uri"]
 
-        # Decrypt client secret if it's encrypted and present
-        if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
+        if client_secret:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                if decrypted_secret:
-                    client_secret = decrypted_secret
-                    logger.debug("Successfully decrypted client secret")
-                else:
-                    logger.warning("Failed to decrypt client secret, using encrypted version")
+                if encryption.is_encrypted(client_secret):
+                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted_secret is None:
+                        logger.warning("Failed to decrypt client secret, using encrypted version")
+                    else:
+                        client_secret = decrypted_secret
+                        logger.debug("Successfully decrypted client secret")
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
@@ -1016,17 +1019,18 @@ class OAuthManager:
         token_url = credentials["token_url"]
         redirect_uri = credentials["redirect_uri"]
 
-        # Decrypt client secret if it's encrypted and present
-        if client_secret and len(client_secret) > 50:  # Simple heuristic: encrypted secrets are longer
+        # Decrypt client secret if explicitly detected as encrypted (use explicit detection, not length heuristic)
+        if client_secret:
             try:
                 settings = get_settings()
                 encryption = get_encryption_service(settings.auth_encryption_secret)
-                decrypted_secret = await encryption.decrypt_secret_async(client_secret)
-                if decrypted_secret:
-                    client_secret = decrypted_secret
-                    logger.debug("Successfully decrypted client secret")
-                else:
-                    logger.warning("Failed to decrypt client secret, using encrypted version")
+                if encryption.is_encrypted(client_secret):
+                    decrypted_secret = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted_secret is None:
+                        logger.warning("Failed to decrypt client secret, using encrypted version")
+                    else:
+                        client_secret = decrypted_secret
+                        logger.debug("Successfully decrypted client secret")
             except Exception as e:
                 logger.warning(f"Failed to decrypt client secret: {e}, using encrypted version")
 
