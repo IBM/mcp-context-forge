@@ -1,0 +1,20 @@
+{{- if and .Values.nginxProxy.enabled .Values.nginxProxy.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-nginx-cache
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-nginx
+spec:
+  accessModes:
+    {{- range .Values.nginxProxy.persistence.accessModes }}
+    - {{ . }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.nginxProxy.persistence.size }}
+  {{- if .Values.nginxProxy.persistence.storageClassName }}
+  storageClassName: {{ .Values.nginxProxy.persistence.storageClassName }}
+  {{- end }}
+{{- end }}

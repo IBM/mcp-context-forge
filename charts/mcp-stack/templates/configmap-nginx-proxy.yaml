@@ -1,0 +1,81 @@
+{{- if .Values.nginxProxy.enabled }}
+{{- $gatewayServiceName := .Values.nginxProxy.config.gatewayServiceName | default (printf "%s-mcpgateway" (include "mcp-stack.fullname" .)) -}}
+{{- $gatewayServicePort := .Values.nginxProxy.config.gatewayServicePort | default .Values.mcpContextForge.service.port -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-nginx-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-nginx
+data:
+  nginx.conf: |
+    worker_processes auto;
+
+    events {
+      worker_connections {{ .Values.nginxProxy.config.workerConnections }};
+    }
+
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      sendfile on;
+      keepalive_timeout {{ .Values.nginxProxy.config.keepaliveTimeout }};
+
+      server_tokens off;
+      client_max_body_size {{ .Values.nginxProxy.config.clientMaxBodySize }};
+
+      {{- if .Values.nginxProxy.config.cache.enabled }}
+      proxy_cache_path {{ .Values.nginxProxy.config.cache.path }} levels=1:2 keys_zone=mcp_cache:100m max_size={{ .Values.nginxProxy.config.cache.maxSize }} inactive={{ .Values.nginxProxy.config.cache.inactive }} use_temp_path=off;
+      {{- end }}
+
+      upstream gateway_upstream {
+        server {{ $gatewayServiceName }}:{{ $gatewayServicePort }};
+        keepalive 32;
+      }
+
+      server {
+        listen 80;
+
+        location = /health {
+          access_log off;
+          add_header Content-Type text/plain;
+          return 200 "ok\n";
+        }
+
+        location = /nginx_status {
+          stub_status on;
+          access_log off;
+          allow all;
+        }
+
+        location / {
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Connection "";
+
+          proxy_connect_timeout 30s;
+          proxy_read_timeout {{ .Values.nginxProxy.config.proxyReadTimeout }};
+          proxy_send_timeout {{ .Values.nginxProxy.config.proxySendTimeout }};
+          send_timeout {{ .Values.nginxProxy.config.sendTimeout }};
+
+          {{- if .Values.nginxProxy.config.cache.enabled }}
+          proxy_cache mcp_cache;
+          proxy_cache_revalidate on;
+          proxy_cache_min_uses 1;
+          proxy_cache_use_stale error timeout invalid_header updating http_500 http_502 http_503 http_504;
+          proxy_cache_lock on;
+          proxy_cache_background_update on;
+          proxy_cache_valid 200 1m;
+          proxy_cache_valid 404 10s;
+          add_header X-Cache-Status $upstream_cache_status;
+          {{- end }}
+
+          proxy_pass http://gateway_upstream;
+        }
+      }
+    }
+{{- end }}
