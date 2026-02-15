@@ -1956,6 +1956,22 @@
           "maximum": 65535,
           "default": 8080
         },
+        "command": {
+          "type": "array",
+          "description": "Optional command override",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "args": {
+          "type": "array",
+          "description": "Optional args override",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
         "ingress": {
           "type": "object",
           "description": "Fast Time Server ingress configuration",
@@ -2040,6 +2056,36 @@
         }
       },
       "additionalProperties": false
+    },
+    "nginxProxy": {
+      "type": "object",
+      "description": "Optional nginx reverse-proxy profile values",
+      "additionalProperties": true
+    },
+    "monitoring": {
+      "type": "object",
+      "description": "Optional monitoring profile values",
+      "additionalProperties": true
+    },
+    "testing": {
+      "type": "object",
+      "description": "Optional testing profile values",
+      "additionalProperties": true
+    },
+    "benchmark": {
+      "type": "object",
+      "description": "Optional benchmark profile values",
+      "additionalProperties": true
+    },
+    "tls": {
+      "type": "object",
+      "description": "Optional TLS profile values",
+      "additionalProperties": true
+    },
+    "inspector": {
+      "type": "object",
+      "description": "Optional MCP inspector profile values",
+      "additionalProperties": true
     }
   },
   "$defs": {
