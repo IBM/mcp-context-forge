@@ -183,7 +183,7 @@ class PolicyEngine:
         """
         context = context or Context()
 
-        logger.debug(f"PolicyEngine.check_access: subject={subject.email}, " f"permission={permission}, resource={resource.type if resource else None}")
+        logger.debug("PolicyEngine.check_access: subject=%s, permission=%s, resource=%s", subject.email, permission, resource.type if resource else None)
 
         # Step 1: Admin bypass (admins have all permissions, if allowed)
         if subject.is_admin and allow_admin_bypass:
@@ -192,8 +192,8 @@ class PolicyEngine:
                 reason="Admin bypass: user has admin privileges",
                 permission=permission,
                 subject_email=subject.email,
-                type=resource.type if resource else None,
-                id=resource.id if resource else None,
+                resource_type=resource.type if resource else None,
+                resource_id=resource.id if resource else None,
                 matching_policies=["admin-bypass"],
             )
             await self._log_decision(decision)
@@ -206,8 +206,8 @@ class PolicyEngine:
                 reason=f"User has required permission: {permission}",
                 permission=permission,
                 subject_email=subject.email,
-                type=resource.type if resource else None,
-                id=resource.id if resource else None,
+                resource_type=resource.type if resource else None,
+                resource_id=resource.id if resource else None,
                 matching_policies=["direct-permission"],
             )
             await self._log_decision(decision)
@@ -226,8 +226,8 @@ class PolicyEngine:
             reason=f"Permission denied: user lacks '{permission}' permission",
             permission=permission,
             subject_email=subject.email,
-            type=resource.type if resource else None,
-            id=resource.id if resource else None,
+            resource_type=resource.type if resource else None,
+            resource_id=resource.id if resource else None,
             matching_policies=[],
         )
         await self._log_decision(decision)
@@ -272,8 +272,8 @@ class PolicyEngine:
                 reason="Resource owner has full access",
                 permission=permission,
                 subject_email=subject.email,
-                type=resource.type,
-                id=resource.id,
+                resource_type=resource.type,
+                resource_id=resource.id,
                 matching_policies=["owner-access"],
             )
 
@@ -285,8 +285,8 @@ class PolicyEngine:
                     reason=f"Team member access: user in team {resource.team_id}",
                     permission=permission,
                     subject_email=subject.email,
-                    type=resource.type,
-                    id=resource.id,
+                    resource_type=resource.type,
+                    resource_id=resource.id,
                     matching_policies=["team-access"],
                 )
 
@@ -299,14 +299,14 @@ class PolicyEngine:
                     reason="Public resource with read permission",
                     permission=permission,
                     subject_email=subject.email,
-                    type=resource.type,
-                    id=resource.id,
+                    resource_type=resource.type,
+                    resource_id=resource.id,
                     matching_policies=["public-access"],
                 )
 
         # Deny by default
         return AccessDecision(
-            allowed=False, reason="No resource-level access granted", permission=permission, subject_email=subject.email, type=resource.type, id=resource.id, matching_policies=[]
+            allowed=False, reason="No resource-level access granted", permission=permission, subject_email=subject.email, resource_type=resource.type, resource_id=resource.id, matching_policies=[]
         )
 
     async def _log_decision(self, decision: AccessDecision) -> None:
@@ -321,12 +321,14 @@ class PolicyEngine:
         The AccessDecisionLog table is created and ready for Phase 2.
         """
         logger.debug(
-            f"Access Decision [{decision.decision_id}]: "
-            f"subject={decision.subject_email}, "
-            f"permission={decision.permission}, "
-            f"resource={decision.resource_type}:{decision.resource_id}, "
-            f"allowed={decision.allowed}, "
-            f"reason={decision.reason}"
+            "Access Decision [%s]: subject=%s, permission=%s, resource=%s:%s, allowed=%s, reason=%s",
+            decision.decision_id,
+            decision.subject_email,
+            decision.permission,
+            decision.resource_type,
+            decision.resource_id,
+            decision.allowed,
+            decision.reason
         )
 
 
@@ -391,7 +393,9 @@ def require_permission_v2(permission: str, resource_type: Optional[str] = None, 
             if not db:
                 raise HTTPException(status_code=500, detail="Database session not available")
 
-            # Create PolicyEngine
+            # Create PolicyEngine (per-request instantiation)
+            # NOTE: PolicyEngine is instantiated on every request. This is acceptable
+            # for Phase 1 but could be optimized in Phase 2+ with caching/pooling.
             policy_engine = PolicyEngine(db)
 
             # Build Subject from user

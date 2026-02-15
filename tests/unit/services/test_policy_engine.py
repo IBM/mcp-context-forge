@@ -45,7 +45,7 @@ class TestPolicyEngine:
         decision = await policy_engine.check_access(
             subject=subject,
             permission="tools.delete",
-            resource=Resource(resource_type="tool", resource_id="any-tool")
+            resource=Resource(type="tool", id="any-tool")
         )
 
         assert decision.allowed is True
@@ -63,7 +63,7 @@ class TestPolicyEngine:
         decision = await policy_engine.check_access(
             subject=subject,
             permission="tools.read",
-            resource=Resource(resource_type="tool", resource_id="db-query")
+            resource=Resource(type="tool", id="db-query")
         )
         assert decision.allowed is True
 
@@ -79,7 +79,7 @@ class TestPolicyEngine:
         decision = await policy_engine.check_access(
             subject=subject,
             permission="tools.delete",
-            resource=Resource(resource_type="tool", resource_id="db-query")
+            resource=Resource(type="tool", id="db-query")
         )
         assert decision.allowed is False
 
@@ -88,8 +88,8 @@ class TestPolicyEngine:
         """Test that resource owners have full access."""
         subject = Subject(email="owner@example.com", is_admin=False, permissions=[])
         resource = Resource(
-            resource_type="tool",
-            resource_id="my-tool",
+            type="tool",
+            id="my-tool",
             owner="owner@example.com"
         )
 
@@ -282,7 +282,7 @@ class TestPolicyEngineEdgeCases:
         decision = await policy_engine.check_access(
             subject=subject,
             permission="any.permission",
-            resource=Resource(resource_type="anything")
+            resource=Resource(type="anything")
         )
 
         assert decision.allowed is True
@@ -298,8 +298,8 @@ class TestPolicyEngineEdgeCases:
         )
 
         resource = Resource(
-            resource_type="tool",
-            resource_id="tool-123",
+            type="tool",
+            id="tool-123",
             team_id="team-2",
             visibility="team"
         )
@@ -322,7 +322,7 @@ class TestPolicyEngineEdgeCases:
         )
 
         resource = Resource(
-            resource_type="tool",
+            type="tool",
             visibility="public"
         )
 
@@ -345,8 +345,8 @@ class TestPolicyEngineEdgeCases:
         )
 
         resource = Resource(
-            resource_type="tool",
-            resource_id="private-tool",
+            type="tool",
+            id="private-tool",
             owner="owner@example.com",
             visibility="private"
         )
