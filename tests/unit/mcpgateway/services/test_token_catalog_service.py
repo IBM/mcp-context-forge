@@ -9,8 +9,8 @@ Tests for token catalog service implementation.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 import hashlib
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
@@ -415,7 +415,7 @@ class TestTokenCatalogService:
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
             mock_gen_token.return_value = "jwt_token_team"
 
-            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123")
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123", expires_in_days=30)
 
             assert raw_token == "jwt_token_team"
             added_token = mock_db.add.call_args[0][0]
@@ -436,6 +436,7 @@ class TestTokenCatalogService:
                 user_email="test@example.com",
                 name="Inactive Token",
                 is_active=False,
+                expires_in_days=30,
             )
 
             assert raw_token == "jwt_token_inactive"
@@ -457,6 +458,7 @@ class TestTokenCatalogService:
             token, raw_token = await token_service.create_token(
                 user_email="test@example.com",
                 name="Default Active Token",
+                expires_in_days=30,
             )
 
             # Verify the token added to DB has is_active=True by default
@@ -503,6 +505,7 @@ class TestTokenCatalogService:
                 name="Scoped Token",
                 scope=token_scope,
                 caller_permissions=["tools.read", "resources.read"],  # Caller has these permissions
+                expires_in_days=30,
             )
 
             assert raw_token == "jwt_token_scoped"
@@ -534,9 +537,8 @@ class TestTokenCatalogService:
         tokens = await token_service.list_user_tokens("test@example.com", include_inactive=True)
 
         assert tokens == []
-        # Verify query was built correctly
-        call_args = mock_db.execute.call_args[0][0]
-        # The query should not filter out inactive tokens
+        # Verify query was executed (should not filter out inactive tokens)
+        assert mock_db.execute.called
 
     @pytest.mark.asyncio
     async def test_list_user_tokens_with_pagination(self, token_service, mock_db):
@@ -547,9 +549,8 @@ class TestTokenCatalogService:
 
         await token_service.list_user_tokens("test@example.com", limit=10, offset=20)
 
-        # Verify pagination was applied
-        call_args = mock_db.execute.call_args[0][0]
-        # Query should have limit and offset applied
+        # Verify query was executed (should have limit and offset applied)
+        assert mock_db.execute.called
 
     @pytest.mark.asyncio
     async def test_list_user_tokens_invalid_limit(self, token_service, mock_db):
@@ -979,6 +980,7 @@ class TestTokenCatalogService:
             mock_get.return_value = mock_api_token
 
             with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock):
+                # Standard
                 import asyncio  # pylint: disable=import-outside-toplevel
 
                 def _boom_create_task(coro):
@@ -1303,7 +1305,7 @@ class TestTokenCatalogServiceEdgeCases:
 
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="")  # Empty name should still work
+            token, _ = await token_service.create_token(user_email="test@example.com", name="", expires_in_days=30)  # Empty name should still work
             assert mock_db.add.called
 
     @pytest.mark.asyncio
@@ -1317,7 +1319,7 @@ class TestTokenCatalogServiceEdgeCases:
         long_desc = "A" * 10000  # Very long description
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", description=long_desc)
+            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", description=long_desc, expires_in_days=30)
 
             added_token = mock_db.add.call_args[0][0]
             assert added_token.description == long_desc
@@ -1355,7 +1357,8 @@ class TestTokenCatalogServiceEdgeCases:
 
             await token_service.update_token(token_id="token-123", user_email="test@example.com", description=None)
 
-            # Description should not change when None is passed
+            # Description should remain unchanged
+            assert mock_api_token.description == original_desc
             mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
@@ -1401,11 +1404,103 @@ class TestTokenCatalogServiceEdgeCases:
         empty_scope = TokenScope()  # All defaults
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", scope=empty_scope)
+            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", scope=empty_scope, expires_in_days=30)
 
             added_token = mock_db.add.call_args[0][0]
             assert added_token.server_id is None
             assert added_token.resource_scopes == []
+
+    @pytest.mark.asyncio
+    async def test_create_token_no_expiry_when_required(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token rejects None expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="Token expiration is required by server policy"):
+            await token_service.create_token(user_email="test@example.com", name="No Expiry Token", expires_in_days=None)
+
+    @pytest.mark.asyncio
+    async def test_create_token_no_expiry_when_allowed(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token allows None expiry when REQUIRE_TOKEN_EXPIRATION=false."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", False)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "jwt_token_without_exp"
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="No Expiry Token", expires_in_days=None)
+
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.expires_at is None
+            assert raw_token == "jwt_token_without_exp"
+
+    @pytest.mark.asyncio
+    async def test_create_token_with_expiry_when_required(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token accepts expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "jwt_token_with_exp"
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Token With Expiry", expires_in_days=30)
+
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.expires_at is not None
+            assert raw_token == "jwt_token_with_exp"
+
+    @pytest.mark.asyncio
+    async def test_create_token_with_team_and_expiry_required(self, token_service, mock_db, mock_user, mock_team, mock_team_member, monkeypatch):
+        """Test create_token with team requires expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            mock_team,
+            mock_team_member,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="Token expiration is required by server policy"):
+            await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123", expires_in_days=None)
+
+    @pytest.mark.asyncio
+    async def test_create_token_zero_expiry_days_when_required(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token with expires_in_days=0 is treated as no expiry and rejected when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="Token expiration is required by server policy"):
+            await token_service.create_token(user_email="test@example.com", name="Zero Expiry Token", expires_in_days=0)
 
     @pytest.mark.asyncio
     async def test_generate_token_settings_values(self, token_service):
@@ -1443,7 +1538,7 @@ class TestTokenCatalogServiceIntegration:
 
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt_new"
-            token, raw = await token_service.create_token(user_email="test@example.com", name="Lifecycle Token")
+            token, raw = await token_service.create_token(user_email="test@example.com", name="Lifecycle Token", expires_in_days=30)
 
         # Update token
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
@@ -1459,7 +1554,7 @@ class TestTokenCatalogServiceIntegration:
 
         # Get stats
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        stats = await token_service.get_token_usage_stats("test@example.com")
+        await token_service.get_token_usage_stats("test@example.com")
 
         # Revoke token
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
@@ -1489,7 +1584,7 @@ class TestTokenCatalogServiceIntegration:
 
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt_team"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123")
+            token, _ = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123", expires_in_days=30)
 
         # List team tokens
         mock_db.execute.side_effect = None
