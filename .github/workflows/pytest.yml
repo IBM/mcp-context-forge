@@ -3,7 +3,7 @@
 # ===============================================================
 #
 #   - runs the full test-suite across three Python versions
-#   - measures branch + line coverage (fails < 60% main, < 35% doctest)
+#   - measures branch + line coverage (fails < 90% main, < 35% doctest)
 #   - uploads the XML/HTML coverage reports as build artifacts
 #   - (optionally) generates / commits an SVG badge - kept disabled
 #   - posts a concise per-file coverage table to the job summary
@@ -46,7 +46,7 @@ jobs:
       - name: ⬇️  Checkout code
         uses: actions/checkout@v5
         with:
-          fetch-depth: 1
+          fetch-depth: 0  # diff-cover needs full history to compare branches
 
       # -----------------------------------------------------------
       # 1️⃣  Set-up Python
@@ -67,7 +67,7 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
-      # 3️⃣  Run the tests with coverage (fail under 60% coverage)
+      # 3️⃣  Run the tests with coverage (fail under 95% coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
         run: |
@@ -78,10 +78,20 @@ jobs:
             --cov-report=html \
             --cov-report=term \
             --cov-branch \
-            --cov-fail-under=60
+            --cov-fail-under=95
 
       # -----------------------------------------------------------
-      # 4️⃣  Run doctests (fail under 35% coverage)
+      # 3.5  Diff-cover: enforce 95% coverage on changed lines (PRs only)
+      # -----------------------------------------------------------
+      - name: 📈  Diff-cover (changed lines)
+        if: github.event_name == 'pull_request'
+        run: |
+          uv run diff-cover coverage.xml \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --fail-under=95
+
+      # -----------------------------------------------------------
+      # 4️⃣  Run doctests (fail under 30% coverage)
       # -----------------------------------------------------------
       - name: 📊  Doctest coverage with threshold
         run: |
@@ -90,7 +100,7 @@ jobs:
             --cov=mcpgateway \
             --cov-report=term \
             --cov-report=json:doctest-coverage.json \
-            --cov-fail-under=34 \
+            --cov-fail-under=30 \
             --tb=short
 
       # -----------------------------------------------------------

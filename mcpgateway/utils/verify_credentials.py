@@ -13,7 +13,7 @@ Examples:
     >>> from mcpgateway.utils import jwt_config_helper as jch
     >>> from pydantic import SecretStr
     >>> class DummySettings:
-    ...     jwt_secret_key = 'secret'
+    ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
     ...     jwt_algorithm = 'HS256'
     ...     jwt_audience = 'mcpgateway-api'
     ...     jwt_issuer = 'mcpgateway'
@@ -31,7 +31,7 @@ Examples:
     >>> vc.settings = DummySettings()
     >>> jch.settings = DummySettings()
     >>> import jwt
-    >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
+    >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
     >>> import asyncio
     >>> asyncio.run(vc.verify_jwt_token(token))['sub'] == 'alice'
     True
@@ -229,7 +229,7 @@ async def verify_credentials(token: str) -> dict:
         >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> from pydantic import SecretStr
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -247,7 +247,7 @@ async def verify_credentials(token: str) -> dict:
         >>> vc.settings = DummySettings()
         >>> jch.settings = DummySettings()
         >>> import jwt
-        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
+        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
         >>> import asyncio
         >>> payload = asyncio.run(vc.verify_credentials(token))
         >>> payload['token'] == token
@@ -305,7 +305,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> from pydantic import SecretStr
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -331,7 +331,7 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
         >>> import asyncio
 
         Test with valid credentials in header:
-        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
+        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
         >>> creds = HTTPAuthorizationCredentials(scheme='Bearer', credentials=token)
         >>> req = Request(scope={'type': 'http', 'headers': []})
         >>> result = asyncio.run(vc.require_auth(request=req, credentials=creds, jwt_token=None))
@@ -428,7 +428,7 @@ async def verify_basic_credentials(credentials: HTTPBasicCredentials) -> str:
         >>> from mcpgateway.utils import verify_credentials as vc
         >>> from pydantic import SecretStr
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -483,7 +483,7 @@ async def require_basic_auth(credentials: HTTPBasicCredentials = Depends(basic_s
         >>> from mcpgateway.utils import verify_credentials as vc
         >>> from pydantic import SecretStr
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -546,7 +546,7 @@ async def require_docs_basic_auth(auth_header: str) -> str:
         >>> from mcpgateway.utils import verify_credentials as vc
         >>> from pydantic import SecretStr
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -683,7 +683,7 @@ async def require_docs_auth_override(
         >>> from mcpgateway.utils import verify_credentials as vc
         >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -701,7 +701,7 @@ async def require_docs_auth_override(
         >>> import asyncio
 
         Test with valid JWT:
-        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
+        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
         >>> auth_header = f'Bearer {token}'
         >>> result = asyncio.run(vc.require_docs_auth_override(auth_header=auth_header))
         >>> result['sub'] == 'alice'
@@ -771,7 +771,7 @@ async def require_auth_override(
         >>> from mcpgateway.utils import jwt_config_helper as jch
         >>> from pydantic import SecretStr
         >>> class DummySettings:
-        ...     jwt_secret_key = 'secret'
+        ...     jwt_secret_key = 'this-is-a-long-test-secret-key-32chars'
         ...     jwt_algorithm = 'HS256'
         ...     jwt_audience = 'mcpgateway-api'
         ...     jwt_issuer = 'mcpgateway'
@@ -795,7 +795,7 @@ async def require_auth_override(
         >>> import asyncio
 
         Test with Bearer token in auth header:
-        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'secret', algorithm='HS256')
+        >>> token = jwt.encode({'sub': 'alice', 'aud': 'mcpgateway-api', 'iss': 'mcpgateway'}, 'this-is-a-long-test-secret-key-32chars', algorithm='HS256')
         >>> auth_header = f'Bearer {token}'
         >>> result = asyncio.run(vc.require_auth_override(auth_header=auth_header))
         >>> result['sub'] == 'alice'

@@ -72,6 +72,7 @@ def sample_tool():
         custom_name="test_tool",
         url="https://api.example.com/tool",
         description="Test tool",
+        original_description="A test tool original",
         integration_type="REST",
         request_type="GET",
         headers={},
@@ -226,6 +227,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
         custom_name="local_tool",
         url="https://api.example.com",
         description="Local REST tool",
+        original_description="A test tool1 original",
         integration_type="REST",
         request_type="GET",
         headers={},
@@ -254,6 +256,7 @@ async def test_export_tools_filters_mcp(export_service, mock_db):
         custom_name="mcp_tool",
         url="https://gateway.example.com",
         description="MCP tool from gateway",
+        original_description="A test tool2 original",
         integration_type="MCP",
         request_type="SSE",
         headers={},
@@ -374,6 +377,7 @@ async def test_export_with_masked_auth_data(export_service, mock_db):
         custom_name="test_tool",
         url="https://api.example.com/tool",
         description="Test tool",
+        original_description="A test tool original",
         integration_type="REST",
         request_type="GET",
         headers={},
@@ -530,6 +534,7 @@ async def test_export_tools_with_non_masked_auth(export_service, mock_db):
         displayName="Test Tool",
         url="https://api.example.com/tool",
         description="Test tool",
+        original_description="A test tool original",
         integration_type="REST",
         request_type="GET",
         headers={},
@@ -876,6 +881,7 @@ async def test_export_selective_all_entity_types(export_service, mock_db):
         displayName="Test Tool",
         url="https://api.example.com",
         description="Test tool",
+        original_description="original test desc",
         integration_type="REST",
         request_type="GET",
         headers={},
@@ -1205,3 +1211,219 @@ async def test_export_selected_roots(export_service):
     assert len(roots) == 1
     assert roots[0]["uri"] == "file:///workspace"
     assert roots[0]["name"] == "Workspace"
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_tools_multiple_pages(export_service, mock_db, sample_tool):
+    """Cover pagination cursor advancement in _fetch_all_tools."""
+    tool2 = sample_tool.model_copy(update={"id": "tool2", "original_name": "tool2", "name": "tool2"})
+    export_service.tool_service.list_tools.side_effect = [
+        ([sample_tool], "cursor1"),
+        ([tool2], None),
+    ]
+
+    tools = await export_service._fetch_all_tools(mock_db, tags=None, include_inactive=False)
+    assert [t.id for t in tools] == ["tool1", "tool2"]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_prompts_multiple_pages(export_service, mock_db):
+    """Cover pagination cursor advancement in _fetch_all_prompts."""
+    p1 = MagicMock()
+    p2 = MagicMock()
+    export_service.prompt_service.list_prompts.side_effect = [
+        ([p1], "cursor1"),
+        ([p2], None),
+    ]
+
+    prompts = await export_service._fetch_all_prompts(mock_db, tags=None, include_inactive=False)
+    assert prompts == [p1, p2]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_resources_multiple_pages(export_service, mock_db):
+    """Cover pagination cursor advancement in _fetch_all_resources."""
+    r1 = MagicMock()
+    r2 = MagicMock()
+    export_service.resource_service.list_resources.side_effect = [
+        ([r1], "cursor1"),
+        ([r2], None),
+    ]
+
+    resources = await export_service._fetch_all_resources(mock_db, tags=None, include_inactive=False)
+    assert resources == [r1, r2]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_gateways_multiple_pages(export_service, mock_db):
+    """Cover pagination cursor advancement in _fetch_all_gateways."""
+    g1 = MagicMock()
+    g2 = MagicMock()
+    export_service.gateway_service.list_gateways.side_effect = [
+        ([g1], "cursor1"),
+        ([g2], None),
+    ]
+
+    gateways = await export_service._fetch_all_gateways(mock_db, tags=None, include_inactive=False)
+    assert gateways == [g1, g2]
+
+
+@pytest.mark.asyncio
+async def test_fetch_all_servers_multiple_pages(export_service, mock_db):
+    """Cover pagination cursor advancement in _fetch_all_servers."""
+    s1 = MagicMock()
+    s2 = MagicMock()
+    export_service.server_service.list_servers.side_effect = [
+        ([s1], "cursor1"),
+        ([s2], None),
+    ]
+
+    servers = await export_service._fetch_all_servers(mock_db, tags=None, include_inactive=False)
+    assert servers == [s1, s2]
+
+
+@pytest.mark.asyncio
+async def test_export_selected_tools_success_and_empty_list(export_service, mock_db):
+    """Cover _export_selected_tools batch path, MCP filtering, and auth inclusion."""
+    assert await export_service._export_selected_tools(mock_db, []) == []
+
+    now = datetime.now(timezone.utc)
+
+    local_tool = MagicMock()
+    local_tool.id = "t1"
+    local_tool.integration_type = "REST"
+    local_tool.gateway_id = None
+    local_tool.original_name = "local_tool"
+    local_tool.custom_name = "local_tool_custom"
+    local_tool.display_name = "Local Tool"
+    local_tool.url = "https://api.example.com/tool"
+    local_tool.request_type = "GET"
+    local_tool.description = "desc"
+    local_tool.headers = None
+    local_tool.input_schema = None
+    local_tool.output_schema = None
+    local_tool.annotations = None
+    local_tool.jsonpath_filter = ""
+    local_tool.tags = []
+    local_tool.rate_limit = None
+    local_tool.timeout = None
+    local_tool.is_active = True
+    local_tool.created_at = now
+    local_tool.updated_at = now
+    local_tool.auth_type = "bearer"
+    local_tool.auth_value = "secret"
+
+    mcp_tool = MagicMock()
+    mcp_tool.id = "t2"
+    mcp_tool.integration_type = "MCP"
+    mcp_tool.gateway_id = "gw1"
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [local_tool, mcp_tool]
+
+    exported = await export_service._export_selected_tools(mock_db, ["t1", "t2"])
+    assert len(exported) == 1
+    assert exported[0]["name"] == "local_tool"
+    assert exported[0]["displayName"] == "Local Tool"
+    assert exported[0]["auth_type"] == "bearer"
+    assert exported[0]["auth_value"] == "secret"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_gateways_success_and_empty_list(export_service, mock_db):
+    """Cover _export_selected_gateways batch path and query_param auth fields."""
+    assert await export_service._export_selected_gateways(mock_db, []) == []
+
+    db_gateway = MagicMock()
+    db_gateway.id = "gw1"
+    db_gateway.name = "gw"
+    db_gateway.url = "https://gw.example.com"
+    db_gateway.description = "desc"
+    db_gateway.transport = "SSE"
+    db_gateway.capabilities = {}
+    db_gateway.is_active = True
+    db_gateway.tags = []
+    db_gateway.passthrough_headers = []
+    db_gateway.auth_type = "query_param"
+    db_gateway.auth_value = "secret"
+    db_gateway.auth_query_params = {"api_key": "k"}
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_gateway]
+
+    exported = await export_service._export_selected_gateways(mock_db, ["gw1"])
+    assert exported[0]["auth_type"] == "query_param"
+    assert exported[0]["auth_value"] == "secret"
+    assert exported[0]["auth_query_params"] == {"api_key": "k"}
+
+
+@pytest.mark.asyncio
+async def test_export_selected_servers_success_and_empty_list(export_service, mock_db):
+    """Cover _export_selected_servers tool_ids extraction and endpoint formatting."""
+    assert await export_service._export_selected_servers(mock_db, []) == []
+
+    tool1 = MagicMock()
+    tool1.id = "tool1"
+    tool2 = MagicMock()
+    tool2.id = "tool2"
+
+    db_server = MagicMock()
+    db_server.id = "server1"
+    db_server.name = "srv"
+    db_server.description = "desc"
+    db_server.tools = [tool1, tool2]
+    db_server.is_active = True
+    db_server.tags = ["t"]
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_server]
+
+    exported = await export_service._export_selected_servers(mock_db, ["server1"], root_path="/api")
+    assert exported[0]["tool_ids"] == ["tool1", "tool2"]
+    assert exported[0]["sse_endpoint"] == "/api/servers/server1/sse"
+    assert exported[0]["websocket_endpoint"] == "/api/servers/server1/ws"
+    assert exported[0]["jsonrpc_endpoint"] == "/api/servers/server1/jsonrpc"
+
+
+@pytest.mark.asyncio
+async def test_export_selected_prompts_success_and_empty_list(export_service, mock_db):
+    """Cover _export_selected_prompts input_schema handling."""
+    assert await export_service._export_selected_prompts(mock_db, []) == []
+
+    db_prompt = MagicMock()
+    db_prompt.id = "p1"
+    db_prompt.name = "p"
+    db_prompt.original_name = "p_orig"
+    db_prompt.custom_name = "p_custom"
+    db_prompt.display_name = "P"
+    db_prompt.template = "tmpl"
+    db_prompt.description = "desc"
+    db_prompt.argument_schema = {"type": "object", "properties": {"a": {"type": "string"}}, "required": ["a"]}
+    db_prompt.tags = ["t"]
+    db_prompt.enabled = True
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_prompt]
+
+    exported = await export_service._export_selected_prompts(mock_db, ["p1"])
+    assert exported[0]["input_schema"]["properties"]["a"]["type"] == "string"
+    assert exported[0]["is_active"] is True
+
+
+@pytest.mark.asyncio
+async def test_export_selected_resources_success_and_empty_list(export_service, mock_db):
+    """Cover _export_selected_resources batch path."""
+    assert await export_service._export_selected_resources(mock_db, []) == []
+
+    now = datetime.now(timezone.utc)
+    db_resource = MagicMock()
+    db_resource.id = "r1"
+    db_resource.name = "res"
+    db_resource.uri = "file:///x"
+    db_resource.description = "desc"
+    db_resource.mime_type = "text/plain"
+    db_resource.tags = []
+    db_resource.is_active = True
+    db_resource.updated_at = now
+
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [db_resource]
+
+    exported = await export_service._export_selected_resources(mock_db, ["file:///x"])
+    assert exported[0]["uri"] == "file:///x"
+    assert exported[0]["last_modified"] == now.isoformat()

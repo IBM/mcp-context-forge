@@ -85,7 +85,7 @@ export COMPOSE_CMD="docker compose"
 ## 🐳/🦭 Build the images
 
 ```bash
-docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+docker pull ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1
 ```
 
 ## 🐳/🦭 Build the images (when doing local development)
@@ -133,6 +133,24 @@ make compose-up                   # auto-detects engine
 COMPOSE_CMD="docker compose" make compose-up   # force Docker
 COMPOSE_CMD="podman compose" make compose-up   # force Podman
 ```
+
+### SSO Profile (Keycloak)
+
+```bash
+make compose-sso                  # Gateway + Keycloak profile (recommended)
+make sso-test-login               # Smoke-check SSO providers/login URL/test users
+```
+
+Manual equivalent:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+```
+
+Keycloak admin console:
+
+- URL: `http://localhost:8180`
+- Credentials: `admin` / `changeme`
 
 ### Without Make
 

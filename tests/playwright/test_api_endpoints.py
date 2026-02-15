@@ -7,9 +7,11 @@ Authors: Mihai Criveti
 Test API endpoints through UI interactions.
 """
 
+# Standard
+import re
+
 # Third-Party
-from playwright.sync_api import APIRequestContext, expect, Page
-import pytest
+from playwright.sync_api import APIRequestContext, expect
 
 
 class TestAPIEndpoints:
@@ -51,14 +53,13 @@ class TestAPIEndpoints:
         assert result.get("jsonrpc") == "2.0"
         assert "result" in result or "error" in result
 
-    def test_api_docs_accessible(self, admin_page: Page, base_url: str):
+    def test_api_docs_accessible(self, admin_page, base_url: str):
         """Test that API documentation is accessible."""
-        import re
         # Test Swagger UI
-        admin_page.goto(f"{base_url}/docs")
-        expect(admin_page).to_have_title(re.compile(r"MCP[ _]Gateway - Swagger UI"))
-        assert admin_page.is_visible(".swagger-ui")
+        admin_page.page.goto(f"{base_url}/docs")
+        expect(admin_page.page).to_have_title(re.compile(r"MCP[ _]Gateway - Swagger UI"))
+        assert admin_page.page.is_visible(".swagger-ui")
 
         # Test ReDoc
-        admin_page.goto(f"{base_url}/redoc")
-        expect(admin_page).to_have_title(re.compile(r"ReDoc", re.IGNORECASE))
+        admin_page.page.goto(f"{base_url}/redoc")
+        expect(admin_page.page).to_have_title(re.compile(r"ReDoc", re.IGNORECASE))

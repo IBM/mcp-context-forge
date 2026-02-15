@@ -727,6 +727,418 @@ class MCPClientConfig(BaseModel):
         return self
 
 
+class GRPCClientTLSConfig(MCPTransportTLSConfigBase):
+    """Client-side gRPC TLS configuration (gateway connecting to plugin).
+
+    Attributes:
+        verify (bool): Whether to verify the remote server certificate.
+    """
+
+    verify: bool = Field(default=True, description="Verify the upstream server certificate")
+
+    @classmethod
+    def from_env(cls) -> Optional["GRPCClientTLSConfig"]:
+        """Construct gRPC client TLS configuration from PLUGINS_GRPC_CLIENT_* environment variables.
+
+        Returns:
+            GRPCClientTLSConfig instance or None if no environment variables are set.
+        """
+        env = os.environ
+        data: dict[str, Any] = {}
+
+        if env.get("PLUGINS_GRPC_CLIENT_MTLS_CERTFILE"):
+            data["certfile"] = env["PLUGINS_GRPC_CLIENT_MTLS_CERTFILE"]
+        if env.get("PLUGINS_GRPC_CLIENT_MTLS_KEYFILE"):
+            data["keyfile"] = env["PLUGINS_GRPC_CLIENT_MTLS_KEYFILE"]
+        if env.get("PLUGINS_GRPC_CLIENT_MTLS_CA_BUNDLE"):
+            data["ca_bundle"] = env["PLUGINS_GRPC_CLIENT_MTLS_CA_BUNDLE"]
+        if env.get("PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD") is not None:
+            data["keyfile_password"] = env["PLUGINS_GRPC_CLIENT_MTLS_KEYFILE_PASSWORD"]
+
+        verify_val = cls._parse_bool(env.get("PLUGINS_GRPC_CLIENT_MTLS_VERIFY"))
+        if verify_val is not None:
+            data["verify"] = verify_val
+
+        if not data:
+            return None
+
+        return cls(**data)
+
+
+class GRPCServerTLSConfig(MCPTransportTLSConfigBase):
+    """Server-side gRPC TLS configuration (plugin accepting gateway connections).
+
+    Attributes:
+        client_auth (str): Client certificate requirement ('none', 'optional', 'require').
+    """
+
+    client_auth: str = Field(default="require", description="Client certificate requirement (none, optional, require)")
+
+    @field_validator("client_auth", mode="after")
+    @classmethod
+    def validate_client_auth(cls, value: str) -> str:
+        """Validate client_auth value.
+
+        Args:
+            value: Client auth requirement string.
+
+        Returns:
+            Validated client auth string.
+
+        Raises:
+            ValueError: If client_auth is not a valid value.
+        """
+        valid_values = {"none", "optional", "require"}
+        if value.lower() not in valid_values:
+            raise ValueError(f"client_auth must be one of {valid_values}, got '{value}'")
+        return value.lower()
+
+    @classmethod
+    def from_env(cls) -> Optional["GRPCServerTLSConfig"]:
+        """Construct gRPC server TLS configuration from PLUGINS_GRPC_SERVER_SSL_* environment variables.
+
+        Returns:
+            GRPCServerTLSConfig instance or None if no environment variables are set.
+        """
+        env = os.environ
+        data: dict[str, Any] = {}
+
+        if env.get("PLUGINS_GRPC_SERVER_SSL_KEYFILE"):
+            data["keyfile"] = env["PLUGINS_GRPC_SERVER_SSL_KEYFILE"]
+        if env.get("PLUGINS_GRPC_SERVER_SSL_CERTFILE"):
+            data["certfile"] = env["PLUGINS_GRPC_SERVER_SSL_CERTFILE"]
+        if env.get("PLUGINS_GRPC_SERVER_SSL_CA_CERTS"):
+            data["ca_bundle"] = env["PLUGINS_GRPC_SERVER_SSL_CA_CERTS"]
+        if env.get("PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD") is not None:
+            data["keyfile_password"] = env["PLUGINS_GRPC_SERVER_SSL_KEYFILE_PASSWORD"]
+        if env.get("PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH"):
+            data["client_auth"] = env["PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH"]
+
+        if not data:
+            return None
+
+        return cls(**data)
+
+
+class GRPCClientConfig(BaseModel):
+    """Client-side gRPC configuration (gateway connecting to external plugin).
+
+    Attributes:
+        target (Optional[str]): The gRPC target address in host:port format.
+        uds (Optional[str]): Unix domain socket path (alternative to target).
+        tls (Optional[GRPCClientTLSConfig]): Client-side TLS configuration for mTLS.
+
+    Examples:
+        >>> # TCP connection
+        >>> config = GRPCClientConfig(target="localhost:50051")
+        >>> config.get_target()
+        'localhost:50051'
+        >>> # Unix domain socket connection (path is resolved to canonical form)
+        >>> config = GRPCClientConfig(uds="/tmp/grpc-plugin.sock")  # doctest: +SKIP
+        >>> config.get_target()  # doctest: +SKIP
+        'unix:///tmp/grpc-plugin.sock'
+    """
+
+    target: Optional[str] = Field(default=None, description="gRPC target address (host:port)")
+    uds: Optional[str] = Field(default=None, description="Unix domain socket path")
+    tls: Optional[GRPCClientTLSConfig] = None
+
+    @field_validator("target", mode="after")
+    @classmethod
+    def validate_target(cls, target: str | None) -> str | None:
+        """Validate gRPC target address format.
+
+        Args:
+            target: The target address to validate.
+
+        Returns:
+            The validated target address.
+
+        Raises:
+            ValueError: If target is not in host:port format.
+        """
+        if target is None:
+            return target
+        if not target:
+            raise ValueError("gRPC target address cannot be empty")
+        # Basic validation - should contain host and port
+        if ":" not in target:
+            raise ValueError(f"gRPC target must be in host:port format, got '{target}'")
+        return target
+
+    @field_validator("uds", mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate Unix domain socket path for gRPC.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated canonical uds path or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("gRPC client uds must be a non-empty string.")
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"gRPC client uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"gRPC client uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            if parent_mode & 0o002:
+                logging.getLogger(__name__).warning(
+                    "gRPC client uds parent directory %s is world-writable. Consider using a directory with restricted permissions.",
+                    parent_dir,
+                )
+        except OSError:
+            pass
+
+        return str(uds_path)
+
+    @model_validator(mode="after")
+    def validate_target_or_uds(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure exactly one of target or uds is configured.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: If neither or both target and uds are set.
+        """
+        has_target = self.target is not None
+        has_uds = self.uds is not None
+
+        if not has_target and not has_uds:
+            raise ValueError("gRPC client must have either 'target' or 'uds' configured")
+        if has_target and has_uds:
+            raise ValueError("gRPC client cannot have both 'target' and 'uds' configured")
+        if has_uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets")
+        return self
+
+    def get_target(self) -> str:
+        """Get the gRPC target string for channel creation.
+
+        Returns:
+            str: The target string, either host:port or unix:///path format.
+        """
+        if self.uds:
+            return f"unix://{self.uds}"
+        return self.target or ""
+
+
+class GRPCServerConfig(BaseModel):
+    """Server-side gRPC configuration (plugin running as gRPC server).
+
+    Attributes:
+        host (str): Server host to bind to.
+        port (int): Server port to bind to.
+        uds (Optional[str]): Unix domain socket path (alternative to host:port).
+        tls (Optional[GRPCServerTLSConfig]): Server-side TLS configuration.
+
+    Examples:
+        >>> # TCP binding
+        >>> config = GRPCServerConfig(host="0.0.0.0", port=50051)
+        >>> config.get_bind_address()
+        '0.0.0.0:50051'
+        >>> # Unix domain socket binding (path is resolved to canonical form)
+        >>> config = GRPCServerConfig(uds="/tmp/grpc-plugin.sock")  # doctest: +SKIP
+        >>> config.get_bind_address()  # doctest: +SKIP
+        'unix:///tmp/grpc-plugin.sock'
+    """
+
+    host: str = Field(default="127.0.0.1", description="Server host to bind to")
+    port: int = Field(default=50051, description="Server port to bind to")
+    uds: Optional[str] = Field(default=None, description="Unix domain socket path")
+    tls: Optional[GRPCServerTLSConfig] = Field(default=None, description="Server-side TLS configuration")
+
+    @field_validator("uds", mode="after")
+    @classmethod
+    def validate_uds(cls, uds: str | None) -> str | None:
+        """Validate Unix domain socket path for gRPC server.
+
+        Args:
+            uds: Unix domain socket path.
+
+        Returns:
+            The validated canonical uds path or None if none is set.
+
+        Raises:
+            ValueError: if uds is empty, not absolute, or parent directory is invalid.
+        """
+        if uds is None:
+            return uds
+        if not isinstance(uds, str) or not uds.strip():
+            raise ValueError("gRPC server uds must be a non-empty string.")
+
+        uds_path = Path(uds).expanduser().resolve()
+        if not uds_path.is_absolute():
+            raise ValueError(f"gRPC server uds path must be absolute: {uds}")
+
+        parent_dir = uds_path.parent
+        if not parent_dir.is_dir():
+            raise ValueError(f"gRPC server uds parent directory does not exist: {parent_dir}")
+
+        # Check parent directory permissions for security
+        try:
+            parent_mode = parent_dir.stat().st_mode
+            if parent_mode & 0o002:
+                logging.getLogger(__name__).warning(
+                    "gRPC server uds parent directory %s is world-writable. Consider using a directory with restricted permissions.",
+                    parent_dir,
+                )
+        except OSError:
+            pass
+
+        return str(uds_path)
+
+    @model_validator(mode="after")
+    def validate_uds_tls(self) -> Self:  # pylint: disable=bad-classmethod-argument
+        """Ensure TLS is not configured when using a Unix domain socket.
+
+        Returns:
+            Self after validation.
+
+        Raises:
+            ValueError: if tls is set with uds.
+        """
+        if self.uds and self.tls:
+            raise ValueError("TLS configuration is not supported for Unix domain sockets")
+        return self
+
+    def get_bind_address(self) -> str:
+        """Get the gRPC bind address string.
+
+        Returns:
+            str: The bind address, either host:port or unix:///path format.
+        """
+        if self.uds:
+            return f"unix://{self.uds}"
+        return f"{self.host}:{self.port}"
+
+    @classmethod
+    def from_env(cls) -> Optional["GRPCServerConfig"]:
+        """Construct gRPC server configuration from PLUGINS_GRPC_SERVER_* environment variables.
+
+        Returns:
+            GRPCServerConfig instance or None if no environment variables are set.
+
+        Raises:
+            ValueError: If PLUGINS_GRPC_SERVER_PORT is not a valid integer.
+        """
+        env = os.environ
+        data: dict[str, Any] = {}
+
+        if env.get("PLUGINS_GRPC_SERVER_HOST"):
+            data["host"] = env["PLUGINS_GRPC_SERVER_HOST"]
+        if env.get("PLUGINS_GRPC_SERVER_PORT"):
+            try:
+                data["port"] = int(env["PLUGINS_GRPC_SERVER_PORT"])
+            except ValueError:
+                raise ValueError(f"Invalid PLUGINS_GRPC_SERVER_PORT: {env['PLUGINS_GRPC_SERVER_PORT']}")
+        if env.get("PLUGINS_GRPC_SERVER_UDS"):
+            data["uds"] = env["PLUGINS_GRPC_SERVER_UDS"]
+
+        # Check if SSL/TLS is enabled
+        ssl_enabled_str = env.get("PLUGINS_GRPC_SERVER_SSL_ENABLED", "").lower()
+        if ssl_enabled_str in {"1", "true", "yes", "on"}:
+            tls_config = GRPCServerTLSConfig.from_env()
+            if tls_config:
+                data["tls"] = tls_config
+
+        if not data:
+            return None
+
+        return cls(**data)
+
+
+class UnixSocketClientConfig(BaseModel):
+    """Client-side Unix socket configuration (gateway connecting to external plugin).
+
+    Attributes:
+        path (str): Path to the Unix domain socket file.
+        reconnect_attempts (int): Number of reconnection attempts on failure.
+        reconnect_delay (float): Base delay between reconnection attempts (with exponential backoff).
+        timeout (float): Timeout for read operations in seconds.
+
+    Examples:
+        >>> config = UnixSocketClientConfig(path="/tmp/plugin.sock")
+        >>> config.path
+        '/tmp/plugin.sock'
+        >>> config.reconnect_attempts
+        3
+    """
+
+    path: str = Field(..., description="Path to the Unix domain socket")
+    reconnect_attempts: int = Field(default=3, description="Number of reconnection attempts")
+    reconnect_delay: float = Field(default=0.1, description="Base delay between reconnection attempts (seconds)")
+    timeout: float = Field(default=30.0, description="Read timeout in seconds")
+
+    @field_validator("path", mode="after")
+    @classmethod
+    def validate_path(cls, path: str) -> str:
+        """Validate Unix socket path.
+
+        Args:
+            path: The socket path to validate.
+
+        Returns:
+            The validated path.
+
+        Raises:
+            ValueError: If path is empty or invalid.
+        """
+        if not path:
+            raise ValueError("Unix socket path cannot be empty")
+        if not path.startswith("/"):
+            raise ValueError(f"Unix socket path must be absolute, got '{path}'")
+        return path
+
+
+class UnixSocketServerConfig(BaseModel):
+    """Server-side Unix socket configuration (plugin running as Unix socket server).
+
+    Attributes:
+        path (str): Path to the Unix domain socket file.
+
+    Examples:
+        >>> config = UnixSocketServerConfig(path="/tmp/plugin.sock")
+        >>> config.path
+        '/tmp/plugin.sock'
+    """
+
+    path: str = Field(default="/tmp/mcpgateway-plugins.sock", description="Path to the Unix domain socket")  # nosec B108 - configurable default
+
+    @classmethod
+    def from_env(cls) -> Optional["UnixSocketServerConfig"]:
+        """Construct Unix socket server configuration from environment variables.
+
+        Returns:
+            UnixSocketServerConfig instance or None if no environment variables are set.
+        """
+        env = os.environ
+        data: dict[str, Any] = {}
+
+        if env.get("UNIX_SOCKET_PATH"):
+            data["path"] = env["UNIX_SOCKET_PATH"]
+
+        if not data:
+            return None
+
+        return cls(**data)
+
+
 class PluginConfig(BaseModel):
     """A plugin configuration.
 
@@ -745,6 +1157,7 @@ class PluginConfig(BaseModel):
         applied_to (Optional[list[AppliedTo]]): the tools, fields, that the plugin is applied to.
         config (dict[str, Any]): the plugin specific configurations.
         mcp (Optional[MCPClientConfig]): Client-side MCP configuration (gateway connecting to plugin).
+        grpc (Optional[GRPCClientConfig]): Client-side gRPC configuration (gateway connecting to plugin).
     """
 
     name: str
@@ -761,6 +1174,8 @@ class PluginConfig(BaseModel):
     applied_to: Optional[AppliedTo] = None  # Fields to apply to.
     config: Optional[dict[str, Any]] = None
     mcp: Optional[MCPClientConfig] = None
+    grpc: Optional[GRPCClientConfig] = None
+    unix_socket: Optional[UnixSocketClientConfig] = None
 
     @model_validator(mode="after")
     def check_url_or_script_filled(self) -> Self:  # pylint: disable=bad-classmethod-argument
@@ -804,8 +1219,17 @@ class PluginConfig(BaseModel):
         if not ignore_config_external and self.config and self.kind == EXTERNAL_PLUGIN_TYPE:
             raise ValueError(f"""Cannot have {self.name} plugin defined as 'external' with 'config' set.""" """ 'config' section settings can only be set on the plugin server.""")
 
-        if self.kind == EXTERNAL_PLUGIN_TYPE and not self.mcp:
-            raise ValueError(f"Must set 'mcp' section for external plugin {self.name}")
+        # External plugins must have exactly one transport configured (mcp, grpc, or unix_socket)
+        if self.kind == EXTERNAL_PLUGIN_TYPE:
+            has_mcp = self.mcp is not None
+            has_grpc = self.grpc is not None
+            has_unix = self.unix_socket is not None
+            transport_count = sum([has_mcp, has_grpc, has_unix])
+
+            if transport_count == 0:
+                raise ValueError(f"External plugin {self.name} must have 'mcp', 'grpc', or 'unix_socket' section configured")
+            if transport_count > 1:
+                raise ValueError(f"External plugin {self.name} can only have one transport configured (mcp, grpc, or unix_socket)")
 
         return self
 
@@ -934,12 +1358,16 @@ class Config(BaseModel):
         plugin_dirs (list[str]): The directories in which to look for plugins.
         plugin_settings (PluginSettings): global settings for plugins.
         server_settings (Optional[MCPServerConfig]): Server-side MCP configuration (when plugins run as server).
+        grpc_server_settings (Optional[GRPCServerConfig]): Server-side gRPC configuration (when plugins run as gRPC server).
+        unix_socket_server_settings (Optional[UnixSocketServerConfig]): Server-side Unix socket configuration.
     """
 
     plugins: Optional[list[PluginConfig]] = []
     plugin_dirs: list[str] = []
     plugin_settings: PluginSettings
     server_settings: Optional[MCPServerConfig] = None
+    grpc_server_settings: Optional[GRPCServerConfig] = None
+    unix_socket_server_settings: Optional[UnixSocketServerConfig] = None
 
 
 class PluginResult(BaseModel, Generic[T]):

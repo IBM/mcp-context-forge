@@ -20,16 +20,20 @@
   <tbody id="servers-table-body" data-testid="server-list" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
   {% for server in data %}
   {% set server_label = server.name or server.id %}
-  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}">
+  {% set can_modify = is_admin or server.ownerEmail == current_user_email or (server.visibility == 'team' and server.teamId and user_team_roles.get(server.teamId|string) == 'owner') %}
+  <tr data-testid="server-item" data-enabled="{{ server.enabled|lower }}" data-owner-email="{{ server.ownerEmail }}" data-team-id="{{ server.teamId or '' }}" data-visibility="{{ server.visibility }}">
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
       <div class="grid grid-cols-2 gap-x-2 gap-y-1 max-w-48">
         <!-- Row 1: View | Edit -->
         <button onclick="viewServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+        {% if can_modify %}
         <button onclick="editServer('{{ server.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+        {% endif %}
 
         <!-- Row 2: Export Config -->
         <button onclick="showConfigSelectionModal('{{ server.id }}', '{{ server.name }}')" class="col-span-2 flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-purple-600 hover:text-purple-900 hover:bg-purple-50 dark:text-purple-400 dark:hover:bg-purple-900/20 transition-colors" x-tooltip="'💡Generate client configuration files for this server'">Export Config</button>
 
+        {% if can_modify %}
         <!-- Row 3: Activate/Deactivate | Delete -->
         <div class="col-span-2 flex flex-col space-y-1">
           <form method="POST" action="{{ root_path }}/admin/servers/{{ server.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'servers')">
@@ -40,6 +44,7 @@
             <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
           </form>
         </div>
+        {% endif %}
       </div>
     </td>
     <td class="px-6 py-4 whitespace-nowrap">
@@ -52,7 +57,7 @@
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
     <td class="px-6 py-4 whitespace-normal break-all text-sm font-medium text-gray-900 dark:text-gray-300 max-w-32">{{ server.id }}</td>
     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-gray-300">{{ server.name }}</td>
-    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description }}</td>
+    <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300">{{ server.description | decode_html }}</td>
     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-gray-300">
       {% if server.associatedTools %}
       <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{{ server.associatedTools | length }} tool{{ 's' if server.associatedTools | length != 1 else '' }}</span>
@@ -92,12 +97,8 @@
       <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
       {% endif %}
     </td>
-    <td class="px-2 py-4 whitespace-nowrap">
-      {% if server.team %}
-      <span class="text-sm text-gray-900 dark:text-gray-100">{{ server.team|e|replace(' ', '<br />')|safe }}</span>
-      {% else %}
-      <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
-      {% endif %}
+    <td class="px-2 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-300 w-20">
+      {% if server.team %}{{ server.team }}{% else %}<span class="text-gray-400 dark:text-gray-600 text-xs">None</span>{% endif %}
     </td>
     <td class="px-6 py-4 whitespace-nowrap">
       {% if server.visibility == 'private' %}

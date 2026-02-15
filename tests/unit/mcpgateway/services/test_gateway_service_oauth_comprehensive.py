@@ -120,6 +120,165 @@ def test_db():
     return session
 
 
+def _make_query(results):
+    class DummyQuery:
+        def __init__(self, items):
+            self._items = items
+
+        def filter(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def all(self):
+            return self._items
+
+    return DummyQuery(results)
+
+
+def test_normalize_url_localhost():
+    """Normalize URL should map 127.0.0.1 to localhost."""
+    assert GatewayService.normalize_url("http://127.0.0.1:8080/path") == "http://localhost:8080/path"
+    assert GatewayService.normalize_url("https://example.com/api") == "https://example.com/api"
+
+
+def test_check_gateway_uniqueness_oauth_match(monkeypatch):
+    """Duplicate detection should match OAuth configs."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = {"grant_type": "authorization_code", "client_id": "cid", "authorization_url": "auth", "token_url": "token", "scope": "s"}
+    existing.auth_value = None
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value=None,
+        oauth_config=existing.oauth_config,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is existing
+
+
+def test_check_gateway_uniqueness_auth_match(monkeypatch):
+    """Duplicate detection should match decoded auth values."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = None
+    existing.auth_value = "encoded"
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda value: {"Authorization": "Basic abc"})
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value={"Authorization": "Basic abc"},
+        oauth_config=None,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is existing
+
+
+def test_check_gateway_uniqueness_decode_failure(monkeypatch):
+    """Decode errors should be handled and continue scanning."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = None
+    existing.auth_value = "encoded"
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.decode_auth", lambda value: (_ for _ in ()).throw(ValueError("bad")))
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value={"Authorization": "Basic abc"},
+        oauth_config=None,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is None
+
+
+def test_check_gateway_uniqueness_no_auth_duplicate():
+    """Duplicate detection should catch URL-only gateways."""
+    service = GatewayService()
+    existing = MagicMock()
+    existing.oauth_config = None
+    existing.auth_value = None
+    db = MagicMock()
+    db.query.return_value = _make_query([existing])
+
+    result = service._check_gateway_uniqueness(
+        db=db,
+        url="http://example.com",
+        auth_value=None,
+        oauth_config=None,
+        team_id=None,
+        owner_email="user@example.com",
+        visibility="public",
+    )
+
+    assert result is existing
+
+
+def test_prepare_gateway_for_read_encodes_auth(monkeypatch):
+    """Prepare gateway should encode auth dict and normalize tags."""
+    service = GatewayService()
+    gateway = MagicMock()
+    gateway.auth_value = {"Authorization": "Basic abc"}
+    gateway.tags = ["tag1", "tag2"]
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda value: "encoded")
+    monkeypatch.setattr("mcpgateway.services.gateway_service.validate_tags_field", lambda tags: [{"name": t} for t in tags])
+
+    result = service._prepare_gateway_for_read(gateway)
+
+    assert result.auth_value == "encoded"
+    assert result.tags == [{"name": "tag1"}, {"name": "tag2"}]
+
+
+def test_create_db_tool_sets_fields(monkeypatch):
+    """_create_db_tool should populate fields consistently."""
+    service = GatewayService()
+    gateway = MagicMock()
+    gateway.url = "http://example.com"
+    gateway.auth_type = "basic"
+    gateway.auth_value = {"Authorization": "Basic abc"}
+    gateway.team_id = "team-1"
+    gateway.owner_email = "user@example.com"
+    gateway.visibility = "team"
+
+    monkeypatch.setattr("mcpgateway.services.gateway_service.encode_auth", lambda value: "encoded")
+
+    tool = ToolCreate(
+        name="ExampleTool",
+        description="desc",
+        request_type="POST",
+        headers={},
+        input_schema={"type": "object"},
+        annotations={},
+        jsonpath_filter="",
+    )
+
+    db_tool = service._create_db_tool(tool, gateway)
+
+    assert db_tool.original_name == "ExampleTool"
+    assert db_tool.auth_type == "basic"
+    assert db_tool.auth_value == "encoded"
+    assert db_tool.team_id == "team-1"
+
+
 class TestGatewayServiceOAuthComprehensive:
     """Comprehensive tests for OAuth functionality in GatewayService."""
 
@@ -316,193 +475,6 @@ class TestGatewayServiceOAuthComprehensive:
         # Verify error was handled
         assert error_logged is True
         assert headers == {}
-
-    # ────────────────────────────────────────────────────────────────────
-    # OAUTH IN REQUEST FORWARDING
-    # ────────────────────────────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_forward_request_oauth_client_credentials_success(self, gateway_service, mock_oauth_gateway, test_db):
-        """Test request forwarding with OAuth client credentials succeeds."""
-        # Mock OAuth manager to return access token
-        gateway_service.oauth_manager.get_access_token.return_value = "forward_request_token"
-
-        # Test the OAuth logic that would be in _forward_request_to_gateway
-        headers = {}
-        if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
-            grant_type = mock_oauth_gateway.oauth_config.get("grant_type", "client_credentials")
-            if grant_type == "client_credentials":
-                # Use OAuth manager to get access token
-                access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
-                headers = {"Authorization": f"Bearer {access_token}"}
-
-        # Verify OAuth manager was called
-        gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-
-        # Verify headers were set correctly
-        assert headers == {"Authorization": "Bearer forward_request_token"}
-
-    @pytest.mark.asyncio
-    async def test_forward_request_oauth_authorization_code_with_token(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
-        """Test request forwarding with OAuth authorization code when token exists."""
-        # Mock TokenStorageService
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
-            mock_token_service = MagicMock()
-            mock_token_service_class.return_value = mock_token_service
-            mock_token_service.get_valid_access_token = AsyncMock(return_value="stored_forward_token")
-
-            # Test the OAuth authorization code logic
-            headers = {}
-            if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
-                grant_type = mock_oauth_auth_code_gateway.oauth_config.get("grant_type", "client_credentials")
-                if grant_type == "authorization_code":
-                    # Get stored token
-                    access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
-                    if access_token:
-                        headers = {"Authorization": f"Bearer {access_token}"}
-
-            # Verify token service was called
-            mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-
-            # Verify headers were set correctly
-            assert headers == {"Authorization": "Bearer stored_forward_token"}
-
-    @pytest.mark.asyncio
-    async def test_forward_request_oauth_authorization_code_no_token(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
-        """Test request forwarding with OAuth authorization code when no token exists."""
-        # Mock TokenStorageService to return None
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
-            mock_token_service = MagicMock()
-            mock_token_service_class.return_value = mock_token_service
-            mock_token_service.get_valid_access_token = AsyncMock(return_value=None)
-
-            # Test the OAuth authorization code logic when no token is available
-            with pytest.raises(GatewayConnectionError) as exc_info:
-                if mock_oauth_auth_code_gateway.auth_type == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
-                    grant_type = mock_oauth_auth_code_gateway.oauth_config.get("grant_type")
-                    if grant_type == "authorization_code":
-                        access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
-                        if not access_token:
-                            raise GatewayConnectionError(f"No valid OAuth token found for authorization_code gateway {mock_oauth_auth_code_gateway.name}")
-
-            assert "No valid OAuth token found" in str(exc_info.value)
-
-    @pytest.mark.asyncio
-    async def test_forward_request_oauth_error_handling(self, gateway_service, mock_oauth_gateway, test_db):
-        """Test request forwarding handles OAuth errors properly."""
-        # Mock OAuth manager to raise an error
-        gateway_service.oauth_manager.get_access_token.side_effect = Exception("OAuth service unavailable")
-
-        # This should raise a GatewayConnectionError
-        with pytest.raises(GatewayConnectionError) as exc_info:
-            # Simulate the actual OAuth error handling in _forward_request_to_gateway
-            try:
-                access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
-            except Exception as oauth_error:
-                raise GatewayConnectionError(f"Failed to obtain OAuth token for gateway {mock_oauth_gateway.name}: {oauth_error}")
-
-        assert "Failed to obtain OAuth token" in str(exc_info.value)
-        assert "OAuth service unavailable" in str(exc_info.value)
-
-    # ────────────────────────────────────────────────────────────────────
-    # OAUTH IN FORWARD REQUEST TO ALL
-    # ────────────────────────────────────────────────────────────────────
-
-    @pytest.mark.asyncio
-    async def test_forward_request_to_all_oauth_mixed_gateways(self, gateway_service, mock_oauth_gateway, test_db):
-        """Test forwarding request to all gateways with mixed OAuth and non-OAuth."""
-        # Create a non-OAuth gateway
-        non_oauth_gateway = MagicMock(spec=DbGateway)
-        non_oauth_gateway.id = 3
-        non_oauth_gateway.name = "regular_gateway"
-        non_oauth_gateway.url = "http://regular.example.com"
-        non_oauth_gateway.enabled = True
-        non_oauth_gateway.auth_type = "basic"
-        non_oauth_gateway.auth_value = {"Authorization": "Basic dGVzdDp0ZXN0"}
-        non_oauth_gateway.oauth_config = None
-
-        # Mock OAuth manager for OAuth gateway
-        gateway_service.oauth_manager.get_access_token.return_value = "all_gateways_token"
-
-        # Test mixed OAuth/non-OAuth header generation
-        headers_list = []
-
-        for gateway in [mock_oauth_gateway, non_oauth_gateway]:
-            headers = {}
-            if getattr(gateway, "auth_type", None) == "oauth" and gateway.oauth_config:
-                grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
-                if grant_type == "client_credentials":
-                    access_token = await gateway_service.oauth_manager.get_access_token(gateway.oauth_config)
-                    headers = {"Authorization": f"Bearer {access_token}"}
-            else:
-                # Non-OAuth gateway uses auth_value directly
-                headers = gateway.auth_value or {}
-            headers_list.append(headers)
-
-        # Verify OAuth manager was called for OAuth gateway
-        gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-
-        # Verify correct headers for each gateway
-        assert headers_list[0] == {"Authorization": "Bearer all_gateways_token"}  # OAuth gateway
-        assert headers_list[1] == {"Authorization": "Basic dGVzdDp0ZXN0"}  # Non-OAuth gateway
-
-    @pytest.mark.asyncio
-    async def test_forward_request_to_all_oauth_authorization_code_skip(self, gateway_service, mock_oauth_auth_code_gateway, test_db):
-        """Test forward to all skips authorization code gateways without tokens."""
-        # Mock TokenStorageService to return None
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_token_service_class:
-            mock_token_service = MagicMock()
-            mock_token_service_class.return_value = mock_token_service
-            mock_token_service.get_valid_access_token = AsyncMock(return_value=None)
-
-            # Test logic for skipping auth code gateways without tokens
-            skip_gateway = False
-            warning_logged = False
-
-            if getattr(mock_oauth_auth_code_gateway, "auth_type", None) == "oauth" and mock_oauth_auth_code_gateway.oauth_config:
-                grant_type = mock_oauth_auth_code_gateway.oauth_config.get("grant_type", "client_credentials")
-                if grant_type == "authorization_code":
-                    access_token = await mock_token_service.get_valid_access_token(test_db, mock_oauth_auth_code_gateway.id)
-                    if not access_token:
-                        # Simulate logging warning and skipping
-                        warning_logged = True
-                        skip_gateway = True
-
-            # Verify token service was called
-            mock_token_service.get_valid_access_token.assert_called_once_with(test_db, mock_oauth_auth_code_gateway.id)
-
-            # Verify gateway would be skipped
-            assert skip_gateway is True
-            assert warning_logged is True
-
-    @pytest.mark.asyncio
-    async def test_forward_request_to_all_oauth_error_collection(self, gateway_service, mock_oauth_gateway, test_db):
-        """Test forward to all collects OAuth errors properly."""
-        # Mock OAuth manager to raise an error
-        gateway_service.oauth_manager.get_access_token.side_effect = Exception("OAuth endpoint down")
-
-        # Test error collection logic
-        errors = []
-        warning_logged = False
-
-        try:
-            if getattr(mock_oauth_gateway, "auth_type", None) == "oauth" and mock_oauth_gateway.oauth_config:
-                grant_type = mock_oauth_gateway.oauth_config.get("grant_type", "client_credentials")
-                if grant_type == "client_credentials":
-                    access_token = await gateway_service.oauth_manager.get_access_token(mock_oauth_gateway.oauth_config)
-        except Exception as oauth_error:
-            # Simulate logging and error collection
-            warning_logged = True
-            errors.append(f"Gateway {mock_oauth_gateway.name}: OAuth error - {str(oauth_error)}")
-
-        # Verify OAuth manager was called and raised error
-        gateway_service.oauth_manager.get_access_token.assert_called_once_with(mock_oauth_gateway.oauth_config)
-
-        # Verify error was collected
-        assert warning_logged is True
-        assert len(errors) == 1
-        assert "OAuth error" in errors[0]
-        assert "OAuth endpoint down" in errors[0]
 
     # ────────────────────────────────────────────────────────────────────
     # FETCH TOOLS AFTER OAUTH

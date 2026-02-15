@@ -54,6 +54,12 @@ class TestImportErrors:
 
             # Should set REDIS_AVAILABLE = False
             assert not mcpgateway.cache.session_registry.REDIS_AVAILABLE
+        # Reload again to avoid leaking import-error flags into other tests/workers.
+        import importlib
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
 
     def test_sqlalchemy_import_error_flag(self):
         """Test SQLALCHEMY_AVAILABLE flag when sqlalchemy import fails."""
@@ -68,6 +74,12 @@ class TestImportErrors:
 
             # Should set SQLALCHEMY_AVAILABLE = False
             assert not mcpgateway.cache.session_registry.SQLALCHEMY_AVAILABLE
+        # Reload again to avoid leaking import-error flags into other tests/workers.
+        import importlib
+
+        import mcpgateway.cache.session_registry
+
+        importlib.reload(mcpgateway.cache.session_registry)
 
 
 class TestNoneBackend:
@@ -949,3 +961,97 @@ class TestInitializationAndShutdown:
 
         # Shutdown should not raise error
         await registry.shutdown()
+
+
+class TestRespondTaskCancellation:
+    """Cover respond task cancellation and reaper behavior."""
+
+    @pytest.mark.asyncio
+    async def test_cancel_respond_task_handles_done_exception(self):
+        registry = SessionRegistry(backend="memory")
+
+        async def fail_task():
+            raise RuntimeError("boom")
+
+        task = asyncio.create_task(fail_task())
+        await asyncio.sleep(0)
+
+        registry.register_respond_task("sid", task)
+        await registry._cancel_respond_task("sid")
+
+        assert "sid" not in registry._respond_tasks
+
+    @pytest.mark.asyncio
+    async def test_cancel_respond_task_escalation_moves_to_stuck(self, monkeypatch):
+        registry = SessionRegistry(backend="memory")
+        transport = MagicMock()
+        transport.disconnect = AsyncMock()
+        registry._sessions["sid"] = transport
+
+        event = asyncio.Event()
+
+        async def wait_task():
+            await event.wait()
+
+        task = asyncio.create_task(wait_task())
+        registry.register_respond_task("sid", task)
+
+        timeouts = [asyncio.TimeoutError(), asyncio.TimeoutError()]
+
+        async def fake_wait_for(*_args, **_kwargs):
+            raise timeouts.pop(0)
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for)
+
+        await registry._cancel_respond_task("sid", timeout=0.0)
+
+        assert "sid" in registry._stuck_tasks
+        transport.disconnect.assert_called_once()
+
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    @pytest.mark.asyncio
+    async def test_reap_stuck_tasks_handles_completed_and_timeout(self, monkeypatch):
+        registry = SessionRegistry(backend="memory")
+
+        done_task = asyncio.create_task(asyncio.sleep(0))
+        await done_task
+
+        hang_event = asyncio.Event()
+
+        async def hang_task():
+            await hang_event.wait()
+
+        pending_task = asyncio.create_task(hang_task())
+
+        registry._stuck_tasks = {"done": done_task, "pending": pending_task}
+
+        sleep_calls = {"count": 0}
+
+        async def fake_sleep(_interval):
+            sleep_calls["count"] += 1
+            if sleep_calls["count"] > 1:
+                raise asyncio.CancelledError()
+            return None
+
+        async def fake_wait_for(*_args, **_kwargs):
+            raise asyncio.TimeoutError()
+
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.sleep", fake_sleep)
+        monkeypatch.setattr("mcpgateway.cache.session_registry.asyncio.wait_for", fake_wait_for)
+
+        with pytest.raises(asyncio.CancelledError):
+            await registry._reap_stuck_tasks()
+
+        assert "done" not in registry._stuck_tasks
+        assert "pending" in registry._stuck_tasks
+
+        pending_task.cancel()
+        try:
+            await pending_task
+        except asyncio.CancelledError:
+            pass

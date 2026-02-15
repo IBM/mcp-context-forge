@@ -791,6 +791,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
         # Delete the client
         db.delete(client)
         db.commit()
+        db.close()
 
         logger.info(f"Deleted registered OAuth client {client_id} for gateway {gateway_id} (issuer: {issuer})")
 

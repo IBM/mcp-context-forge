@@ -38,7 +38,7 @@ Example usage:
 Examples:
     >>> from mcpgateway.common.validators import SecurityValidator
     >>> SecurityValidator.sanitize_display_text('<b>Test</b>', 'test')
-    '&lt;b&gt;Test&lt;/b&gt;'
+    'Test'
     >>> SecurityValidator.validate_name('valid_name-123', 'test')
     'valid_name-123'
     >>> SecurityValidator.validate_identifier('my.test.id_123', 'test')
@@ -48,11 +48,13 @@ Examples:
 """
 
 # Standard
-import html
+from html.parser import HTMLParser
+import ipaddress
 import logging
 from pathlib import Path
 import re
 import shlex
+import socket
 from typing import Any, Iterable, List, Optional, Pattern
 from urllib.parse import urlparse
 import uuid
@@ -220,6 +222,68 @@ _SQL_PATTERNS: List[Pattern[str]] = [
 ]
 
 
+# ============================================================================
+# HTML Tag Stripper with Character Preservation
+# ============================================================================
+class _TagStripper(HTMLParser):
+    """Strip HTML tags while preserving all text content and special characters.
+
+    This parser removes HTML tags but keeps the text content exactly as-is,
+    including special characters like &, ", and '. HTML entities are decoded
+    to their literal characters (e.g., & becomes &).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.reset()
+        self.strict = False
+        self.fed: List[str] = []
+
+    def handle_data(self, data: str) -> None:
+        """Handle text data between tags.
+
+        With convert_charrefs=True, HTML entities are automatically decoded
+        (e.g., &amp; → &) and plain text with & passes through unchanged.
+
+        Args:
+            data: Text content between HTML tags
+        """
+        self.fed.append(data)
+
+    def get_data(self) -> str:
+        """Return the accumulated text content.
+
+        Returns:
+            str: Concatenated text content from all handled data
+        """
+        return "".join(self.fed)
+
+
+def _strip_html_tags(value: str) -> str:
+    """Remove HTML tags while preserving special characters exactly as-is.
+
+    Args:
+        value: String that may contain HTML tags
+
+    Returns:
+        String with HTML tags removed but text content preserved
+
+    Examples:
+        >>> _strip_html_tags('<b>Hello</b> World')
+        'Hello World'
+        >>> _strip_html_tags('Test & Check')
+        'Test & Check'
+        >>> _strip_html_tags('Quote: "Hello"')
+        'Quote: "Hello"'
+        >>> _strip_html_tags('&&&')
+        '&&&'
+    """
+    s = _TagStripper()
+    s.feed(value)
+    s.close()
+    return s.get_data()
+
+
 class SecurityValidator:
     """Configurable validation with MCP-compliant limits"""
 
@@ -260,12 +324,12 @@ class SecurityValidator:
             ValueError: When input is not acceptable
 
         Examples:
-            Basic HTML escaping:
+            Basic HTML tag stripping:
 
             >>> SecurityValidator.sanitize_display_text('Hello World', 'test')
             'Hello World'
             >>> SecurityValidator.sanitize_display_text('Hello <b>World</b>', 'test')
-            'Hello &lt;b&gt;World&lt;/b&gt;'
+            'Hello World'
 
             Empty/None handling:
 
@@ -289,7 +353,7 @@ class SecurityValidator:
                 ...
             ValueError: test contains potentially dangerous character sequences
             >>> SecurityValidator.sanitize_display_text('-->test', 'test')
-            '--&gt;test'
+            '-->test'
             >>> SecurityValidator.sanitize_display_text('--><script>', 'test')
             Traceback (most recent call last):
                 ...
@@ -299,14 +363,14 @@ class SecurityValidator:
                 ...
             ValueError: test contains potentially dangerous character sequences
 
-            Safe character escaping:
+            Special characters (preserved as-is, no HTML entity conversion):
 
             >>> SecurityValidator.sanitize_display_text('User & Admin', 'test')
-            'User &amp; Admin'
+            'User & Admin'
             >>> SecurityValidator.sanitize_display_text('Quote: "Hello"', 'test')
-            'Quote: &quot;Hello&quot;'
+            'Quote: "Hello"'
             >>> SecurityValidator.sanitize_display_text("Quote: 'Hello'", 'test')
-            'Quote: &#x27;Hello&#x27;'
+            "Quote: 'Hello'"
         """
         if not value:
             return value
@@ -323,8 +387,8 @@ class SecurityValidator:
             if pattern.search(value):
                 raise ValueError(f"{field_name} contains potentially dangerous character sequences")
 
-        # Escape HTML entities to ensure proper display
-        return html.escape(value, quote=True)
+        cleaned = _strip_html_tags(value)
+        return cleaned
 
     @classmethod
     def validate_name(cls, value: str, field_name: str = "Name") -> str:
@@ -952,10 +1016,10 @@ class SecurityValidator:
             Traceback (most recent call last):
                 ...
             ValueError: URL contains invalid IP address (0.0.0.0)
-            >>> SecurityValidator.validate_url('https://169.254.169.254/')
+            >>> SecurityValidator.validate_url('https://169.254.169.254/')  # doctest: +ELLIPSIS
             Traceback (most recent call last):
                 ...
-            ValueError: URL contains restricted IP address
+            ValueError: URL contains IP address blocked by SSRF protection ...
 
             Invalid port numbers:
 
@@ -1034,20 +1098,16 @@ class SecurityValidator:
             if "[" in result.netloc or "]" in result.netloc:
                 raise ValueError(f"{field_name} contains IPv6 address which is not supported")
 
-            # Block dangerous IP addresses
+            # SSRF Protection: Block dangerous IP addresses and hostnames
             hostname = result.hostname
             if hostname:
-                # Block 0.0.0.0 (all interfaces)
+                # Always block 0.0.0.0 (all interfaces) regardless of SSRF settings
                 if hostname == "0.0.0.0":  # nosec B104 - we're blocking this for security
                     raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
 
-                # Block AWS metadata service
-                if hostname == "169.254.169.254":
-                    raise ValueError(f"{field_name} contains restricted IP address")
-
-                # Optional: Block localhost/loopback (uncomment if needed)
-                # if hostname in ["127.0.0.1", "localhost"]:
-                #     raise ValueError(f"{field_name} contains localhost address")
+                # Apply SSRF protection if enabled
+                if settings.ssrf_protection_enabled:
+                    cls._validate_ssrf(hostname, field_name)
 
             # Validate port number
             if result.port is not None:
@@ -1072,6 +1132,123 @@ class SecurityValidator:
             raise ValueError(f"{field_name} is not a valid URL")
 
         return value
+
+    @classmethod
+    def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
+        """Validate hostname/IP against SSRF protection rules.
+
+        This method implements configurable SSRF (Server-Side Request Forgery) protection
+        to prevent the gateway from being used to access internal resources or cloud
+        metadata services.
+
+        Args:
+            hostname (str): The hostname or IP address to validate.
+            field_name (str): Name of field being validated (for error messages).
+
+        Raises:
+            ValueError: If the hostname/IP is blocked by SSRF protection rules.
+
+        Configuration (via settings):
+            - ssrf_protection_enabled: Master switch (must be True for this to be called)
+            - ssrf_blocked_networks: CIDR ranges always blocked (e.g., cloud metadata)
+            - ssrf_blocked_hosts: Hostnames always blocked
+            - ssrf_allow_localhost: If False, blocks 127.0.0.0/8 and localhost
+            - ssrf_allow_private_networks: If False, blocks RFC 1918 private ranges
+
+        Examples:
+            Cloud metadata (always blocked):
+
+            >>> from unittest.mock import patch, MagicMock
+            >>> mock_settings = MagicMock()
+            >>> mock_settings.ssrf_protection_enabled = True
+            >>> mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+            >>> mock_settings.ssrf_blocked_hosts = ["metadata.google.internal"]
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('169.254.169.254', 'URL')
+            ...     except ValueError as e:
+            ...         'blocked by SSRF protection' in str(e)
+            True
+
+            Localhost (configurable):
+
+            >>> mock_settings.ssrf_allow_localhost = False
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('127.0.0.1', 'URL')
+            ...     except ValueError as e:
+            ...         'localhost' in str(e).lower()
+            True
+
+            Public IPs (always allowed):
+
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
+        """
+        # Normalize hostname: lowercase, strip trailing dots (DNS FQDN notation)
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Check blocked hostnames (case-insensitive, normalized)
+        for blocked_host in settings.ssrf_blocked_hosts:
+            blocked_normalized = blocked_host.lower().rstrip(".")
+            if hostname_normalized == blocked_normalized:
+                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+
+        # Resolve hostname to IP for network-based checks
+        # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
+        ip_addresses: list = []
+        try:
+            # Try to parse as IP address directly
+            ip_addresses = [ipaddress.ip_address(hostname)]
+        except ValueError:
+            # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+            try:
+                # getaddrinfo returns all A/AAAA records
+                addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for _, _, _, _, sockaddr in addr_info:
+                    try:
+                        ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
+                    except ValueError:
+                        continue
+            except (socket.gaierror, socket.herror):
+                # DNS resolution failed
+                if settings.ssrf_dns_fail_closed:
+                    raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
+                # Fail open: allow through (hostname blocking above catches known dangerous hostnames)
+                return
+
+        if not ip_addresses:
+            if settings.ssrf_dns_fail_closed:
+                raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+            return
+
+        # Check ALL resolved addresses - if ANY is blocked, reject the request
+        for ip_addr in ip_addresses:
+            # Check against blocked networks (always blocked regardless of other settings)
+            for network_str in settings.ssrf_blocked_networks:
+                try:
+                    network = ipaddress.ip_network(network_str, strict=False)
+                except ValueError:
+                    # Invalid network in config - log and skip
+                    logger.warning(f"Invalid CIDR in ssrf_blocked_networks: {network_str}")
+                    continue
+
+                if ip_addr in network:
+                    raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
+
+            # Check localhost/loopback (if not allowed)
+            if not settings.ssrf_allow_localhost:
+                if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
+                    raise ValueError(f"{field_name} contains localhost address which is blocked by SSRF protection")
+
+            # Check private networks (if not allowed)
+            if not settings.ssrf_allow_private_networks:
+                if ip_addr.is_private and not ip_addr.is_loopback:
+                    raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
 
     @classmethod
     def validate_no_xss(cls, value: str, field_name: str) -> None:

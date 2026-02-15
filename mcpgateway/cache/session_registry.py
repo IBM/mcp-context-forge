@@ -408,6 +408,9 @@ class SessionRegistry(SessionBackend):
 
         This prevents memory leaks from tasks that eventually complete after
         being moved to _stuck_tasks during escalation.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         reap_interval = 30.0  # seconds
         retry_timeout = 2.0  # seconds for retry cancellation
@@ -460,7 +463,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.debug("Stuck task reaper cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in stuck task reaper: {e}")
 
@@ -1008,6 +1011,76 @@ class SessionRegistry(SessionBackend):
             except Exception as e:
                 logger.error(f"Database error during broadcast: {e}")
 
+    async def _register_session_mapping(self, session_id: str, message: Dict[str, Any], user_email: Optional[str] = None) -> None:
+        """Register session mapping for session affinity when tools are called.
+
+        This method is called on the worker that executes the request (the SSE session
+        owner) to pre-register the mapping between a downstream session ID and the
+        upstream MCP session pool key. This enables session affinity in multi-worker
+        deployments.
+
+        Only registers mappings for tools/call methods - list operations and other
+        methods don't need session affinity since they don't maintain state.
+
+        Args:
+            session_id: The downstream SSE session ID.
+            message: The MCP protocol message being broadcast.
+            user_email: Optional user email for session isolation.
+        """
+        # Skip if session affinity is disabled
+        if not settings.mcpgateway_session_affinity_enabled:
+            return
+
+        # Only register for tools/call - other methods don't need session affinity
+        method = message.get("method")
+        if method != "tools/call":
+            return
+
+        # Extract tool name from params
+        params = message.get("params", {})
+        tool_name = params.get("name")
+        if not tool_name:
+            return
+
+        try:
+            # Look up tool in cache to get gateway info
+            # First-Party
+            from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+
+            tool_info = await tool_lookup_cache.get(tool_name)
+            if not tool_info:
+                logger.debug(f"Tool {tool_name} not found in cache, skipping session mapping registration")
+                return
+
+            # Extract gateway information
+            gateway = tool_info.get("gateway", {})
+            gateway_url = gateway.get("url")
+            gateway_id = gateway.get("id")
+            transport = gateway.get("transport")
+
+            if not gateway_url or not gateway_id or not transport:
+                logger.debug(f"Incomplete gateway info for tool {tool_name}, skipping session mapping registration")
+                return
+
+            # Register the session mapping with the pool
+            # First-Party
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+
+            pool = get_mcp_session_pool()
+            await pool.register_session_mapping(
+                session_id,
+                gateway_url,
+                gateway_id,
+                transport,
+                user_email,
+            )
+
+            logger.debug(f"Registered session mapping for session {session_id[:8]}... -> {gateway_url} (tool: {tool_name})")
+
+        except Exception as e:
+            # Don't fail the broadcast if session mapping registration fails
+            logger.warning(f"Failed to register session mapping for {session_id[:8]}...: {e}")
+
     async def get_all_session_ids(self) -> list[str]:
         """Return a snapshot list of all known local session IDs.
 
@@ -1447,6 +1520,9 @@ class SessionRegistry(SessionBackend):
 
         The task also verifies that local sessions still exist in the database
         and removes them locally if they've been deleted elsewhere.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("Starting database cleanup task")
         while True:
@@ -1499,7 +1575,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.info("Database cleanup task cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in database cleanup task: {e}")
                 await asyncio.sleep(600)  # Sleep longer on error
@@ -1596,6 +1672,9 @@ class SessionRegistry(SessionBackend):
         Runs periodically (every minute) to check all local sessions and remove
         those that are no longer connected. This prevents memory leaks from
         accumulating disconnected transport objects.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
         """
         logger.info("Starting memory cleanup task")
         while True:
@@ -1617,7 +1696,7 @@ class SessionRegistry(SessionBackend):
 
             except asyncio.CancelledError:
                 logger.info("Memory cleanup task cancelled")
-                break
+                raise
             except Exception as e:
                 logger.error(f"Error in memory cleanup task: {e}")
                 await asyncio.sleep(300)  # Sleep longer on error
@@ -1848,15 +1927,14 @@ class SessionRegistry(SessionBackend):
             # Get the token from the current authentication context
             # The user object should contain auth_token, token_teams, and is_admin from the SSE endpoint
             token = None
-            token_teams = user.get("token_teams", [])  # Default to empty list, never None
             is_admin = user.get("is_admin", False)  # Preserve admin status from SSE endpoint
 
             try:
                 if hasattr(user, "get") and user.get("auth_token"):
                     token = user["auth_token"]
                 else:
-                    # Fallback: create token preserving the user's context (including admin status)
-                    logger.warning("No auth token available for SSE RPC call - creating fallback token")
+                    # Fallback: create lightweight session token (teams resolved server-side by downstream /rpc)
+                    logger.warning("No auth token available for SSE RPC call - creating fallback session token")
                     now = datetime.now(timezone.utc)
                     payload = {
                         "sub": user.get("email", "system"),
@@ -1864,7 +1942,7 @@ class SessionRegistry(SessionBackend):
                         "aud": settings.jwt_audience,
                         "iat": int(now.timestamp()),
                         "jti": str(uuid.uuid4()),
-                        "teams": token_teams,  # Always a list - preserves token scope
+                        "token_use": "session",  # nosec B105 - token type marker, not a password
                         "user": {
                             "email": user.get("email", "system"),
                             "full_name": user.get("full_name", "System"),
@@ -1875,7 +1953,14 @@ class SessionRegistry(SessionBackend):
                     # Generate token using centralized token creation
                     token = await create_jwt_token(payload)
 
+                # Pass downstream session id to /rpc for session affinity.
+                # This is gateway-internal only; the pool strips it before contacting upstream MCP servers.
+                if settings.mcpgateway_session_affinity_enabled:
+                    await self._register_session_mapping(transport.session_id, message, user.get("email") if hasattr(user, "get") else None)
+
                 headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+                if settings.mcpgateway_session_affinity_enabled:
+                    headers["x-mcp-session-id"] = transport.session_id
                 # Extract root URL from base_url (remove /servers/{id} path)
                 parsed_url = urlparse(base_url)
                 # Preserve the path up to the root path (before /servers/{id})

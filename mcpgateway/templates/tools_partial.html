@@ -20,7 +20,8 @@
     class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700"
   >
     {% for tool in data %}
-      <tr data-enabled="{{ tool.enabled|lower }}">
+      {% set can_modify = is_admin or tool.ownerEmail == current_user_email or (tool.visibility == 'team' and tool.teamId and user_team_roles.get(tool.teamId|string) == 'owner') %}
+      <tr data-enabled="{{ tool.enabled|lower }}" data-owner-email="{{ tool.ownerEmail }}" data-team-id="{{ tool.teamId or '' }}" data-visibility="{{ tool.visibility }}">
         <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
             <!-- Row 1: Test -->
@@ -40,6 +41,7 @@
             >
               View
             </button>
+            {% if can_modify %}
             <button
               onclick="editTool('{{ tool.id }}')"
               class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
@@ -47,7 +49,9 @@
             >
               Edit
             </button>
+            {% endif %}
 
+            {% if can_modify %}
             <!-- Row 3: Deactivate/Activate | Delete -->
             <div class="col-span-2 flex flex-col space-y-1">
               {% if tool.enabled %}
@@ -99,6 +103,7 @@
                 </button>
               </form>
             </div>
+            {% endif %}
           </div>
         </td>
         <td
@@ -123,9 +128,9 @@
         <td
           class="px-2 py-4 whitespace-normal break-words text-sm text-gray-500 dark:text-gray-300"
         >
-          {% set clean_desc = (tool.description or "") | replace('\n', ' ') |
+          {% set clean_desc = (tool.description or "") | decode_html | replace('\n', ' ') |
           replace('\r', ' ') %} {% set refactor_desc = clean_desc | striptags |
-          trim | escape %} {% if refactor_desc | length is greaterthan 220 %} {{
+          trim %} {% if refactor_desc | length is greaterthan 220 %} {{
           refactor_desc[:400] + "..." }} {% else %} {{ refactor_desc }} {% endif %}
         </td>
         <td class="px-2 py-4 whitespace-normal break-words">
@@ -157,7 +162,7 @@
           {% if tool.tags %} {% for tag in tool.tags %}
           <span
             class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 mr-1 mb-1"
-            >{{ tag.id }}</span
+            >{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}</span
           >
           {% endfor %} {% else %}
           <span class="text-gray-500 dark:text-gray-300 text-xs">None</span>

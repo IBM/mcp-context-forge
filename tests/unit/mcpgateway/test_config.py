@@ -278,3 +278,667 @@ def test_compression_zstd_level_validation():
     with pytest.raises(ValidationError) as exc_info:
         Settings(compression_zstd_level=23, _env_file=None)
     assert "less than or equal to 22" in str(exc_info.value).lower()
+
+
+# --------------------------------------------------------------------------- #
+#                    _normalize_env_list_vars                                  #
+# --------------------------------------------------------------------------- #
+def test_normalize_env_list_vars_empty_value():
+    """Empty env var should be converted to '[]'."""
+    from mcpgateway.config import _normalize_env_list_vars
+
+    with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": ""}, clear=False):
+        _normalize_env_list_vars()
+        assert os.environ["SSO_TRUSTED_DOMAINS"] == "[]"
+
+
+def test_normalize_env_list_vars_valid_json():
+    """Valid JSON array should be left as-is."""
+    from mcpgateway.config import _normalize_env_list_vars
+
+    with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": '["a.com", "b.com"]'}, clear=False):
+        _normalize_env_list_vars()
+        assert os.environ["SSO_TRUSTED_DOMAINS"] == '["a.com", "b.com"]'
+
+
+def test_normalize_env_list_vars_csv():
+    """CSV value should be converted to JSON array."""
+    from mcpgateway.config import _normalize_env_list_vars
+
+    with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": "a.com, b.com"}, clear=False):
+        _normalize_env_list_vars()
+        import orjson
+
+        result = orjson.loads(os.environ["SSO_TRUSTED_DOMAINS"])
+        assert result == ["a.com", "b.com"]
+
+
+def test_normalize_env_list_vars_invalid_json_bracket():
+    """Value starting with '[' but not valid JSON should fall through to CSV."""
+    from mcpgateway.config import _normalize_env_list_vars
+
+    with patch.dict(os.environ, {"SSO_TRUSTED_DOMAINS": "[not-valid-json"}, clear=False):
+        _normalize_env_list_vars()
+        import orjson
+
+        result = orjson.loads(os.environ["SSO_TRUSTED_DOMAINS"])
+        assert result == ["[not-valid-json"]
+
+
+# --------------------------------------------------------------------------- #
+#                      x_frame_options validator                               #
+# --------------------------------------------------------------------------- #
+def test_x_frame_options_null_returns_none():
+    """x_frame_options set to 'null' or 'none' should return None."""
+    s = Settings(x_frame_options="null", _env_file=None)
+    assert s.x_frame_options is None
+
+    s2 = Settings(x_frame_options="None", _env_file=None)
+    assert s2.x_frame_options is None
+
+
+def test_x_frame_options_normal_value():
+    """Normal x_frame_options value should be preserved."""
+    s = Settings(x_frame_options="DENY", _env_file=None)
+    assert s.x_frame_options == "DENY"
+
+
+# --------------------------------------------------------------------------- #
+#                      parse_allowed_roots                                     #
+# --------------------------------------------------------------------------- #
+def test_parse_allowed_roots_json():
+    """JSON array string should be parsed into list."""
+    s = Settings(allowed_roots='["/api", "/v2"]', _env_file=None)
+    assert s.allowed_roots == ["/api", "/v2"]
+
+
+def test_parse_allowed_roots_json_non_list_falls_back_to_csv():
+    """Valid JSON that is not a list should fall back to comma-splitting (config.py:648->654)."""
+    s = Settings(allowed_roots='{"root": "/api"}', _env_file=None)
+    assert s.allowed_roots == ['{"root": "/api"}']
+
+
+def test_parse_allowed_roots_csv():
+    """CSV string should be parsed into list."""
+    s = Settings(allowed_roots="/api, /v2", _env_file=None)
+    assert s.allowed_roots == ["/api", "/v2"]
+
+
+def test_parse_allowed_roots_empty():
+    """Empty string should return empty list."""
+    s = Settings(allowed_roots="", _env_file=None)
+    assert s.allowed_roots == []
+
+
+def test_parse_allowed_roots_list_passthrough():
+    """List input should be passed through unchanged."""
+    s = Settings(allowed_roots=["/api"], _env_file=None)
+    assert s.allowed_roots == ["/api"]
+
+
+# --------------------------------------------------------------------------- #
+#                      validate_secrets branches                               #
+# --------------------------------------------------------------------------- #
+def test_validate_secrets_non_secretstr_input():
+    """Passing a plain string for jwt_secret_key should return SecretStr."""
+    s = Settings(jwt_secret_key="a" * 32, _env_file=None)
+    assert isinstance(s.jwt_secret_key, SecretStr)
+    assert s.jwt_secret_key.get_secret_value() == "a" * 32
+
+
+def test_validate_secrets_weak_secret_warns():
+    """Weak secret should trigger warnings but not fail."""
+    s = Settings(jwt_secret_key="changeme", _env_file=None)
+    assert s.jwt_secret_key.get_secret_value() == "changeme"
+
+
+def test_validate_secrets_low_entropy_warns():
+    """Low entropy secret should trigger warnings."""
+    s = Settings(jwt_secret_key="aaaa", _env_file=None)
+    assert s.jwt_secret_key.get_secret_value() == "aaaa"
+
+
+def test_validate_secrets_direct_call_non_secretstr_value():
+    """Cover validate_secrets branch where v is not a SecretStr (config.py:691)."""
+    class _Info:
+        field_name = "jwt_secret_key"
+        data = {"client_mode": True}
+
+    out = Settings.validate_secrets("plain-secret", _Info())
+    assert isinstance(out, SecretStr)
+    assert out.get_secret_value() == "plain-secret"
+
+
+# --------------------------------------------------------------------------- #
+#                      validate_admin_password branches                        #
+# --------------------------------------------------------------------------- #
+def test_validate_admin_password_plain_string():
+    """Plain string password should be wrapped as SecretStr."""
+    s = Settings(basic_auth_password="StrongP@ss1!", _env_file=None)
+    assert isinstance(s.basic_auth_password, SecretStr)
+    assert s.basic_auth_password.get_secret_value() == "StrongP@ss1!"
+
+
+def test_validate_admin_password_short_warns():
+    """Short password should trigger warning."""
+    s = Settings(basic_auth_password="ab", _env_file=None)
+    assert s.basic_auth_password.get_secret_value() == "ab"
+
+
+def test_validate_admin_password_high_complexity():
+    """Complex password with 3+ categories passes without extra warning."""
+    s = Settings(basic_auth_password="Abc123!@#", _env_file=None)
+    assert s.basic_auth_password.get_secret_value() == "Abc123!@#"
+
+
+def test_validate_admin_password_low_complexity():
+    """Low complexity password triggers warning."""
+    s = Settings(basic_auth_password="alllower", _env_file=None)
+    assert s.basic_auth_password.get_secret_value() == "alllower"
+
+
+def test_validate_admin_password_direct_call_plain_string():
+    """Cover validate_admin_password branch where v is not a SecretStr (config.py:726)."""
+    class _Info:
+        data = {"client_mode": True}
+
+    out = Settings.validate_admin_password("plain", _Info())
+    assert isinstance(out, SecretStr)
+    assert out.get_secret_value() == "plain"
+
+
+# --------------------------------------------------------------------------- #
+#                      validate_cors_origins                                   #
+# --------------------------------------------------------------------------- #
+def test_validate_cors_origins_empty_set():
+    """Empty set allowed_origins should work."""
+    s = Settings(allowed_origins=set(), _env_file=None)
+    assert s.allowed_origins == set()
+
+
+def test_validate_cors_origins_valid_set():
+    """Valid origins set should be preserved."""
+    origins = {"http://localhost:3000", "https://example.com"}
+    s = Settings(allowed_origins=origins, _env_file=None)
+    assert s.allowed_origins == origins
+
+
+def test_validate_cors_origins_wildcard_warns():
+    """Wildcard origin should trigger warning."""
+    s = Settings(allowed_origins={"*"}, _env_file=None)
+    assert "*" in s.allowed_origins
+
+
+def test_validate_cors_origins_invalid_format_warns():
+    """Origin without http:// or https:// should trigger warning."""
+    s = Settings(allowed_origins={"example.com"}, _env_file=None)
+    assert "example.com" in s.allowed_origins
+
+
+def test_validate_cors_origins_none_passthrough_direct_call():
+    """Directly cover the validator branch returning None (config.py:767)."""
+    # This branch is not reachable through Settings() because _parse_allowed_origins
+    # turns inputs into a set, but we still want to keep the validator logic covered.
+    class _Info:
+        data = {"client_mode": True}
+
+    assert Settings.validate_cors_origins(None, _Info()) is None
+
+
+def test_validate_cors_origins_invalid_type_direct_call():
+    """Directly cover the validator raising ValueError for invalid types (config.py:769)."""
+    class _Info:
+        data = {"client_mode": True}
+
+    with pytest.raises(ValueError, match="allowed_origins must be a set or list of strings"):
+        Settings.validate_cors_origins(123, _Info())
+
+
+# --------------------------------------------------------------------------- #
+#                      validate_database_url                                   #
+# --------------------------------------------------------------------------- #
+def test_validate_database_url_weak_password_warns():
+    """Database URL with weak password triggers warning."""
+    s = Settings(database_url="postgresql://admin:password123@localhost/db", _env_file=None)
+    assert "postgresql" in s.database_url
+
+
+def test_validate_database_url_sqlite_info():
+    """SQLite URL triggers info message."""
+    s = Settings(database_url="sqlite:///./test.db", _env_file=None)
+    assert s.database_url == "sqlite:///./test.db"
+
+
+# --------------------------------------------------------------------------- #
+#                      validate_security_combinations                          #
+# --------------------------------------------------------------------------- #
+def test_security_combinations_ui_no_auth():
+    """UI enabled without auth should warn."""
+    s = Settings(auth_required=False, mcpgateway_ui_enabled=True, _env_file=None)
+    assert s.auth_required is False
+
+
+def test_security_combinations_ssl_no_dev():
+    """SSL verification disabled outside dev should warn."""
+    s = Settings(skip_ssl_verify=True, dev_mode=False, _env_file=None)
+    assert s.skip_ssl_verify is True
+
+
+def test_security_combinations_debug_no_dev():
+    """Debug enabled outside dev should warn."""
+    s = Settings(debug=True, dev_mode=False, _env_file=None)
+    assert s.debug is True
+
+
+# --------------------------------------------------------------------------- #
+#                      get_security_warnings                                   #
+# --------------------------------------------------------------------------- #
+def test_get_security_warnings_many():
+    """Get security warnings with multiple issues triggered."""
+    s = Settings(
+        auth_required=False,
+        skip_ssl_verify=True,
+        debug=True,
+        dev_mode=False,
+        token_expiry=20000,
+        tool_rate_limit=2000,
+        _env_file=None,
+    )
+    warnings = s.get_security_warnings()
+    assert len(warnings) >= 3
+    assert any("Authentication is disabled" in w for w in warnings)
+    assert any("SSL" in w for w in warnings)
+    assert any("Debug" in w for w in warnings)
+
+
+def test_get_security_warnings_clean():
+    """Minimal warnings with secure settings."""
+    s = Settings(
+        auth_required=True,
+        skip_ssl_verify=False,
+        debug=False,
+        dev_mode=False,
+        basic_auth_user="custom_admin",
+        basic_auth_password="StrongP@ss1!XYZ",
+        allowed_origins={"https://example.com"},
+        token_expiry=60,
+        tool_rate_limit=100,
+        _env_file=None,
+    )
+    warnings = s.get_security_warnings()
+    # Should have very few warnings (may have SQLite warning)
+    assert not any("Authentication is disabled" in w for w in warnings)
+
+
+def test_get_security_warnings_dev_mode():
+    """Dev mode should generate a warning."""
+    s = Settings(dev_mode=True, _env_file=None)
+    warnings = s.get_security_warnings()
+    assert any("Development mode" in w for w in warnings)
+
+
+def test_get_security_warnings_long_token():
+    """Very long token expiry should generate a warning."""
+    s = Settings(token_expiry=20160, _env_file=None)
+    warnings = s.get_security_warnings()
+    assert any("token expiry" in w for w in warnings)
+
+
+def test_get_security_warnings_high_rate_limit():
+    """Very high rate limit should generate a warning."""
+    s = Settings(tool_rate_limit=5000, _env_file=None)
+    warnings = s.get_security_warnings()
+    assert any("rate limit" in w for w in warnings)
+
+
+def test_get_security_warnings_wildcard_cors():
+    """Wildcard CORS origin should generate a warning."""
+    s = Settings(cors_enabled=True, allowed_origins={"*"}, _env_file=None)
+    warnings = s.get_security_warnings()
+    assert any("CORS allows all origins" in w for w in warnings)
+
+
+# --------------------------------------------------------------------------- #
+#                      get_security_status                                     #
+# --------------------------------------------------------------------------- #
+def test_get_security_status():
+    """get_security_status should return a dict with all expected keys."""
+    s = Settings(auth_required=True, _env_file=None)
+    status = s.get_security_status()
+    assert "secure_secrets" in status
+    assert "auth_enabled" in status
+    assert "ssl_verification" in status
+    assert "debug_disabled" in status
+    assert "cors_restricted" in status
+    assert "ui_protected" in status
+    assert "warnings" in status
+    assert "security_score" in status
+    assert isinstance(status["security_score"], int)
+    assert 0 <= status["security_score"] <= 100
+
+
+# --------------------------------------------------------------------------- #
+#                    _parse_allowed_origins quote stripping                     #
+# --------------------------------------------------------------------------- #
+def test_parse_allowed_origins_quoted_string():
+    """Outer quotes should be stripped from allowed_origins string."""
+    s = Settings(allowed_origins='"https://a.com,https://b.com"', _env_file=None)
+    assert "https://a.com" in s.allowed_origins
+    assert "https://b.com" in s.allowed_origins
+
+
+# --------------------------------------------------------------------------- #
+#                      validate_log_level                                       #
+# --------------------------------------------------------------------------- #
+def test_validate_log_level_invalid():
+    """Invalid log level should raise ValueError."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(log_level="TRACE", _env_file=None)
+
+
+def test_validate_log_level_case_insensitive():
+    """Log level should be case-insensitive and uppercased."""
+    s = Settings(log_level="debug", _env_file=None)
+    assert s.log_level == "DEBUG"
+
+
+# --------------------------------------------------------------------------- #
+#                    _parse_sso_issuers                                        #
+# --------------------------------------------------------------------------- #
+def test_parse_sso_issuers_none():
+    """None should return empty list."""
+    s = Settings(sso_issuers=None, _env_file=None)
+    assert s.sso_issuers == []
+
+
+def test_parse_sso_issuers_list():
+    """List input should pass through."""
+    s = Settings(sso_issuers=["https://issuer.com"], _env_file=None)
+    assert len(s.sso_issuers) == 1
+    assert str(s.sso_issuers[0]).rstrip("/") == "https://issuer.com"
+
+
+def test_parse_sso_issuers_json_string():
+    """JSON array string should be parsed."""
+    s = Settings(sso_issuers='["https://a.com", "https://b.com"]', _env_file=None)
+    assert len(s.sso_issuers) == 2
+    urls = [str(u).rstrip("/") for u in s.sso_issuers]
+    assert "https://a.com" in urls
+    assert "https://b.com" in urls
+
+
+def test_parse_sso_issuers_csv_string():
+    """CSV string should be parsed."""
+    s = Settings(sso_issuers="https://a.com, https://b.com", _env_file=None)
+    assert len(s.sso_issuers) == 2
+    urls = [str(u).rstrip("/") for u in s.sso_issuers]
+    assert "https://a.com" in urls
+    assert "https://b.com" in urls
+
+
+def test_parse_sso_issuers_empty_string():
+    """Empty string should return empty list."""
+    s = Settings(sso_issuers="", _env_file=None)
+    assert s.sso_issuers == []
+
+
+def test_parse_sso_issuers_invalid_json():
+    """Invalid JSON starting with '[' should raise ValueError."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(sso_issuers="[invalid", _env_file=None)
+
+
+def test_parse_sso_issuers_invalid_type():
+    """Non-string/list/None type should raise ValueError."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(sso_issuers=123, _env_file=None)
+
+
+# --------------------------------------------------------------------------- #
+#                    gateway_tool_name_separator                                #
+# --------------------------------------------------------------------------- #
+def test_gateway_tool_name_separator_invalid():
+    """Invalid separator should default to '-'."""
+    s = Settings(gateway_tool_name_separator="invalid", _env_file=None)
+    assert s.gateway_tool_name_separator == "-"
+
+
+def test_gateway_tool_name_separator_valid():
+    """Valid separators should be preserved."""
+    for sep in ["-", "--", "_", "."]:
+        s = Settings(gateway_tool_name_separator=sep, _env_file=None)
+        assert s.gateway_tool_name_separator == sep
+
+
+# --------------------------------------------------------------------------- #
+#                    custom_well_known_files                                    #
+# --------------------------------------------------------------------------- #
+def test_custom_well_known_files_empty():
+    """Empty well_known_custom_files should return empty dict."""
+    s = Settings(well_known_custom_files="", _env_file=None)
+    assert s.custom_well_known_files == {}
+
+
+def test_custom_well_known_files_valid_json():
+    """Valid JSON should be parsed into dict."""
+    s = Settings(well_known_custom_files='{"robots.txt": "User-agent: *"}', _env_file=None)
+    assert s.custom_well_known_files == {"robots.txt": "User-agent: *"}
+
+
+def test_custom_well_known_files_invalid_json():
+    """Invalid JSON should return empty dict."""
+    s = Settings(well_known_custom_files="not-valid-json", _env_file=None)
+    assert s.custom_well_known_files == {}
+
+
+# --------------------------------------------------------------------------- #
+#                    _auto_enable_security_txt                                  #
+# --------------------------------------------------------------------------- #
+def test_auto_enable_security_txt_with_content():
+    """security_txt_enabled should be True when content is provided."""
+    s = Settings(well_known_security_txt="Contact: security@example.com", _env_file=None)
+    assert s.well_known_security_txt_enabled is True
+
+
+def test_auto_enable_security_txt_empty():
+    """security_txt_enabled should be False when content is empty."""
+    s = Settings(well_known_security_txt="", _env_file=None)
+    assert s.well_known_security_txt_enabled is False
+
+
+def test_auto_enable_security_txt_falls_back_to_bool_value_direct_call():
+    """Directly cover fallback branch when well_known_security_txt is missing from validator context (config.py:1699)."""
+    class _Info:
+        data = {}
+
+    assert Settings._auto_enable_security_txt(True, _Info()) is True
+    assert Settings._auto_enable_security_txt(False, _Info()) is False
+
+
+# --------------------------------------------------------------------------- #
+#                    _parse_list_from_env                                       #
+# --------------------------------------------------------------------------- #
+def test_parse_list_from_env_none():
+    """None should return empty list."""
+    s = Settings(sso_entra_admin_groups=None, _env_file=None)
+    assert s.sso_entra_admin_groups == []
+
+
+def test_parse_list_from_env_invalid_json_fallback():
+    """Invalid JSON starting with '[' should fall back to CSV parsing."""
+    s = Settings(sso_entra_admin_groups="[not-valid", _env_file=None)
+    assert s.sso_entra_admin_groups == ["[not-valid"]
+
+
+def test_parse_list_from_env_invalid_type():
+    """Non-string/list/None type should raise ValueError."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(sso_entra_admin_groups=123, _env_file=None)
+
+
+# --------------------------------------------------------------------------- #
+#                    validate_database (non-sqlite)                            #
+# --------------------------------------------------------------------------- #
+def test_validate_database_non_sqlite():
+    """Non-SQLite databases should skip directory creation."""
+    s = Settings(database_url="postgresql://u:p@host/db", _env_file=None)
+    s.validate_database()  # Should not raise or try to create dirs
+
+
+# --------------------------------------------------------------------------- #
+#                    __init__ passthrough headers                               #
+# --------------------------------------------------------------------------- #
+def test_init_passthrough_headers_json():
+    """DEFAULT_PASSTHROUGH_HEADERS as JSON should be parsed."""
+    with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '["X-Custom", "X-Other"]'}, clear=False):
+        s = Settings(_env_file=None)
+        assert s.default_passthrough_headers == ["X-Custom", "X-Other"]
+
+
+def test_init_passthrough_headers_json_not_array_falls_back_to_csv():
+    """Non-array JSON should fall back to comma-splitting (config.py:2124-2128)."""
+    with patch.dict(os.environ, {"DEFAULT_PASSTHROUGH_HEADERS": '{"a": 1}'}, clear=False):
+        # Pass an explicit list to bypass pydantic_settings' eager env JSON parsing
+        # (it would otherwise fail validation before our __init__ fallback executes).
+        s = Settings(default_passthrough_headers=["X-Tenant-Id"], _env_file=None)
+        assert s.default_passthrough_headers == ['{"a": 1}']
+
+
+def test_init_passthrough_headers_default():
+    """Missing DEFAULT_PASSTHROUGH_HEADERS should use safe defaults."""
+    env = {k: v for k, v in os.environ.items() if k != "DEFAULT_PASSTHROUGH_HEADERS"}
+    with patch.dict(os.environ, env, clear=True):
+        s = Settings(_env_file=None)
+        assert s.default_passthrough_headers == ["X-Tenant-Id", "X-Trace-Id"]
+
+
+# --------------------------------------------------------------------------- #
+#                    __init__ CORS environment-aware defaults                   #
+# --------------------------------------------------------------------------- #
+def test_init_cors_development_env():
+    """Development environment should get expanded CORS origins."""
+    env = {k: v for k, v in os.environ.items() if k != "ALLOWED_ORIGINS"}
+    with patch.dict(os.environ, env, clear=True):
+        s = Settings(environment="development", _env_file=None)
+        # Should include localhost variants
+        assert any("localhost" in o for o in s.allowed_origins)
+
+
+def test_init_cors_production_env():
+    """Production environment should get domain-based CORS origins."""
+    env = {k: v for k, v in os.environ.items() if k != "ALLOWED_ORIGINS"}
+    with patch.dict(os.environ, env, clear=True):
+        s = Settings(environment="production", app_domain="https://myapp.com", _env_file=None)
+        # Production origins should be based on app_domain
+        assert len(s.allowed_origins) >= 1
+
+
+# --------------------------------------------------------------------------- #
+#                    generate_settings_schema                                  #
+# --------------------------------------------------------------------------- #
+def test_generate_settings_schema():
+    """generate_settings_schema should return a valid JSON schema dict."""
+    from mcpgateway.config import generate_settings_schema
+
+    schema = generate_settings_schema()
+    assert isinstance(schema, dict)
+    assert "properties" in schema
+    assert "title" in schema
+
+
+# --------------------------------------------------------------------------- #
+#                    client_mode bypasses security checks                      #
+# --------------------------------------------------------------------------- #
+def test_client_mode_skips_security_warnings():
+    """client_mode=True should skip security validation warnings."""
+    s = Settings(
+        client_mode=True,
+        jwt_secret_key="weak",
+        basic_auth_password="x",
+        _env_file=None,
+    )
+    # Should not raise - client mode bypasses all warnings
+    assert s.client_mode is True
+
+
+# --------------------------------------------------------------------------- #
+#                    log_summary                                               #
+# --------------------------------------------------------------------------- #
+def test_log_summary():
+    """log_summary should log settings without raising."""
+    s = Settings(_env_file=None)
+    s.log_summary()
+
+
+# --------------------------------------------------------------------------- #
+#                    proxy auth warning in __init__                            #
+# --------------------------------------------------------------------------- #
+def test_proxy_auth_warning():
+    """Disabled MCP client auth with trust_proxy_auth=False should warn."""
+    s = Settings(mcp_client_auth_enabled=False, trust_proxy_auth=False, _env_file=None)
+    assert s.mcp_client_auth_enabled is False
+
+
+# --------------------------------------------------------------------------- #
+#                    Ed25519 key derivation                                    #
+# --------------------------------------------------------------------------- #
+def test_derive_ed25519_public_key():
+    """Valid Ed25519 private key should auto-derive public key."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    from cryptography.hazmat.primitives import serialization
+
+    private_key = ed25519.Ed25519PrivateKey.generate()
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    s = Settings(ed25519_private_key=pem, _env_file=None)
+    assert s.ed25519_public_key is not None
+    assert "PUBLIC KEY" in s.ed25519_public_key
+
+
+def test_derive_ed25519_invalid_key_warns():
+    """Invalid PEM data should log warning but not raise."""
+    s = Settings(ed25519_private_key="not-a-valid-pem-key", _env_file=None)
+    assert s.ed25519_public_key is None
+
+
+def test_derive_ed25519_non_ed25519_key_is_ignored():
+    """Non-Ed25519 keys should be ignored by the derive_public_keys model validator (config.py:2074)."""
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.hazmat.primitives import serialization
+
+    private_key = ec.generate_private_key(ec.SECP256R1())
+    pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode()
+
+    s = Settings(ed25519_private_key=pem, _env_file=None)
+    assert s.ed25519_public_key is None
+
+
+# --------------------------------------------------------------------------- #
+#                    direct_proxy feature flag defaults                         #
+# --------------------------------------------------------------------------- #
+def test_direct_proxy_enabled_default_false():
+    """mcpgateway_direct_proxy_enabled should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_direct_proxy_enabled is False
+
+
+def test_direct_proxy_timeout_default_30():
+    """mcpgateway_direct_proxy_timeout should default to 30."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_direct_proxy_timeout == 30

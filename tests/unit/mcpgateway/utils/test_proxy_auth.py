@@ -20,6 +20,8 @@ import pytest
 # First-Party
 from mcpgateway.utils import verify_credentials as vc
 
+TEST_JWT_SECRET = "test-jwt-secret-key-with-minimum-32-bytes"
+
 
 class TestProxyAuthentication:
     """Test cases for proxy authentication functionality."""
@@ -29,7 +31,7 @@ class TestProxyAuthentication:
         """Create mock settings for testing."""
 
         class MockSettings:
-            jwt_secret_key = "test-secret"
+            jwt_secret_key = TEST_JWT_SECRET
             jwt_algorithm = "HS256"
             basic_auth_user = "admin"
             basic_auth_password = "password"
@@ -187,7 +189,7 @@ class TestRBACProxyAuthentication:
         """Create mock settings for testing."""
 
         class MockSettings:
-            jwt_secret_key = "test-secret"
+            jwt_secret_key = TEST_JWT_SECRET
             jwt_algorithm = "HS256"
             basic_auth_user = "admin"
             basic_auth_password = "password"
@@ -232,13 +234,15 @@ class TestRBACProxyAuthentication:
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
 
         with patch.object(rbac, "settings", mock_settings):
-            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
-            assert result["email"] == "proxy-user"
-            assert result["auth_method"] == "proxy"
-            assert result["is_admin"] is False
-            # Verify plugin context fields are included for cross-hook sharing
-            assert "plugin_context_table" in result
-            assert "plugin_global_context" in result
+            with patch("mcpgateway.middleware.rbac.fresh_db_session") as mock_fresh_db:
+                mock_fresh_db.return_value.__enter__.return_value = mock_db
+                result = await rbac.get_current_user_with_permissions(mock_request, None, None)
+                assert result["email"] == "proxy-user"
+                assert result["auth_method"] == "proxy"
+                assert result["is_admin"] is False
+                # Verify plugin context fields are included for cross-hook sharing
+                assert "plugin_context_table" in result
+                assert "plugin_global_context" in result
 
     @pytest.mark.asyncio
     async def test_rbac_proxy_auth_without_header(self, mock_settings, mock_request, mock_db):
@@ -249,7 +253,7 @@ class TestRBACProxyAuthentication:
         mock_request.headers = {}
 
         with patch.object(rbac, "settings", mock_settings):
-            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert result["email"] == "anonymous"
             assert result["auth_method"] == "anonymous"
             assert result["is_admin"] is False
@@ -264,7 +268,7 @@ class TestRBACProxyAuthentication:
         mock_request.headers = {"X-Authenticated-User": "proxy-user"}
 
         with patch.object(rbac, "settings", mock_settings):
-            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert result["email"] == "anonymous"
             assert result["auth_method"] == "anonymous"
 
@@ -280,7 +284,7 @@ class TestRBACProxyAuthentication:
 
         with patch.object(rbac, "settings", mock_settings):
             # Should ignore proxy header and use JWT flow (returns platform admin when auth not required)
-            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert result["email"] == mock_settings.platform_admin_email
             assert result["auth_method"] == "disabled"
 
@@ -296,10 +300,12 @@ class TestRBACProxyAuthentication:
         mock_request.state.plugin_global_context = Mock()
 
         with patch.object(rbac, "settings", mock_settings):
-            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
-            # Verify plugin contexts are passed through for HTTP_AUTH_CHECK_PERMISSION hooks
-            assert result["plugin_context_table"] == {"test_plugin": {"key": "value"}}
-            assert result["plugin_global_context"] is not None
+            with patch("mcpgateway.middleware.rbac.fresh_db_session") as mock_fresh_db:
+                mock_fresh_db.return_value.__enter__.return_value = mock_db
+                result = await rbac.get_current_user_with_permissions(mock_request, None, None)
+                # Verify plugin contexts are passed through for HTTP_AUTH_CHECK_PERMISSION hooks
+                assert result["plugin_context_table"] == {"test_plugin": {"key": "value"}}
+                assert result["plugin_global_context"] is not None
 
     @pytest.mark.asyncio
     async def test_rbac_proxy_auth_missing_header_returns_401_when_auth_required(self, mock_settings, mock_request, mock_db):
@@ -312,7 +318,7 @@ class TestRBACProxyAuthentication:
 
         with patch.object(rbac, "settings", mock_settings):
             with pytest.raises(HTTPException) as exc_info:
-                await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+                await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert exc_info.value.status_code == 401
             assert "Proxy authentication header required" in exc_info.value.detail
 
@@ -327,7 +333,7 @@ class TestRBACProxyAuthentication:
 
         with patch.object(rbac, "settings", mock_settings):
             with pytest.raises(HTTPException) as exc_info:
-                await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+                await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert exc_info.value.status_code == 302
             assert "/admin/login" in exc_info.value.headers.get("Location", "")
 
@@ -343,7 +349,7 @@ class TestRBACProxyAuthentication:
         mock_settings.platform_admin_email = "admin@example.com"
 
         with patch.object(rbac, "settings", mock_settings):
-            result = await rbac.get_current_user_with_permissions(mock_request, None, None, mock_db)
+            result = await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert result["email"] == "admin@example.com"
             assert result["is_admin"] is True  # Matches platform_admin_email
             assert result["auth_method"] == "proxy"
@@ -393,7 +399,7 @@ class TestWebSocketAuthentication:
 
         # Create mock WebSocket
         websocket = AsyncMock(spec=WebSocket)
-        token = jwt.encode({"sub": "test-user"}, "test-secret", algorithm="HS256")
+        token = jwt.encode({"sub": "test-user"}, TEST_JWT_SECRET, algorithm="HS256")
         websocket.query_params = {"token": token}
         websocket.headers = {}
         websocket.accept = AsyncMock()
@@ -473,7 +479,7 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
-            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_secret_key = TEST_JWT_SECRET
             mock_settings.jwt_algorithm = "HS256"
             mock_settings.auth_required = False
 
@@ -494,7 +500,7 @@ class TestWebSocketAuthentication:
             mock_settings.mcp_client_auth_enabled = False
             mock_settings.trust_proxy_auth = True
             mock_settings.proxy_user_header = "X-Authenticated-User"
-            mock_settings.jwt_secret_key = "secret"
+            mock_settings.jwt_secret_key = TEST_JWT_SECRET
             mock_settings.jwt_algorithm = "HS256"
             mock_settings.auth_required = True
             send = AsyncMock()

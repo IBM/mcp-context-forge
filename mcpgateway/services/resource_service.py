@@ -41,10 +41,10 @@ import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select
 from sqlalchemy.exc import IntegrityError, OperationalError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceTemplate, TextContent
+from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, fresh_db_session
@@ -64,6 +64,7 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -1009,7 +1010,7 @@ class ResourceService:
 
         # Apply team-based access control if user_email is provided OR token_teams is explicitly set
         # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email or token_teams is not None:
+        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
@@ -1300,7 +1301,7 @@ class ResourceService:
 
         # Add visibility filtering if user context OR token_teams provided
         # This ensures unauthenticated requests with token_teams=[] only see public resources
-        if user_email or token_teams is not None:
+        if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
             if token_teams is not None:
                 team_ids = token_teams
@@ -1417,6 +1418,8 @@ class ResourceService:
         resource_template_uri: Optional[str] = None,
         user_identity: Optional[Union[str, Dict[str, Any]]] = None,
         meta_data: Optional[Dict[str, Any]] = None,  # Reserved for future MCP SDK support
+        resource_obj: Optional[Any] = None,
+        gateway_obj: Optional[Any] = None,
     ) -> Any:
         """
         Invoke a resource via its configured gateway using SSE or StreamableHTTP transport.
@@ -1449,6 +1452,10 @@ class ResourceService:
                 OAuth token lookup always uses platform_admin_email (service account).
             meta_data (Optional[Dict[str, Any]]):
                 Additional metadata to pass to the gateway during invocation.
+            resource_obj (Optional[Any]):
+                Pre-fetched DbResource object to skip the internal resource lookup query.
+            gateway_obj (Optional[Any]):
+                Pre-fetched DbGateway object to skip the internal gateway lookup query.
 
         Returns:
             Any: The text content returned by the remote resource, or ``None`` if the
@@ -1527,8 +1534,14 @@ class ResourceService:
 
         logger.info(f"Invoking the resource: {uri}")
         gateway_id = None
-        resource_info = None
-        resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+        # Use pre-fetched resource if provided (avoids Q5 re-fetch)
+        resource_info = resource_obj
+        if resource_info is None:
+            resource_info = db.execute(select(DbResource).where(DbResource.id == resource_id)).scalar_one_or_none()
+
+        # Release transaction immediately after resource lookup to prevent idle-in-transaction
+        # This is especially important when resource isn't found - we don't want to hold the transaction
+        db.commit()
 
         # Normalize user_identity to string for session pool isolation
         # Use authenticated user for pool isolation, but keep platform_admin for OAuth token lookup
@@ -1545,8 +1558,19 @@ class ResourceService:
         if resource_info:
             gateway_id = getattr(resource_info, "gateway_id", None)
             resource_name = getattr(resource_info, "name", None)
-            if gateway_id:
+            # Use pre-fetched gateway if provided (avoids Q6 re-fetch)
+            gateway = gateway_obj
+            if gateway is None and gateway_id:
                 gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+
+            # ═══════════════════════════════════════════════════════════════════════════
+            # CRITICAL: Release DB transaction immediately after fetching resource/gateway
+            # This ensures the transaction doesn't stay open if there's no gateway
+            # or if the function returns early for any reason.
+            # ═══════════════════════════════════════════════════════════════════════════
+            db.commit()
+
+            if gateway:
 
                 start_time = time.monotonic()
                 success = False
@@ -1632,67 +1656,17 @@ class ResourceService:
                         )
 
                     try:
-                        # Handle different authentication types
-                        headers = {}
-                        if gateway and gateway.auth_type == "oauth" and gateway.oauth_config:
-                            grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
-
-                            if grant_type == "authorization_code":
-                                # For Authorization Code flow, try to get stored tokens
-                                try:
-                                    # First-Party
-                                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-                                    token_storage = TokenStorageService(db)
-                                    # Get user-specific OAuth token
-                                    # if not user_email:
-                                    #     if span:
-                                    #         span.set_attribute("health.status", "unhealthy")
-                                    #         span.set_attribute("error.message", "User email required for OAuth token")
-                                    #     await self._handle_gateway_failure(gateway)
-
-                                    access_token: str = await token_storage.get_user_token(gateway.id, oauth_user_email)
-
-                                    if access_token:
-                                        headers["Authorization"] = f"Bearer {access_token}"
-                                    else:
-                                        if span:
-                                            span.set_attribute("health.status", "unhealthy")
-                                            span.set_attribute("error.message", "No valid OAuth token for user")
-                                        # await self._handle_gateway_failure(gateway)
-
-                                except Exception as e:
-                                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
-                                    if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
-                                    # await self._handle_gateway_failure(gateway)
-                            else:
-                                # For Client Credentials flow, get token directly
-                                try:
-                                    access_token: str = await self.oauth_manager.get_access_token(gateway.oauth_config)
-                                    headers["Authorization"] = f"Bearer {access_token}"
-                                except Exception as e:
-                                    if span:
-                                        span.set_attribute("health.status", "unhealthy")
-                                        span.set_attribute("error.message", str(e))
-                                    # await self._handle_gateway_failure(gateway)
-                        else:
-                            # Handle non-OAuth authentication (existing logic)
-                            auth_data = gateway.auth_value or {}
-                            if isinstance(auth_data, str):
-                                headers = decode_auth(auth_data)
-                            elif isinstance(auth_data, dict):
-                                headers = {str(k): str(v) for k, v in auth_data.items()}
-                            else:
-                                headers = {}
-
                         # ═══════════════════════════════════════════════════════════════════════════
-                        # Extract gateway data to local variables BEFORE releasing DB connection
+                        # Extract gateway data to local variables BEFORE OAuth handling
+                        # OAuth client_credentials flow makes network calls, so we must release
+                        # the DB transaction first to prevent idle-in-transaction during network I/O
                         # ═══════════════════════════════════════════════════════════════════════════
                         gateway_url = gateway.url
                         gateway_transport = gateway.transport
                         gateway_auth_type = gateway.auth_type
+                        gateway_auth_value = gateway.auth_value
+                        gateway_oauth_config = gateway.oauth_config
+                        gateway_name = gateway.name
                         gateway_auth_query_params = getattr(gateway, "auth_query_params", None)
 
                         # Apply query param auth to URL if applicable
@@ -1711,13 +1685,60 @@ class ResourceService:
                                 gateway_url = apply_query_param_auth(gateway_url, auth_query_params_decrypted)
 
                         # ═══════════════════════════════════════════════════════════════════════════
-                        # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
+                        # CRITICAL: Release DB connection back to pool BEFORE making HTTP/OAuth calls
                         # This prevents connection pool exhaustion during slow upstream requests.
+                        # OAuth client_credentials flow makes network calls to token endpoints.
                         # All needed data has been extracted to local variables above.
-                        # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
                         # ═══════════════════════════════════════════════════════════════════════════
-                        db.commit()  # End read-only transaction cleanly (commit not rollback to avoid inflating rollback stats)
+                        db.commit()  # End read-only transaction cleanly
                         db.close()
+
+                        # Handle different authentication types (AFTER DB release)
+                        headers = {}
+                        if gateway_auth_type == "oauth" and gateway_oauth_config:
+                            grant_type = gateway_oauth_config.get("grant_type", "client_credentials")
+
+                            if grant_type == "authorization_code":
+                                # For Authorization Code flow, try to get stored tokens
+                                try:
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                    # Use fresh DB session for token lookup (original db was closed)
+                                    with fresh_db_session() as token_db:
+                                        token_storage = TokenStorageService(token_db)
+                                        access_token: str = await token_storage.get_user_token(gateway_id, oauth_user_email)
+
+                                    if access_token:
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                    else:
+                                        if span:
+                                            span.set_attribute("health.status", "unhealthy")
+                                            span.set_attribute("error.message", "No valid OAuth token for user")
+
+                                except Exception as e:
+                                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway_name}: {e}")
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", "Failed to obtain stored OAuth token")
+                            else:
+                                # For Client Credentials flow, get token directly (makes network calls)
+                                try:
+                                    access_token: str = await self.oauth_manager.get_access_token(gateway_oauth_config)
+                                    headers["Authorization"] = f"Bearer {access_token}"
+                                except Exception as e:
+                                    if span:
+                                        span.set_attribute("health.status", "unhealthy")
+                                        span.set_attribute("error.message", str(e))
+                        else:
+                            # Handle non-OAuth authentication (existing logic)
+                            auth_data = gateway_auth_value or {}
+                            if isinstance(auth_data, str):
+                                headers = decode_auth(auth_data)
+                            elif isinstance(auth_data, dict):
+                                headers = {str(k): str(v) for k, v in auth_data.items()}
+                            else:
+                                headers = {}
 
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
@@ -1947,7 +1968,7 @@ class ResourceService:
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         meta_data: Optional[Dict[str, Any]] = None,
-    ) -> ResourceContent:
+    ) -> Union[ResourceContent, ResourceContents]:
         """Read a resource's content with plugin hook support.
 
         Args:
@@ -2016,11 +2037,20 @@ class ResourceService:
         success = False
         error_message = None
         resource_db = None
+        resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
         content = None
         uri = resource_uri or "unknown"
         if resource_id:
-            resource_db = db.get(DbResource, resource_id)
-            uri = resource_db.uri if resource_db else None
+            resource_db = db.get(DbResource, resource_id, options=[joinedload(DbResource.gateway)])
+            if resource_db:
+                uri = resource_db.uri
+                resource_db_gateway = resource_db.gateway  # Eager-loaded, safe to access
+                # Check enabled status in Python (avoids redundant Q3/Q4 re-fetches)
+                if not include_inactive and not resource_db.enabled:
+                    raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
+                content = resource_db.content
+            else:
+                uri = None
 
         # Create database span for observability dashboard
         trace_id = current_trace_id.get()
@@ -2134,9 +2164,12 @@ class ResourceService:
 
                 # Original resource fetching logic
                 logger.info(f"Fetching resource: {resource_id} (URI: {uri})")
+
+                # Check if resource's gateway is in direct_proxy mode
+                # First, try to find the resource to get its gateway
                 # Check for template
 
-                if uri is not None:  # and "{" in uri and "}" in uri:
+                if resource_db is None and uri is not None:  # and "{" in uri and "}" in uri:
                     # Matches uri (modified value from pluggins if applicable)
                     # with uri from resource DB
                     # if uri is of type resource template then resource is retreived from DB
@@ -2144,8 +2177,57 @@ class ResourceService:
                     if include_inactive:
                         query = select(DbResource).where(DbResource.uri == str(uri))
                     resource_db = db.execute(query).scalar_one_or_none()
-                    if resource_db:
-                        # resource_id = resource_db.id
+
+                    # Check for direct_proxy mode
+                    if resource_db and resource_db.gateway and getattr(resource_db.gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, resource_db.gateway, user, token_teams):
+                            raise ResourceNotFoundError(f"Resource not found: {uri}")
+
+                        logger.info(f"Using direct_proxy mode for resource '{uri}' via gateway {resource_db.gateway.id}")
+
+                        try:  # First-Party
+                            # First-Party
+                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
+
+                            gateway = resource_db.gateway
+
+                            # Prepare headers with gateway auth
+                            headers = build_gateway_auth_headers(gateway)
+
+                            # Use MCP SDK to connect and read resource
+                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await session.initialize()
+
+                                    # Note: MCP SDK read_resource() only accepts uri; _meta is not supported
+                                    result = await session.read_resource(uri=uri)
+
+                                    # Convert MCP result to MCP-compliant content models
+                                    # result.contents is a list of TextResourceContents or BlobResourceContents
+                                    if result.contents:
+                                        first_content = result.contents[0]
+                                        if hasattr(first_content, "text"):
+                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
+                                        elif hasattr(first_content, "blob"):
+                                            content = BlobResourceContents(
+                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
+                                            )
+                                        else:
+                                            content = TextResourceContents(uri=uri, text="")
+                                    else:
+                                        content = TextResourceContents(uri=uri, text="")
+
+                                    success = True
+                                    logger.info(f"[READ RESOURCE] Using direct_proxy mode for gateway {gateway.id} (from X-Context-Forge-Gateway-Id header). Meta Attached: {meta_data is not None}")
+                                    # Skip the rest of the DB lookup logic
+
+                        except Exception as e:
+                            logger.exception(f"Error in direct_proxy mode for resource '{uri}': {e}")
+                            raise ResourceError(f"Direct proxy resource read failed: {str(e)}")
+
+                    elif resource_db:
+                        # Normal cache mode - resource found in DB
                         content = resource_db.content
                     else:
                         # Check the inactivity first
@@ -2178,9 +2260,9 @@ class ResourceService:
                     if content is None and resource_db is None:
                         raise ResourceNotFoundError(f"Resource template not found for '{resource_uri}'")
 
-                if resource_id:
-                    # if resource_id provided instead of resource_uri
-                    # retrieves resource based on resource_id
+                if resource_id and resource_db is None:
+                    # if resource_id provided but not found by Q2 (shouldn't normally happen,
+                    # but handles race conditions where resource is deleted between requests)
                     query = select(DbResource).where(DbResource.id == str(resource_id)).where(DbResource.enabled)
                     if include_inactive:
                         query = select(DbResource).where(DbResource.id == str(resource_id))
@@ -2216,19 +2298,6 @@ class ResourceService:
                         if not server_match:
                             raise ResourceNotFoundError(f"Resource not found: {resource_uri or resource_id}")
 
-                # Call post-fetch hooks if registered
-                if has_post_fetch:
-                    # Create post-fetch payload
-                    post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
-                    # Execute post-fetch hooks
-                    post_result, _ = await self._plugin_manager.invoke_hook(
-                        ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True
-                    )  # Pass contexts from pre-fetch
-
-                    # Use modified content if plugin changed it
-                    if post_result.modified_payload:
-                        content = post_result.modified_payload.content
-
                 # Set success attributes on span
                 if span:
                     span.set_attribute("success", True)
@@ -2241,8 +2310,18 @@ class ResourceService:
                 # Prefer returning first-class content models or objects with content-like attributes.
                 # ResourceContent and TextContent already imported at top level
 
-                # If content is already a Pydantic content model, return as-is
-                if isinstance(content, (ResourceContent, TextContent)):
+                # Release transaction before network calls to avoid idle-in-transaction during invoke_resource
+                db.commit()
+
+                # ═══════════════════════════════════════════════════════════════════════════
+                # RESOLVE CONTENT: Fetch actual content from gateway if needed
+                # ═══════════════════════════════════════════════════════════════════════════
+                # If content is a Pydantic content model, invoke gateway
+
+                # ResourceContents covers TextResourceContents and BlobResourceContents (MCP-compliant)
+                # ResourceContent is the legacy model for backwards compatibility
+
+                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     resource_response = await self.invoke_resource(
                         db=db,
                         resource_id=getattr(content, "id"),
@@ -2250,12 +2329,13 @@ class ResourceService:
                         resource_template_uri=getattr(content, "text") or None,
                         user_identity=user,
                         meta_data=meta_data,
+                        resource_obj=resource_db,
+                        gateway_obj=resource_db_gateway,
                     )
                     if resource_response:
                         setattr(content, "text", resource_response)
-                    return content
-                # If content is any object that quacks like content (e.g., MagicMock with .text/.blob), return as-is
-                if hasattr(content, "text") or hasattr(content, "blob"):
+                # If content is any object that quacks like content
+                elif hasattr(content, "text") or hasattr(content, "blob"):
                     if hasattr(content, "blob"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2264,8 +2344,11 @@ class ResourceService:
                             resource_template_uri=getattr(content, "blob") or None,
                             user_identity=user,
                             meta_data=meta_data,
+                            resource_obj=resource_db,
+                            gateway_obj=resource_db_gateway,
                         )
-                        setattr(content, "blob", resource_response)
+                        if resource_response:
+                            setattr(content, "blob", resource_response)
                     elif hasattr(content, "text"):
                         resource_response = await self.invoke_resource(
                             db=db,
@@ -2274,17 +2357,30 @@ class ResourceService:
                             resource_template_uri=getattr(content, "text") or None,
                             user_identity=user,
                             meta_data=meta_data,
+                            resource_obj=resource_db,
+                            gateway_obj=resource_db_gateway,
                         )
-                        setattr(content, "text", resource_response)
-                    return content
+                        if resource_response:
+                            setattr(content, "text", resource_response)
                 # Normalize primitive types to ResourceContent
-                if isinstance(content, bytes):
-                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
-                if isinstance(content, str):
-                    return ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
+                elif isinstance(content, bytes):
+                    content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, blob=content)
+                elif isinstance(content, str):
+                    content = ResourceContent(type="resource", id=str(resource_id), uri=original_uri, text=content)
+                else:
+                    # Fallback to stringified content
+                    content = ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
 
-                # Fallback to stringified content
-                return ResourceContent(type="resource", id=str(resource_id) or str(content.id), uri=original_uri or content.uri, text=str(content))
+                # ═══════════════════════════════════════════════════════════════════════════
+                # POST-FETCH HOOKS: Now called AFTER content is resolved from gateway
+                # ═══════════════════════════════════════════════════════════════════════════
+                if has_post_fetch:
+                    post_payload = ResourcePostFetchPayload(uri=original_uri, content=content)
+                    post_result, _ = await self._plugin_manager.invoke_hook(ResourceHookType.RESOURCE_POST_FETCH, post_payload, global_context, contexts, violations_as_exceptions=True)
+                    if post_result.modified_payload:
+                        content = post_result.modified_payload.content
+
+                return content
             except Exception as e:
                 success = False
                 error_message = str(e)
@@ -2307,14 +2403,16 @@ class ResourceService:
                         logger.warning(f"Failed to record resource metric: {metrics_error}")
 
                 # End database span for observability dashboard
+                # NOTE: Use fresh_db_session() since db may have been closed by invoke_resource
                 if db_span_id and observability_service and not db_span_ended:
                     try:
-                        observability_service.end_span(
-                            db=db,
-                            span_id=db_span_id,
-                            status="ok" if success else "error",
-                            status_message=error_message if error_message else None,
-                        )
+                        with fresh_db_session() as fresh_db:
+                            observability_service.end_span(
+                                db=fresh_db,
+                                span_id=db_span_id,
+                                status="ok" if success else "error",
+                                status_message=error_message if error_message else None,
+                            )
                         db_span_ended = True
                         logger.debug(f"✓ Ended resource.read span: {db_span_id}")
                     except Exception as e:
@@ -3351,7 +3449,6 @@ class ResourceService:
             "data": {
                 "id": resource.id,
                 "uri": resource.uri,
-                "content": resource.content,
                 "enabled": resource.enabled,
             },
             "timestamp": datetime.now(timezone.utc).isoformat(),

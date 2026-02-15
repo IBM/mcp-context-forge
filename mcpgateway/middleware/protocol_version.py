@@ -38,6 +38,68 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
 
         Returns:
             Response: Either a 400 error for invalid protocol versions or the result of call_next
+
+        Examples:
+            Non-MCP endpoints are bypassed:
+
+            >>> import asyncio
+            >>> from starlette.requests import Request
+            >>> from starlette.responses import Response
+            >>> from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
+            >>> async def call_next(req): return Response("ok", media_type="text/plain")
+            >>> scope = {
+            ...     "type": "http",
+            ...     "asgi": {"version": "3.0"},
+            ...     "method": "GET",
+            ...     "path": "/health",
+            ...     "raw_path": b"/health",
+            ...     "query_string": b"",
+            ...     "headers": [],
+            ...     "client": ("testclient", 50000),
+            ...     "server": ("testserver", 80),
+            ...     "scheme": "http",
+            ... }
+            >>> resp = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(Request(scope), call_next))
+            >>> resp.status_code
+            200
+
+            MCP endpoints default the version when the header is missing:
+
+            >>> from mcpgateway.middleware.protocol_version import DEFAULT_PROTOCOL_VERSION
+            >>> scope_rpc = {
+            ...     "type": "http",
+            ...     "asgi": {"version": "3.0"},
+            ...     "method": "POST",
+            ...     "path": "/rpc",
+            ...     "raw_path": b"/rpc",
+            ...     "query_string": b"",
+            ...     "headers": [],
+            ...     "client": ("testclient", 50000),
+            ...     "server": ("testserver", 80),
+            ...     "scheme": "http",
+            ... }
+            >>> req = Request(scope_rpc)
+            >>> _ = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(req, call_next))
+            >>> req.state.mcp_protocol_version == DEFAULT_PROTOCOL_VERSION
+            True
+
+            Unsupported versions return `400`:
+
+            >>> bad_scope = {
+            ...     "type": "http",
+            ...     "asgi": {"version": "3.0"},
+            ...     "method": "POST",
+            ...     "path": "/rpc",
+            ...     "raw_path": b"/rpc",
+            ...     "query_string": b"",
+            ...     "headers": [(b"mcp-protocol-version", b"bad")],
+            ...     "client": ("testclient", 50000),
+            ...     "server": ("testserver", 80),
+            ...     "scheme": "http",
+            ... }
+            >>> bad_resp = asyncio.run(MCPProtocolVersionMiddleware(app=None).dispatch(Request(bad_scope), call_next))
+            >>> (bad_resp.status_code, b"Unsupported protocol version: bad" in bad_resp.body)
+            (400, True)
         """
         path = request.url.path
 

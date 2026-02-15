@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi.testclient import TestClient
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from sqlalchemy.exc import IntegrityError
 import jwt
 import pytest
@@ -26,6 +26,8 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
 )
+
+TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 
 
 # --------------------------------------------------------------------------- #
@@ -51,13 +53,20 @@ def test_client(app_with_temp_db):
 
     app_with_temp_db.dependency_overrides[require_auth] = lambda: "test_user"
 
+    # Use a strong JWT secret during tests to avoid short-key warnings.
+    original_jwt_secret = settings.jwt_secret_key
+    if hasattr(original_jwt_secret, "get_secret_value") and callable(getattr(original_jwt_secret, "get_secret_value", None)):
+        settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
+    else:
+        settings.jwt_secret_key = TEST_JWT_SECRET
+
     # First-Party
     from mcpgateway.auth import get_current_user
 
     app_with_temp_db.dependency_overrides[get_current_user] = lambda credentials=None, db=None: mock_user
 
-    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None, db=None):
-        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": db}
+    def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None):
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "db": None}
 
     app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
@@ -82,6 +91,7 @@ def test_client(app_with_temp_db):
     client = TestClient(app_with_temp_db)
     yield client
 
+    settings.jwt_secret_key = original_jwt_secret
     app_with_temp_db.dependency_overrides.pop(require_auth, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
@@ -126,8 +136,8 @@ class TestGatewayCreateErrorHandlers:
                 "description": "Test gateway",
             }
             response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 503
-            assert "Unable to connect" in response.json()["message"]
+            assert response.status_code == 502
+            assert "Connection failed" in response.json()["message"]
 
     def test_register_gateway_value_error(self, test_client, auth_headers):
         """Test ValueError handling in register_gateway."""
@@ -265,7 +275,8 @@ class TestGatewayUpdateErrorHandlers:
                 "description": "Updated gateway",
             }
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
-            assert response.status_code == 503
+            assert response.status_code == 502
+            assert "Connection failed" in response.json()["message"]
 
     def test_update_gateway_value_error(self, test_client, auth_headers):
         """Test ValueError handling in update_gateway."""

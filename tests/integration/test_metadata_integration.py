@@ -86,14 +86,17 @@ def test_app():
     async def mock_user_with_permissions():
         """Mock user context for RBAC."""
         db_session = TestingSessionLocal()
-        return {
-            "email": "test_user@example.com",
-            "full_name": "Test User",
-            "is_admin": True,
-            "ip_address": "127.0.0.1",
-            "user_agent": "test-client",
-            "db": db_session,
-        }
+        try:
+            yield {
+                "email": "test_user@example.com",
+                "full_name": "Test User",
+                "is_admin": True,
+                "ip_address": "127.0.0.1",
+                "user_agent": "test-client",
+                "db": db_session,
+            }
+        finally:
+            db_session.close()
 
     def mock_get_permission_service(*args, **kwargs):
         """Return a mock permission service that always grants access."""
@@ -252,14 +255,17 @@ class TestMetadataIntegration:
             import mcpgateway.db as db_mod
 
             db_session = db_mod.SessionLocal()
-            return {
-                "email": "anonymous",
-                "full_name": "Anonymous User",
-                "is_admin": False,
-                "ip_address": "127.0.0.1",
-                "user_agent": "test-client",
-                "db": db_session,
-            }
+            try:
+                yield {
+                    "email": "anonymous",
+                    "full_name": "Anonymous User",
+                    "is_admin": False,
+                    "ip_address": "127.0.0.1",
+                    "user_agent": "test-client",
+                    "db": db_session,
+                }
+            finally:
+                db_session.close()
 
         test_app.dependency_overrides[get_current_user_with_permissions] = mock_anonymous_user
 
@@ -400,3 +406,4 @@ class TestMetadataIntegration:
 
         finally:
             db.close()
+            engine.dispose()

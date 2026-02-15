@@ -32,21 +32,25 @@ Examples:
 """
 
 # Standard
+import asyncio
 from contextlib import asynccontextmanager, AsyncExitStack
 import contextvars
 from dataclasses import dataclass
 import re
-from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Union
+from typing import Any, AsyncGenerator, Dict, List, Optional, Pattern, Tuple, Union
 from uuid import uuid4
 
 # Third-Party
 import anyio
 from fastapi.security.utils import get_authorization_scheme_param
-from mcp import types
+import httpx
+from mcp import ClientSession, types
+from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage
+from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
+import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
@@ -62,6 +66,8 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
+from mcpgateway.transports.redis_event_store import RedisEventStore
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_credentials
 
@@ -393,13 +399,16 @@ async def get_db() -> AsyncGenerator[Session, Any]:
     Asynchronous context manager for database sessions.
 
     Commits the transaction on successful completion to avoid implicit rollbacks
-    for read-only operations. Rolls back explicitly on exception.
+    for read-only operations. Rolls back explicitly on exception. Handles
+    asyncio.CancelledError explicitly to prevent transaction leaks when MCP
+    handlers are cancelled (client disconnect, timeout, etc.).
 
     Yields:
         A database session instance from SessionLocal.
         Ensures the session is closed after use.
 
     Raises:
+        asyncio.CancelledError: Re-raised after rollback and close on task cancellation.
         Exception: Re-raises any exception after rolling back the transaction.
 
     Examples:
@@ -416,6 +425,19 @@ async def get_db() -> AsyncGenerator[Session, Any]:
     try:
         yield db
         db.commit()
+    except asyncio.CancelledError:
+        # Handle cancellation explicitly to prevent transaction leaks.
+        # When MCP handlers are cancelled (client disconnect, timeout, etc.),
+        # we must rollback and close the session before re-raising.
+        try:
+            db.rollback()
+        except Exception:
+            pass  # nosec B110 - Best effort rollback on cancellation
+        try:
+            db.close()
+        except Exception:
+            pass  # nosec B110 - Best effort close on cancellation
+        raise
     except Exception:
         try:
             db.rollback()
@@ -442,8 +464,168 @@ def get_user_email_from_context() -> str:
     return str(user) if user else "unknown"
 
 
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
+    """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Tool objects from remote server
+    """
+    try:
+        # Prepare headers with gateway auth
+        headers = build_gateway_auth_headers(gateway)
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        # Use MCP SDK to connect and list tools
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+                # List tools with _meta forwarded
+                result = await session.list_tools(params=params)
+                return result.tools
+
+    except Exception as e:
+        logger.exception(f"Error proxying tools/list to gateway {gateway.id}: {e}")
+        return []
+
+
+async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Resource]:  # pylint: disable=unused-argument
+    """Proxy resources/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Resource objects from remote server
+    """
+    try:
+        # Prepare headers with gateway auth
+        headers = build_gateway_auth_headers(gateway)
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        # Use MCP SDK to connect and list resources
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # Prepare params with _meta if provided
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+                    logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+                # List resources with _meta forwarded
+                result = await session.list_resources(params=params)
+
+                logger.info(f"Received {len(result.resources)} resources from gateway {gateway.id}")
+                return result.resources
+
+    except Exception as e:
+        logger.exception(f"Error proxying resources/list to gateway {gateway.id}: {e}")
+        return []
+
+
+async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
+    """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        resource_uri: URI of the resource to read
+        user_context: User context (not used - auth comes from gateway config)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of content objects (TextResourceContents or BlobResourceContents) from remote server
+    """
+    try:
+        # Prepare headers with gateway auth
+        headers = build_gateway_auth_headers(gateway)
+
+        # Get request headers
+        request_headers = request_headers_var.get()
+
+        # Forward X-Context-Forge-Gateway-Id header
+        gw_id = extract_gateway_id_from_headers(request_headers)
+        if gw_id:
+            headers[GATEWAY_ID_HEADER] = gw_id
+
+        # Forward passthrough headers if configured
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        # Use MCP SDK to connect and read resource
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                # Prepare request params with _meta if provided
+                if meta:
+                    # Create params and inject _meta
+                    request_params = ReadResourceRequestParams(uri=resource_uri)
+                    request_params_dict = request_params.model_dump()
+                    request_params_dict["_meta"] = meta
+
+                    # Send request with _meta
+                    result = await session.send_request(
+                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
+                        types.ReadResourceResult,
+                    )
+                else:
+                    # No _meta, use simple read_resource
+                    result = await session.read_resource(uri=resource_uri)
+
+                logger.info(f"Received {len(result.contents)} content items from gateway {gateway.id} for resource {resource_uri}")
+                return result.contents
+
+    except Exception as e:
+        logger.exception(f"Error proxying resources/read to gateway {gateway.id} for resource {resource_uri}: {e}")
+        return []
+
+
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]]:
+async def call_tool(name: str, arguments: dict) -> Union[
+    types.CallToolResult,
+    List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
+    Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
+]:
     """
     Handles tool invocation via the MCP Server.
 
@@ -454,26 +636,21 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     handles schema validation separately in tool_service.py with multi-draft support.
 
     This function supports the MCP protocol's tool calling with structured content validation.
-    It can return either unstructured content only, or both unstructured and structured content
-    when the tool defines an outputSchema.
+    In direct_proxy mode, returns the raw CallToolResult from the remote server.
+    In normal mode, converts ToolResult to CallToolResult with content normalization.
 
     Args:
         name (str): The name of the tool to invoke.
         arguments (dict): A dictionary of arguments to pass to the tool.
 
     Returns:
-        Union[List[ContentBlock], Tuple[List[ContentBlock], Dict[str, Any]]]:
-            - If structured content is not present: Returns a list of content blocks
-              (TextContent, ImageContent, or EmbeddedResource)
-            - If structured content is present: Returns a tuple of (unstructured_content, structured_content)
-              where structured_content is a dictionary that will be validated against the tool's outputSchema
-
-        The MCP SDK's call_tool decorator automatically handles both return types:
-        - List return → CallToolResult with content only
-        - Tuple return → CallToolResult with both content and structuredContent fields
+        types.CallToolResult: MCP SDK CallToolResult with content and optional structuredContent.
 
     Raises:
         Exception: Re-raised after logging to allow MCP SDK to convert to JSON-RPC error response.
+
+    Raises:
+        Exception: Re-raises exceptions encountered during tool invocation after logging.
 
     Examples:
         >>> # Test call_tool function signature
@@ -526,9 +703,135 @@ async def call_tool(name: str, arguments: dict) -> List[Union[types.TextContent,
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
 
+    # Check if we're in direct_proxy mode by looking for X-Context-Forge-Gateway-Id header
+    gateway_id_from_header = extract_gateway_id_from_headers(request_headers)
+
+    # If X-Context-Forge-Gateway-Id header is present, use direct proxy mode
+    if gateway_id_from_header:
+        try:  # Check if this gateway is in direct_proxy mode
+            async with get_db() as check_db:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway = check_db.execute(select(DbGateway).where(DbGateway.id == gateway_id_from_header)).scalar_one_or_none()
+                if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                    # SECURITY: Check gateway access before allowing direct proxy
+                    if not await check_gateway_access(check_db, gateway, user_email, token_teams):
+                        logger.warning(f"Access denied to gateway {gateway_id_from_header} in direct_proxy mode for user {user_email}")
+                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], isError=True)
+
+                    logger.info(f"Using direct_proxy mode for tool '{name}' via gateway {gateway_id_from_header}")
+
+                    # Use direct proxy method - returns raw CallToolResult from remote server
+                    # Return it directly without any normalization
+                    return await tool_service.invoke_tool_direct(
+                        gateway_id=gateway_id_from_header,
+                        name=name,
+                        arguments=arguments,
+                        request_headers=request_headers,
+                        meta_data=meta_data,
+                        user_email=user_email,
+                        token_teams=token_teams,
+                    )
+        except Exception as e:
+            logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
+            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
+
+    # Normal mode: use standard tool invocation with normalization
     app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
+
+    # Multi-worker session affinity: check if we should forward to another worker
+    # Check both x-mcp-session-id (internal/forwarded) and mcp-session-id (client protocol header)
+    mcp_session_id = None
+    if request_headers:
+        request_headers_lower = {k.lower(): v for k, v in request_headers.items()}
+        mcp_session_id = request_headers_lower.get("x-mcp-session-id") or request_headers_lower.get("mcp-session-id")
+    if settings.mcpgateway_session_affinity_enabled and mcp_session_id:
+        try:
+            # First-Party
+            from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import get_mcp_session_pool  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+
+            if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+                logger.debug("Invalid MCP session id for Streamable HTTP tool affinity, executing locally")
+                raise RuntimeError("invalid mcp session id")
+
+            pool = get_mcp_session_pool()
+
+            # Register session mapping BEFORE checking forwarding (same pattern as SSE)
+            # This ensures ownership is registered atomically so forward_request_to_owner() works
+            try:
+                cached = await tool_lookup_cache.get(name)
+                if cached and cached.get("status") == "active":
+                    gateway_info = cached.get("gateway")
+                    if gateway_info:
+                        url = gateway_info.get("url")
+                        gateway_id = gateway_info.get("id", "")
+                        transport_type = gateway_info.get("transport", "streamablehttp")
+                        if url:
+                            await pool.register_session_mapping(mcp_session_id, url, gateway_id, transport_type, user_email)
+            except Exception as e:
+                logger.error(f"Failed to pre-register session mapping for Streamable HTTP: {e}")
+
+            forwarded_response = await pool.forward_request_to_owner(
+                mcp_session_id,
+                {"method": "tools/call", "params": {"name": name, "arguments": arguments, "_meta": meta_data}, "headers": dict(request_headers) if request_headers else {}},
+            )
+            if forwarded_response is not None:
+                # Request was handled by another worker - convert response to expected format
+                if "error" in forwarded_response:
+                    raise Exception(forwarded_response["error"].get("message", "Forwarded request failed"))  # pylint: disable=broad-exception-raised
+                result_data = forwarded_response.get("result", {})
+
+                def _rehydrate_content_items(items: Any) -> list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource]:
+                    """Convert forwarded tool result items back to MCP content types.
+
+                    Args:
+                        items: List of content item dicts from forwarded response.
+
+                    Returns:
+                        List of validated MCP content type instances.
+                    """
+                    if not isinstance(items, list):
+                        return []
+                    converted: list[types.TextContent | types.ImageContent | types.AudioContent | types.ResourceLink | types.EmbeddedResource] = []
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = item.get("type")
+                        try:
+                            if item_type == "text":
+                                converted.append(types.TextContent.model_validate(item))
+                            elif item_type == "image":
+                                converted.append(types.ImageContent.model_validate(item))
+                            elif item_type == "audio":
+                                converted.append(types.AudioContent.model_validate(item))
+                            elif item_type == "resource_link":
+                                converted.append(types.ResourceLink.model_validate(item))
+                            elif item_type == "resource":
+                                converted.append(types.EmbeddedResource.model_validate(item))
+                            else:
+                                converted.append(types.TextContent(type="text", text=str(item)))
+                        except Exception:
+                            converted.append(types.TextContent(type="text", text=str(item)))
+                    return converted
+
+                unstructured = _rehydrate_content_items(result_data.get("content", []))
+                structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                if structured:
+                    return (unstructured, structured)
+                return unstructured
+        except RuntimeError:
+            # Pool not initialized - execute locally
+            pass
+
     try:
         async with get_db() as db:
+            # Use tool service for all tool invocations (handles direct_proxy internally)
             result = await tool_service.invoke_tool(
                 db=db,
                 name=name,
@@ -712,10 +1015,57 @@ async def list_tools() -> List[types.Tool]:
     if server_id:
         try:
             async with get_db() as db:
+                # Check for X-Context-Forge-Gateway-Id header first - if present, try direct proxy mode
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []  # Return empty list for unauthorized access
+
+                        # Direct proxy mode: forward request to remote MCP server
+                        # Get _meta from request context if available
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST TOOLS] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_tools_to_gateway(gateway, request_headers, user_context, meta)
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
+                # Check if server exists for cache mode
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Server as DbServer  # pylint: disable=import-outside-toplevel
+
+                server = db.execute(select(DbServer).where(DbServer.id == server_id)).scalar_one_or_none()
+                if not server:
+                    logger.warning(f"Server {server_id} not found in database")
+                    return []
+
+                # Default cache mode: use database
                 tools = await tool_service.list_server_tools(db, server_id, user_email=user_email, token_teams=token_teams, _request_headers=request_headers)
                 return [types.Tool(name=tool.name, description=tool.description, inputSchema=tool.input_schema, outputSchema=tool.output_schema, annotations=tool.annotations) for tool in tools]
         except Exception as e:
-            logger.exception(f"Error listing tools:{e}")
+            logger.error(f"Error listing tools:{e}")
             return []
     else:
         try:
@@ -889,6 +1239,43 @@ async def list_resources() -> List[types.Resource]:
     if server_id:
         try:
             async with get_db() as db:
+                # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
+                request_headers = request_headers_var.get()
+
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+                if gateway_id:
+                    # Third-Party
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        # SECURITY: Check gateway access before allowing direct proxy
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []  # Return empty list for unauthorized access
+
+                        # Direct proxy mode: forward request to remote MCP server
+                        # Get _meta from request context if available
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST RESOURCES] Using direct_proxy mode for server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header). Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_resources_to_gateway(gateway, request_headers, user_context, meta)
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
+                # Default cache mode: use database
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Resource(uri=resource.uri, name=resource.name, description=resource.description, mimeType=resource.mime_type) for resource in resources]
         except Exception as e:
@@ -953,6 +1340,51 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
 
     try:
         async with get_db() as db:
+            # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
+            request_headers = request_headers_var.get()
+
+            gateway_id = extract_gateway_id_from_headers(request_headers)
+
+            # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
+            if gateway_id:
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                # First-Party
+                from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                if gateway and gateway.gateway_mode == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                    # SECURITY: Check gateway access before allowing direct proxy
+                    if not await check_gateway_access(db, gateway, user_email, token_teams):
+                        logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                        return ""
+
+                    # Direct proxy mode: forward request to remote MCP server
+                    # Get _meta from request context if available
+                    meta = None
+                    try:
+                        request_ctx = mcp_app.request_context
+                        meta = request_ctx.meta
+                        logger.info(f"Using direct_proxy mode for resources/read {resource_uri}, server {server_id}, gateway {gateway.id} (from {GATEWAY_ID_HEADER} header), forwarding _meta: {meta}")
+                    except (LookupError, AttributeError) as e:
+                        logger.debug(f"No request context available for _meta extraction: {e}")
+
+                    contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta)
+                    if contents:
+                        # Return first content (text or blob)
+                        first_content = contents[0]
+                        if hasattr(first_content, "text"):
+                            return first_content.text
+                        if hasattr(first_content, "blob"):
+                            return first_content.blob
+                    return ""
+                if gateway:
+                    logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {gateway.gateway_mode}), using cache mode")
+                else:
+                    logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
+            # Default cache mode: use database
             try:
                 result = await resource_service.read_resource(
                     db=db,
@@ -1171,7 +1603,14 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
-            event_store = InMemoryEventStore()
+            # Use Redis event store for single-worker stateful deployments
+            if settings.cache_type == "redis" and settings.redis_url:
+                event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
+                logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
+            else:
+                # Fall back to in-memory for single-worker or when Redis not available
+                event_store = InMemoryEventStore()
+                logger.warning("Using InMemoryEventStore - only works with single worker!")
             stateless = False
         else:
             event_store = None
@@ -1197,7 +1636,7 @@ class SessionManagerWrapper:
             >>> callable(wrapper.initialize)
             True
         """
-        logger.info("Initializing Streamable HTTP service")
+        logger.debug("Initializing Streamable HTTP service")
         await self.stack.enter_async_context(self.session_manager.run())
 
     async def shutdown(self) -> None:
@@ -1212,7 +1651,7 @@ class SessionManagerWrapper:
             >>> callable(wrapper.shutdown)
             True
         """
-        logger.info("Stopping Streamable HTTP Session Manager...")
+        logger.debug("Stopping Streamable HTTP Session Manager...")
         await self.stack.aclose()
 
     async def handle_streamable_http(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -1248,8 +1687,278 @@ class SessionManagerWrapper:
         # Uses precompiled regex for server ID extraction
         match = _SERVER_ID_RE.search(path)
 
-        # Extract request headers from scope
-        headers = dict(Headers(scope=scope))
+        # Extract request headers from scope (ASGI provides bytes; normalize to lowercase for lookup).
+        raw_headers = scope.get("headers") or []
+        headers: dict[str, str] = {}
+        for item in raw_headers:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            k, v = item
+            if not isinstance(k, (bytes, bytearray)) or not isinstance(v, (bytes, bytearray)):
+                continue
+            # latin-1 is a byte-preserving decode; safe for arbitrary header bytes.
+            headers[k.decode("latin-1").lower()] = v.decode("latin-1")
+
+        # Log session info for debugging stateful sessions
+        mcp_session_id = headers.get("mcp-session-id", "not-provided")
+        method = scope.get("method", "UNKNOWN")
+        query_string = scope.get("query_string", b"").decode("utf-8")
+        logger.debug(f"[STATEFUL] Streamable HTTP {method} {path} | MCP-Session-Id: {mcp_session_id} | Query: {query_string} | Stateful: {settings.use_stateful_sessions}")
+
+        # Note: mcp-session-id from client is used for gateway-internal session affinity
+        # routing (stored in request_headers_var), but is NOT renamed or forwarded to
+        # upstream servers - it's a gateway-side concept, not an end-to-end semantic header
+
+        # Multi-worker session affinity: check if we should forward to another worker
+        # This must happen BEFORE the SDK's session manager handles the request
+        is_internally_forwarded = headers.get("x-forwarded-internally") == "true"
+
+        if settings.mcpgateway_session_affinity_enabled and mcp_session_id != "not-provided":
+            try:
+                # First-Party
+                from mcpgateway.services.mcp_session_pool import MCPSessionPool  # pylint: disable=import-outside-toplevel
+
+                if not MCPSessionPool.is_valid_mcp_session_id(mcp_session_id):
+                    logger.debug("Invalid MCP session id on Streamable HTTP request, skipping affinity")
+                    mcp_session_id = "not-provided"
+            except Exception:
+                mcp_session_id = "not-provided"
+
+        # Log session manager ID for debugging
+        logger.debug(f"[SESSION_MGR_DEBUG] Manager ID: {id(self.session_manager)}")
+
+        if is_internally_forwarded:
+            logger.debug(f"[HTTP_AFFINITY_FORWARDED] Received forwarded request | Method: {method} | Session: {mcp_session_id}")
+
+            # Only route POST requests with JSON-RPC body to /rpc
+            # DELETE and other methods should return success (session cleanup is local)
+            if method != "POST":
+                logger.debug("[HTTP_AFFINITY_FORWARDED] Non-POST method, returning 200 OK")
+                await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+                await send({"type": "http.response.body", "body": b'{"jsonrpc":"2.0","result":{}}'})
+                return
+
+            # For POST requests, bypass SDK session manager and use /rpc directly
+            # This avoids SDK's session cleanup issues while maintaining stateful upstream connections
+            try:
+                # Read request body
+                body_parts = []
+                while True:
+                    message = await receive()
+                    if message["type"] == "http.request":
+                        body_parts.append(message.get("body", b""))
+                        if not message.get("more_body", False):
+                            break
+                    elif message["type"] == "http.disconnect":
+                        return
+                body = b"".join(body_parts)
+
+                if not body:
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Empty body, returning 202 Accepted")
+                    await send({"type": "http.response.start", "status": 202, "headers": []})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+
+                json_body = orjson.loads(body)
+                rpc_method = json_body.get("method", "")
+                logger.debug(f"[HTTP_AFFINITY_FORWARDED] Routing to /rpc | Method: {rpc_method}")
+
+                # Notifications don't need /rpc routing - just acknowledge
+                if rpc_method.startswith("notifications/"):
+                    logger.debug("[HTTP_AFFINITY_FORWARDED] Notification, returning 202 Accepted")
+                    await send({"type": "http.response.start", "status": 202, "headers": []})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+
+                async with httpx.AsyncClient() as client:
+                    rpc_headers = {
+                        "content-type": "application/json",
+                        "x-mcp-session-id": mcp_session_id,  # Pass session for upstream affinity
+                        "x-forwarded-internally": "true",  # Prevent infinite forwarding loops
+                    }
+                    # Copy auth header if present
+                    if "authorization" in headers:
+                        rpc_headers["authorization"] = headers["authorization"]
+
+                    response = await client.post(
+                        f"http://127.0.0.1:{settings.port}/rpc",
+                        content=body,
+                        headers=rpc_headers,
+                        timeout=30.0,
+                    )
+
+                    # Return response to client
+                    response_headers = [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(response.content)).encode()),
+                    ]
+                    if mcp_session_id != "not-provided":
+                        response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
+
+                    await send(
+                        {
+                            "type": "http.response.start",
+                            "status": response.status_code,
+                            "headers": response_headers,
+                        }
+                    )
+                    await send(
+                        {
+                            "type": "http.response.body",
+                            "body": response.content,
+                        }
+                    )
+                    logger.debug(f"[HTTP_AFFINITY_FORWARDED] Response sent | Status: {response.status_code}")
+                    return
+            except Exception as e:
+                logger.error(f"[HTTP_AFFINITY_FORWARDED] Error routing to /rpc: {e}")
+                # Fall through to SDK handling as fallback
+
+        if settings.mcpgateway_session_affinity_enabled and settings.use_stateful_sessions and mcp_session_id != "not-provided" and not is_internally_forwarded:
+            try:
+                # First-Party - lazy import to avoid circular dependencies
+                # First-Party
+                from mcpgateway.services.mcp_session_pool import get_mcp_session_pool, WORKER_ID  # pylint: disable=import-outside-toplevel
+
+                pool = get_mcp_session_pool()
+                owner = await pool.get_streamable_http_session_owner(mcp_session_id)
+                logger.debug(f"[HTTP_AFFINITY_CHECK] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner from Redis: {owner}")
+
+                if owner and owner != WORKER_ID:
+                    # Session owned by another worker - forward the entire HTTP request
+                    logger.info(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner: {owner} | Forwarding HTTP request")
+
+                    # Read request body
+                    body_parts = []
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.request":
+                            body_parts.append(message.get("body", b""))
+                            if not message.get("more_body", False):
+                                break
+                        elif message["type"] == "http.disconnect":
+                            return
+                    body = b"".join(body_parts)
+
+                    # Forward to owner worker
+                    response = await pool.forward_streamable_http_to_owner(
+                        owner_worker_id=owner,
+                        mcp_session_id=mcp_session_id,
+                        method=method,
+                        path=path,
+                        headers=headers,
+                        body=body,
+                        query_string=query_string,
+                    )
+
+                    if response:
+                        # Send forwarded response back to client
+                        response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
+                        response_headers.append((b"content-length", str(len(response["body"])).encode()))
+
+                        await send(
+                            {
+                                "type": "http.response.start",
+                                "status": response["status"],
+                                "headers": response_headers,
+                            }
+                        )
+                        await send(
+                            {
+                                "type": "http.response.body",
+                                "body": response["body"],
+                            }
+                        )
+                        logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarded response sent to client")
+                        return
+
+                    # Forwarding failed - fall through to local handling
+                    # This may result in "session not found" but it's better than no response
+                    logger.debug(f"[HTTP_AFFINITY] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Forwarding failed, falling back to local")
+
+                elif owner == WORKER_ID and method == "POST":
+                    # We own this session - route POST requests to /rpc to avoid SDK session issues
+                    # The SDK's _server_instances gets cleared between requests, so we can't rely on it
+                    logger.debug(f"[HTTP_AFFINITY_LOCAL] Worker {WORKER_ID} | Session {mcp_session_id[:8]}... | Owner is us, routing to /rpc")
+
+                    # Read request body
+                    body_parts = []
+                    while True:
+                        message = await receive()
+                        if message["type"] == "http.request":
+                            body_parts.append(message.get("body", b""))
+                            if not message.get("more_body", False):
+                                break
+                        elif message["type"] == "http.disconnect":
+                            return
+                    body = b"".join(body_parts)
+
+                    if not body:
+                        logger.debug("[HTTP_AFFINITY_LOCAL] Empty body, returning 202 Accepted")
+                        await send({"type": "http.response.start", "status": 202, "headers": []})
+                        await send({"type": "http.response.body", "body": b""})
+                        return
+
+                    # Parse JSON-RPC and route to /rpc
+                    try:
+                        json_body = orjson.loads(body)
+                        rpc_method = json_body.get("method", "")
+                        logger.debug(f"[HTTP_AFFINITY_LOCAL] Routing to /rpc | Method: {rpc_method}")
+
+                        # Notifications don't need /rpc routing
+                        if rpc_method.startswith("notifications/"):
+                            logger.debug("[HTTP_AFFINITY_LOCAL] Notification, returning 202 Accepted")
+                            await send({"type": "http.response.start", "status": 202, "headers": []})
+                            await send({"type": "http.response.body", "body": b""})
+                            return
+
+                        async with httpx.AsyncClient() as client:
+                            rpc_headers = {
+                                "content-type": "application/json",
+                                "x-mcp-session-id": mcp_session_id,
+                                "x-forwarded-internally": "true",
+                            }
+                            if "authorization" in headers:
+                                rpc_headers["authorization"] = headers["authorization"]
+
+                            response = await client.post(
+                                f"http://127.0.0.1:{settings.port}/rpc",
+                                content=body,
+                                headers=rpc_headers,
+                                timeout=30.0,
+                            )
+
+                            response_headers = [
+                                (b"content-type", b"application/json"),
+                                (b"content-length", str(len(response.content)).encode()),
+                                (b"mcp-session-id", mcp_session_id.encode()),
+                            ]
+
+                            await send(
+                                {
+                                    "type": "http.response.start",
+                                    "status": response.status_code,
+                                    "headers": response_headers,
+                                }
+                            )
+                            await send(
+                                {
+                                    "type": "http.response.body",
+                                    "body": response.content,
+                                }
+                            )
+                            logger.debug(f"[HTTP_AFFINITY_LOCAL] Response sent | Status: {response.status_code}")
+                            return
+                    except Exception as e:
+                        logger.error(f"[HTTP_AFFINITY_LOCAL] Error routing to /rpc: {e}")
+                        # Fall through to SDK handling as fallback
+
+            except RuntimeError:
+                # Pool not initialized - proceed with local handling
+                pass
+            except Exception as e:
+                logger.debug(f"Session affinity check failed, proceeding locally: {e}")
+
         # Store headers in context for tool invocations
         request_headers_var.set(headers)
 
@@ -1284,6 +1993,7 @@ class SessionManagerWrapper:
             # Expected when client closes one side of the stream (normal lifecycle)
             logger.debug("Streamable HTTP connection closed by client (ClosedResourceError)")
         except Exception as e:
+            logger.error(f"[STATEFUL] Streamable HTTP request failed | Session: {mcp_session_id} | Error: {e}")
             logger.exception(f"Error handling streamable HTTP request: {e}")
             raise
 
@@ -1373,23 +2083,28 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         user_payload = await verify_credentials(token)
         # Store enriched user context with normalized teams
         if isinstance(user_payload, dict):
-            # Check if "teams" key exists and is not None to distinguish:
-            # - Key exists with non-None value (even empty []) -> normalized list (scoped token)
-            # - Key absent OR key is None -> None (unrestricted for admin, public-only for non-admin)
-            teams_value = user_payload.get("teams") if "teams" in user_payload else None
-            if teams_value is not None:
-                normalized_teams = []
-                for team in teams_value or []:
-                    if isinstance(team, dict):
-                        team_id = team.get("id")
-                        if team_id:
-                            normalized_teams.append(team_id)
-                    elif isinstance(team, str):
-                        normalized_teams.append(team)
-                final_teams = normalized_teams
+            # Resolve teams based on token_use claim
+            token_use = user_payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache
+                user_email_for_teams = user_payload.get("sub") or user_payload.get("email")
+                is_admin_flag = user_payload.get("is_admin", False) or user_payload.get("user", {}).get("is_admin", False)
+                if is_admin_flag:
+                    final_teams = None  # Admin bypass
+                elif user_email_for_teams:
+                    # Resolve teams synchronously with L1 cache (StreamableHTTP uses sync context)
+                    # First-Party
+                    from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+                    final_teams = _resolve_teams_from_db_sync(user_email_for_teams, is_admin=False)
+                else:
+                    final_teams = []  # No email — public-only
             else:
-                # No "teams" key or teams is null - treat as unrestricted (None)
-                final_teams = None
+                # API token or legacy: use embedded teams from JWT
+                # First-Party
+                from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+                final_teams = normalize_token_teams(user_payload)
 
             # ═══════════════════════════════════════════════════════════════════════════
             # SECURITY: Validate team membership for team-scoped tokens
@@ -1402,6 +2117,9 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
             # Skip for: public-only tokens ([]), admin unrestricted tokens (None)
             if final_teams and len(final_teams) > 0 and user_email:
                 # Import lazily to avoid circular imports
+                # Third-Party
+                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
                 # First-Party
                 from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
                 from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
@@ -1421,9 +2139,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
 
                 if cached_result is None:
                     # Cache miss - query database
-                    # Third-Party
-                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
                     db = SessionLocal()
                     try:
                         memberships = (
@@ -1454,6 +2169,12 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                         # Cache positive result
                         auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
                     finally:
+                        # Rollback any implicit transaction before closing to prevent
+                        # idle-in-transaction state if the connection is returned to pool
+                        try:
+                            db.rollback()
+                        except Exception:
+                            pass  # nosec B110 - Best effort rollback
                         db.close()
 
             user_context_var.set(

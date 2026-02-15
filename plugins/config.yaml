@@ -514,7 +514,7 @@ plugins:
     author: "ContextForge"
     hooks: ["tool_pre_invoke", "tool_post_invoke"]
     tags: ["reliability", "sre"]
-    mode: "enforce_ignore_error"
+    mode: "disabled"
     priority: 70
     conditions: []
     config:
@@ -968,3 +968,65 @@ plugins:
       # Output options
       add_format_marker: true    # Add annotations.format="toon" to converted content
       skip_on_error: true        # Continue with original JSON if conversion fails
+
+  # Unified Policy Decision Point - single interface for Cedar, OPA, Native RBAC, MAC
+  - name: "UnifiedPDPPlugin"
+    kind: "plugins.unified_pdp.unified_pdp.UnifiedPDPPlugin"
+    description: "Unified Policy Decision Point for access control across multiple policy engines"
+    version: "0.1.0"
+    author: "yiannis2804"
+    hooks: ["tool_pre_invoke", "resource_pre_fetch"]
+    tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
+    mode: "disabled"  # set to "enforce" to activate
+    priority: 10  # Run early — access control before other plugins
+    conditions: []
+    config:
+      engines:
+        - name: native
+          enabled: true
+          priority: 1
+          settings:
+            rules_file: "plugins/unified_pdp/default_rules.json"
+        - name: mac
+          enabled: false
+          priority: 2
+          settings:
+            relaxed_star: false
+        - name: opa
+          enabled: false
+          priority: 3
+          settings:
+            opa_url: "http://localhost:8181"
+            policy_path: "mcpgateway"
+            timeout_ms: 5000
+            max_retries: 3
+        - name: cedar
+          enabled: false
+          priority: 4
+          settings:
+            cedar_url: "http://localhost:8700"
+            timeout_ms: 5000
+            max_retries: 3
+      combination_mode: "all_must_allow"
+      default_decision: "deny"
+      cache:
+        enabled: true
+        ttl_seconds: 60
+        max_entries: 10000
+      performance:
+        timeout_ms: 1000
+        parallel_evaluation: true
+
+  # JWT Claims Extraction — extracts claims for downstream Cedar/OPA authorization
+  - name: "JwtClaimsExtractionPlugin"
+    kind: "plugins.jwt_claims_extraction.jwt_claims_extraction.JwtClaimsExtractionPlugin"
+    description: "Extracts JWT claims and stores them in global context state for downstream authorization plugins"
+    version: "1.0.0"
+    author: "yiannis2804"
+    hooks: ["http_auth_resolve_user"]
+    tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
+    mode: "disabled"  # set to "permissive" to activate
+    priority: 10  # Run early — before other auth plugins
+    conditions: []
+    config:
+      context_key: jwt_claims

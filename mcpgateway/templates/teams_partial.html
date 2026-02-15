@@ -48,7 +48,7 @@
                 {% elif team.relationship == 'public' %}
                 Public team • Owner: {{ team.created_by|default('Unknown') }}
                 {% else %}
-                {{ team.description|truncate(80) if team.description else "No description" }}
+                {{ (team.description | decode_html)|truncate(80) if team.description else "No description" }}
                 {% endif %}
             </p>
         </div>

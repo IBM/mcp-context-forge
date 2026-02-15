@@ -740,7 +740,7 @@ class ImportService:
                 elif conflict_strategy == ConflictStrategy.UPDATE:
                     try:
                         # Find existing gateway by name
-                        gateways = await self.gateway_service.list_gateways(db, include_inactive=True)
+                        gateways, _ = await self.gateway_service.list_gateways(db, include_inactive=True)
                         existing_gateway = next((g for g in gateways if g.name == gateway_name), None)
                         if existing_gateway:
                             update_data = self._convert_to_gateway_update(gateway_data)
@@ -957,14 +957,34 @@ class ImportService:
             if not tools_to_register:
                 return
 
+            # Use a batch ID so we can scope the post-import fixup below.
+            batch_id = str(uuid.uuid4())
+
             # Use bulk registration
             result = await self.tool_service.register_tools_bulk(
                 db=db,
                 tools=tools_to_register,
                 created_by=imported_by,
                 created_via="import",
+                import_batch_id=batch_id,
                 conflict_strategy=conflict_strategy.value,
             )
+
+            # Restore original_description from export data for newly created tools.
+            # register_tools_bulk sets original_description=description, but the
+            # export payload may carry the real upstream original_description.
+            if result.get("created", 0) > 0:
+                orig_desc_map = {d["name"]: d["original_description"] for d in tools_data if d.get("original_description") and d.get("original_description") != d.get("description")}
+                if orig_desc_map:
+                    # Third-Party
+                    from sqlalchemy import select
+
+                    for tool_name, orig_desc in orig_desc_map.items():
+                        stmt = select(Tool).where(Tool.original_name == tool_name, Tool.import_batch_id == batch_id)
+                        db_tool = db.execute(stmt).scalar_one_or_none()
+                        if db_tool:
+                            db_tool.original_description = orig_desc
+                    db.commit()
 
             # Update status based on results
             status.created_entities += result["created"]
@@ -1607,7 +1627,7 @@ class ImportService:
                 existing, _ = await self.tool_service.list_tools(db)
                 item_info["conflicts_with"] = any(t.original_name == item_name for t in existing)
             elif entity_type == "gateways":
-                existing = await self.gateway_service.list_gateways(db)
+                existing, _ = await self.gateway_service.list_gateways(db)
                 item_info["conflicts_with"] = any(g.name == item_name for g in existing)
             elif entity_type == "servers":
                 existing = await self.server_service.list_servers(db)
@@ -1721,7 +1741,7 @@ class ImportService:
 
             # Check gateway conflicts
             if "gateways" in entities:
-                existing_gateways = await self.gateway_service.list_gateways(db)
+                existing_gateways, _ = await self.gateway_service.list_gateways(db)
                 existing_names = {g.name for g in existing_gateways}
 
                 gateway_conflicts = []

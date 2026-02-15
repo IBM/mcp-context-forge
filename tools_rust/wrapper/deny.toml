@@ -1,0 +1,19 @@
+[licenses]
+unused-allowed-license = "warn"
+confidence-threshold = 0.95
+allow = [
+    "MIT",
+    "ISC",
+    "Apache-2.0",
+    "OpenSSL",
+    "Unicode-3.0",
+    "BSD-3-Clause",
+    "CDLA-Permissive-2.0",
+]
+
+#[[licenses.clarify]]
+#name = "ring"
+#expression = "MIT AND ISC AND OpenSSL"
+#license-files = [
+#    { path = "LICENSE", hash = 0xbd0eed23 }
+#]

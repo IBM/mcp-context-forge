@@ -17,9 +17,10 @@ from typing import Dict, List, Optional, Set
 
 # Third-Party
 from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import contains_eager, Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import PermissionAuditLog, Permissions, Role, UserRole, utc_now
 
 logger = logging.getLogger(__name__)
@@ -49,16 +50,19 @@ class PermissionService:
         True
     """
 
-    def __init__(self, db: Session, audit_enabled: bool = True):
+    def __init__(self, db: Session, audit_enabled: Optional[bool] = None):
         """Initialize permission service.
 
         Args:
             db: Database session
-            audit_enabled: Whether to enable permission auditing
+            audit_enabled: Whether to enable permission auditing (defaults to settings.permission_audit_enabled / PERMISSION_AUDIT_ENABLED)
         """
         self.db = db
+        if audit_enabled is None:
+            audit_enabled = settings.permission_audit_enabled
         self.audit_enabled = audit_enabled
         self._permission_cache: Dict[str, Set[str]] = {}
+        self._roles_cache: Dict[str, List[UserRole]] = {}
         self._cache_timestamps: Dict[str, datetime] = {}
         self.cache_ttl = 300  # 5 minutes
 
@@ -71,6 +75,8 @@ class PermissionService:
         team_id: Optional[str] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
+        allow_admin_bypass: bool = True,
+        check_any_team: bool = False,
     ) -> bool:
         """Check if user has specific permission.
 
@@ -85,6 +91,11 @@ class PermissionService:
             team_id: Team context for the permission check
             ip_address: IP address for audit logging
             user_agent: User agent for audit logging
+            allow_admin_bypass: If True, admin users bypass all permission checks.
+                               If False, admins must have explicit permissions.
+                               Default is True for backward compatibility.
+            check_any_team: If True, check permission across ALL team-scoped roles
+                           (used for list/read endpoints with multi-team session tokens)
 
         Returns:
             bool: True if permission is granted, False otherwise
@@ -104,12 +115,12 @@ class PermissionService:
             True
         """
         try:
-            # First check if user is admin (bypass all permission checks)
-            if await self._is_user_admin(user_email):
+            # Check if user is admin (bypass all permission checks if allowed)
+            if allow_admin_bypass and await self._is_user_admin(user_email):
                 return True
 
-            # Get user's effective permissions from roles
-            user_permissions = await self.get_user_permissions(user_email, team_id)
+            # Get user's effective permissions (uses cache when valid)
+            user_permissions = await self.get_user_permissions(user_email, team_id, include_all_teams=check_any_team)
 
             # Check if user has the specific permission or wildcard
             granted = permission in user_permissions or Permissions.ALL_PERMISSIONS in user_permissions
@@ -124,6 +135,8 @@ class PermissionService:
 
             # Log the permission check if auditing is enabled
             if self.audit_enabled:
+                # Reuse roles cached by get_user_permissions (no second query)
+                roles_checked = self._get_roles_for_audit(user_email, team_id)
                 await self._log_permission_check(
                     user_email=user_email,
                     permission=permission,
@@ -131,7 +144,7 @@ class PermissionService:
                     resource_id=resource_id,
                     team_id=team_id,
                     granted=granted,
-                    roles_checked=await self._get_roles_for_audit(user_email, team_id),
+                    roles_checked=roles_checked,
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
@@ -145,7 +158,43 @@ class PermissionService:
             # Default to deny on error
             return False
 
-    async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None) -> Set[str]:
+    async def has_admin_permission(self, user_email: str) -> bool:
+        """Check if user has any admin-level permission.
+
+        This is used by AdminAuthMiddleware to allow access to /admin/* routes
+        for users who have admin permissions via RBAC, even if they're not
+        marked as is_admin in the database.
+
+        Args:
+            user_email: Email of the user to check
+
+        Returns:
+            bool: True if user is an admin OR has any admin.* permission
+        """
+        try:
+            # First check if user is a database admin
+            if await self._is_user_admin(user_email):
+                return True
+
+            # Get user's permissions and check for any admin.* permission
+            user_permissions = await self.get_user_permissions(user_email)
+
+            # Check for wildcard or any admin permission
+            if Permissions.ALL_PERMISSIONS in user_permissions:
+                return True
+
+            # Check for any admin.* permission
+            for perm in user_permissions:
+                if perm.startswith("admin."):
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Error checking admin permission for {user_email}: {e}")
+            return False
+
+    async def get_user_permissions(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> Set[str]:
         """Get all effective permissions for a user.
 
         Collects permissions from all user's roles across applicable scopes.
@@ -154,6 +203,7 @@ class PermissionService:
         Args:
             user_email: Email of the user
             team_id: Optional team context
+            include_all_teams: If True, include ALL team-scoped roles (for list/read endpoints)
 
         Returns:
             Set[str]: All effective permissions for the user
@@ -169,23 +219,31 @@ class PermissionService:
             >>> asyncio.iscoroutinefunction(service.get_user_permissions)
             True
         """
-        # Check cache first
-        cache_key = f"{user_email}:{team_id or 'global'}"
+        # Use distinct cache key for any-team lookups to avoid poisoning global cache
+        if include_all_teams:
+            cache_key = f"{user_email}:__anyteam__"
+        else:
+            cache_key = f"{user_email}:{team_id or 'global'}"
         if self._is_cache_valid(cache_key):
-            return self._permission_cache[cache_key]
+            cached_perms = self._permission_cache[cache_key]
+            logger.debug(f"[RBAC] Cache hit for {user_email} (team_id={team_id}): {cached_perms}")
+            return cached_perms
 
         permissions = set()
 
-        # Get all active roles for the user
-        user_roles = await self._get_user_roles(user_email, team_id)
+        # Get all active roles for the user (with eager-loaded role relationship)
+        user_roles = await self._get_user_roles(user_email, team_id, include_all_teams=include_all_teams)
+        logger.debug(f"[RBAC] Found {len(user_roles)} roles for {user_email} (team_id={team_id})")
 
         # Collect permissions from all roles
         for user_role in user_roles:
             role_permissions = user_role.role.get_effective_permissions()
+            logger.debug(f"[RBAC] Role '{user_role.role.name}' (scope={user_role.scope}, scope_id={user_role.scope_id}) has permissions: {role_permissions}")
             permissions.update(role_permissions)
 
-        # Cache the result
+        # Cache both permissions and roles
         self._permission_cache[cache_key] = permissions
+        self._roles_cache[cache_key] = user_roles
         self._cache_timestamps[cache_key] = utc_now()
 
         return permissions
@@ -353,6 +411,7 @@ class PermissionService:
 
         for key in keys_to_remove:
             self._permission_cache.pop(key, None)
+            self._roles_cache.pop(key, None)
             self._cache_timestamps.pop(key, None)
 
         logger.debug(f"Cleared permission cache for user: {user_email}")
@@ -373,28 +432,60 @@ class PermissionService:
             True
         """
         self._permission_cache.clear()
+        self._roles_cache.clear()
         self._cache_timestamps.clear()
         logger.debug("Cleared all permission cache")
 
-    async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None) -> List[UserRole]:
+    async def _get_user_roles(self, user_email: str, team_id: Optional[str] = None, include_all_teams: bool = False) -> List[UserRole]:
         """Get user roles for permission checking.
 
-        Includes global roles and team-specific roles if team_id is provided.
+        Always includes global and personal roles. Team-scoped role inclusion
+        depends on the parameters:
+
+        - team_id provided: includes team roles for that specific team
+          (plus team roles with scope_id=NULL which apply to all teams)
+        - team_id=None, include_all_teams=True: includes ALL team-scoped roles
+          EXCEPT roles on personal teams (which auto-grant team_admin to every user)
+        - team_id=None, include_all_teams=False: includes only team-scoped roles
+          with scope_id=NULL (roles that apply to all teams, e.g. during login)
 
         Args:
             user_email: Email address of the user
-            team_id: Optional team ID to include team-specific roles
+            team_id: Optional team ID to filter to a specific team's roles
+            include_all_teams: If True, include ALL team-scoped roles (for list/read with session tokens)
 
         Returns:
             List[UserRole]: List of active roles for the user
         """
-        query = select(UserRole).join(Role).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
+        query = select(UserRole).join(Role).options(contains_eager(UserRole.role)).where(and_(UserRole.user_email == user_email, UserRole.is_active.is_(True), Role.is_active.is_(True)))
 
-        # Include global roles and team-specific roles
+        # Include global roles and personal roles
         scope_conditions = [UserRole.scope == "global", UserRole.scope == "personal"]
 
         if team_id:
-            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id == team_id))
+            # Filter to specific team's roles only
+            scope_conditions.append(and_(UserRole.scope == "team", or_(UserRole.scope_id == team_id, UserRole.scope_id.is_(None))))
+        elif include_all_teams:
+            # Include ALL team-scoped roles EXCEPT personal team roles.
+            # Personal teams are auto-created for every user with team_admin permissions,
+            # so including them would grant every user full mutate permissions (servers.create,
+            # tools.create, etc.) when check_any_team=True, making RBAC ineffective.
+            # First-Party
+            from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
+
+            scope_conditions.append(
+                and_(
+                    UserRole.scope == "team",
+                    or_(
+                        UserRole.scope_id.is_(None),
+                        ~UserRole.scope_id.in_(select(EmailTeam.id).where(EmailTeam.is_personal.is_(True))),
+                    ),
+                )
+            )
+        else:
+            # When team_id is None and include_all_teams is False (e.g., during login),
+            # include team-scoped roles with scope_id=None (roles that apply to all teams)
+            scope_conditions.append(and_(UserRole.scope == "team", UserRole.scope_id.is_(None)))
 
         query = query.where(or_(*scope_conditions))
 
@@ -403,7 +494,7 @@ class PermissionService:
         query = query.where((UserRole.expires_at.is_(None)) | (UserRole.expires_at > now))
 
         result = self.db.execute(query)
-        user_roles = result.scalars().all()
+        user_roles = result.unique().scalars().all()
         return user_roles
 
     async def _log_permission_check(
@@ -446,17 +537,20 @@ class PermissionService:
         self.db.add(audit_log)
         self.db.commit()
 
-    async def _get_roles_for_audit(self, user_email: str, team_id: Optional[str]) -> Dict:
-        """Get role information for audit logging.
+    def _get_roles_for_audit(self, user_email: str, team_id: Optional[str]) -> Dict:
+        """Get role information for audit logging from cached roles.
+
+        Uses roles cached by get_user_permissions() to avoid a duplicate DB query.
 
         Args:
-            user_email: Email address of the user
-            team_id: Optional team ID for context
+            user_email: Email address of the user.
+            team_id: Optional team ID for context.
 
         Returns:
             Dict: Role information for audit logging
         """
-        user_roles = await self._get_user_roles(user_email, team_id)
+        cache_key = f"{user_email}:{team_id or 'global'}"
+        user_roles = self._roles_cache.get(cache_key, [])
         return {"roles": [{"id": ur.role_id, "name": ur.role.name, "scope": ur.scope, "permissions": ur.role.permissions} for ur in user_roles]}
 
     def _is_cache_valid(self, cache_key: str) -> bool:
@@ -487,7 +581,6 @@ class PermissionService:
             bool: True if user is admin
         """
         # First-Party
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
         from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
         # Special case for platform admin (virtual user)
@@ -516,12 +609,12 @@ class PermissionService:
                 return True
             return False
 
-        # Check if user is a member of this team
-        if not await self._is_team_member(user_email, team_id):
-            return False
-
-        # Get user's role in the team
+        # Get user's role in the team (single query instead of two separate queries)
         user_role = await self._get_user_team_role(user_email, team_id)
+
+        # If user is not a member (role is None), deny access
+        if user_role is None:
+            return False
 
         # Define fallback permissions based on team role
         if user_role == "owner":
@@ -536,6 +629,8 @@ class PermissionService:
     async def _is_team_member(self, user_email: str, team_id: str) -> bool:
         """Check if user is a member of the specified team.
 
+        Note: This method delegates to _get_user_team_role to avoid duplicate DB queries.
+
         Args:
             user_email: Email address of the user
             team_id: Team ID
@@ -543,13 +638,8 @@ class PermissionService:
         Returns:
             bool: True if user is a team member
         """
-        # First-Party
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
-
-        member = self.db.execute(select(EmailTeamMember).where(and_(EmailTeamMember.user_email == user_email, EmailTeamMember.team_id == team_id, EmailTeamMember.is_active))).scalar_one_or_none()
-        self.db.commit()  # Release transaction to avoid idle-in-transaction
-
-        return member is not None
+        # Delegate to _get_user_team_role to avoid duplicate query
+        return await self._get_user_team_role(user_email, team_id) is not None
 
     async def _get_user_team_role(self, user_email: str, team_id: str) -> Optional[str]:
         """Get user's role in the specified team.

@@ -28,11 +28,13 @@ include *.json
 include *.sh
 include *.txt
 include *.lua
+include *.js
 recursive-include tests/async *.py
 recursive-include tests/async *.yaml
 recursive-include examples *.yaml
 recursive-include plugin_templates *
 recursive-include mcpgateway/toolops *.md
+recursive-include mcpgateway *.proto
 
 # Tooling/lint configuration dot-files (explicit so they're not lost)
 include .env.make
@@ -87,6 +89,7 @@ recursive-include tests/manual *.py *.md
 # recursive-include deployment *
 # recursive-include mcp-servers *
 recursive-include plugins *.py
+recursive-include plugins *.json
 recursive-include plugins *.sh
 recursive-include plugins *.yaml
 recursive-include plugins *.md
@@ -94,11 +97,10 @@ recursive-include plugins *.md
 # Rust plugins (optional - exclude build artifacts)
 recursive-include plugins_rust *.rs
 recursive-include plugins_rust *.toml
+recursive-include plugins_rust *.md
+recursive-include plugins_rust *.py
 include plugins_rust/Makefile
-include plugins_rust/README.md
-include plugins_rust/QUICKSTART.md
 prune plugins_rust/target
-prune plugins_rust/benchmarks
 
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
@@ -119,8 +121,10 @@ exclude AGENTS.md
 # Exclude deployment, mcp-servers, agent_runtimes and llms
 prune deployment
 prune mcp-servers
+prune a2a-agents
 prune agent_runtimes
 prune llms
+prune tools_rust
 
 # Development and CI/CD artifacts
 prune .github
@@ -170,6 +174,7 @@ exclude .coverage.*
 exclude .travis.yml
 exclude .eslintrc.json
 exclude eslint.config.js
+exclude vitest.config.js
 exclude .stylelintrc.json
 exclude .markdownlint-cli2.yaml
 exclude .spellcheck-en.txt

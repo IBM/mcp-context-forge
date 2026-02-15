@@ -1,33 +1,44 @@
 # RBAC Configuration
 
-Role-based access control (RBAC) defines which actions users or teams can perform in MCP Gateway. This document covers the security model, token scoping semantics, and best practices for access control.
+Role-based access control (RBAC) defines which actions users or teams can perform in MCP Gateway. This document covers the two-layer security model, token scoping semantics, permission system, and best practices for access control.
 
 ---
 
 ## Overview
 
-MCP Gateway implements a multi-layered access control system:
+MCP Gateway implements a **two-layer security model**:
 
-1. **Authentication**: Verify user identity via JWT, SSO, or API tokens
-2. **Team Membership**: Group users for collective access policies
-3. **Token Scoping**: Restrict token capabilities to specific resources
-4. **Visibility Filtering**: Control which resources users can discover
+1. **Token Scoping (Layer 1)**: Controls what resources a user CAN SEE (data filtering)
+2. **RBAC (Layer 2)**: Controls what actions a user CAN DO (action authorization)
+
+Both layers must pass for an operation to succeed.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                         Access Control Layers                               │
+│                      Two-Layer Security Model                               │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │                                                                             │
-│   Request → Authentication → Team Resolution → Token Scoping → Visibility  │
+│   Request → Authentication → Token Scoping → RBAC Check → Operation        │
+│                              (Can See?)       (Can Do?)                     │
 │                                                                             │
 │   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐ │
-│   │   JWT    │   │  User    │   │  Token   │   │ Resource │   │ Filtered │ │
-│   │  Token   │──▶│ Identity │──▶│  Teams   │──▶│  Access  │──▶│  Results │ │
+│   │   JWT    │   │  User    │   │ Resource │   │Permission│   │ Execute  │ │
+│   │  Token   │──▶│ Identity │──▶│  Access  │──▶│  Check   │──▶│ Operation│ │
 │   │          │   │          │   │          │   │          │   │          │ │
 │   └──────────┘   └──────────┘   └──────────┘   └──────────┘   └──────────┘ │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### Authentication Methods
+
+| Method | Priority | Description |
+|--------|----------|-------------|
+| JWT Token | 1 (Primary) | Signature verified, supports teams/scopes claims |
+| Plugin Auth | 0 (Before JWT) | `HTTP_AUTH_RESOLVE_USER` hook can provide custom auth |
+| API Token (DB) | 2 (Fallback) | Legacy database-stored tokens |
+| Proxy Header | 3 | When `MCP_CLIENT_AUTH_ENABLED=false` AND `TRUST_PROXY_AUTH=true` |
+| Anonymous | 4 | When `AUTH_REQUIRED=false` (development only) |
 
 ---
 
@@ -47,12 +58,74 @@ Logical groups that:
 - Own resources (tools, prompts, resources)
 - Map from external identity providers (SSO groups)
 
-### Roles
-Current role types:
+### Built-in RBAC Roles
 
-- **Admin**: Full management access, can bypass team restrictions
-- **Maintainer**: Manage servers, tools, prompts, configurations
-- **Viewer**: Read-only access and metrics
+| Role | Scope | Permissions |
+|------|-------|-------------|
+| `platform_admin` | global | `["*"]` (all permissions) |
+| `team_admin` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
+| `developer` | team | admin.dashboard, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.create, servers.update, servers.delete, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke |
+| `viewer` | team | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
+| `platform_viewer` | global | admin.dashboard, gateways.read, servers.read, teams.join, tools.read, resources.read, prompts.read, a2a.read |
+
+!!! info "Default Role Assignment"
+    **New users automatically receive up to two roles upon creation:**
+
+    **Admin users** (`is_admin: true`) receive:
+
+    1. `platform_admin` role with **global scope** (`scope_id` = None)
+       - Grants unrestricted access to all platform resources
+    2. `team_admin` role with **team scope** (`scope_id` = personal team ID)
+       - Grants full management of their personal team resources
+       - Only assigned if personal team creation succeeds
+
+    **Non-admin users** (`is_admin: false`) receive:
+
+    1. `platform_viewer` role with **global scope** (`scope_id` = None)
+       - Grants read-only access to all platform resources
+    2. `team_admin` role with **team scope** (`scope_id` = personal team ID)
+       - Grants full management of their personal team resources
+       - Only assigned if personal team creation succeeds
+
+    This dual-role approach ensures:
+    - Users always have appropriate global visibility (via `platform_admin` or `platform_viewer`)
+    - Users can fully manage their personal team resources (via team-scoped `team_admin`, when available)
+    - Clear separation between team-level and platform-level permissions
+
+    The `granted_by` field tracks which admin created the user for audit purposes.
+
+!!! note "Existing Users Migration"
+    An Alembic migration (`v1a2b3c4d5e6`) automatically updates existing users without roles:
+
+    **Previous behavior (before migration):**
+    - Admin users: Only `platform_admin` with global scope (`scope_id` = None)
+    - Non-admin users: Only `viewer` with team scope (`scope_id` = None)
+
+    **After migration:**
+
+    **Admin users** receive:
+
+    1. `team_admin` role with **team scope**
+       - `scope_id` = user's personal team ID (from `email_team_members` table)
+       - Enables management of personal team resources
+    2. `platform_admin` role with **global scope**
+       - `scope_id` = None
+       - Maintains unrestricted platform access
+
+    **Non-admin users** receive:
+
+    1. `team_admin` role with **team scope**
+       - `scope_id` = user's personal team ID (from `email_team_members` table)
+       - Enables management of personal team resources
+    2. `platform_viewer` role with **global scope**
+       - `scope_id` = None
+       - Provides read-only access to platform resources
+
+    **Migration behavior:**
+    - Only affects users without existing role assignments
+    - Users without a personal team still receive their global role (team_admin is skipped)
+    - The platform admin (configured via `PLATFORM_ADMIN_EMAIL`) is excluded to preserve bootstrap configuration
+    - Migration is idempotent and safe to run multiple times
 
 ### Resources
 Protected entities:
@@ -65,42 +138,59 @@ Protected entities:
 
 ## Token Scoping Model
 
-Token scoping controls what resources a token can access based on the `teams` claim in the JWT payload. This provides fine-grained access control for automation tokens, service accounts, and restricted user sessions.
+Token scoping controls what resources a token can access based on the `teams` claim in the JWT payload. The `normalize_token_teams()` function is the **single source of truth** for interpreting JWT team claims across all enforcement points.
 
-### Teams Claim Semantics
+### Token Scoping Contract
 
-The `teams` claim in JWT tokens determines resource visibility:
+The `teams` claim in JWT tokens determines resource visibility. The system follows a **secure-first design**: when in doubt, access is denied.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                        Token Teams Claim Handling                           │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  JWT Claim State          │  Admin User           │  Non-Admin User         │
+│  JWT Claim State          │  is_admin: true       │  is_admin: false        │
 ├───────────────────────────┼───────────────────────┼─────────────────────────┤
-│  No "teams" key           │  UNRESTRICTED         │  PUBLIC-ONLY (secure)   │
-│  teams: null              │  UNRESTRICTED         │  PUBLIC-ONLY (secure)   │
-│  teams: []                │  PUBLIC-ONLY          │  PUBLIC-ONLY            │
+│  No "teams" key           │  PUBLIC-ONLY []       │  PUBLIC-ONLY []         │
+│  teams: null              │  ADMIN BYPASS (None)  │  PUBLIC-ONLY []         │
+│  teams: []                │  PUBLIC-ONLY []       │  PUBLIC-ONLY []         │
 │  teams: ["team-id"]       │  Team + Public        │  Team + Public          │
 │  teams: ["t1", "t2"]      │  Both Teams + Public  │  Both Teams + Public    │
 └───────────────────────────┴───────────────────────┴─────────────────────────┘
 ```
 
+!!! warning "Admin Bypass Requirements"
+    Admin bypass (unrestricted access) requires **BOTH** conditions:
+
+    1. `teams: null` (explicit null, not missing key)
+    2. `is_admin: true`
+
+    A missing `teams` key always results in public-only access, even for admins.
+    An empty `teams: []` also results in public-only access, even for admins.
+
+### Return Value Semantics
+
+| Return Value | Meaning | Query Behavior |
+|--------------|---------|----------------|
+| `None` | Admin bypass | Skip ALL team filtering |
+| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY |
+| `["t1", "t2"]` | Team-scoped | Filter to team resources + public |
+
 ### Security Design Principles
 
-1. **Principle of Least Privilege**
+1. **Secure-First Defaults**
 
-   - Non-admin tokens without explicit team scope default to public-only access
-   - This prevents accidental exposure of team resources
+   - Missing `teams` key always returns `[]` (public-only access)
+   - This prevents accidental exposure when tokens are misconfigured
 
-2. **Scoped Automation Tokens**
+2. **Explicit Admin Bypass**
 
-   - Admin tokens with `teams: []` are intentionally restricted to public resources
+   - Admin bypass requires explicit `teams: null` AND `is_admin: true`
+   - Empty teams `[]` disables bypass even for admins
+
+3. **Scoped Automation Tokens**
+
+   - Tokens with `teams: []` are intentionally restricted to public resources
    - Use case: CI/CD pipelines, monitoring systems, public API clients
-
-3. **Backward Compatible Admin Access**
-
-   - Admin session tokens (from UI login) omit the teams claim entirely
-   - This grants unrestricted access for administrative operations
 
 ### Token Scoping Flow
 
@@ -120,32 +210,44 @@ The `teams` claim in JWT tokens determines resource visibility:
                           │                               │
                           ▼                               ▼
                ┌─────────────────────┐       ┌─────────────────────┐
-               │ "teams" key exists  │       │ "teams" key missing │
-               │ with non-null value │       │ OR teams: null      │
+               │ "teams" key EXISTS  │       │ "teams" key MISSING │
                └──────────┬──────────┘       └──────────┬──────────┘
                           │                             │
                           ▼                             ▼
                ┌─────────────────────┐       ┌─────────────────────┐
-               │ Use explicit scope  │       │ Check is_admin flag │
-               │ teams = [...] or [] │       └──────────┬──────────┘
-               └──────────┬──────────┘                  │
-                          │                 ┌───────────┴───────────┐
-                          │                 │                       │
-                          │                 ▼                       ▼
-                          │      ┌──────────────────┐   ┌──────────────────┐
-                          │      │ Admin: teams =   │   │ Non-Admin:       │
-                          │      │ None (bypass)    │   │ teams = []       │
-                          │      │ UNRESTRICTED     │   │ PUBLIC-ONLY      │
-                          │      └────────┬─────────┘   └────────┬─────────┘
-                          │               │                      │
-                          └───────────────┴──────────────────────┘
-                                          │
-                                          ▼
-                              ┌───────────────────────┐
-                              │   Apply visibility    │
-                              │   filter to query     │
-                              └───────────────────────┘
+               │ Check teams value   │       │ Return []           │
+               └──────────┬──────────┘       │ PUBLIC-ONLY         │
+                          │                  │ (secure default)    │
+          ┌───────────────┼───────────────┐  └─────────────────────┘
+          │               │               │
+          ▼               ▼               ▼
+  ┌───────────────┐ ┌───────────┐ ┌───────────────┐
+  │ teams: null   │ │ teams: [] │ │ teams: [...]  │
+  └───────┬───────┘ └─────┬─────┘ └───────┬───────┘
+          │               │               │
+          ▼               │               ▼
+  ┌───────────────┐       │       ┌───────────────┐
+  │ Check is_admin│       │       │ Return [...]  │
+  └───────┬───────┘       │       │ TEAM-SCOPED   │
+          │               │       └───────────────┘
+    ┌─────┴─────┐         │
+    │           │         │
+    ▼           ▼         ▼
+┌────────┐ ┌────────┐ ┌────────┐
+│ Admin  │ │Non-Adm │ │ Empty  │
+│ true   │ │ false  │ │ list   │
+├────────┤ ├────────┤ ├────────┤
+│ Return │ │ Return │ │ Return │
+│ None   │ │ []     │ │ []     │
+│ BYPASS │ │ PUBLIC │ │ PUBLIC │
+└────────┘ └────────┘ └────────┘
 ```
+
+!!! note "Key Insight"
+    The difference between `teams: null` and missing `teams` key is critical:
+
+    - **Missing key**: Always `[]` (public-only) - secure default
+    - **Explicit null**: Admin bypass when `is_admin: true`, otherwise `[]`
 
 ### Visibility Levels
 
@@ -154,20 +256,42 @@ Resources in MCP Gateway have three visibility levels:
 | Visibility | Description | Who Can See |
 |------------|-------------|-------------|
 | `public` | Accessible to all authenticated users | Everyone with valid token |
-| `team` | Accessible to team members only | Team members + admins (unrestricted) |
-| `private` | Accessible to owner only | Resource owner + admins (unrestricted) |
+| `team` | Accessible to team members only | Team members + admins (with bypass) |
+| `private` | Accessible to owner only | Resource owner + admins (with bypass) |
+
+### Access Matrix by Token Type
+
+| Token Type | Public Resources | Team Resources | Private Resources |
+|------------|-----------------|----------------|-------------------|
+| Admin Bypass (`teams=null`, `is_admin=true`) | ✅ | ✅ (all teams) | ✅ (all) |
+| Team-Scoped (`teams=["t1"]`) | ✅ | ✅ (own team) | ✅ (own only) |
+| Public-Only (`teams=[]`) | ✅ | ❌ | ❌ |
+
+!!! warning "Public-Only Token Limitations"
+    **Public-only tokens (`teams=[]`) cannot access private resources, even if the resource is owned by the token's user.**
+
+    This is intentional security behavior - public-only tokens are designed for limited-scope access to public resources only. To access private resources, users must use a team-scoped token that includes their personal team.
+
+    ```
+    # Public-only token behavior:
+    # ✅ Can access: visibility='public' resources
+    # ❌ Cannot access: visibility='team' resources (any team)
+    # ❌ Cannot access: visibility='private' resources (even if owned by user)
+    ```
 
 ### Enforcement Points
 
 Token scoping is enforced consistently across all access paths:
 
-| Layer | Location | Description |
-|-------|----------|-------------|
-| Middleware | `token_scoping.py` | Request-level access control |
-| REST API | `main.py` | `/tools`, `/resources`, `/prompts` endpoints |
-| RPC Handler | `main.py` | `tools/list`, `resources/list`, `prompts/list` |
-| MCP Transport | `streamablehttp_transport.py` | Streamable HTTP protocol filtering |
-| Service Layer | `*_service.py` | Database query filtering |
+| Location | Token Scoping | RBAC | Description |
+|----------|--------------|------|-------------|
+| Token Scoping Middleware | ✅ | N/A | Request-level data filtering |
+| REST API Endpoints | ✅ | ✅ | `@require_permission` decorators |
+| RPC Handler (`/rpc`) | ✅ | Varies | Method-specific permission checks |
+| Admin UI | ✅ | ✅ | Permission-based UI rendering |
+| Service Layer | ✅ | N/A | Database query filtering |
+| WebSocket | ✅ | ✅ | Forwards auth to /rpc |
+| MCP Transport | ✅ | N/A | Streamable HTTP protocol filtering |
 
 ---
 
@@ -179,16 +303,16 @@ Generated when users log in via the Admin UI:
 
 ```json
 {
-  "sub": "user@example.com",
+  "sub": "admin@example.com",
   "is_admin": true,
+  "teams": null,
   "iss": "mcpgateway",
   "aud": "mcpgateway-api",
   "exp": 1234567890
-  // Note: No "teams" key for admin users = unrestricted access
 }
 ```
 
-**Behavior**: Admin session tokens omit the `teams` claim, granting unrestricted access to all resources.
+**Behavior**: Admin session tokens should set `teams: null` (explicit null) combined with `is_admin: true` to enable admin bypass (unrestricted access to all resources).
 
 ### API Tokens (Programmatic Access)
 
@@ -269,6 +393,163 @@ python3 -m mcpgateway.utils.create_jwt_token \
 
 ---
 
+## Permission System
+
+### Permission Categories
+
+Permissions are defined in the `Permissions` class and control what actions users can perform:
+
+| Category | Permissions |
+|----------|-------------|
+| **Users** | users.create, users.read, users.update, users.delete, users.invite |
+| **Teams** | teams.create, teams.read, teams.update, teams.delete, teams.join, teams.manage_members |
+| **Tools** | tools.create, tools.read, tools.update, tools.delete, tools.execute |
+| **Resources** | resources.create, resources.read, resources.update, resources.delete, resources.share |
+| **Gateways** | gateways.create, gateways.read, gateways.update, gateways.delete |
+| **Prompts** | prompts.create, prompts.read, prompts.update, prompts.delete, prompts.execute |
+| **Servers** | servers.create, servers.read, servers.update, servers.delete, servers.manage |
+| **Tokens** | tokens.create, tokens.read, tokens.update, tokens.revoke |
+| **Admin** | admin.system_config, admin.user_management, admin.security_audit, admin.overview, admin.dashboard, admin.events, admin.grpc, admin.plugins |
+| **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
+| **Tags** | tags.read, tags.create, tags.update, tags.delete |
+| **Wildcard** | `*` (all permissions) |
+
+### Permission Checking Flow
+
+```
+@require_permission("resource.action")
+    │
+    ▼
+┌─────────────────────────────┐
+│ Extract user_context        │ ← From request/kwargs
+└─────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────┐
+│ Plugin Permission Hook      │ ← HTTP_AUTH_CHECK_PERMISSION can override
+└─────────────────────────────┘
+    │ (no plugin decision)
+    ▼
+┌─────────────────────────────┐
+│ Admin Bypass Check          │ ← If allow_admin_bypass=True AND user.is_admin
+└─────────────────────────────┘
+    │ (not admin or bypass disabled)
+    ▼
+┌─────────────────────────────┐
+│ Role Collection             │ ← Get all active roles for user
+│ - Global scope roles        │
+│ - Personal scope roles      │
+│ - Team scope roles          │
+└─────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────┐
+│ Permission Aggregation      │ ← Collect permissions from roles
+│ - Include inherited perms   │   (role inheritance supported)
+│ - Check for wildcard (*)    │
+└─────────────────────────────┘
+    │
+    ▼
+┌─────────────────────────────┐
+│ Fallback Permission Check   │ ← Implicit permissions (see below)
+└─────────────────────────────┘
+    │
+    ▼
+  GRANT or DENY
+```
+
+### Fallback Permissions
+
+The system grants implicit permissions without explicit role assignment. These are **not** shown in `/rbac/my/permissions` but are effective:
+
+| User Context | Implicit Permissions |
+|--------------|---------------------|
+| Any authenticated user | teams.create, teams.read |
+| Team member | teams.read (for their teams) |
+| Team owner | teams.read, teams.update, teams.delete, teams.manage_members |
+| Any authenticated user | tokens.* (for own tokens only) |
+
+!!! info "Why Fallback Permissions Exist"
+    Fallback permissions enable basic functionality without requiring explicit role assignment:
+
+    - Users can always create and view teams they belong to
+    - Team owners automatically have management rights
+    - Users can always manage their own API tokens
+
+### Admin API RBAC
+
+The Admin API enforces **strict RBAC** where even users with `is_admin: true` must have explicit permissions granted. This enables **delegated administration** - granting specific admin capabilities without full superuser access.
+
+**Key behaviors:**
+
+| Aspect | Behavior |
+|--------|----------|
+| Admin bypass | `allow_admin_bypass=False` on all admin routes |
+| `is_admin` flag | Does NOT bypass permission checks |
+| UI entry | Requires any `admin.*` permission via `has_admin_permission()` |
+| Route protection | All 177 admin routes use `@require_permission` decorators |
+
+**Example: Delegated Server Management**
+
+```json
+{
+  "role": "server-manager",
+  "permissions": [
+    "servers.read",
+    "servers.create",
+    "servers.update",
+    "servers.delete"
+  ]
+}
+```
+
+A user with this role can:
+
+- ✅ Access `/admin/servers/*` endpoints
+- ✅ View the Admin UI (has `servers.*` which satisfies `has_admin_permission()`)
+- ❌ Access `/admin/tools/*` endpoints (no `tools.*` permissions)
+- ❌ Access `/admin/gateways/*` endpoints (no `gateways.*` permissions)
+
+!!! warning "Platform Admin Role"
+    The built-in `platform_admin` role has `["*"]` (wildcard) permissions, which grants access to all operations. For delegated administration, create custom roles with specific permission sets.
+
+---
+
+## Configuration Safety
+
+### Development vs Production Settings
+
+The following configuration combinations require careful consideration:
+
+| Setting | Value | Impact | Recommended Use |
+|---------|-------|--------|-----------------|
+| `AUTH_REQUIRED` | `false` | All requests granted admin access | Development only |
+| `TRUST_PROXY_AUTH` | `true` + `MCP_CLIENT_AUTH_ENABLED=false` | Trust `X-Forwarded-User` header without verification | Behind trusted reverse proxy only |
+
+### Proxy Authentication Mode
+
+When `MCP_CLIENT_AUTH_ENABLED=false` and `TRUST_PROXY_AUTH=true`:
+
+- The gateway trusts the `X-Forwarded-User` header from upstream proxy
+- No JWT validation or database verification is performed
+- **Only use** when deployed behind a trusted reverse proxy that handles authentication
+
+!!! danger "Security Warning"
+    Proxy authentication mode should only be used in trusted network environments where the reverse proxy is the only entry point to the gateway. Exposing the gateway directly to untrusted networks with this configuration allows header injection attacks.
+
+### Anonymous Mode (AUTH_REQUIRED=false)
+
+When `AUTH_REQUIRED=false`:
+
+- All unauthenticated requests receive platform-admin context
+- **Never use in production** - all users have full admin access
+- Intended only for local development and testing
+
+!!! danger "Production Warning"
+    Setting `AUTH_REQUIRED=false` in production grants administrative access to all requests. This completely bypasses authentication and authorization.
+
+---
+
 ## Best Practices
 
 ### Token Lifecycle
@@ -294,7 +575,7 @@ python3 -m mcpgateway.utils.create_jwt_token \
 
 | Use Case | Recommended Token Scope |
 |----------|------------------------|
-| Admin UI access | Session token (no teams key) |
+| Admin UI access | Session token (`teams: null` + `is_admin: true`) |
 | CI/CD pipeline | `teams: []` (public-only) |
 | Service integration | Specific team(s) |
 | Developer access | Personal team + project teams |

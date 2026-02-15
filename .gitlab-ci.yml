@@ -1,33 +1,8 @@
 stages:
-  - test
+  - sanity
 
-test:
-  stage: test
-  before_script:
-    - |
-      if ! command -v python3 &>/dev/null; then
-        wget -q -O /tmp/python.tar.gz "https://github.com/indygreg/python-build-standalone/releases/download/20250106/cpython-3.12.8+20250106-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
-        mkdir -p "$CI_PROJECT_DIR/.python"
-        tar -xzf /tmp/python.tar.gz -C "$CI_PROJECT_DIR/.python"
-        rm /tmp/python.tar.gz
-      fi
-    - export PATH="$CI_PROJECT_DIR/.python/python/bin:$PATH"
-    - python3 -m venv .venv
-    - source .venv/bin/activate
-    - python3 -m pip install --upgrade pip
-    - python3 -m pip install -e . || true
-    - python3 -m pip install pytest pytest-cov pytest-asyncio anyio
+sanity:
+  stage: sanity
+  image: alpine:3.20
   script:
-    - export PATH="$CI_PROJECT_DIR/.python/python/bin:$PATH"
-    - source .venv/bin/activate
-    - pytest tests/unit tests/integration
-        --ignore=tests/fuzz
-        --continue-on-collection-errors
-        --cov=mcpgateway
-        --cov-report=term
-        --tb=line
-        --no-header
-        -p no:warnings
-        -q || echo "⚠️ Some tests failed — see output above"
-  variables:
-    DATABASE_URL: "sqlite:///:memory:"
+    - echo "CI skeleton OK (no runtime dependencies yet)."

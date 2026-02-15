@@ -18,6 +18,7 @@ import hashlib
 import logging
 import secrets
 import string
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
@@ -444,15 +445,44 @@ class SSOService:
             >>> asyncio.run(svc4.handle_oauth_callback('github', 'c', 'st')) is None
             True
         """
+        callback_result = await self.handle_oauth_callback_with_tokens(provider_id, code, state)
+        if not callback_result:
+            return None
+        user_info, _token_data = callback_result
+        return user_info
+
+    async def handle_oauth_callback_with_tokens(self, provider_id: str, code: str, state: str) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Handle OAuth callback and return both user info and raw token response.
+
+        Args:
+            provider_id: Provider identifier
+            code: Authorization code from callback
+            state: CSRF state parameter
+
+        Returns:
+            Tuple of (user_info, token_data) or None if authentication fails
+        """
         # Validate auth session
         stmt = select(SSOAuthSession).where(SSOAuthSession.state == state, SSOAuthSession.provider_id == provider_id)
         auth_session = self.db.execute(stmt).scalar_one_or_none()
 
-        if not auth_session or auth_session.is_expired:
+        if not auth_session:
+            logger.warning(f"OAuth callback: no auth session found for state/provider {provider_id}. Possible CSRF or replay.")
+            return None
+
+        if auth_session.is_expired:
+            logger.warning(f"OAuth callback: auth session expired for provider {provider_id}.")
+            self.db.delete(auth_session)
+            self.db.commit()
             return None
 
         provider = auth_session.provider
-        if not provider or not provider.is_enabled:
+        if not provider:
+            logger.error(f"OAuth callback: provider '{provider_id}' not found for auth session.")
+            return None
+
+        if not provider.is_enabled:
+            logger.warning(f"OAuth callback: provider '{provider_id}' is disabled.")
             return None
 
         try:
@@ -474,7 +504,7 @@ class SSOService:
             self.db.delete(auth_session)
             self.db.commit()
 
-            return user_info
+            return user_info, token_data
 
         except Exception as e:
             # Clean up auth session on error
@@ -531,6 +561,10 @@ class SSOService:
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         client = await get_http_client()
+        keycloak_id_token_claims: Optional[Dict[str, Any]] = None
+        if provider.id == "keycloak" and token_data and "id_token" in token_data:
+            keycloak_id_token_claims = self._decode_jwt_claims(token_data["id_token"])
+
         response = await client.get(provider.userinfo_url, headers={"Authorization": f"Bearer {access_token}"})
 
         if response.status_code == 200:
@@ -584,16 +618,31 @@ class SSOService:
                             user_data[claim] = id_token_claims[claim]
 
             # For Keycloak, also extract groups/roles from id_token if available
-            if provider.id == "keycloak" and token_data and "id_token" in token_data:
-                id_token_claims = self._decode_jwt_claims(token_data["id_token"])
-                if id_token_claims:
-                    # Keycloak includes realm_access, resource_access, and groups in id_token
-                    for claim in ["realm_access", "resource_access", "groups"]:
-                        if claim in id_token_claims and claim not in user_data:
-                            user_data[claim] = id_token_claims[claim]
+            if provider.id == "keycloak" and keycloak_id_token_claims:
+                # Keycloak includes realm_access, resource_access, and groups in id_token
+                for claim in ["realm_access", "resource_access", "groups"]:
+                    if claim in keycloak_id_token_claims and claim not in user_data:
+                        user_data[claim] = keycloak_id_token_claims[claim]
 
             # Normalize user info across providers
             return self._normalize_user_info(provider, user_data)
+
+        # Keycloak can issue tokens using the browser-facing issuer URL; if userinfo
+        # is called on a different host/port, Keycloak may reject the token with 401.
+        # Only fall back to id_token claims for 401 with split-host configuration.
+        # Other errors (403=revoked, 500=server error) must NOT fall back — the user
+        # should be denied access, not silently authenticated via stale id_token claims.
+        if provider.id == "keycloak" and keycloak_id_token_claims and response.status_code == 401:
+            metadata = provider.provider_metadata or {}
+            public_base_url = metadata.get("public_base_url")
+            if public_base_url and public_base_url != metadata.get("base_url"):
+                logger.warning(
+                    "User info request returned 401 for keycloak with split-host config (public=%s, internal=%s). Falling back to id_token claims.",
+                    public_base_url,
+                    metadata.get("base_url"),
+                )
+                return self._normalize_user_info(provider, keycloak_id_token_claims)
+
         logger.error(f"User info request failed for {provider.name}: HTTP {response.status_code} - {response.text}")
 
         return None
@@ -752,58 +801,111 @@ class SSOService:
         Returns:
             JWT token for authenticated user or None if failed
         """
-        email = user_info.get("email")
-        if not email:
+        raw_email = user_info.get("email")
+        if not raw_email:
+            logger.warning("SSO authenticate_or_create_user: no email in user_info from provider '%s'. User cannot be authenticated without an email address.", user_info.get("provider", "unknown"))
             return None
+
+        email = str(raw_email).strip().lower()
+        if not email:
+            logger.warning("SSO authenticate_or_create_user: email is empty after normalization from provider '%s'.", user_info.get("provider", "unknown"))
+            return None
+
+        # Use stable local values for JWT payload generation to avoid lazy-loading
+        # expired ORM attributes after commit/flush boundaries.
+        resolved_email = email
+        resolved_full_name = user_info.get("full_name", email)
+        resolved_auth_provider = user_info.get("provider", "sso")
+        resolved_is_admin = False
 
         # Check if user exists
         user = await self.auth_service.get_user_by_email(email)
 
         if user:
+            current_full_name = user.full_name or resolved_full_name
+            current_auth_provider = user.auth_provider or resolved_auth_provider
+            current_is_admin = bool(user.is_admin)
+            current_admin_origin = user.admin_origin
+
+            provider = self.get_provider(user_info.get("provider"))
+            provider_id: Optional[str] = None
+            provider_metadata: Dict[str, Any] = {}
+            provider_ctx: Optional[Any] = None
+            if provider:
+                provider_id = provider.id
+                provider_metadata = provider.provider_metadata or {}
+                provider_ctx = SimpleNamespace(id=provider_id, provider_metadata=provider_metadata)
+
             # Update user info from SSO
-            if user_info.get("full_name") and user_info["full_name"] != user.full_name:
+            if user_info.get("full_name") and user_info["full_name"] != current_full_name:
                 user.full_name = user_info["full_name"]
+                current_full_name = user_info["full_name"]
 
             # Update auth provider if changed
-            if user.auth_provider == "local" or user.auth_provider != user_info.get("provider"):
-                user.auth_provider = user_info.get("provider", "sso")
+            incoming_provider = user_info.get("provider", "sso")
+            if current_auth_provider == "local" or current_auth_provider != incoming_provider:
+                user.auth_provider = incoming_provider
+                current_auth_provider = incoming_provider
 
             # Mark email as verified for SSO users
             user.email_verified = True
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership
-            # NOTE: Only UPGRADE is_admin via SSO, never downgrade
-            # This preserves manual admin grants made via Admin UI/API
-            # To revoke admin access, use the Admin UI/API directly
-            provider = self.get_provider(user_info.get("provider"))
-            if provider:
-                should_be_admin = self._should_user_be_admin(email, user_info, provider)
-                if should_be_admin and not user.is_admin:
-                    logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
-                    user.is_admin = True
+            # Track origin to support both promotion AND demotion for SSO-granted admins
+            # Manual/API grants are "sticky" - never auto-demoted by SSO
+            # Only users with admin_origin="sso" can be demoted on login
+            if provider_ctx:
+                should_be_admin = self._should_user_be_admin(email, user_info, provider_ctx)
+                if should_be_admin:
+                    # Grant admin access
+                    if not current_is_admin:
+                        logger.info(f"Upgrading is_admin to True for {email} based on SSO admin groups")
+                        user.is_admin = True
+                        # Track that admin was granted via SSO (only set on initial grant)
+                        user.admin_origin = "sso"
+                        current_is_admin = True
+                        current_admin_origin = "sso"
+                    # Do NOT change admin_origin if already admin - preserve manual/API grants
+                elif current_is_admin and current_admin_origin == "sso":
+                    # User was SSO admin but no longer in admin groups - revoke access
+                    logger.info(f"Revoking is_admin for {email} - removed from SSO admin groups")
+                    user.is_admin = False
+                    user.admin_origin = None
+                    current_is_admin = False
+                    current_admin_origin = None
 
             self.db.commit()
 
             # Determine if syncing should happen (default True, respect provider-level and Entra setting)
             should_sync = True
-            if provider:
+            if provider_ctx:
                 # Check provider-level sync_roles flag in provider_metadata (allows disabling per-provider)
-                metadata = provider.provider_metadata or {}
-                if "sync_roles" in metadata:
-                    should_sync = metadata.get("sync_roles", True)
+                if "sync_roles" in provider_metadata:
+                    should_sync = provider_metadata.get("sync_roles", True)
                 # Legacy Entra-specific setting (fallback for backwards compatibility)
-                elif provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+                elif provider_id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
                     should_sync = settings.sso_entra_sync_roles_on_login
 
-            if provider and should_sync:
-                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
-                await self._sync_user_roles(email, role_assignments, provider)
+            if provider_ctx and should_sync:
+                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
+                await self._sync_user_roles(email, role_assignments, provider_ctx)
+
+            user_email = getattr(user, "email", None)
+            if isinstance(user_email, str) and user_email.strip():
+                resolved_email = user_email.strip().lower()
+            resolved_full_name = current_full_name
+            resolved_auth_provider = current_auth_provider
+            resolved_is_admin = current_is_admin
         else:
             # Auto-create user if enabled
             provider = self.get_provider(user_info.get("provider"))
             if not provider or not provider.auto_create_users:
                 return None
+
+            provider_id = provider.id
+            provider_metadata = provider.provider_metadata or {}
+            provider_ctx = SimpleNamespace(id=provider_id, provider_metadata=provider_metadata)
 
             # Check trusted domains if configured
             if provider.trusted_domains:
@@ -846,7 +948,7 @@ class SSOService:
             random_password = "".join(secrets.choice(string.ascii_letters + string.digits + string.punctuation) for _ in range(32))
 
             # Determine if user should be admin based on domain/organization
-            is_admin = self._should_user_be_admin(email, user_info, provider)
+            is_admin = self._should_user_be_admin(email, user_info, provider_ctx)
 
             user = await self.auth_service.create_user(
                 email=email,
@@ -858,18 +960,24 @@ class SSOService:
             if not user:
                 return None
 
+            user_email = getattr(user, "email", None)
+            if isinstance(user_email, str) and user_email.strip():
+                resolved_email = user_email.strip().lower()
+            resolved_full_name = user_info.get("full_name", email)
+            resolved_auth_provider = user_info.get("provider", "sso")
+            resolved_is_admin = is_admin
+
             # Assign RBAC roles based on SSO groups (or default role if no groups)
             # Check provider-level sync_roles flag in provider_metadata
-            metadata = provider.provider_metadata or {}
-            should_sync = metadata.get("sync_roles", True)
+            should_sync = provider_metadata.get("sync_roles", True)
             # Legacy Entra-specific setting (fallback for backwards compatibility)
-            if "sync_roles" not in metadata and provider.id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
+            if "sync_roles" not in provider_metadata and provider_id == "entra" and hasattr(settings, "sso_entra_sync_roles_on_login"):
                 should_sync = settings.sso_entra_sync_roles_on_login
 
             if should_sync:
-                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider)
+                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
                 if role_assignments:
-                    await self._sync_user_roles(email, role_assignments, provider)
+                    await self._sync_user_roles(email, role_assignments, provider_ctx)
 
             # If user was created from approved request, mark request as used
             if settings.sso_require_admin_approval:
@@ -879,28 +987,23 @@ class SSOService:
                     pending.status = "completed"
                     self.db.commit()
 
-        # Generate JWT token for user
+        # Generate JWT token for user — session token (teams resolved server-side)
         token_data = {
-            "sub": user.email,
-            "email": user.email,
-            "full_name": user.full_name,
-            "auth_provider": user.auth_provider,
+            "sub": resolved_email,
+            "email": resolved_email,
+            "full_name": resolved_full_name,
+            "auth_provider": resolved_auth_provider,
             "iat": int(utc_now().timestamp()),
-            "user": {"email": user.email, "full_name": user.full_name, "is_admin": user.is_admin, "auth_provider": user.auth_provider},
+            "user": {
+                "email": resolved_email,
+                "full_name": resolved_full_name,
+                "is_admin": resolved_is_admin,
+                "auth_provider": resolved_auth_provider,
+            },
+            "token_use": "session",  # nosec B105 - token type marker, not a password
+            # Scopes
+            "scopes": {"server_id": None, "permissions": ["*"] if resolved_is_admin else [], "ip_restrictions": [], "time_restrictions": {}},
         }
-
-        # Add user teams to token
-        teams = user.get_teams()
-        token_data["teams"] = [team.id for team in teams]
-
-        # Add namespaces for RBAC
-        namespaces = [f"user:{user.email}"]
-        namespaces.extend([f"team:{team.slug}" for team in teams])
-        namespaces.append("public")
-        token_data["namespaces"] = namespaces
-
-        # Add scopes
-        token_data["scopes"] = {"server_id": None, "permissions": ["*"] if user.is_admin else [], "ip_restrictions": [], "time_restrictions": {}}
 
         # Create JWT token
         token = await create_jwt_token(token_data)
@@ -963,28 +1066,61 @@ class SSOService:
         # Generic Role Mapping Logic
         metadata = provider.provider_metadata or {}
         role_mappings = metadata.get("role_mappings", {})
+        provider_default_role: Optional[str] = metadata.get("default_role")
+        resolve_team_scope_to_personal_team = bool(metadata.get("resolve_team_scope_to_personal_team", False))
+        has_provider_default_role = isinstance(provider_default_role, str) and bool(provider_default_role.strip())
 
         # Merge with legacy Entra specific settings if applicable
         has_entra_admin_groups = provider.id == "entra" and settings.sso_entra_admin_groups
-        has_entra_default_role = provider.id == "entra" and settings.sso_entra_default_role
 
         if provider.id == "entra":
             # Use generic role_mappings fallback to legacy setting
             if not role_mappings and settings.sso_entra_role_mappings:
                 role_mappings = settings.sso_entra_role_mappings
+            # Legacy fallback for default role configuration
+            if not has_provider_default_role and settings.sso_entra_default_role:
+                provider_default_role = settings.sso_entra_default_role
+                has_provider_default_role = True
 
         # Early exit: Skip role mapping if no configuration exists
-        if not role_mappings and not has_entra_admin_groups and not has_entra_default_role:
+        if not role_mappings and not has_entra_admin_groups and not has_provider_default_role:
             logger.debug(f"No role mappings configured for provider {provider.id}, skipping role sync")
             return role_assignments
 
-        # Handle EntraID admin groups -> platform_admin
+        personal_team_id: Optional[str] = None
+        personal_team_checked = False
+
+        async def _resolve_team_scope_id_if_needed(role_scope: str) -> Optional[str]:
+            nonlocal personal_team_id, personal_team_checked
+
+            if role_scope != "team" or not resolve_team_scope_to_personal_team:
+                return None
+
+            if personal_team_checked:
+                return personal_team_id
+
+            personal_team_checked = True
+            try:
+                # First-Party
+                from mcpgateway.services.personal_team_service import PersonalTeamService
+
+                personal_team = await PersonalTeamService(self.db).get_personal_team(user_email)
+                personal_team_id = personal_team.id if personal_team else None
+                if not personal_team_id:
+                    logger.warning(f"Could not resolve personal team for {user_email}; skipping team-scoped SSO role mapping")
+            except Exception as e:
+                logger.error(f"Failed to resolve personal team for {user_email}: {e}. All team-scoped SSO role assignments will be skipped for this login.")
+                personal_team_id = None
+
+            return personal_team_id
+
+        # Handle EntraID admin groups -> admin role
         if has_entra_admin_groups:
             admin_groups_lower = [g.lower() for g in settings.sso_entra_admin_groups]
             for group in user_groups:
                 if group.lower() in admin_groups_lower:
-                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped EntraID admin group to platform_admin role for {user_email}")
+                    role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped EntraID admin group to {settings.default_admin_role} role for {user_email}")
                     break  # Only need one admin assignment
 
         # Batch role lookups: collect all role names that need to be looked up
@@ -992,12 +1128,12 @@ class SSOService:
         for group in user_groups:
             if group in role_mappings:
                 role_name = role_mappings[group]
-                if role_name not in ["admin", "platform_admin"]:
+                if role_name not in ["admin", settings.default_admin_role]:
                     role_names_to_lookup.add(role_name)
 
         # Add default role to lookup if needed
-        if has_entra_default_role:
-            role_names_to_lookup.add(settings.sso_entra_default_role)
+        if has_provider_default_role and provider_default_role:
+            role_names_to_lookup.add(provider_default_role)
 
         # Pre-fetch all roles by name in batches (reduces DB round-trips)
         role_service = RoleService(self.db)
@@ -1014,27 +1150,33 @@ class SSOService:
         for group in user_groups:
             if group in role_mappings:
                 role_name = role_mappings[group]
-                # Special case for "admin"/"platform_admin" shorthand
-                if role_name in ["admin", "platform_admin"]:
-                    role_assignments.append({"role_name": "platform_admin", "scope": "global", "scope_id": None})
-                    logger.debug(f"Mapped group to platform_admin role for {user_email}")
+                # Special case for "admin" shorthand or configured admin role name
+                if role_name in ["admin", settings.default_admin_role]:
+                    role_assignments.append({"role_name": settings.default_admin_role, "scope": "global", "scope_id": None})
+                    logger.debug(f"Mapped group to {settings.default_admin_role} role for {user_email}")
                     continue
 
                 # Use pre-fetched role from cache
                 role = role_cache.get(role_name)
                 if role:
+                    scope_id = await _resolve_team_scope_id_if_needed(role.scope)
+                    if role.scope == "team" and resolve_team_scope_to_personal_team and not scope_id:
+                        continue
                     # Avoid duplicate assignments
-                    if not any(r["role_name"] == role.name for r in role_assignments):
-                        role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": None})
+                    if not any(r["role_name"] == role.name and r["scope"] == role.scope and r.get("scope_id") == scope_id for r in role_assignments):
+                        role_assignments.append({"role_name": role.name, "scope": role.scope, "scope_id": scope_id})
                         logger.debug(f"Mapped group to role '{role.name}' for {user_email}")
                 else:
                     logger.warning(f"Role '{role_name}' not found for group mapping")
 
-        # Apply default role if no mappings found (Entra legacy fallback)
-        if not role_assignments and has_entra_default_role:
-            default_role = role_cache.get(settings.sso_entra_default_role)
+        # Apply default role if no mappings found
+        if not role_assignments and has_provider_default_role and provider_default_role:
+            default_role = role_cache.get(provider_default_role)
             if default_role:
-                role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": None})
+                scope_id = await _resolve_team_scope_id_if_needed(default_role.scope)
+                if default_role.scope == "team" and resolve_team_scope_to_personal_team and not scope_id:
+                    return role_assignments
+                role_assignments.append({"role_name": default_role.name, "scope": default_role.scope, "scope_id": scope_id})
                 logger.info(f"Assigned default role '{default_role.name}' to {user_email}")
 
         return role_assignments
@@ -1086,3 +1228,8 @@ class SSOService:
 
             except Exception as e:
                 logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}")
+                try:
+                    self.db.rollback()
+                except Exception as rollback_error:
+                    logger.error(f"Database rollback failed after role assignment error for {user_email}: {rollback_error}. Aborting remaining role assignments.")
+                    break

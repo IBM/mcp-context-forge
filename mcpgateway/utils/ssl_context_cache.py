@@ -23,6 +23,21 @@ def get_cached_ssl_context(ca_certificate: str) -> ssl.SSLContext:
     Returns:
         ssl.SSLContext: Configured SSL context
 
+    Examples:
+        The actual `ssl.SSLContext.load_verify_locations()` call requires valid PEM
+        data; in doctests we mock it to focus on caching behavior.
+
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache, get_cached_ssl_context
+        >>> clear_ssl_context_cache()
+        >>> with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ...     ctx = Mock()
+        ...     mock_create.return_value = ctx
+        ...     a = get_cached_ssl_context("CERTDATA")
+        ...     b = get_cached_ssl_context(b"CERTDATA")  # same bytes => same cache entry
+        ...     (a is ctx, b is ctx, mock_create.call_count)
+        (True, True, 1)
+
     Note:
         The function handles bytes, str, and other types (for test mocks).
         SSL contexts are cached by the SHA256 hash of the certificate to
@@ -61,5 +76,16 @@ def clear_ssl_context_cache() -> None:
     - In test fixtures to ensure test isolation
     - After CA certificate rotation
     - When memory pressure requires cache cleanup
+
+    Examples:
+        >>> from unittest.mock import Mock, patch
+        >>> from mcpgateway.utils.ssl_context_cache import clear_ssl_context_cache, get_cached_ssl_context
+        >>> with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ...     mock_create.return_value = Mock()
+        ...     _ = get_cached_ssl_context("CERTDATA")
+        ...     clear_ssl_context_cache()
+        ...     _ = get_cached_ssl_context("CERTDATA")
+        ...     mock_create.call_count
+        2
     """
     _ssl_context_cache.clear()
