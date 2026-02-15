@@ -293,6 +293,9 @@ todo/
 TODO.md
 FIXMEs
 
+# Upgrade validation outputs
+artifacts/upgrade-validation*/
+
 # Debug & profiling artifacts
 debug_login_page.png
 docs/pstats.png
