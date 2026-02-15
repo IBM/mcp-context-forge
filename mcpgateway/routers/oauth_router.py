@@ -265,6 +265,8 @@ async def oauth_callback(
     Args:
         code (str): The authorization code returned by the OAuth provider.
         state (str): The state parameter for CSRF protection, which encodes the gateway ID.
+        error (str): OAuth provider error code from error callback (RFC 6749 Section 4.1.2.1).
+        error_description (str): OAuth provider error description.
         request (Request): The incoming HTTP request object.
         db (Session): The database session dependency.
 
@@ -363,14 +365,14 @@ async def oauth_callback(
 
         if not gateway:
             return HTMLResponse(
-                content="""
+                content=f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Gateway not found</p>
-                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -379,14 +381,14 @@ async def oauth_callback(
 
         if not gateway.oauth_config:
             return HTMLResponse(
-                content="""
+                content=f"""
                 <!DOCTYPE html>
                 <html>
                 <head><title>OAuth Authorization Failed</title></head>
                 <body>
                     <h1>❌ OAuth Authorization Failed</h1>
                     <p>Error: Gateway has no OAuth configuration</p>
-                    <a href="{root_path}/admin#gateways">Return to Admin Panel</a>
+                    <a href="{safe_root_path}/admin#gateways">Return to Admin Panel</a>
                 </body>
                 </html>
                 """,
@@ -447,9 +449,9 @@ async def oauth_callback(
         <body>
             <h1 class="success">✅ OAuth Authorization Successful</h1>
             <div class="info">
-                <p><strong>Gateway:</strong> {gateway.name}</p>
-                <p><strong>User ID:</strong> {result.get("user_id", "Unknown")}</p>
-                <p><strong>Expires:</strong> {result.get("expires_at", "Unknown")}</p>
+                <p><strong>Gateway:</strong> {escape(str(gateway.name))}</p>
+                <p><strong>User ID:</strong> {escape(str(result.get("user_id", "Unknown")))}</p>
+                <p><strong>Expires:</strong> {escape(str(result.get("expires_at", "Unknown")))}</p>
                 <p><strong>Status:</strong> Authorization completed successfully</p>
             </div>
 
@@ -536,7 +538,7 @@ async def oauth_callback(
         </head>
         <body>
             <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Error:</strong> {str(e)}</p>
+            <p><strong>Error:</strong> {escape(str(e))}</p>
             <p>Please check your OAuth configuration and try again.</p>
             <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>
@@ -570,7 +572,7 @@ async def oauth_callback(
         </head>
         <body>
             <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Unexpected Error:</strong> {str(e)}</p>
+            <p><strong>Unexpected Error:</strong> {escape(str(e))}</p>
             <p>Please contact your administrator for assistance.</p>
             <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>

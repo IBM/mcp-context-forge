@@ -966,7 +966,14 @@ class OAuthManager:
 
     @staticmethod
     def _is_microsoft_entra_v2_endpoint(endpoint_url: Any) -> bool:
-        """Return True when endpoint matches Entra v2 hosted on login.microsoftonline.com."""
+        """Return True when endpoint matches Entra v2 hosted on login.microsoftonline.com.
+
+        Args:
+            endpoint_url: OAuth endpoint URL to check
+
+        Returns:
+            True if the endpoint is a Microsoft Entra v2 OAuth endpoint
+        """
         if not isinstance(endpoint_url, str) or not endpoint_url:
             return False
 
@@ -978,7 +985,14 @@ class OAuthManager:
 
     @staticmethod
     def _is_enabled_flag(value: Any) -> bool:
-        """Parse boolean-like config values from oauth_config."""
+        """Parse boolean-like config values from oauth_config.
+
+        Args:
+            value: Config value to interpret as boolean
+
+        Returns:
+            True if value represents an enabled/truthy setting
+        """
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
@@ -986,7 +1000,15 @@ class OAuthManager:
         return False
 
     def _should_include_resource_parameter(self, credentials: Dict[str, Any], scopes: Any) -> bool:
-        """Determine whether RFC 8707 resource should be sent for this request."""
+        """Determine whether RFC 8707 resource should be sent for this request.
+
+        Args:
+            credentials: OAuth configuration containing resource and endpoint URLs
+            scopes: OAuth scopes for the request
+
+        Returns:
+            True if the resource parameter should be included in the request
+        """
         if not credentials.get("resource"):
             return False
 
@@ -994,10 +1016,7 @@ class OAuthManager:
             return False
 
         # Microsoft Entra v2 does not accept legacy resource with v2 scope-based requests.
-        if scopes and (
-            self._is_microsoft_entra_v2_endpoint(credentials.get("authorization_url"))
-            or self._is_microsoft_entra_v2_endpoint(credentials.get("token_url"))
-        ):
+        if scopes and (self._is_microsoft_entra_v2_endpoint(credentials.get("authorization_url")) or self._is_microsoft_entra_v2_endpoint(credentials.get("token_url"))):
             logger.info("Omitting OAuth resource parameter for Microsoft Entra v2 scope-based flow")
             return False
 
