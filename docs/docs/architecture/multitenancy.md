@@ -722,81 +722,28 @@ sequenceDiagram
 
 ## Password Management
 
-### Changing Platform Admin Password
+MCP Gateway now supports:
 
-The platform admin password can be changed using several methods:
+- Self-service forgot-password/reset flow:
+  - `POST /auth/email/forgot-password`
+  - `GET /auth/email/reset-password/{token}`
+  - `POST /auth/email/reset-password/{token}`
+- Admin unlock flow:
+  - `POST /auth/email/admin/users/{email}/unlock`
+- Admin password reset via UI and API (`PUT /auth/email/admin/users/{email}`)
 
-#### Method 1: Admin UI (Easiest)
-Use the web interface to change passwords:
+Operational guidance, Kubernetes recovery commands, emergency SQL procedures, and
+SMTP/reset configuration are documented in:
 
-1. Navigate to [http://localhost:4444/admin/#users](http://localhost:4444/admin/#users)
-2. Click "Edit" on the user account
-3. Enter a new password in the "New Password" field (leave empty to keep current password)
-4. Confirm the password in the "Confirm New Password" field
-5. Click "Update User"
-
-**Note**: Both password fields must match for the update to succeed. The form will prevent submission if passwords don't match.
-
-#### Method 2: API Endpoint
-Use the `/auth/email/change-password` endpoint after authentication:
-
-```bash
-# First, get a JWT token by logging in
-curl -X POST "http://localhost:4444/auth/email/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "email": "admin@example.com",
-    "password": "current_password"
-  }'
-
-# Use the returned JWT token to change password
-curl -X POST "http://localhost:4444/auth/email/change-password" \
-  -H "Authorization: Bearer " \
-  -H "Content-Type: application/json" \
-  -d '{
-    "old_password": "current_password",
-    "new_password": "new_secure_password"
-  }'
-```
-
-#### Method 3: Environment Variable + Migration
-1. Update `PLATFORM_ADMIN_PASSWORD` in your `.env` file
-2. Run database migration to apply the change:
-   ```bash
-   alembic upgrade head
-   ```
-
-**Note**: This method only works during initial setup. After the admin user exists, the environment variable is ignored.
-
-#### Method 4: Direct Database Update
-For emergency password resets, you can update the database directly:
-
-```bash
-# Using the application's password service
-python3 -c "
-from mcpgateway.services.argon2_service import Argon2PasswordService
-from mcpgateway.db import SessionLocal
-from mcpgateway.common.models import EmailUser
-
-service = Argon2PasswordService()
-hashed = service.hash_password('new_password')
-
-with SessionLocal() as db:
-    user = db.query(EmailUser).filter(EmailUser.email == 'admin@example.com').first()
-    if user:
-        user.password_hash = hashed
-        db.commit()
-        print('Password updated successfully')
-    else:
-        print('Admin user not found')
-"
-```
+- [Management: Password Management & Recovery](../manage/password-management.md)
 
 ### Password Security Requirements
-- Minimum 8 characters (enforced by application)
-- Uses Argon2id hashing algorithm for secure storage
-- Password change events are logged in the audit trail
-- Failed login attempts are tracked and can trigger account lockout
+
+- Argon2id hashing for stored credentials
+- One-time reset tokens (hashed in DB, configurable expiry)
+- Password reset request rate limiting
+- Failed login tracking and account lockout controls
+- Audit events for login/reset/lockout/unlock actions
 
 ### Role-Based UI Experience
 

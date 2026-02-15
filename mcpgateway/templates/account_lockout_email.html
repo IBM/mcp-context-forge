@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+  <body style="font-family: Arial, sans-serif; color: #1f2937; line-height: 1.5;">
+    <h2 style="margin-bottom: 0.5rem;">Account Temporarily Locked</h2>
+    <p>Hello {{ display_name }},</p>
+    <p>
+      Your MCP Gateway account was temporarily locked after repeated failed sign-in attempts.
+    </p>
+    <p><strong>Automatic unlock time:</strong> {{ locked_until }}</p>
+    <p>
+      If this was not you, reset your password immediately:
+      <a href="{{ reset_url }}" style="color: #2563eb;">Reset Password</a>
+    </p>
+  </body>
+</html>

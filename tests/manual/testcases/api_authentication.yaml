@@ -164,13 +164,13 @@ tests:
       - "Verify email verification status updated"
 
   - test_id: "AUTH-010"
-    endpoint: "/auth/forgot-password"
+    endpoint: "/auth/email/forgot-password"
     method: "POST"
     description: "Password reset request"
-    curl_command: 'curl -X POST http://localhost:4444/auth/forgot-password -H "Content-Type: application/json"'
+    curl_command: 'curl -X POST http://localhost:4444/auth/email/forgot-password -H "Content-Type: application/json"'
     request_body: '{"email":"admin@example.com"}'
     expected_status: 200
-    expected_response: "Password reset email sent"
+    expected_response: "If this email is registered, you will receive a reset link"
     requires_config: "Email delivery configured"
     test_steps:
       - "Request password reset for known user"

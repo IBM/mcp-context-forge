@@ -945,6 +945,103 @@
               "description": "Require authentication",
               "default": "true"
             },
+            "ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Send account lockout notification emails",
+              "default": "true"
+            },
+            "PASSWORD_RESET_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable self-service forgot/reset password flow",
+              "default": "true"
+            },
+            "PASSWORD_RESET_TOKEN_EXPIRY_MINUTES": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "description": "Password reset token expiry in minutes",
+              "default": "60"
+            },
+            "PASSWORD_RESET_RATE_LIMIT": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "description": "Maximum password reset requests per email in each window",
+              "default": "5"
+            },
+            "PASSWORD_RESET_RATE_WINDOW_MINUTES": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "description": "Password reset request rate-limit window in minutes",
+              "default": "15"
+            },
+            "PASSWORD_RESET_INVALIDATE_SESSIONS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Invalidate active sessions after successful password reset",
+              "default": "true"
+            },
+            "PASSWORD_RESET_MIN_RESPONSE_MS": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "description": "Minimum forgot-password response duration in milliseconds",
+              "default": "250"
+            },
+            "SMTP_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable SMTP delivery for auth notifications",
+              "default": "false"
+            },
+            "SMTP_HOST": {
+              "type": "string",
+              "description": "SMTP host",
+              "default": ""
+            },
+            "SMTP_PORT": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]{0,4}$",
+              "description": "SMTP port",
+              "default": "587"
+            },
+            "SMTP_USER": {
+              "type": "string",
+              "description": "SMTP username",
+              "default": ""
+            },
+            "SMTP_PASSWORD": {
+              "type": "string",
+              "description": "SMTP password",
+              "default": ""
+            },
+            "SMTP_FROM_EMAIL": {
+              "type": "string",
+              "description": "Sender email for auth notifications",
+              "default": ""
+            },
+            "SMTP_FROM_NAME": {
+              "type": "string",
+              "description": "Sender display name for auth notifications",
+              "default": "MCP Gateway"
+            },
+            "SMTP_USE_TLS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Use STARTTLS for SMTP connections",
+              "default": "true"
+            },
+            "SMTP_USE_SSL": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Use implicit SSL/TLS for SMTP connections",
+              "default": "false"
+            },
+            "SMTP_TIMEOUT_SECONDS": {
+              "type": "string",
+              "pattern": "^[1-9][0-9]*$",
+              "description": "SMTP timeout in seconds",
+              "default": "15"
+            },
             "JWT_SECRET_KEY": {
               "type": "string",
               "description": "JWT secret key",

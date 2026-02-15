@@ -436,9 +436,29 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_REQUIRE_LOWERCASE`  | Require lowercase letters in passwords           | `true`                | bool    |
 | `PASSWORD_REQUIRE_NUMBERS`    | Require numbers in passwords                     | `false`               | bool    |
 | `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `true`                | bool    |
-| `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
-| `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
+| `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `10`                  | int > 0 |
+| `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `1`                   | int > 0 |
+| `ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED` | Send lockout notification emails      | `true`                | bool    |
+| `PASSWORD_RESET_ENABLED`      | Enable self-service forgot-password/reset flow   | `true`                | bool    |
+| `PASSWORD_RESET_TOKEN_EXPIRY_MINUTES` | Password reset token expiry window     | `60`                  | int > 0 |
+| `PASSWORD_RESET_RATE_LIMIT`   | Max reset requests per email in rate window      | `5`                   | int > 0 |
+| `PASSWORD_RESET_RATE_WINDOW_MINUTES` | Password reset rate-limit window        | `15`                  | int > 0 |
+| `PASSWORD_RESET_INVALIDATE_SESSIONS` | Invalidate active sessions on reset     | `true`                | bool    |
+| `PASSWORD_RESET_MIN_RESPONSE_MS` | Minimum forgot-password response duration    | `250`                 | int >= 0 |
 | `PROTECT_ALL_ADMINS`         | Prevent any admin from being demoted or deactivated via API/UI. When false, only the last active admin is protected. | `true` | bool |
+| `SMTP_ENABLED`                | Enable SMTP notifications for auth emails        | `false`               | bool    |
+| `SMTP_HOST`                   | SMTP host                                         | (none)                | string  |
+| `SMTP_PORT`                   | SMTP port                                         | `587`                 | int     |
+| `SMTP_USER`                   | SMTP username                                     | (none)                | string  |
+| `SMTP_PASSWORD`               | SMTP password                                     | (none)                | string  |
+| `SMTP_FROM_EMAIL`             | Sender email address                              | (none)                | string  |
+| `SMTP_FROM_NAME`              | Sender display name                               | `MCP Gateway`         | string  |
+| `SMTP_USE_TLS`                | Use STARTTLS                                      | `true`                | bool    |
+| `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
+| `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
+
+When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
+When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
 
 ### MCP Client Authentication
 

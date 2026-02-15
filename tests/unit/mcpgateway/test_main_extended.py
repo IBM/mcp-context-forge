@@ -664,10 +664,20 @@ class TestAdminAuthMiddleware:
         assert response.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_admin_auth_exempt_paths_call_next_when_auth_required(self, monkeypatch):
-        """Cover exempt path short-circuit (login/logout/static)."""
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/admin/login",
+            "/admin/logout",
+            "/admin/forgot-password",
+            "/admin/reset-password/token-123",
+            "/admin/static/app.css",
+        ],
+    )
+    async def test_admin_auth_exempt_paths_call_next_when_auth_required(self, monkeypatch, path):
+        """Cover exempt path short-circuit for public admin routes and static assets."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/admin/login", headers={"accept": "application/json"})
+        request = _make_request(path, headers={"accept": "application/json"})
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
@@ -677,10 +687,18 @@ class TestAdminAuthMiddleware:
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_admin_auth_exempt_login_with_prefixed_scope_path(self, monkeypatch):
-        """When proxy forwards full path, /admin/login must still be exempt after normalization."""
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/qa/gateway/admin/login",
+            "/qa/gateway/admin/forgot-password",
+            "/qa/gateway/admin/reset-password/token-123",
+        ],
+    )
+    async def test_admin_auth_exempt_path_with_prefixed_scope_path(self, monkeypatch, path):
+        """When proxy forwards full paths, exempt admin auth routes must remain public."""
         middleware = AdminAuthMiddleware(None)
-        request = _make_request("/qa/gateway/admin/login", root_path="/qa/gateway")
+        request = _make_request(path, root_path="/qa/gateway")
         call_next = AsyncMock(return_value="ok")
 
         monkeypatch.setattr(settings, "auth_required", True)
