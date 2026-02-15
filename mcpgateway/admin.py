@@ -873,6 +873,29 @@ def _escape_like(value: str) -> str:
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+async def _get_user_team_ids(user: dict, db: Session) -> list:
+    """Return team IDs for the authenticated user.
+
+    When called from :func:`admin_unified_search`, the user dict carries a
+    ``_cached_team_ids`` key so the expensive lookup is executed only once
+    per request instead of once per entity type.
+
+    Args:
+        user (dict): Authenticated user context.
+        db (Session): Database session.
+
+    Returns:
+        list: Team ID list for the user.
+    """
+    cached = user.get("_cached_team_ids")
+    if cached is not None:
+        return cached
+    user_email = get_user_email(user)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    return [t.id for t in user_teams]
+
+
 def _normalize_search_query(query: Optional[str]) -> str:
     """Normalize search query values for consistent filtering.
 
@@ -7641,9 +7664,7 @@ async def admin_search_tools(
         return _build_search_response(entity_key="tools", entity_type="tools", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
     # Build base query
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.display_name, DbTool.description)
 
@@ -8255,9 +8276,7 @@ async def admin_search_gateways(
     if not search_query and not tag_groups:
         return _build_search_response(entity_key="gateways", entity_type="gateways", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbGateway.id, DbGateway.name, DbGateway.url, DbGateway.description)
 
@@ -8429,9 +8448,7 @@ async def admin_search_servers(
     if not search_query and not tag_groups:
         return _build_search_response(entity_key="servers", entity_type="servers", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbServer.id, DbServer.name, DbServer.description)
 
@@ -8936,9 +8953,7 @@ async def admin_search_resources(
     if not search_query and not tag_groups:
         return _build_search_response(entity_key="resources", entity_type="resources", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbResource.id, DbResource.name, DbResource.description)
 
@@ -9058,9 +9073,7 @@ async def admin_search_prompts(
     if not search_query and not tag_groups:
         return _build_search_response(entity_key="prompts", entity_type="prompts", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbPrompt.id, DbPrompt.original_name, DbPrompt.display_name, DbPrompt.description)
 
@@ -9711,9 +9724,7 @@ async def admin_search_a2a_agents(
     if not search_query and not tag_groups:
         return _build_search_response(entity_key="agents", entity_type="agents", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url, DbA2AAgent.description)
 
@@ -9871,6 +9882,12 @@ async def admin_unified_search(
             if exc.status_code in {401, 403}:
                 return {empty_key: [], "items": [], "count": 0}
             raise
+
+    # Pre-fetch team IDs once and inject into the user context so that
+    # individual search functions reuse them via _get_user_team_ids().
+    _team_ids = await _get_user_team_ids(user, db)
+    user = dict(user)  # shallow copy to avoid mutating the caller's dict
+    user["_cached_team_ids"] = _team_ids
 
     grouped_results: dict[str, list[dict[str, Any]]] = {entity_type: [] for entity_type in selected_entity_types}
 
