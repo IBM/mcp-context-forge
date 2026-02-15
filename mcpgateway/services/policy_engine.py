@@ -237,6 +237,24 @@ class PolicyEngine:
         """
         Check resource-level access (owner, team membership, visibility).
 
+        NOTE: This is Phase 2+ scaffolding. Currently not called because:
+        - No decorator passes resource_type parameter
+        - Resource is always None in check_access()
+        - This method never executes
+        
+        Phase 2 Activation Plan:
+        When decorators pass resource_type (e.g., @require_permission_v2("tools.read", resource_type="tool")):
+        1. Decorator will extract resource_id from function parameters (tool_id, server_id, etc.)
+        2. Create Resource object with type and id
+        3. This method will check owner/team/visibility rules
+        4. Enable fine-grained per-resource permissions
+        
+        Example future usage:
+            @require_permission_v2("tools.read", resource_type="tool")
+            async def get_tool(tool_id: str, ...):
+                # Will check if user can access this specific tool
+                # Based on ownership, team membership, or public visibility
+
         Args:
             subject: The subject requesting access
             permission: Required permission string
