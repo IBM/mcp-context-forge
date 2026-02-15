@@ -3254,6 +3254,49 @@ class ToolEmbedding(Base):
             f"model_name={self.model_name})>"
         )
 
+    def similar_to(
+        self,
+        db: "Session",
+        limit: int = 10,
+        threshold: Optional[float] = None,
+    ) -> "List[tuple[ToolEmbedding, float]]":
+        """Find other ToolEmbeddings similar to this one.
+
+        Uses pgvector cosine distance on PostgreSQL, numpy fallback on SQLite.
+
+        Args:
+            db: Active database session.
+            limit: Maximum number of results.
+            threshold: Optional minimum similarity (0-1).
+
+        Returns:
+            List of (ToolEmbedding, similarity_score) tuples, ordered by
+            descending similarity. Does not include self.
+        """
+        dialect_name = db.get_bind().dialect.name
+
+        if dialect_name == "postgresql":
+            distance_expr = ToolEmbedding.embedding.cosine_distance(self.embedding)
+            query = select(ToolEmbedding, (1 - distance_expr).label("similarity")).filter(ToolEmbedding.id != self.id)
+            if threshold is not None:
+                query = query.filter(distance_expr <= (1 - threshold))
+            query = query.order_by(distance_expr.asc()).limit(limit)
+            rows = db.execute(query).all()
+            return [(te, max(0.0, min(1.0, float(sim)))) for te, sim in rows]
+        else:
+            # SQLite: compute cosine similarity in Python
+            from mcpgateway.services.vector_search_service import _cosine_similarity_numpy
+
+            all_embeddings = db.query(ToolEmbedding).filter(ToolEmbedding.id != self.id).all()
+            scored = []
+            for te in all_embeddings:
+                sim = _cosine_similarity_numpy(self.embedding, te.embedding)
+                if threshold is not None and sim < threshold:
+                    continue
+                scored.append((te, sim))
+            scored.sort(key=lambda x: x[1], reverse=True)
+            return scored[:limit]
+
 
 class Resource(Base):
     """

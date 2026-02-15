@@ -207,6 +207,7 @@ mariadb = [
 llmchat = [
     "langchain-core>=1.2.11",
     "langchain-mcp-adapters>=0.2.1",
+    "langchain-mistralai>=0.2.0",
     "langchain-ollama>=1.0.1",
     "langchain-openai>=1.1.9",
     "langgraph>=1.0.8",
