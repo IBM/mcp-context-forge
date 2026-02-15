@@ -549,12 +549,10 @@ async def test_manager_plugin_dirs_added_to_sys_path():
 
         # Write a temp config YAML that uses plugin_dirs to find the plugin
         config_path = os.path.join(tmpdir, "config.yaml")
-        # Use forward slashes to avoid YAML escape issues on Windows
-        tmpdir_yaml = tmpdir.replace(os.sep, "/")
         with open(config_path, "w") as f:
             f.write(
                 f"plugin_dirs:\n"
-                f'  - "{tmpdir_yaml}"\n'
+                f'  - "{tmpdir}"\n'
                 f"\n"
                 f"plugin_settings:\n"
                 f"  plugin_timeout: 30\n"
