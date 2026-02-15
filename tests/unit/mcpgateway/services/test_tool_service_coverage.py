@@ -136,6 +136,7 @@ def mock_tool(mock_gateway):
     tool.display_name = "Test Tool"
     tool.url = "http://example.com/tools/test"
     tool.description = "A test tool"
+    tool.original_description = "A test tool original"
     tool.integration_type = "MCP"
     tool.request_type = "SSE"
     tool.headers = {"Content-Type": "application/json"}
@@ -2995,6 +2996,7 @@ class TestConvertToolToReadMetrics:
             slug="test-tool",
             display_name="Test Tool",
             description="A test tool",
+            original_description="A test tool original",
             url="http://example.com/tool",
             integration_type="direct",
             request_type="GET",
@@ -3060,6 +3062,7 @@ class TestConvertToolToReadMetrics:
             slug="test-tool",
             display_name="Test Tool",
             description="A test tool",
+            original_description="A test tool original",
             url="http://example.com/tool",
             integration_type="direct",
             request_type="GET",
@@ -3446,6 +3449,7 @@ class TestListToolsBranches:
             "displayName": "Test",
             "url": "http://x.com",
             "description": "d",
+            "original_description": "od",
             "integration_type": "REST",
             "request_type": "GET",
             "headers": {},
@@ -4043,6 +4047,7 @@ class TestUpdateToolBranches:
         tool.custom_name = "old_name"
         tool.display_name = "Old"
         tool.description = "old desc"
+        tool.original_description = "old desc"
         tool.version = 3
         tool.team_id = None
         tool.visibility = "public"

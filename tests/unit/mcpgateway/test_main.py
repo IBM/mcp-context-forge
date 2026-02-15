@@ -78,6 +78,7 @@ MOCK_TOOL_READ = {
     "customName": "test_tool",
     "url": "http://example.com/tools/test",
     "description": "A test tool",
+    "original_description": "A test tool original",
     "requestType": "POST",
     "integrationType": "MCP",
     "headers": {"Content-Type": "application/json"},
