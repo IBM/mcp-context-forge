@@ -1,5 +1,5 @@
 {
-  "typeCheckingMode": "off",
+  "typeCheckingMode": "strict",
   "reportUnusedCoroutine": "error",
   "reportMissingTypeStubs": "warning",
   "exclude": [
