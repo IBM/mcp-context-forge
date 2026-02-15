@@ -60,6 +60,7 @@ else:
                 )
 
 # First-Party
+from mcpgateway.alembic.versions.bab4694b3e90_add_tool_embedding_table import HAS_PGVECTOR
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.utils.create_slug import slugify
