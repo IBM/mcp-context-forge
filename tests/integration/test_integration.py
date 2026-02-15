@@ -178,6 +178,7 @@ MOCK_TOOL = ToolRead(
     original_name="test_tool",
     url="http://example.com/tools/test",
     description="demo",
+    original_description="original demo",
     request_type="POST",
     integration_type="MCP",
     headers={"Content-Type": "application/json"},
