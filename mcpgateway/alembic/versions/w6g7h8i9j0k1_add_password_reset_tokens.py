@@ -2,7 +2,7 @@
 """Add password_reset_tokens table
 
 Revision ID: w6g7h8i9j0k1
-Revises: ba202ac1665f
+Revises: 8a16a77260f0
 Create Date: 2026-02-15 12:30:00.000000
 """
 
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "w6g7h8i9j0k1"
-down_revision: Union[str, Sequence[str], None] = "ba202ac1665f"
+down_revision: Union[str, Sequence[str], None] = "8a16a77260f0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
