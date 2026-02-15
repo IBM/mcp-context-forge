@@ -148,7 +148,7 @@ class PolicyEngine:
                 return True
             if perm.endswith(".*"):
                 prefix = perm[:-2]  # "admin.*" -> "admin"
-                if required == prefix or required.startswith(prefix + "."):
+                if required.startswith(prefix + "."):
                     return True
         return False
 
