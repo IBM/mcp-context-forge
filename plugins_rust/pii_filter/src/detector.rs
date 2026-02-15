@@ -59,7 +59,7 @@ pub struct Detection {
 ///
 /// # Example (Python)
 /// ```python
-/// from plugins_rust import PIIDetectorRust
+/// from pii_filter_rust import PIIDetectorRust
 ///
 /// config = {"detect_ssn": True, "detect_email": True}
 /// detector = PIIDetectorRust(config)
