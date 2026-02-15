@@ -420,6 +420,7 @@ class ExportService:
                 "integration_type": tool.integration_type,
                 "request_type": tool.request_type,
                 "description": tool.description,
+                "original_description": tool.original_description,
                 "headers": tool.headers or {},
                 "input_schema": tool.input_schema or {"type": "object", "properties": {}},
                 "output_schema": tool.output_schema,

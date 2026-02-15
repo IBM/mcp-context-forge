@@ -120,6 +120,7 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_scalar_tool.scalars.return_value = mock_scalar_tool
     mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
 
+
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
@@ -346,6 +347,7 @@ def mock_tool(mock_gateway):
     tool.original_name = "test_tool"
     tool.url = "http://example.com/tools/test"
     tool.description = "A test tool"
+    tool.original_description = "A test tool original"
     tool.integration_type = "MCP"
     tool.request_type = "SSE"
     tool.headers = {"Content-Type": "application/json"}
@@ -600,6 +602,7 @@ class TestToolService:
                 name="test-gateway-test-tool",
                 url="http://example.com/tools/test",
                 description="A test tool",
+                original_description="A test tool original",
                 integration_type="REST",
                 request_type="POST",
                 headers={"Content-Type": "application/json"},
@@ -889,6 +892,7 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
+            original_description="A test tool original",
             integration_type="MCP",
             request_type="POST",
             headers={"Content-Type": "application/json"},
@@ -1079,6 +1083,7 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
+            original_description="A test tool original",
             integration_type="MCP",
             request_type="POST",
             headers={"Content-Type": "application/json"},
@@ -1205,6 +1210,7 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
+            original_description="A test tool original",
             integration_type="MCP",
             request_type="POST",
             headers={"Content-Type": "application/json"},
@@ -1340,6 +1346,7 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
+            original_description="A test tool original",
             integration_type="MCP",
             request_type="POST",
             headers={"Content-Type": "application/json"},
@@ -1496,6 +1503,7 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/test",
             description="A test tool",
+            original_description="A test tool original",
             integration_type="MCP",
             request_type="POST",
             headers={"Content-Type": "application/json"},
@@ -1567,6 +1575,7 @@ class TestToolService:
             name="test-gateway-test-tool",
             url="http://example.com/tools/updated",  # Updated URL
             description="An updated test tool",  # Updated description
+            original_description="A test tool original",  # original description
             integration_type="MCP",
             request_type="POST",
             headers={"Content-Type": "application/json"},
@@ -1612,6 +1621,7 @@ class TestToolService:
         assert mock_tool.custom_name == "updated_tool"
         assert mock_tool.url == "http://example.com/tools/updated"
         assert mock_tool.description == "An updated test tool"
+        assert mock_tool.original_description == "A test tool original"
 
         # Verify notification
         tool_service._notify_tool_updated.assert_called_once()
