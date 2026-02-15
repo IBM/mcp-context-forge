@@ -589,3 +589,60 @@ async def test_manager_plugin_dirs_added_to_sys_path():
         assert resolved_tmpdir not in sys.path
 
     PluginManager.reset()
+
+
+@pytest.mark.asyncio
+async def test_manager_reset_cleans_plugin_dirs_from_sys_path():
+    """Test that PluginManager.reset() removes plugin_dirs from sys.path."""
+    import os
+    import sys
+    import tempfile
+
+    PluginManager.reset()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        plugin_pkg = os.path.join(tmpdir, "my_reset_plugin")
+        os.makedirs(plugin_pkg)
+
+        with open(os.path.join(plugin_pkg, "__init__.py"), "w") as f:
+            f.write("")
+
+        with open(os.path.join(plugin_pkg, "my_reset_plugin.py"), "w") as f:
+            f.write(
+                "from mcpgateway.plugins.framework.base import Plugin\n"
+                "from mcpgateway.plugins.framework.models import PluginResult\n"
+                "\n"
+                "class MyResetPlugin(Plugin):\n"
+                "    async def prompt_pre_fetch(self, payload, context):\n"
+                "        return PluginResult(modified_payload=payload)\n"
+            )
+
+        config_path = os.path.join(tmpdir, "config.yaml")
+        tmpdir_yaml = tmpdir.replace(os.sep, "/")
+        with open(config_path, "w") as f:
+            f.write(
+                f"plugin_dirs:\n"
+                f'  - "{tmpdir_yaml}"\n'
+                f"\n"
+                f"plugin_settings:\n"
+                f"  plugin_timeout: 30\n"
+                f"  fail_on_plugin_error: false\n"
+                f"  enable_plugin_api: false\n"
+                f"\n"
+                f"plugins:\n"
+                f'  - name: "MyResetPlugin"\n'
+                f'    kind: "my_reset_plugin.my_reset_plugin.MyResetPlugin"\n'
+                f'    hooks: ["prompt_pre_fetch"]\n'
+                f'    mode: "enforce"\n'
+                f"    priority: 100\n"
+            )
+
+        resolved_tmpdir = os.path.abspath(tmpdir)
+
+        manager = PluginManager(config_path)
+        await manager.initialize()
+        assert resolved_tmpdir in sys.path
+
+        # Call reset() directly WITHOUT shutdown() first
+        PluginManager.reset()
+        assert resolved_tmpdir not in sys.path
