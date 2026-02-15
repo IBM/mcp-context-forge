@@ -42,7 +42,7 @@ from mcpgateway.schemas import (
 # --------------------------------------------------------------------------- #
 # Constants                                                                   #
 # --------------------------------------------------------------------------- #
-PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-03-26")
+PROTOCOL_VERSION = os.getenv("PROTOCOL_VERSION", "2025-11-25")
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"
 
 # Mock data templates with complete field structures

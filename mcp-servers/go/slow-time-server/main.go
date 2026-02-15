@@ -750,7 +750,7 @@ func main() {
             fmt.Fprintf(flag.CommandLine.Output(), ind+ind+"%s (default %q)\n\n",
                 fl.Usage, fl.DefValue)
         })
-        fmt.Fprintf(flag.CommandLine.Output(),
+        fmt.Fprintf(flag.CommandLine.Output(), // #nosec G705 -- static usage text, not user-controlled
             "Examples:\n"+
                 ind+"%s -transport=dual -port=8081 -latency=5s\n"+
                 ind+"%s -transport=dual -port=8081 -latency=2s -failure-rate=0.3 -failure-mode=error -seed=42\n"+
@@ -807,7 +807,7 @@ func main() {
         stddevDelay:    *latencyStd,
         failureRate:    *failureRate,
         failureMode:    *failureMode,
-        rng:            rand.New(rand.NewSource(rngSeed)),
+        rng:            rand.New(rand.NewSource(rngSeed)), // #nosec G404 -- deterministic PRNG for reproducible latency simulation, not crypto
     }
 
     logAt(logDebug, "starting %s %s", appName, appVersion)
@@ -965,7 +965,8 @@ func main() {
             handler = authMiddleware(*authToken, handler)
         }
 
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("SSE server error: %v", err)
         }
 
@@ -993,7 +994,8 @@ func main() {
             handler = authMiddleware(*authToken, handler)
         }
 
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("HTTP server error: %v", err)
         }
 
@@ -1033,7 +1035,8 @@ func main() {
             handler = authMiddleware(*authToken, handler)
         }
 
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("DUAL server error: %v", err)
         }
 
@@ -1058,7 +1061,8 @@ func main() {
             handler = authMiddleware(*authToken, handler)
         }
 
-        if err := http.ListenAndServe(addr, handler); err != nil && err != http.ErrServerClosed {
+        srv := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+        if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
             logger.Fatalf("REST server error: %v", err)
         }
 

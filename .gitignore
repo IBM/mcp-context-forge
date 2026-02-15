@@ -251,6 +251,8 @@ celerybeat-schedule
 # ========================================
 uv.lock
 **/uv.lock
+.uv-cache/
+.uv-tmp/
 
 # ========================================
 # Rust (plugins_rust)

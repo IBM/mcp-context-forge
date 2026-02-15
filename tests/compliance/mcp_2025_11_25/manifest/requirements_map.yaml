@@ -1,0 +1,23 @@
+protocol_version: "2025-11-25"
+requirement_sets:
+  base:
+    level: MUST
+    description: JSON-RPC envelope, method inventory, and batch rejection checks.
+  lifecycle:
+    level: MUST
+    description: Initialize handshake shape and protocol version behavior.
+  transport_core:
+    level: MUST
+    description: Streamable HTTP header and request behavior checks.
+  server_features:
+    level: MUST
+    description: tools/resources/prompts/logging surface checks.
+  utilities:
+    level: MUST
+    description: ping and notifications baseline semantics.
+  tasks:
+    level: SHOULD
+    description: Task methods and capability-gated behavior checks.
+  authorization:
+    level: SHOULD
+    description: OAuth protected resource metadata endpoint checks.
