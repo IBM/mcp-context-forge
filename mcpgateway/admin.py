@@ -2978,7 +2978,14 @@ async def admin_login_page(request: Request) -> Response:
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
-        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
+        {
+            "request": request,
+            "root_path": root_path,
+            "secure_cookie_warning": secure_cookie_warning,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "prefill_email": prefill_email,
+            "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
+        },
     )
 
 
@@ -3144,6 +3151,151 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         LOGGER.error(f"Login handler error: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
+
+
+@admin_router.get("/forgot-password")
+async def admin_forgot_password_page(request: Request) -> Response:
+    """Render forgot-password page.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        Response: Forgot-password page response.
+    """
+    root_path = settings.app_root_path
+    if not getattr(settings, "email_auth_enabled", False):
+        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "forgot-password.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+        },
+    )
+
+
+@admin_router.post("/forgot-password")
+async def admin_forgot_password_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    """Handle forgot-password form submission.
+
+    Args:
+        request: Incoming HTTP request with form data.
+        db: Database session dependency.
+
+    Returns:
+        RedirectResponse: Redirect to login or forgot-password page with status.
+    """
+    root_path = request.scope.get("root_path", "")
+    if not getattr(settings, "email_auth_enabled", False):
+        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+    if not getattr(settings, "password_reset_enabled", True):
+        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+
+    try:
+        form = await request.form()
+        email_val = form.get("email")
+        email = str(email_val).strip() if email_val else ""
+        if not email:
+            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=missing_email", status_code=303)
+
+        auth_service = EmailAuthService(db)
+        result = await auth_service.request_password_reset(email=email, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
+        if result.rate_limited:
+            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=rate_limited", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/login?notice=reset_email_sent", status_code=303)
+    except Exception as exc:
+        LOGGER.warning("Forgot-password request failed: %s", exc)
+        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=server_error", status_code=303)
+
+
+@admin_router.get("/reset-password/{token}")
+async def admin_reset_password_page(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
+    """Render password reset form for a token.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        Response: Reset-password page response.
+    """
+    root_path = settings.app_root_path
+    if not getattr(settings, "email_auth_enabled", False):
+        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+    if not getattr(settings, "password_reset_enabled", True):
+        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+
+    auth_service = EmailAuthService(db)
+    token_valid = False
+    token_error = None
+    try:
+        await auth_service.validate_password_reset_token(token=token, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
+        token_valid = True
+    except AuthenticationError as exc:
+        token_error = str(exc)
+
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "reset-password.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "token": token,
+            "token_valid": token_valid,
+            "token_error": token_error,
+            "password_min_length": settings.password_min_length,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+        },
+    )
+
+
+@admin_router.post("/reset-password/{token}")
+async def admin_reset_password_handler(token: str, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
+    """Handle password reset form submission.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request with reset form data.
+        db: Database session dependency.
+
+    Returns:
+        RedirectResponse: Redirect to login or reset page with status.
+    """
+    root_path = request.scope.get("root_path", "")
+    if not getattr(settings, "email_auth_enabled", False):
+        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
+    if not getattr(settings, "password_reset_enabled", True):
+        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
+
+    try:
+        form = await request.form()
+        password = str(form.get("password", ""))
+        confirm_password = str(form.get("confirm_password", ""))
+        if not password or not confirm_password:
+            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=missing_fields", status_code=303)
+        if password != confirm_password:
+            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=password_mismatch", status_code=303)
+
+        auth_service = EmailAuthService(db)
+        await auth_service.reset_password_with_token(token=token, new_password=password, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
+        return RedirectResponse(url=f"{root_path}/admin/login?notice=password_reset_success", status_code=303)
+    except PasswordValidationError as exc:
+        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error={urllib.parse.quote(str(exc))}", status_code=303)
+    except AuthenticationError as exc:
+        msg = str(exc).lower()
+        if "expired" in msg:
+            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_expired", status_code=303)
+        if "used" in msg:
+            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_used", status_code=303)
+        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_invalid", status_code=303)
+    except Exception as exc:
+        LOGGER.warning("Password reset failed: %s", exc)
+        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=server_error", status_code=303)
 
 
 async def _admin_logout(request: Request) -> Response:
@@ -5628,6 +5780,10 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     is_current_user = user_obj.email == current_user_email
     is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
+    locked_until = getattr(user_obj, "locked_until", None)
+    is_locked = bool(locked_until and locked_until > utc_now())
+    failed_attempts = int(getattr(user_obj, "failed_login_attempts", 0) or 0)
+    lock_until_text = locked_until.strftime("%Y-%m-%d %H:%M") if locked_until else "N/A"
 
     badges = []
     if user_obj.is_admin:
@@ -5645,6 +5801,8 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full '
             'dark:bg-orange-900 dark:text-orange-200"><i class="fas fa-key mr-1"></i>Password Change Required</span>'
         )
+    if is_locked:
+        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-red-100 text-red-800 rounded-full ' + 'dark:bg-red-900 dark:text-red-200"><i class="fas fa-lock mr-1"></i>Locked</span>')
 
     actions = [
         f'<button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 '
@@ -5655,6 +5813,15 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
     ]
 
     if not is_current_user and not is_last_admin:
+        if is_locked:
+            actions.append(
+                f'<button class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 '
+                f"dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 "
+                f"dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
+                f'focus:ring-indigo-500" hx-post="{root_path}/admin/users/{encoded_email}/unlock" '
+                f'hx-confirm="Unlock this user account?" hx-target="closest .user-card" hx-swap="outerHTML">Unlock</button>'
+            )
+
         if user_obj.is_active:
             actions.append(
                 f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
@@ -5706,6 +5873,8 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
           </div>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {safe_email}</p>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {auth_provider}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">⚠️ Failed attempts: {failed_attempts}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔒 Locked until: {lock_until_text}</p>
           <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {created_at}</p>
         </div>
         <div class="flex gap-2 ml-4">
@@ -5843,6 +6012,9 @@ async def admin_users_partial_html(
                     "auth_provider": user_obj.auth_provider,
                     "created_at": user_obj.created_at,
                     "password_change_required": user_obj.password_change_required,
+                    "failed_login_attempts": int(getattr(user_obj, "failed_login_attempts", 0) or 0),
+                    "locked_until": getattr(user_obj, "locked_until", None),
+                    "is_locked": bool(getattr(user_obj, "locked_until", None) and getattr(user_obj, "locked_until", None) > utc_now()),
                     "is_current_user": is_current_user,
                     "is_last_admin": is_last_admin,
                 }
@@ -6616,6 +6788,44 @@ async def admin_delete_user(
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(str(e))}</div>', status_code=400)
+
+
+@admin_router.post("/users/{user_email}/unlock")
+@require_permission("admin.user_management", allow_admin_bypass=False)
+async def admin_unlock_user(
+    user_email: str,
+    _request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> HTMLResponse:
+    """Unlock a user account from the admin UI.
+
+    Args:
+        user_email: URL-encoded email for the user to unlock.
+        _request: Incoming HTTP request.
+        db: Database session dependency.
+        user: Current authenticated user context.
+
+    Returns:
+        HTMLResponse: Updated user card HTML or error snippet.
+    """
+    if not settings.email_auth_enabled:
+        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
+
+    try:
+        root_path = _request.scope.get("root_path", "") if _request else ""
+        auth_service = EmailAuthService(db)
+        decoded_email = urllib.parse.unquote(user_email)
+        current_user_email = get_user_email(user)
+
+        user_obj = await auth_service.unlock_user_account(decoded_email, unlocked_by=current_user_email)
+        admin_count = await auth_service.count_active_admin_users()
+        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
+    except ValueError as exc:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(exc))}</div>', status_code=404)
+    except Exception as exc:
+        LOGGER.error("Error unlocking user %s: %s", user_email, exc)
+        return HTMLResponse(content=f'<div class="text-red-500">Error unlocking user: {html.escape(str(exc))}</div>', status_code=400)
 
 
 @admin_router.post("/users/{user_email}/force-password-change")

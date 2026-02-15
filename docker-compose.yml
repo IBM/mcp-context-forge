@@ -232,6 +232,25 @@ services:
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
+      - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
+      # Self-service password reset (feature flags + hardening controls)
+      - PASSWORD_RESET_ENABLED=${PASSWORD_RESET_ENABLED:-true}
+      - PASSWORD_RESET_TOKEN_EXPIRY_MINUTES=${PASSWORD_RESET_TOKEN_EXPIRY_MINUTES:-60}
+      - PASSWORD_RESET_RATE_LIMIT=${PASSWORD_RESET_RATE_LIMIT:-5}
+      - PASSWORD_RESET_RATE_WINDOW_MINUTES=${PASSWORD_RESET_RATE_WINDOW_MINUTES:-15}
+      - PASSWORD_RESET_INVALIDATE_SESSIONS=${PASSWORD_RESET_INVALIDATE_SESSIONS:-true}
+      - PASSWORD_RESET_MIN_RESPONSE_MS=${PASSWORD_RESET_MIN_RESPONSE_MS:-250}
+      # SMTP for password reset / lockout notifications (optional)
+      - SMTP_ENABLED=${SMTP_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - "SMTP_FROM_NAME=${SMTP_FROM_NAME:-MCP Gateway}"
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-false}
+      - SMTP_TIMEOUT_SECONDS=${SMTP_TIMEOUT_SECONDS:-15}
       # ═══════════════════════════════════════════════════════════════════════════
       # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
       # ═══════════════════════════════════════════════════════════════════════════

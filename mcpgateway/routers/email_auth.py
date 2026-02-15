@@ -40,7 +40,10 @@ from mcpgateway.schemas import (
     CursorPaginatedUsersResponse,
     EmailLoginRequest,
     EmailUserResponse,
+    ForgotPasswordRequest,
+    PasswordResetTokenValidationResponse,
     PublicRegistrationRequest,
+    ResetPasswordRequest,
     SuccessResponse,
 )
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
@@ -418,6 +421,102 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Password change service error")
 
 
+@email_auth_router.post("/forgot-password", response_model=SuccessResponse)
+async def forgot_password(reset_request: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Request a one-time password reset token via email.
+
+    Args:
+        reset_request: Forgot-password request payload.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Generic success response to avoid account enumeration.
+
+    Raises:
+        HTTPException: If password reset is disabled or the request is rate limited.
+    """
+    if not getattr(settings, "password_reset_enabled", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
+
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    result = await auth_service.request_password_reset(email=reset_request.email, ip_address=ip_address, user_agent=user_agent)
+    if result.rate_limited:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many requests. Please try again later.")
+
+    return SuccessResponse(success=True, message="If this email is registered, you will receive a reset link.")
+
+
+@email_auth_router.get("/reset-password/{token}", response_model=PasswordResetTokenValidationResponse)
+async def validate_password_reset_token(token: str, request: Request, db: Session = Depends(get_db)):
+    """Validate a password reset token before submitting a new password.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        PasswordResetTokenValidationResponse: Token validity and expiration data.
+
+    Raises:
+        HTTPException: If password reset is disabled or token validation fails.
+    """
+    if not getattr(settings, "password_reset_enabled", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
+
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    try:
+        reset_token = await auth_service.validate_password_reset_token(token=token, ip_address=ip_address, user_agent=user_agent)
+        return PasswordResetTokenValidationResponse(valid=True, message="Reset token is valid", expires_at=reset_token.expires_at)
+    except AuthenticationError as exc:
+        detail = str(exc)
+        if "expired" in detail.lower():
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+
+
+@email_auth_router.post("/reset-password/{token}", response_model=SuccessResponse)
+async def complete_password_reset(token: str, reset_request: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    """Complete password reset with a valid one-time token.
+
+    Args:
+        token: One-time reset token.
+        reset_request: Reset-password payload with new credentials.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Password reset completion status.
+
+    Raises:
+        HTTPException: If password reset is disabled or reset validation fails.
+    """
+    if not getattr(settings, "password_reset_enabled", True):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
+
+    auth_service = EmailAuthService(db)
+    ip_address = get_client_ip(request)
+    user_agent = get_user_agent(request)
+
+    try:
+        await auth_service.reset_password_with_token(token=token, new_password=reset_request.new_password, ip_address=ip_address, user_agent=user_agent)
+        return SuccessResponse(success=True, message="Password reset successful. Please sign in with your new password.")
+    except AuthenticationError as exc:
+        detail = str(exc)
+        if "expired" in detail.lower():
+            raise HTTPException(status_code=status.HTTP_410_GONE, detail=detail)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
+    except PasswordValidationError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+
 @email_auth_router.get("/me", response_model=EmailUserResponse)
 async def get_current_user_profile(current_user: EmailUser = Depends(get_current_user)):
     """Get current user's profile information.
@@ -745,3 +844,31 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
     except Exception as e:
         logger.error(f"Error deleting user {user_email}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")
+
+
+@email_auth_router.post("/admin/users/{user_email}/unlock", response_model=SuccessResponse)
+@require_permission("admin.user_management")
+async def unlock_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+    """Unlock a user account by clearing lockout state and failed login counter.
+
+    Args:
+        user_email: Email address of the user to unlock.
+        current_user_ctx: Authenticated admin context.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Unlock operation result.
+
+    Raises:
+        HTTPException: If user is missing or unlock operation fails.
+    """
+    auth_service = EmailAuthService(db)
+
+    try:
+        await auth_service.unlock_user_account(email=user_email, unlocked_by=current_user_ctx.get("email"))
+        return SuccessResponse(success=True, message=f"User {user_email} has been unlocked")
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+    except Exception as exc:
+        logger.error("Failed to unlock user %s: %s", user_email, exc)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to unlock user")

@@ -33,9 +33,16 @@
               <i class="fas fa-key mr-1"></i>Password Change Required
             </span>
             {% endif %}
+            {% if user.is_locked %}
+            <span class="px-2 py-1 text-xs font-semibold bg-red-100 text-red-800 rounded-full dark:bg-red-900 dark:text-red-200">
+              <i class="fas fa-lock mr-1"></i>Locked
+            </span>
+            {% endif %}
           </div>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {{ user.email }}</p>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {{ user.auth_provider }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">⚠️ Failed attempts: {{ user.failed_login_attempts }}</p>
+          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔒 Locked until: {{ user.locked_until.strftime("%Y-%m-%d %H:%M") if user.locked_until else "N/A" }}</p>
           <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {{ user.created_at.strftime("%Y-%m-%d %H:%M") }}</p>
         </div>
         <div class="flex gap-2 ml-4">
@@ -49,6 +56,17 @@
             Edit
           </button>
           {% if not user.is_current_user and not user.is_last_admin %}
+            {% if user.is_locked %}
+            <button
+              class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+              hx-post="{{ root_path }}/admin/users/{{ user.email | urlencode }}/unlock"
+              hx-confirm="Unlock this user account?"
+              hx-target="closest .user-card"
+              hx-swap="outerHTML"
+            >
+              Unlock
+            </button>
+            {% endif %}
             {% if not user.is_active %}
             <button
               class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
