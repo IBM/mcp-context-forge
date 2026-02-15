@@ -1110,7 +1110,7 @@
     },
     "password_reset_enabled": {
       "default": true,
-      "description": "Enable self-service password reset workflow",
+      "description": "Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)",
       "title": "Password Reset Enabled",
       "type": "boolean"
     },
@@ -1146,7 +1146,7 @@
     },
     "smtp_enabled": {
       "default": false,
-      "description": "Enable SMTP email delivery for password reset and account lockout notifications",
+      "description": "Enable SMTP email delivery for password reset and account lockout notifications (when false, reset requests are accepted but no email is sent)",
       "title": "Smtp Enabled",
       "type": "boolean"
     },

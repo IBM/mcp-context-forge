@@ -482,7 +482,7 @@ class Settings(BaseSettings):
     account_lockout_notification_enabled: bool = Field(default=True, description="Send lockout notification emails when accounts are locked")
 
     # Self-service password reset
-    password_reset_enabled: bool = Field(default=True, description="Enable self-service password reset workflow")
+    password_reset_enabled: bool = Field(default=True, description="Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)")
     password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
     password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
     password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
@@ -490,7 +490,10 @@ class Settings(BaseSettings):
     password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
 
     # Email delivery for auth notifications
-    smtp_enabled: bool = Field(default=False, description="Enable SMTP email delivery for password reset and account lockout notifications")
+    smtp_enabled: bool = Field(
+        default=False,
+        description="Enable SMTP email delivery for password reset and account lockout notifications (when false, reset requests are accepted but no email is sent)",
+    )
     smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
     smtp_port: int = Field(default=587, description="SMTP server port")
     smtp_user: Optional[str] = Field(default=None, description="SMTP username")

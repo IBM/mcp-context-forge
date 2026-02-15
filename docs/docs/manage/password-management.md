@@ -36,6 +36,17 @@ Behavior:
 - Default rate limit: 5 requests / 15 minutes per email
 - Forgot-password responses are generic to reduce account enumeration
 
+### If SMTP/email is not configured
+
+When `SMTP_ENABLED=false` (default), forgot-password requests are still accepted and
+reset tokens are still generated, but no email is delivered.
+
+In this mode, recovery options are:
+
+1. Use **Admin -> Users** to set a new password directly.
+2. Use admin API `PUT /auth/email/admin/users/{email}` to set a new password.
+3. For break-glass scenarios, use the database recovery steps below.
+
 ## Admin UI Reset & Unlock
 
 Navigate to `Admin -> Users` (`/admin/#users`):

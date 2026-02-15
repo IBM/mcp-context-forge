@@ -457,6 +457,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `SMTP_USE_SSL`                | Use implicit SSL/TLS                              | `false`               | bool    |
 | `SMTP_TIMEOUT_SECONDS`        | SMTP timeout in seconds                           | `15`                  | int > 0 |
 
+When `PASSWORD_RESET_ENABLED=false`, self-service forgot/reset endpoints are disabled (`403` on API and disabled/redirected UI flows).
+When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered.
+
 ### MCP Client Authentication
 
 | Setting                        | Description                                      | Default               | Options |
