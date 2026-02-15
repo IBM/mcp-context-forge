@@ -82,15 +82,15 @@ jobs:
 
       - name: Check formatting
         working-directory: plugins_rust/${{ matrix.plugin }}
-        run: make fmt-check
+        run: cargo fmt -- --check
 
       - name: Run Clippy
         working-directory: plugins_rust/${{ matrix.plugin }}
-        run: make clippy
+        run: cargo clippy -- -D warnings
 
       - name: Run Rust tests
         working-directory: plugins_rust/${{ matrix.plugin }}
-        run: make test-verbose
+        run: cargo test -- --nocapture
 
 
   # Build wheels for multiple platforms (native builds)
