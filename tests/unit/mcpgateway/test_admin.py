@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 from uuid import UUID, uuid4
 
 # Third-Party
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import ValidationError
 from pydantic_core import InitErrorDetails
@@ -30,6 +30,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
     _adjust_pagination_for_conversion_failures,
+    _escape_like,
     _generate_unified_teams_view,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
@@ -40,6 +41,8 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_timeseries_metrics_python,
     _get_user_team_roles,
     _normalize_team_id,
+    _normalize_search_query,
+    _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
     _validated_team_id_param,
@@ -140,6 +143,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_search_servers,
     admin_search_teams,
     admin_search_tools,
+    admin_unified_search,
     admin_search_users,
     admin_servers_partial_html,
     admin_set_a2a_agent_state,
@@ -6374,14 +6378,16 @@ async def test_admin_search_users(monkeypatch, mock_db, allow_permission):
 async def test_admin_search_users_empty_query(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     result = await admin_search_users(q="   ", limit=5, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
-    assert result == {"users": [], "count": 0}
+    assert result["users"] == []
+    assert result["count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_admin_search_users_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     result = await admin_search_users(q="a", limit=5, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
-    assert result == {"users": [], "count": 0}
+    assert result["users"] == []
+    assert result["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -7323,6 +7329,38 @@ async def test_admin_servers_partial_html_include_inactive_query_param(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_admin_servers_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
+    """Cover q/tags query params and server search predicate branches."""
+    # Third-Party
+    import sqlalchemy as sa
+
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    monkeypatch.setattr("mcpgateway.admin.json_contains_tag_expr", lambda *_args, **_kwargs: sa.true())
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    response = await admin_servers_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        q="  Server  ",
+        tags=" alpha+beta,gamma ",
+        include_inactive=False,
+        render="controls",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = paginate_mock.call_args
+    assert kwargs["base_url"].endswith("/admin/servers/partial")
+    assert kwargs["query_params"]["q"] == "server"
+    assert kwargs["query_params"]["tags"] == "alpha+beta,gamma"
+
+
+@pytest.mark.asyncio
 async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped(monkeypatch, mock_request, mock_db):
     """Cover conversion failure branch in admin_servers_partial_html."""
     pagination = make_pagination_meta()
@@ -7376,6 +7414,39 @@ async def test_admin_tools_partial_html_renders(monkeypatch, mock_request, mock_
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_tools_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
+    """Cover q/tags query params and tool search predicate branches."""
+    # Third-Party
+    import sqlalchemy as sa
+
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    monkeypatch.setattr("mcpgateway.admin.json_contains_tag_expr", lambda *_args, **_kwargs: sa.true())
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    response = await admin_tools_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        q="  Tool  ",
+        tags=" t1 ",
+        include_inactive=False,
+        render="controls",
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "is_admin": True},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = paginate_mock.call_args
+    assert kwargs["base_url"].endswith("/admin/tools/partial")
+    assert kwargs["query_params"]["q"] == "tool"
+    assert kwargs["query_params"]["tags"] == "t1"
 
 
 @pytest.mark.asyncio
@@ -7595,6 +7666,39 @@ async def test_admin_prompts_partial_html_renders(monkeypatch, mock_request, moc
 
 
 @pytest.mark.asyncio
+async def test_admin_prompts_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
+    """Cover q/tags query params and prompt search predicate branches."""
+    # Third-Party
+    import sqlalchemy as sa
+
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    monkeypatch.setattr("mcpgateway.admin.json_contains_tag_expr", lambda *_args, **_kwargs: sa.true())
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    response = await admin_prompts_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        q="  Prompt  ",
+        tags=" t1 ",
+        include_inactive=False,
+        render="controls",
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = paginate_mock.call_args
+    assert kwargs["base_url"].endswith("/admin/prompts/partial")
+    assert kwargs["query_params"]["q"] == "prompt"
+    assert kwargs["query_params"]["tags"] == "t1"
+
+
+@pytest.mark.asyncio
 async def test_admin_prompts_partial_html_all_teams_view(monkeypatch, mock_request, mock_db):
     """Cover All Teams view access conditions in prompts partial."""
     pagination = make_pagination_meta()
@@ -7708,6 +7812,39 @@ async def test_admin_resources_partial_html_renders(monkeypatch, mock_request, m
 
 
 @pytest.mark.asyncio
+async def test_admin_resources_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
+    """Cover q/tags query params and resource search predicate branches."""
+    # Third-Party
+    import sqlalchemy as sa
+
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    monkeypatch.setattr("mcpgateway.admin.json_contains_tag_expr", lambda *_args, **_kwargs: sa.true())
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    response = await admin_resources_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        q="  Resource  ",
+        tags=" t1 ",
+        include_inactive=False,
+        render="controls",
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = paginate_mock.call_args
+    assert kwargs["base_url"].endswith("/admin/resources/partial")
+    assert kwargs["query_params"]["q"] == "resource"
+    assert kwargs["query_params"]["tags"] == "t1"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("render", [None, "controls", "selector"])
 async def test_admin_gateways_partial_html_renders(monkeypatch, mock_request, mock_db, render):
     pagination = make_pagination_meta()
@@ -7732,6 +7869,38 @@ async def test_admin_gateways_partial_html_renders(monkeypatch, mock_request, mo
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_gateways_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
+    """Cover q/tags query params and gateway search predicate branches."""
+    # Third-Party
+    import sqlalchemy as sa
+
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    monkeypatch.setattr("mcpgateway.admin.json_contains_tag_expr", lambda *_args, **_kwargs: sa.true())
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    response = await admin_gateways_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        q="  Gateway  ",
+        tags=" t1 ",
+        include_inactive=False,
+        render="controls",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = paginate_mock.call_args
+    assert kwargs["base_url"].endswith("/admin/gateways/partial")
+    assert kwargs["query_params"]["q"] == "gateway"
+    assert kwargs["query_params"]["tags"] == "t1"
 
 
 @pytest.mark.asyncio
@@ -7894,6 +8063,39 @@ async def test_admin_a2a_partial_html_renders(monkeypatch, mock_request, mock_db
         user={"email": "user@example.com", "db": mock_db},
     )
     assert isinstance(response, HTMLResponse)
+
+
+@pytest.mark.asyncio
+async def test_admin_a2a_partial_html_propagates_search_and_tags_to_pagination(monkeypatch, mock_request, mock_db):
+    """Cover q/tags query params and A2A agent search predicate branches."""
+    # Third-Party
+    import sqlalchemy as sa
+
+    pagination = make_pagination_meta()
+    paginate_mock = AsyncMock(return_value={"data": [], "pagination": pagination, "links": None})
+    monkeypatch.setattr("mcpgateway.admin.paginate_query", paginate_mock)
+    monkeypatch.setattr("mcpgateway.admin.json_contains_tag_expr", lambda *_args, **_kwargs: sa.true())
+    setup_team_service(monkeypatch, ["team-1"])
+
+    mock_request.headers = {}
+    response = await admin_a2a_partial_html(
+        mock_request,
+        page=1,
+        per_page=10,
+        q="  Agent  ",
+        tags=" t1 ",
+        include_inactive=False,
+        render="controls",
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert isinstance(response, HTMLResponse)
+    _args, kwargs = paginate_mock.call_args
+    assert kwargs["base_url"].endswith("/admin/a2a/partial")
+    assert kwargs["query_params"]["q"] == "agent"
+    assert kwargs["query_params"]["tags"] == "t1"
 
 
 @pytest.mark.asyncio
@@ -8307,6 +8509,277 @@ async def test_admin_search_gateways_empty_query_and_team_filters(monkeypatch, m
     assert result["count"] == 1
 
 
+def test_parse_tag_filter_groups_supports_or_and_and():
+    assert _parse_tag_filter_groups("prod,staging") == [["prod"], ["staging"]]
+    assert _parse_tag_filter_groups("mcp+critical,ui") == [["mcp", "critical"], ["ui"]]
+    assert _parse_tag_filter_groups("  a + b , , c ") == [["a", "b"], ["c"]]
+
+
+def test_normalize_search_query_supports_fastapi_query_default():
+    assert _normalize_search_query(Query(default="  Foo  ")) == "foo"
+    assert _normalize_search_query(Query(default=None)) == ""
+
+
+def test_normalize_search_query_handles_none_and_non_string_defaults():
+    assert _normalize_search_query(None) == ""
+    assert _normalize_search_query(Query(default=123)) == "123"
+
+
+def test_normalize_tags_query_supports_fastapi_query_default_and_non_string_defaults():
+    # First-Party
+    import mcpgateway.admin as admin_module
+
+    assert admin_module._normalize_tags_query(None) == ""
+    assert admin_module._normalize_tags_query("  alpha+beta,gamma  ") == "alpha+beta,gamma"
+    assert admin_module._normalize_tags_query(Query(default="  prod,staging  ")) == "prod,staging"
+    assert admin_module._normalize_tags_query(Query(default=None)) == ""
+    assert admin_module._normalize_tags_query(Query(default=123)) == "123"
+
+
+def test_normalize_int_query_supports_fastapi_query_default_and_fallback():
+    # First-Party
+    import mcpgateway.admin as admin_module
+
+    assert admin_module._normalize_int_query(7, fallback=1) == 7
+    assert admin_module._normalize_int_query(Query(default=8), fallback=1) == 8
+    assert admin_module._normalize_int_query("9", fallback=1) == 9
+    assert admin_module._normalize_int_query(None, fallback=3) == 3
+
+
+def test_escape_like_escapes_wildcards():
+    assert _escape_like("hello") == "hello"
+    assert _escape_like("100%") == "100\\%"
+    assert _escape_like("a_b") == "a\\_b"
+    assert _escape_like("a\\b") == "a\\\\b"
+    assert _escape_like("%_\\") == "\\%\\_\\\\"
+    assert _escape_like("") == ""
+
+
+def test_parse_tag_filter_groups_respects_max_groups():
+    # 25 groups should be capped at _TAG_MAX_GROUPS (20)
+    tags = ",".join(f"tag{i}" for i in range(25))
+    result = _parse_tag_filter_groups(tags)
+    assert len(result) == 20
+
+
+def test_parse_tag_filter_groups_respects_max_terms_per_group():
+    # 15 terms in one group should be capped at _TAG_MAX_TERMS_PER_GROUP (10)
+    tags = "+".join(f"term{i}" for i in range(15))
+    result = _parse_tag_filter_groups(tags)
+    assert len(result) == 1
+    assert len(result[0]) == 10
+
+
+def test_apply_tag_filter_groups_builds_where_clauses(monkeypatch, mock_db):
+    # Third-Party
+    import sqlalchemy as sa
+
+    # First-Party
+    import mcpgateway.admin as admin_module
+
+    calls: list[dict[str, object]] = []
+
+    def fake_json_contains_tag_expr(_db, _column, group, *, match_any: bool = True):  # noqa: ANN001
+        calls.append({"group": list(group), "match_any": match_any})
+        # Use a deterministic boolean expression regardless of session/dialect.
+        return sa.true() if match_any else sa.false()
+
+    monkeypatch.setattr(admin_module, "json_contains_tag_expr", fake_json_contains_tag_expr)
+
+    base_query = sa.select(sa.literal(1))
+    tags_col = sa.column("tags")
+
+    assert admin_module._apply_tag_filter_groups(base_query, mock_db, tags_col, []) is base_query
+
+    result_single = admin_module._apply_tag_filter_groups(base_query, mock_db, tags_col, [["alpha"]])
+    assert result_single is not base_query
+    assert calls == [{"group": ["alpha"], "match_any": True}]
+
+    calls.clear()
+    result_multi = admin_module._apply_tag_filter_groups(base_query, mock_db, tags_col, [["a"], ["b", "c"]])
+    assert result_multi is not base_query
+    assert calls == [{"group": ["a"], "match_any": True}, {"group": ["b", "c"], "match_any": False}]
+
+
+@pytest.mark.asyncio
+async def test_admin_search_tools_supports_tags_without_query(monkeypatch, mock_db, allow_permission):
+    setup_team_service(monkeypatch, [])
+    monkeypatch.setattr("mcpgateway.admin._apply_tag_filter_groups", lambda query, *_args, **_kwargs: query)
+    mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]
+
+    result = await admin_search_tools(
+        q=" ",
+        tags="alpha+beta,gamma",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert result["count"] == 1
+    assert result["tools"][0]["id"] == "tool-1"
+    assert result["filters_applied"]["tag_groups"] == [["alpha", "beta"], ["gamma"]]
+
+
+@pytest.mark.asyncio
+async def test_admin_search_endpoints_support_tags_without_query(monkeypatch, mock_db, allow_permission):
+    """Cover tags-only search paths (ordering else-branches) for non-tool entities."""
+    setup_team_service(monkeypatch, [])
+    monkeypatch.setattr("mcpgateway.admin._apply_tag_filter_groups", lambda query, *_args, **_kwargs: query)
+
+    result = MagicMock()
+    result.all.return_value = []
+    mock_db.execute.return_value = result
+
+    user = {"email": "user@example.com", "db": mock_db}
+
+    gateways = await admin_search_gateways(q=" ", tags="t1", include_inactive=False, limit=5, team_id=None, db=mock_db, user=user)
+    assert gateways["count"] == 0
+
+    servers = await admin_search_servers(q=" ", tags="t1", include_inactive=False, limit=5, team_id=None, db=mock_db, user=user)
+    assert servers["count"] == 0
+
+    resources = await admin_search_resources(q=" ", tags="t1", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user=user)
+    assert resources["count"] == 0
+
+    prompts = await admin_search_prompts(q=" ", tags="t1", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user=user)
+    assert prompts["count"] == 0
+
+    agents = await admin_search_a2a_agents(q=" ", tags="t1", include_inactive=False, limit=5, team_id=None, db=mock_db, user=user)
+    assert agents["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [{"id": "srv-1", "name": "Server 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [{"id": "gw-1", "name": "Gateway 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [{"id": "res-1", "name": "Resource 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [{"id": "prompt-1", "name": "Prompt 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [{"id": "agent-1", "name": "Agent 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [{"id": "team-1", "name": "Team 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_users", AsyncMock(return_value={"users": [{"id": "user-1", "email": "user@example.com"}], "count": 1}))
+
+    result = await admin_unified_search(
+        q="core",
+        tags=None,
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["count"] == 8
+    assert result["results"]["servers"][0]["id"] == "srv-1"
+    assert any(item["entity_type"] == "tools" for item in result["items"])
+    assert result["results"]["teams"][0]["id"] == "team-1"
+    assert result["results"]["users"][0]["id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_entity_types_parses_a2a_alias(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [{"id": "agent-1", "name": "Agent 1"}], "count": 1}))
+
+    result = await admin_unified_search(
+        q="core",
+        tags=None,
+        entity_types="a2a,tools,unknown,agents",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    # a2a should map to agents and de-duplicate with explicit "agents"
+    assert result["entity_types"] == ["agents", "tools"]
+    assert result["results"]["agents"][0]["id"] == "agent-1"
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_invalid_entity_types_returns_400(mock_db, allow_permission):
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_unified_search(
+            q="core",
+            tags=None,
+            entity_types="unknown, ,",
+            include_inactive=False,
+            limit=5,
+            gateway_id=None,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db},
+        )
+    assert excinfo.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_clamps_limit_per_type_and_handles_forbidden_search(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(side_effect=HTTPException(status_code=403, detail="forbidden")))
+
+    result = await admin_unified_search(
+        q="core",
+        tags="t1",
+        entity_types="servers",
+        include_inactive=False,
+        limit=5,
+        limit_per_type=settings.pagination_max_page_size + 100,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["servers"]
+    assert result["limit_per_type"] == settings.pagination_max_page_size
+    assert result["results"]["servers"] == []
+    assert result["count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_propagates_non_auth_http_exceptions(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(side_effect=HTTPException(status_code=500, detail="boom")))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_unified_search(
+            q="core",
+            tags=None,
+            entity_types="servers",
+            include_inactive=False,
+            limit=5,
+            gateway_id=None,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db},
+        )
+
+    assert excinfo.value.status_code == 500
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_empty_query_and_tags_returns_empty(mock_db, allow_permission):
+    result = await admin_unified_search(
+        q=" ",
+        tags=" ",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["count"] == 0
+    assert result["items"] == []
+    assert result["results"]["tools"] == []
+
+
 class TestAdminAdditionalCoverage:
     """Additional admin tests to cover missing branches."""
 
@@ -8669,7 +9142,8 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
         response = await admin_search_a2a_agents(q=" ", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com"})
-        assert response == {"agents": [], "count": 0}
+        assert response["agents"] == []
+        assert response["count"] == 0
 
     async def test_admin_search_a2a_agents_team_filter_denied_sets_false_where(self, monkeypatch, mock_db):
         """Cover team filter denied branch in admin_search_a2a_agents."""
@@ -12662,8 +13136,8 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="Alpha", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@test.com"})
-        assert len(result) == 1
-        assert result[0]["name"] == "Alpha"
+        assert result["count"] == 1
+        assert result["teams"][0]["name"] == "Alpha"
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_non_admin_filters(self, monkeypatch, allow_permission, mock_db):
@@ -12681,7 +13155,24 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="zzz", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
-        assert [t["id"] for t in result] == ["t3"]
+        assert [t["id"] for t in result["teams"]] == ["t3"]
+        assert result["count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_admin_search_teams_non_admin_matches_description(self, monkeypatch, allow_permission, mock_db):
+        mock_auth = MagicMock()
+        regular_user = SimpleNamespace(is_admin=False)
+        mock_auth.get_user_by_email = AsyncMock(return_value=regular_user)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth)
+
+        team1 = SimpleNamespace(id="t1", name="Platform", slug="platform", description="Engineering team", visibility="public", is_active=True)
+        ts = MagicMock()
+        ts.get_user_teams = AsyncMock(return_value=[team1])
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
+
+        result = await admin_search_teams(q="engineering", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
+        assert result["count"] == 1
+        assert result["teams"][0]["id"] == "t1"
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_no_user(self, monkeypatch, allow_permission, mock_db):
@@ -12691,7 +13182,8 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
         result = await admin_search_teams(q="test", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "ghost@test.com"})
-        assert result == []
+        assert result["teams"] == []
+        assert result["count"] == 0
 
 
 # ============================================================================ #

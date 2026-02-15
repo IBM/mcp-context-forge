@@ -286,6 +286,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize search functionality for all entity types (immediate, no debounce)
     initializeSearchInputsMemoized();
+    initializeGlobalSearch();
     initializePasswordValidation();
     initializeAddMembersForms();
 
@@ -17367,55 +17368,198 @@ window.testSearchInit = function () {
 /**
  * Clear search functionality for different entity types
  */
+const PANEL_SEARCH_CONFIG = {
+    catalog: {
+        tableName: "servers",
+        partialPath: "servers/partial",
+        targetSelector: "#servers-table",
+        indicatorSelector: "#servers-loading",
+        searchInputId: "catalog-search-input",
+        tagInputId: "catalog-tag-filter",
+        inactiveCheckboxId: "show-inactive-servers",
+        defaultPerPage: 50,
+    },
+    tools: {
+        tableName: "tools",
+        partialPath: "tools/partial",
+        targetSelector: "#tools-table",
+        indicatorSelector: "#tools-loading",
+        searchInputId: "tools-search-input",
+        tagInputId: "tools-tag-filter",
+        inactiveCheckboxId: "show-inactive-tools",
+        defaultPerPage: 50,
+    },
+    resources: {
+        tableName: "resources",
+        partialPath: "resources/partial",
+        targetSelector: "#resources-table",
+        indicatorSelector: "#resources-loading",
+        searchInputId: "resources-search-input",
+        tagInputId: "resources-tag-filter",
+        inactiveCheckboxId: "show-inactive-resources",
+        defaultPerPage: 50,
+    },
+    prompts: {
+        tableName: "prompts",
+        partialPath: "prompts/partial",
+        targetSelector: "#prompts-table",
+        indicatorSelector: "#prompts-loading",
+        searchInputId: "prompts-search-input",
+        tagInputId: "prompts-tag-filter",
+        inactiveCheckboxId: "show-inactive-prompts",
+        defaultPerPage: 50,
+    },
+    gateways: {
+        tableName: "gateways",
+        partialPath: "gateways/partial",
+        targetSelector: "#gateways-table",
+        indicatorSelector: "#gateways-loading",
+        searchInputId: "gateways-search-input",
+        tagInputId: "gateways-tag-filter",
+        inactiveCheckboxId: "show-inactive-gateways",
+        defaultPerPage: 50,
+    },
+    "a2a-agents": {
+        tableName: "agents",
+        partialPath: "a2a/partial",
+        targetSelector: "#agents-table",
+        indicatorSelector: "#agents-loading",
+        searchInputId: "a2a-agents-search-input",
+        tagInputId: "a2a-agents-tag-filter",
+        inactiveCheckboxId: "show-inactive-a2a-agents",
+        defaultPerPage: 50,
+    },
+};
+
+const panelSearchReloadTimers = {};
+
+function getPanelSearchConfig(entityType) {
+    return PANEL_SEARCH_CONFIG[entityType] || null;
+}
+
+function getPanelSearchStateFromUrl(tableName) {
+    const params = new URLSearchParams(window.location.search);
+    const prefix = `${tableName}_`;
+    return {
+        query: (params.get(prefix + "q") || "").trim(),
+        tags: (params.get(prefix + "tags") || "").trim(),
+    };
+}
+
+function updatePanelSearchStateInUrl(tableName, query, tags) {
+    const currentUrl = new URL(window.location.href);
+    const params = new URLSearchParams(currentUrl.searchParams);
+    const prefix = `${tableName}_`;
+    const normalizedQuery = (query || "").trim();
+    const normalizedTags = (tags || "").trim();
+
+    if (normalizedQuery) {
+        params.set(prefix + "q", normalizedQuery);
+    } else {
+        params.delete(prefix + "q");
+    }
+
+    if (normalizedTags) {
+        params.set(prefix + "tags", normalizedTags);
+    } else {
+        params.delete(prefix + "tags");
+    }
+
+    // Search/filter changes always reset to first page.
+    params.set(prefix + "page", "1");
+
+    const newUrl =
+        currentUrl.pathname +
+        (params.toString() ? `?${params.toString()}` : "") +
+        currentUrl.hash;
+    safeReplaceState({}, "", newUrl);
+}
+
+function getPanelPerPage(panelConfig) {
+    const selector = document.querySelector(
+        `#${panelConfig.tableName}-pagination-controls select`,
+    );
+    if (!selector) {
+        return panelConfig.defaultPerPage;
+    }
+    const parsed = parseInt(selector.value, 10);
+    return Number.isNaN(parsed) ? panelConfig.defaultPerPage : parsed;
+}
+
+function loadSearchablePanel(entityType) {
+    const panelConfig = getPanelSearchConfig(entityType);
+    if (!panelConfig) {
+        return;
+    }
+
+    const searchInput = document.getElementById(panelConfig.searchInputId);
+    const tagInput = document.getElementById(panelConfig.tagInputId);
+    const query = (searchInput?.value || "").trim();
+    const tags = (tagInput?.value || "").trim();
+
+    // Persist search state in namespaced URL params for pagination/shareability.
+    updatePanelSearchStateInUrl(panelConfig.tableName, query, tags);
+
+    const includeInactive = Boolean(
+        document.getElementById(panelConfig.inactiveCheckboxId)?.checked,
+    );
+    const params = new URLSearchParams();
+    params.set("page", "1");
+    params.set("per_page", String(getPanelPerPage(panelConfig)));
+    params.set("include_inactive", includeInactive ? "true" : "false");
+    if (query) {
+        params.set("q", query);
+    }
+    if (tags) {
+        params.set("tags", tags);
+    }
+    const currentTeamId = getCurrentTeamId();
+    if (currentTeamId) {
+        params.set("team_id", currentTeamId);
+    }
+
+    const url = `${window.ROOT_PATH}/admin/${panelConfig.partialPath}?${params.toString()}`;
+    if (window.htmx && window.htmx.ajax) {
+        window.htmx.ajax("GET", url, {
+            target: panelConfig.targetSelector,
+            swap: "outerHTML",
+            indicator: panelConfig.indicatorSelector,
+        });
+    }
+}
+
+function queueSearchablePanelReload(entityType, delayMs = 250) {
+    if (panelSearchReloadTimers[entityType]) {
+        clearTimeout(panelSearchReloadTimers[entityType]);
+    }
+    panelSearchReloadTimers[entityType] = setTimeout(() => {
+        loadSearchablePanel(entityType);
+    }, delayMs);
+}
+
 function clearSearch(entityType) {
     try {
-        if (entityType === "catalog") {
-            const searchInput = document.getElementById("catalog-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterServerTable(""); // Clear the filter
-            }
-        } else if (entityType === "tools") {
-            const searchInput = document.getElementById("tools-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterToolsTable(""); // Clear the filter
-            }
-        } else if (entityType === "resources") {
+        const panelConfig = getPanelSearchConfig(entityType);
+        if (panelConfig) {
             const searchInput = document.getElementById(
-                "resources-search-input",
+                panelConfig.searchInputId,
             );
             if (searchInput) {
                 searchInput.value = "";
-                filterResourcesTable(""); // Clear the filter
             }
-        } else if (entityType === "prompts") {
-            const searchInput = document.getElementById("prompts-search-input");
-            if (searchInput) {
-                searchInput.value = "";
-                filterPromptsTable(""); // Clear the filter
+            const tagInput = document.getElementById(panelConfig.tagInputId);
+            if (tagInput) {
+                tagInput.value = "";
             }
-        } else if (entityType === "a2a-agents") {
-            const searchInput = document.getElementById(
-                "a2a-agents-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterA2AAgentsTable(""); // Clear the filter
-            }
-        } else if (entityType === "gateways") {
-            const searchInput = document.getElementById(
-                "gateways-search-input",
-            );
-            if (searchInput) {
-                searchInput.value = "";
-                filterGatewaysTable(""); // Clear the filter
-            }
-        } else if (entityType === "tokens") {
+            loadSearchablePanel(entityType);
+            return;
+        }
+
+        if (entityType === "tokens") {
             const searchInput = document.getElementById("tokens-search-input");
             if (searchInput) {
                 searchInput.value = "";
-                performTokenSearch(""); // Clear the search and reload
+                performTokenSearch("");
             }
         }
     } catch (error) {
@@ -17433,135 +17577,53 @@ window.clearSearch = clearSearch;
 function initializeSearchInputs() {
     console.log("🔍 Initializing search inputs...");
 
-    // Clone inputs to remove existing event listeners before re-adding.
-    // This prevents duplicate listeners when re-initializing after reset.
-    const searchInputIds = [
-        "catalog-search-input",
-        "gateways-search-input",
-        "tools-search-input",
-        "resources-search-input",
-        "prompts-search-input",
-        "a2a-agents-search-input",
-        "tokens-search-input",
-    ];
-
-    searchInputIds.forEach((inputId) => {
-        const input = document.getElementById(inputId);
+    // Clone inputs to remove existing listeners from previous initialization runs.
+    Object.values(PANEL_SEARCH_CONFIG).forEach((panelConfig) => {
+        const input = document.getElementById(panelConfig.searchInputId);
         if (input) {
-            const newInput = input.cloneNode(true);
-            input.parentNode.replaceChild(newInput, input);
+            const clonedInput = input.cloneNode(true);
+            clonedInput.removeAttribute("oninput");
+            input.parentNode.replaceChild(clonedInput, input);
         }
     });
 
-    // Virtual Servers search
-    const catalogSearchInput = document.getElementById("catalog-search-input");
-    if (catalogSearchInput) {
-        catalogSearchInput.addEventListener("input", function () {
-            filterServerTable(this.value);
-        });
-        console.log("✅ Virtual Servers search initialized");
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = catalogSearchInput.value || "";
-        if (currentSearch) {
-            filterServerTable(currentSearch);
+    Object.entries(PANEL_SEARCH_CONFIG).forEach(([entityType, panelConfig]) => {
+        const searchInput = document.getElementById(panelConfig.searchInputId);
+        const tagInput = document.getElementById(panelConfig.tagInputId);
+        if (!searchInput) {
+            return;
         }
-    }
 
-    // MCP Servers (Gateways) search
-    const gatewaysSearchInput = document.getElementById(
-        "gateways-search-input",
-    );
-    if (gatewaysSearchInput) {
-        console.log("✅ Found MCP Servers search input");
-
-        // Use addEventListener instead of direct assignment
-        gatewaysSearchInput.addEventListener("input", function (e) {
-            const searchValue = e.target.value;
-            console.log("🔍 MCP Servers search triggered:", searchValue);
-            filterGatewaysTable(searchValue);
-        });
-
-        // Add keyup as backup
-        gatewaysSearchInput.addEventListener("keyup", function (e) {
-            const searchValue = e.target.value;
-            filterGatewaysTable(searchValue);
-        });
-
-        // Add change as backup
-        gatewaysSearchInput.addEventListener("change", function (e) {
-            const searchValue = e.target.value;
-            filterGatewaysTable(searchValue);
-        });
-
-        console.log("✅ MCP Servers search events attached");
-
-        // Reapply current search term if any (preserves search after HTMX swap)
-        const currentSearch = gatewaysSearchInput.value || "";
-        if (currentSearch) {
-            filterGatewaysTable(currentSearch);
+        const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
+        if (searchState.query) {
+            searchInput.value = searchState.query;
         }
-    } else {
-        console.error("❌ MCP Servers search input not found!");
+        if (tagInput && searchState.tags) {
+            tagInput.value = searchState.tags;
+        }
 
-        // Debug available inputs
-        const allInputs = document.querySelectorAll('input[type="text"]');
-        console.log(
-            "Available text inputs:",
-            Array.from(allInputs).map((input) => ({
-                id: input.id,
-                placeholder: input.placeholder,
-                className: input.className,
-            })),
-        );
-    }
-
-    // Tools search
-    const toolsSearchInput = document.getElementById("tools-search-input");
-    if (toolsSearchInput) {
-        toolsSearchInput.addEventListener("input", function () {
-            filterToolsTable(this.value);
+        searchInput.addEventListener("input", () => {
+            queueSearchablePanelReload(entityType, 250);
         });
-        console.log("✅ Tools search initialized");
-    }
 
-    // Resources search
-    const resourcesSearchInput = document.getElementById(
-        "resources-search-input",
-    );
-    if (resourcesSearchInput) {
-        resourcesSearchInput.addEventListener("input", function () {
-            filterResourcesTable(this.value);
-        });
-        console.log("✅ Resources search initialized");
-    }
+        const panel = document.getElementById(`${entityType}-panel`);
+        const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
+        if (isVisible && (searchState.query || searchState.tags)) {
+            queueSearchablePanelReload(entityType, 0);
+        }
+    });
 
-    // Prompts search
-    const promptsSearchInput = document.getElementById("prompts-search-input");
-    if (promptsSearchInput) {
-        promptsSearchInput.addEventListener("input", function () {
-            filterPromptsTable(this.value);
-        });
-        console.log("✅ Prompts search initialized");
-    }
-
-    // A2A Agents search
-    const agentsSearchInput = document.getElementById(
-        "a2a-agents-search-input",
-    );
-    if (agentsSearchInput) {
-        agentsSearchInput.addEventListener("input", function () {
-            filterA2AAgentsTable(this.value);
-        });
-        console.log("✅ A2A Agents search initialized");
-    }
-
-    // Tokens search
+    // Tokens search (server-side, not part of PANEL_SEARCH_CONFIG)
     const tokensSearchInput = document.getElementById("tokens-search-input");
     if (tokensSearchInput) {
-        tokensSearchInput.addEventListener("input", function () {
-            debouncedServerSideTokenSearch(this.value);
-        });
-        console.log("✅ Tokens search initialized");
+        const clonedTokensInput = tokensSearchInput.cloneNode(true);
+        tokensSearchInput.parentNode.replaceChild(clonedTokensInput, tokensSearchInput);
+        const freshTokensInput = document.getElementById("tokens-search-input");
+        if (freshTokensInput) {
+            freshTokensInput.addEventListener("input", function () {
+                debouncedServerSideTokenSearch(this.value);
+            });
+        }
     }
 }
 
@@ -17574,6 +17636,258 @@ const {
     debouncedInit: initializeSearchInputsDebounced,
     reset: resetSearchInputsState,
 } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
+
+const GLOBAL_SEARCH_ENTITY_CONFIG = {
+    servers: { label: "Servers", tab: "catalog", viewFunction: "viewServer" },
+    gateways: {
+        label: "Gateways",
+        tab: "gateways",
+        viewFunction: "viewGateway",
+    },
+    tools: { label: "Tools", tab: "tools", viewFunction: "viewTool" },
+    resources: {
+        label: "Resources",
+        tab: "resources",
+        viewFunction: "viewResource",
+    },
+    prompts: { label: "Prompts", tab: "prompts", viewFunction: "viewPrompt" },
+    agents: {
+        label: "A2A Agents",
+        tab: "a2a-agents",
+        viewFunction: "viewAgent",
+    },
+    teams: { label: "Teams", tab: "teams", viewFunction: "showTeamEditModal" },
+    users: { label: "Users", tab: "users", viewFunction: "showUserEditModal" },
+};
+
+let globalSearchDebounceTimer = null;
+let globalSearchRequestId = 0;
+
+function renderGlobalSearchMessage(message) {
+    const container = document.getElementById("global-search-results");
+    if (!container) {
+        return;
+    }
+    container.innerHTML = `<div class="p-4 text-sm text-gray-500 dark:text-gray-400">${escapeHtml(message)}</div>`;
+}
+
+function renderGlobalSearchResults(payload) {
+    const container = document.getElementById("global-search-results");
+    if (!container) {
+        return;
+    }
+
+    const groups = Array.isArray(payload?.groups) ? payload.groups : [];
+    const visibleGroups = groups.filter(
+        (group) => Array.isArray(group.items) && group.items.length > 0,
+    );
+
+    if (visibleGroups.length === 0) {
+        renderGlobalSearchMessage("No matching results.");
+        return;
+    }
+
+    let html = "";
+    visibleGroups.forEach((group) => {
+        const entityType = group.entity_type;
+        const config = GLOBAL_SEARCH_ENTITY_CONFIG[entityType] || {
+            label: entityType,
+        };
+        html += `<div class="border-b border-gray-200 dark:border-gray-700">`;
+        html += `<div class="px-4 py-2 text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">${escapeHtml(config.label)} (${group.items.length})</div>`;
+
+        group.items.forEach((item) => {
+            const itemId = item.id || item.email || item.slug || "";
+            const name =
+                item.display_name ||
+                item.original_name ||
+                item.name ||
+                item.full_name ||
+                item.email ||
+                item.slug ||
+                item.id ||
+                "Unnamed";
+            const summary =
+                item.description ||
+                item.email ||
+                item.slug ||
+                item.url ||
+                item.endpoint_url ||
+                item.original_name ||
+                item.id ||
+                "";
+            html += `
+                <button
+                  type="button"
+                  class="global-search-result-item w-full text-left px-4 py-2 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                  data-entity="${escapeHtml(entityType)}"
+                  data-id="${escapeHtml(itemId)}"
+                  onclick="navigateToGlobalSearchResult(this)"
+                >
+                  <div class="text-sm font-medium text-gray-900 dark:text-gray-100">${escapeHtml(name)}</div>
+                  <div class="text-xs text-gray-500 dark:text-gray-400 truncate">${escapeHtml(summary)}</div>
+                </button>
+            `;
+        });
+        html += "</div>";
+    });
+
+    container.innerHTML = html;
+}
+
+async function runGlobalSearch(query) {
+    const normalizedQuery = (query || "").trim();
+    const requestId = ++globalSearchRequestId;
+
+    if (!normalizedQuery) {
+        renderGlobalSearchMessage("Start typing to search all admin entities.");
+        return;
+    }
+
+    renderGlobalSearchMessage("Searching...");
+    const params = new URLSearchParams();
+    params.set("q", normalizedQuery);
+    params.set("limit_per_type", "8");
+    const currentTeamId = getCurrentTeamId();
+    if (currentTeamId) {
+        params.set("team_id", currentTeamId);
+    }
+
+    try {
+        const response = await fetchWithAuth(
+            `${window.ROOT_PATH}/admin/search?${params.toString()}`,
+        );
+        if (!response.ok) {
+            throw new Error(
+                `Search request failed (${response.status} ${response.statusText})`,
+            );
+        }
+
+        const payload = await response.json();
+        // Ignore out-of-order responses.
+        if (requestId !== globalSearchRequestId) {
+            return;
+        }
+        renderGlobalSearchResults(payload);
+    } catch (error) {
+        if (requestId !== globalSearchRequestId) {
+            return;
+        }
+        console.error("Error running global search:", error);
+        renderGlobalSearchMessage("Search failed. Please try again.");
+    }
+}
+
+function openGlobalSearchModal() {
+    const modal = document.getElementById("global-search-modal");
+    const input = document.getElementById("global-search-input");
+    if (!modal || !input) {
+        return;
+    }
+
+    modal.classList.remove("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    input.focus();
+    if (input.value.trim()) {
+        runGlobalSearch(input.value);
+    } else {
+        renderGlobalSearchMessage("Start typing to search all admin entities.");
+    }
+}
+
+function closeGlobalSearchModal() {
+    const modal = document.getElementById("global-search-modal");
+    if (!modal) {
+        return;
+    }
+
+    modal.classList.add("hidden");
+    modal.setAttribute("aria-hidden", "true");
+}
+
+function navigateToGlobalSearchResult(button) {
+    if (!button) {
+        return;
+    }
+
+    const entityType = button.dataset.entity;
+    const entityId = button.dataset.id;
+    if (!entityType || !entityId) {
+        return;
+    }
+
+    const config = GLOBAL_SEARCH_ENTITY_CONFIG[entityType];
+    closeGlobalSearchModal();
+    if (!config) {
+        return;
+    }
+
+    showTab(config.tab);
+    const viewFunction = window[config.viewFunction];
+    if (typeof viewFunction === "function") {
+        setTimeout(() => {
+            viewFunction(entityId);
+        }, 120);
+    }
+}
+
+function initializeGlobalSearch() {
+    const input = document.getElementById("global-search-input");
+    if (input && !input.dataset.listenerAttached) {
+        input.dataset.listenerAttached = "true";
+        input.addEventListener("input", (event) => {
+            const value = event.target?.value || "";
+            if (globalSearchDebounceTimer) {
+                clearTimeout(globalSearchDebounceTimer);
+            }
+            globalSearchDebounceTimer = setTimeout(() => {
+                runGlobalSearch(value);
+            }, 220);
+        });
+
+        input.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                closeGlobalSearchModal();
+                event.preventDefault();
+                return;
+            }
+            if (event.key === "Enter") {
+                const firstResult = document.querySelector(
+                    "#global-search-results .global-search-result-item",
+                );
+                if (firstResult) {
+                    navigateToGlobalSearchResult(firstResult);
+                    event.preventDefault();
+                }
+            }
+        });
+    }
+
+    if (!window.__globalSearchHotkeysBound) {
+        window.__globalSearchHotkeysBound = true;
+        document.addEventListener("keydown", (event) => {
+            const isShortcut =
+                (event.ctrlKey || event.metaKey) &&
+                event.key.toLowerCase() === "k";
+            if (isShortcut) {
+                event.preventDefault();
+                openGlobalSearchModal();
+                return;
+            }
+            if (event.key === "Escape") {
+                const modal = document.getElementById("global-search-modal");
+                if (modal && !modal.classList.contains("hidden")) {
+                    closeGlobalSearchModal();
+                    event.preventDefault();
+                }
+            }
+        });
+    }
+}
+
+window.openGlobalSearchModal = openGlobalSearchModal;
+window.closeGlobalSearchModal = closeGlobalSearchModal;
+window.navigateToGlobalSearchResult = navigateToGlobalSearchResult;
 
 function handleAuthTypeChange() {
     const authType = this.value;
@@ -18460,7 +18774,11 @@ function addTagToFilter(entityType, tag) {
     if (!currentTags.includes(tag)) {
         currentTags.push(tag);
         filterInput.value = currentTags.join(", ");
-        filterEntitiesByTags(entityType, filterInput.value);
+        if (getPanelSearchConfig(entityType)) {
+            queueSearchablePanelReload(entityType, 0);
+        } else {
+            filterEntitiesByTags(entityType, filterInput.value);
+        }
     }
 }
 
@@ -18586,7 +18904,11 @@ function clearTagFilter(entityType) {
     const filterInput = document.getElementById(`${entityType}-tag-filter`);
     if (filterInput) {
         filterInput.value = "";
+        // Apply immediate local reset for responsive UX and test compatibility.
         filterEntitiesByTags(entityType, "");
+        if (getPanelSearchConfig(entityType)) {
+            loadSearchablePanel(entityType);
+        }
     }
 }
 
