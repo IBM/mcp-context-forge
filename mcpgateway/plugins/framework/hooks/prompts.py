@@ -2,7 +2,7 @@
 """Location: ./mcpgateway/plugins/hooks/prompts.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Teryl Taylor
+Authors: Teryl Taylor, Fred Araujo
 
 Pydantic models for prompt plugins.
 This module implements the pydantic models associated with
@@ -11,13 +11,12 @@ the base plugin layer including configurations, and contexts.
 
 # Standard
 from enum import Enum
-from typing import Optional
+from typing import Any, Optional
 
 # Third-Party
-from pydantic import Field
+from pydantic import Field, field_validator
 
 # First-Party
-from mcpgateway.common.models import PromptResult
 from mcpgateway.plugins.framework.models import PluginPayload, PluginResult
 
 
@@ -79,27 +78,42 @@ class PromptPosthookPayload(PluginPayload):
 
     Attributes:
         prompt_id (str): The prompt ID.
-        result (PromptResult): The prompt after its template is rendered.
+        result (Any): The prompt result (accepts any PromptResultLike-satisfying object).
 
-     Examples:
-        >>> from mcpgateway.common.models import PromptResult, Message, TextContent
-        >>> msg = Message(role="user", content=TextContent(type="text", text="Hello World"))
-        >>> result = PromptResult(messages=[msg])
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> result = SimpleNamespace(messages=[], description=None)
         >>> payload = PromptPosthookPayload(prompt_id="123", result=result)
         >>> payload.prompt_id
-        '123'
-        >>> payload.result.messages[0].content.text
-        'Hello World'
-        >>> from mcpgateway.common.models import PromptResult, Message, TextContent
-        >>> msg = Message(role="assistant", content=TextContent(type="text", text="Test output"))
-        >>> r = PromptResult(messages=[msg])
-        >>> p = PromptPosthookPayload(prompt_id="123", result=r)
-        >>> p.prompt_id
         '123'
     """
 
     prompt_id: str
-    result: PromptResult
+    result: Any
+
+    @field_validator("result", mode="before")
+    @classmethod
+    def _coerce_result(cls, v: Any) -> Any:
+        """Convert nested dicts to objects with attribute access.
+
+        When deserializing from JSON (external server flows), ``result``
+        arrives as a plain dict.  This validator converts it to a
+        :class:`~mcpgateway.plugins.framework.utils.StructuredData` so
+        that plugin code like ``payload.result.messages[0].content.text``
+        works regardless of the transport.
+
+        Args:
+            v: The raw value for the ``result`` field.
+
+        Returns:
+            The coerced value with attribute access, or the original value.
+        """
+        if isinstance(v, dict):
+            # First-Party
+            from mcpgateway.plugins.framework.utils import coerce_nested  # pylint: disable=import-outside-toplevel
+
+            return coerce_nested(v)
+        return v
 
 
 PromptPrehookResult = PluginResult[PromptPrehookPayload]

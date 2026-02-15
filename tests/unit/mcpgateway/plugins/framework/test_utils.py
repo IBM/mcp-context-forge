@@ -295,6 +295,125 @@ def test_payload_matches_prompt_pre_fetch_multiple_conditions():
 # ============================================================================
 
 
+# ============================================================================
+# Test StructuredData and coerce_nested
+# ============================================================================
+
+
+def test_structured_data_attribute_access():
+    """Test StructuredData provides attribute access on extra fields."""
+    from mcpgateway.plugins.framework.utils import StructuredData
+
+    sd = StructuredData(name="test", value=42)
+    assert sd.name == "test"
+    assert sd.value == 42
+
+
+def test_structured_data_model_dump():
+    """Test StructuredData round-trips through model_dump."""
+    from mcpgateway.plugins.framework.utils import StructuredData
+
+    sd = StructuredData(role="user", content="hello")
+    dumped = sd.model_dump()
+    assert dumped == {"role": "user", "content": "hello"}
+
+
+def test_coerce_nested_dict():
+    """Test coerce_nested converts a dict to StructuredData."""
+    from mcpgateway.plugins.framework.utils import StructuredData, coerce_nested
+
+    result = coerce_nested({"name": "test"})
+    assert isinstance(result, StructuredData)
+    assert result.name == "test"
+
+
+def test_coerce_nested_deeply_nested():
+    """Test coerce_nested handles deeply nested dicts."""
+    from mcpgateway.plugins.framework.utils import coerce_nested
+
+    data = {
+        "messages": [
+            {"role": "user", "content": {"type": "text", "text": "hi"}},
+        ],
+    }
+    result = coerce_nested(data)
+    assert result.messages[0].content.text == "hi"
+    assert result.messages[0].role == "user"
+
+
+def test_coerce_nested_list():
+    """Test coerce_nested handles lists."""
+    from mcpgateway.plugins.framework.utils import StructuredData, coerce_nested
+
+    result = coerce_nested([{"a": 1}, {"b": 2}])
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert isinstance(result[0], StructuredData)
+    assert result[0].a == 1
+
+
+def test_coerce_nested_scalar():
+    """Test coerce_nested passes through scalars unchanged."""
+    from mcpgateway.plugins.framework.utils import coerce_nested
+
+    assert coerce_nested(42) == 42
+    assert coerce_nested("hello") == "hello"
+    assert coerce_nested(None) is None
+
+
+def test_coerce_nested_pydantic_model():
+    """Test coerce_nested returns Pydantic models as-is."""
+    from pydantic import BaseModel
+
+    from mcpgateway.plugins.framework.utils import coerce_nested
+
+    class MyModel(BaseModel):
+        x: int = 1
+
+    model = MyModel()
+    assert coerce_nested(model) is model
+
+
+# ============================================================================
+# Test ORJSONResponse
+# ============================================================================
+
+
+def test_orjson_response_media_type():
+    """Test ORJSONResponse has correct media type."""
+    from mcpgateway.plugins.framework.utils import ORJSONResponse
+
+    assert ORJSONResponse.media_type == "application/json"
+
+
+def test_orjson_response_render():
+    """Test ORJSONResponse renders JSON bytes."""
+    from mcpgateway.plugins.framework.utils import ORJSONResponse
+
+    response = ORJSONResponse(content={"status": "ok", "count": 42})
+    assert response.body is not None
+    import orjson
+
+    parsed = orjson.loads(response.body)
+    assert parsed == {"status": "ok", "count": 42}
+
+
+def test_orjson_response_render_non_str_keys():
+    """Test ORJSONResponse handles non-string keys."""
+    from mcpgateway.plugins.framework.utils import ORJSONResponse
+
+    response = ORJSONResponse(content={1: "one", 2: "two"})
+    import orjson
+
+    parsed = orjson.loads(response.body)
+    assert parsed == {"1": "one", "2": "two"}
+
+
+# ============================================================================
+# Test matches function edge cases
+# ============================================================================
+
+
 def test_matches_edge_cases():
     """Test the matches function with edge cases."""
     context = GlobalContext(request_id="req1", server_id="srv1", tenant_id="tenant1", user="admin_user")

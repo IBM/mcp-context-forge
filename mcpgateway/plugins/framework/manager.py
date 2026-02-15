@@ -36,11 +36,13 @@ from typing import Any, Optional, Union
 # First-Party
 from mcpgateway.plugins.framework.base import HookRef, Plugin
 from mcpgateway.plugins.framework.errors import convert_exception_to_error, PluginError, PluginViolationError
+from mcpgateway.plugins.framework.hooks.policies import apply_policy, DefaultHookPolicy, HookPayloadPolicy
 from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.memory import copyonwrite
 from mcpgateway.plugins.framework.models import Config, GlobalContext, PluginContext, PluginContextTable, PluginErrorModel, PluginMode, PluginPayload, PluginResult
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
+from mcpgateway.plugins.framework.settings import settings
 from mcpgateway.plugins.framework.utils import payload_matches
 
 # Use standard logging to avoid circular imports (plugins -> services -> plugins)
@@ -82,15 +84,23 @@ class PluginExecutor:
         >>> # )
     """
 
-    def __init__(self, config: Optional[Config] = None, timeout: int = DEFAULT_PLUGIN_TIMEOUT):
+    def __init__(
+        self,
+        config: Optional[Config] = None,
+        timeout: int = DEFAULT_PLUGIN_TIMEOUT,
+        hook_policies: Optional[dict[str, HookPayloadPolicy]] = None,
+    ):
         """Initialize the plugin executor.
 
         Args:
-            timeout: Maximum execution time per plugin in seconds.
             config: the plugin manager configuration.
+            timeout: Maximum execution time per plugin in seconds.
+            hook_policies: Per-hook-type payload modification policies.
         """
         self.timeout = timeout
         self.config = config
+        self.hook_policies: dict[str, HookPayloadPolicy] = hook_policies or {}
+        self.default_hook_policy = DefaultHookPolicy(settings.default_hook_policy)
 
     async def execute(
         self,
@@ -142,6 +152,9 @@ class PluginExecutor:
         # Validate payload size
         self._validate_payload_size(payload)
 
+        # Look up the policy for this hook type (may be None)
+        policy = self.hook_policies.get(hook_type)
+
         res_local_contexts = {}
         combined_metadata: dict[str, Any] = {}
         current_payload: PluginPayload | None = None
@@ -182,9 +195,29 @@ class PluginExecutor:
                 global_context,
                 combined_metadata,
             )
-            # Track payload modifications
+
+            # Apply policy-based controlled merge (per-plugin)
             if result.modified_payload is not None:
-                current_payload = result.modified_payload
+                if policy:
+                    # Explicit policy -- filter to writable fields only
+                    filtered = apply_policy(
+                        current_payload or payload,
+                        result.modified_payload,
+                        policy,
+                    )
+                    if filtered is not None:
+                        current_payload = filtered
+                elif self.default_hook_policy == DefaultHookPolicy.ALLOW:
+                    # No explicit policy + default=allow -- accept all modifications
+                    current_payload = result.modified_payload
+                else:
+                    # No explicit policy + default=deny -- reject all modifications
+                    logger.warning(
+                        "Plugin %s attempted payload modification on hook %s but no policy is defined and default is deny",
+                        hook_ref.plugin_ref.name,
+                        hook_type,
+                    )
+
             if not result.continue_processing and hook_ref.plugin_ref.plugin.mode == PluginMode.ENFORCE:
                 return (result, res_local_contexts)
 
@@ -432,7 +465,12 @@ class PluginManager:
     _config_path: str | None = None
     _executor: PluginExecutor = PluginExecutor()
 
-    def __init__(self, config: str = "", timeout: int = DEFAULT_PLUGIN_TIMEOUT):
+    def __init__(
+        self,
+        config: str = "",
+        timeout: int = DEFAULT_PLUGIN_TIMEOUT,
+        hook_policies: Optional[dict[str, HookPayloadPolicy]] = None,
+    ):
         """Initialize plugin manager.
 
         PluginManager implements a thread-safe Borg singleton:
@@ -448,6 +486,7 @@ class PluginManager:
         Args:
             config: Path to plugin configuration file (YAML).
             timeout: Maximum execution time per plugin in seconds.
+            hook_policies: Per-hook-type payload modification policies (injected by gateway).
 
         Examples:
             >>> # Initialize with configuration file
@@ -468,9 +507,12 @@ class PluginManager:
                         self._config = ConfigLoader.load_config(config)
                         self._config_path = config
 
-                    # Update executor timeouts
-                    self._executor.config = self._config
-                    self._executor.timeout = timeout
+                    # Update executor with timeout and policies
+                    self._executor = PluginExecutor(
+                        config=self._config,
+                        timeout=timeout,
+                        hook_policies=hook_policies,
+                    )
 
     @classmethod
     def reset(cls) -> None:

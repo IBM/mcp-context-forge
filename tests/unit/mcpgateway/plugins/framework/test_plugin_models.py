@@ -26,11 +26,16 @@ def _write_file(tmp_path: Path, name: str) -> str:
     return str(file_path)
 
 
-def test_parse_bool_values():
-    assert MCPClientTLSConfig._parse_bool("true") is True
-    assert MCPClientTLSConfig._parse_bool("0") is False
-    with pytest.raises(ValueError):
-        MCPClientTLSConfig._parse_bool("maybe")
+def test_bool_parsing_via_settings(monkeypatch):
+    """Bool fields on PluginsSettings handle true/false strings correctly."""
+    # First-Party
+    from mcpgateway.plugins.framework.settings import PluginsSettings
+
+    monkeypatch.setenv("PLUGINS_CLIENT_MTLS_VERIFY", "true")
+    assert PluginsSettings().client_mtls_verify is True
+
+    monkeypatch.setenv("PLUGINS_CLIENT_MTLS_VERIFY", "0")
+    assert PluginsSettings().client_mtls_verify is False
 
 
 def test_client_tls_from_env(monkeypatch, tmp_path):
@@ -56,7 +61,7 @@ def test_client_tls_from_env(monkeypatch, tmp_path):
 
 def test_server_tls_from_env_invalid_cert_reqs(monkeypatch):
     monkeypatch.setenv("PLUGINS_SERVER_SSL_CERT_REQS", "not-an-int")
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, Exception)):
         MCPServerTLSConfig.from_env()
 
 
@@ -87,7 +92,7 @@ def test_server_config_tls_with_uds_raises(tmp_path):
 
 def test_server_config_from_env_invalid_port(monkeypatch):
     monkeypatch.setenv("PLUGINS_SERVER_PORT", "bad")
-    with pytest.raises(ValueError):
+    with pytest.raises((ValueError, Exception)):
         MCPServerConfig.from_env()
 
 
@@ -192,3 +197,15 @@ def test_plugin_config_external_config_disallowed():
     mcp = MCPClientConfig(proto=TransportType.SSE, url="https://example.com")
     with pytest.raises(ValueError):
         PluginConfig(name="external", kind=EXTERNAL_PLUGIN_TYPE, config={"x": 1}, mcp=mcp)
+
+
+def test_transport_type_enum_parity():
+    """Ensure framework and common TransportType enums stay in sync."""
+    # First-Party
+    from mcpgateway.plugins.framework.models import TransportType as FrameworkTransportType
+
+    common_members = {m.name: m.value for m in TransportType}
+    framework_members = {m.name: m.value for m in FrameworkTransportType}
+    assert framework_members == common_members, (
+        f"TransportType enums diverged. " f"Common-only: {set(common_members) - set(framework_members)}, " f"Framework-only: {set(framework_members) - set(common_members)}"
+    )

@@ -11,7 +11,7 @@ Usage:
 
 Environment variables:
     PLUGINS_CONFIG_PATH: Path to plugin configuration file
-    UNIX_SOCKET_PATH: Path for Unix socket (default: /tmp/mcpgateway-plugins.sock)
+    PLUGINS_UNIX_SOCKET_PATH: Path for Unix socket (default: /tmp/mcpgateway-plugins.sock)
 
 Examples:
     Run with default settings:
@@ -20,7 +20,7 @@ Examples:
 
     Run with custom socket path:
 
-    $ UNIX_SOCKET_PATH=/tmp/my-plugins.sock python -m mcpgateway.plugins.framework.external.unix.server.runtime
+    $ PLUGINS_UNIX_SOCKET_PATH=/tmp/my-plugins.sock python -m mcpgateway.plugins.framework.external.unix.server.runtime
 """
 
 # Standard
@@ -31,6 +31,7 @@ import sys
 
 # First-Party
 from mcpgateway.plugins.framework.external.unix.server.server import run_server
+from mcpgateway.plugins.framework.settings import PluginsSettings
 
 # Configure logging
 logging.basicConfig(
@@ -44,14 +45,9 @@ logger = logging.getLogger(__name__)
 
 async def run() -> None:
     """Main entry point for the Unix socket server."""
-    config_path = os.environ.get(
-        "PLUGINS_CONFIG_PATH",
-        os.path.join(".", "resources", "plugins", "config.yaml"),
-    )
-    socket_path = os.environ.get(
-        "UNIX_SOCKET_PATH",
-        "/tmp/mcpgateway-plugins.sock",  # nosec B108 - configurable via env var
-    )
+    s = PluginsSettings()
+    config_path = s.config_path or os.path.join(".", "resources", "plugins", "config.yaml")
+    socket_path = s.unix_socket_path or "/tmp/mcpgateway-plugins.sock"  # nosec B108 - configurable via env var
 
     logger.info("Starting Unix socket plugin server")
     logger.info("  Config: %s", config_path)

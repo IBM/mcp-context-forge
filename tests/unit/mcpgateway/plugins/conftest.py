@@ -12,6 +12,7 @@ import pytest
 
 # First-Party
 from mcpgateway.plugins.framework import PluginManager
+from mcpgateway.plugins.framework.settings import settings
 
 
 @pytest.fixture(autouse=True)
@@ -22,4 +23,11 @@ def reset_plugin_manager_state():
     preventing state leakage between tests when using the Borg pattern.
     """
     PluginManager.reset()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def clear_plugins_settings_cache(reset_plugin_manager_state):
+    """Clear the settings LRU cache so env changes take effect per test."""
+    settings.cache_clear()
     yield

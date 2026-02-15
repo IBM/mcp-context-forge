@@ -113,7 +113,7 @@ class TestResourceServicePluginIntegration:
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
 
-        with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGIN_CONFIG_FILE": "test_config.yaml"}):
+        with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGINS_CONFIG_FILE": "test_config.yaml"}):
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 mock_manager = MagicMock()
                 mock_manager._initialized = False
@@ -608,7 +608,7 @@ class TestResourceServicePluginIntegration:
     @pytest.mark.asyncio
     async def test_plugin_manager_initialization(self):
         """Test plugin manager initialization in ResourceService."""
-        with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGIN_CONFIG_FILE": "plugins/test.yaml"}):
+        with patch.dict(os.environ, {"PLUGINS_ENABLED": "true", "PLUGINS_CONFIG_FILE": "plugins/test.yaml"}):
             with patch("mcpgateway.services.resource_service.PluginManager") as MockPluginManager:
                 mock_manager = MagicMock()
                 MockPluginManager.return_value = mock_manager

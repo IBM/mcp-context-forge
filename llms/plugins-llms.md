@@ -137,7 +137,7 @@ Plugins: How They Work in MCP Context Forge
          cwd: "/opt/plugins"
          # or: script: path/to/server.py
      ```
-- Enable framework in gateway: `.env` must set `PLUGINS_ENABLED=true` and optionally `PLUGIN_CONFIG_FILE=plugins/config.yaml`. To reuse a gateway-wide mTLS client certificate for multiple external plugins, set `PLUGINS_MTLS_CA_BUNDLE`, `PLUGINS_MTLS_CLIENT_CERT`, and related `PLUGINS_MTLS_*` variables. Individual plugin `tls` blocks override these defaults.
+- Enable framework in gateway: `.env` must set `PLUGINS_ENABLED=true` and optionally `PLUGINS_CONFIG_FILE=plugins/config.yaml`. To reuse a gateway-wide mTLS client certificate for multiple external plugins, set `PLUGINS_MTLS_CA_BUNDLE`, `PLUGINS_MTLS_CLIENT_CERT`, and related `PLUGINS_MTLS_*` variables. Individual plugin `tls` blocks override these defaults.
 
 **Built‑in Plugins (39 plugins in 42 directories)**
 
@@ -281,7 +281,7 @@ async function toolPreInvoke({ payload, context }: any) {
 ```
 
 **Environment and Enablement**
-- Enable plugins in gateway `.env`: `PLUGINS_ENABLED=true` and optionally `PLUGIN_CONFIG_FILE=plugins/config.yaml`.
+- Enable plugins in gateway `.env`: `PLUGINS_ENABLED=true` and optionally `PLUGINS_CONFIG_FILE=plugins/config.yaml`.
 - Run gateway: `make dev` (reload) or `make serve`.
 - Validate config: `make check-env` and `make doctest test` for framework models.
 

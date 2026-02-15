@@ -174,19 +174,9 @@ class ResourceService:
         self._plugin_manager = None
         if PLUGINS_AVAILABLE:
             try:
-                # Support env overrides for testability without reloading settings
-                env_flag = os.getenv("PLUGINS_ENABLED")
-                if env_flag is not None:
-                    env_enabled = env_flag.strip().lower() in {"1", "true", "yes", "on"}
-                    plugins_enabled = env_enabled
-                else:
-                    plugins_enabled = settings.plugins_enabled
-
-                config_file = os.getenv("PLUGIN_CONFIG_FILE", settings.plugin_config_file)
-
-                if plugins_enabled:
-                    self._plugin_manager = PluginManager(config_file)
-                    logger.info(f"Plugin manager initialized for ResourceService with config: {config_file}")
+                if settings.plugins.enabled:
+                    self._plugin_manager = PluginManager(settings.plugins.config_file)
+                    logger.info(f"Plugin manager initialized for ResourceService with config: {settings.plugins.config_file}")
             except Exception as e:
                 logger.warning(f"Plugin manager initialization failed in ResourceService: {e}")
                 self._plugin_manager = None

@@ -421,7 +421,7 @@ plugins:
 ```bash
 # Enable plugin system
 export PLUGINS_ENABLED=true
-export PLUGIN_CONFIG_FILE=plugins/config.yaml
+export PLUGINS_CONFIG_FILE=plugins/config.yaml
 
 # Test plugin
 make dev

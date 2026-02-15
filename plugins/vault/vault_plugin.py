@@ -241,7 +241,7 @@ class Vault(Plugin):
             if modified and self._sconfig.vault_header_name in headers:
                 del headers[self._sconfig.vault_header_name]
 
-            payload.headers = HttpHeaderPayload(root=headers)
+            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
 
         if modified:
             logger.info(f"Modified tool '{payload.name}' to add auth header")

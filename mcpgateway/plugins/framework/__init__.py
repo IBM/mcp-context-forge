@@ -14,7 +14,6 @@ Exposes core MCP Gateway plugin components:
 """
 
 # Standard
-import os
 from typing import Optional
 
 # First-Party
@@ -85,12 +84,17 @@ def get_plugin_manager() -> Optional[PluginManager]:
     """
     global _plugin_manager  # pylint: disable=global-statement
     if _plugin_manager is None:
-        # Import here to avoid circular dependency
-        from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+        # Use plugin framework's own settings instead of mcpgateway.config
+        from mcpgateway.plugins.framework.settings import settings  # pylint: disable=import-outside-toplevel
 
-        if settings.plugins_enabled:
-            config_file = os.getenv("PLUGIN_CONFIG_FILE", getattr(settings, "plugin_config_file", "plugins/config.yaml"))
-            _plugin_manager = PluginManager(config_file)
+        if settings.enabled:
+            # Import concrete policies from the gateway side
+            from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # pylint: disable=import-outside-toplevel
+
+            _plugin_manager = PluginManager(
+                settings.config_file,
+                hook_policies=HOOK_PAYLOAD_POLICIES,
+            )
     return _plugin_manager
 
 
