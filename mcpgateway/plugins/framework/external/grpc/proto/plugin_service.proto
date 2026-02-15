@@ -1,0 +1,146 @@
+// Copyright 2025
+// SPDX-License-Identifier: Apache-2.0
+// Authors: Teryl Taylor
+//
+// Protocol buffer definitions for gRPC external plugin transport.
+
+syntax = "proto3";
+
+package mcpgateway.plugins;
+
+import "google/protobuf/struct.proto";
+
+// ============================================================================
+// Plugin Service - Main service for external plugin communication
+// ============================================================================
+
+service PluginService {
+  // Get configuration for a single plugin by name
+  rpc GetPluginConfig(GetPluginConfigRequest) returns (GetPluginConfigResponse);
+
+  // Get configurations for all plugins on the server
+  rpc GetPluginConfigs(GetPluginConfigsRequest) returns (GetPluginConfigsResponse);
+
+  // Invoke a plugin hook
+  rpc InvokeHook(InvokeHookRequest) returns (InvokeHookResponse);
+}
+
+// ============================================================================
+// Health Service - Standard gRPC health checking
+// ============================================================================
+
+service Health {
+  // Check the health status of the plugin server
+  rpc Check(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+// ============================================================================
+// Request/Response Messages
+// ============================================================================
+
+// GetPluginConfig - Retrieve a single plugin's configuration
+message GetPluginConfigRequest {
+  string name = 1;  // Plugin name to retrieve
+}
+
+message GetPluginConfigResponse {
+  bool found = 1;                       // Whether the plugin was found
+  google.protobuf.Struct config = 2;    // Plugin configuration as JSON-like struct
+}
+
+// GetPluginConfigs - Retrieve all plugin configurations
+message GetPluginConfigsRequest {
+  // Empty - retrieves all plugins
+}
+
+message GetPluginConfigsResponse {
+  repeated google.protobuf.Struct configs = 1;  // List of plugin configurations
+}
+
+// InvokeHook - Execute a plugin hook
+message InvokeHookRequest {
+  string hook_type = 1;                   // Hook type identifier (e.g., "tool_pre_invoke")
+  string plugin_name = 2;                 // Name of the plugin to execute
+  google.protobuf.Struct payload = 3;    // Hook payload (polymorphic, varies by hook_type)
+  PluginContext context = 4;              // Plugin context (explicit message for performance)
+}
+
+message InvokeHookResponse {
+  string plugin_name = 1;                 // Plugin that was executed
+  google.protobuf.Struct result = 2;     // Full PluginResult as struct (polymorphic)
+  PluginContext context = 3;              // Updated context (explicit message)
+  PluginError error = 4;                  // Error details (if failed)
+  PluginResultBase result_base = 5;       // Common result fields (for fast access)
+}
+
+// ============================================================================
+// Context Messages - Explicit messages for better serialization performance
+// ============================================================================
+
+// Global context shared across all plugins for a request
+message GlobalContext {
+  string request_id = 1;                  // ID of the HTTP request
+  string server_id = 2;                   // Server ID
+  string tenant_id = 3;                   // Tenant ID
+  oneof user_value {                      // User can be string or struct
+    string user_string = 4;
+    google.protobuf.Struct user_struct = 5;
+  }
+  google.protobuf.Struct metadata = 6;   // Read-only metadata
+  google.protobuf.Struct state = 7;      // Shared state across plugins
+}
+
+// Plugin context for a single request lifecycle
+message PluginContext {
+  GlobalContext global_context = 1;       // Global context shared across plugins
+  google.protobuf.Struct state = 2;      // Plugin-local state
+  google.protobuf.Struct metadata = 3;   // Plugin metadata
+}
+
+// ============================================================================
+// Result Messages
+// ============================================================================
+
+// Policy violation from a plugin
+message PluginViolation {
+  string reason = 1;                      // Short reason for the violation
+  string description = 2;                 // Longer description
+  string code = 3;                        // Violation code
+  string plugin_name = 4;                 // Plugin that generated the violation
+  google.protobuf.Struct details = 5;    // Additional details
+  int32 mcp_error_code = 6;              // MCP error code for client response
+}
+
+// Common fields for all plugin results
+message PluginResultBase {
+  bool continue_processing = 1;           // Whether to continue plugin chain
+  PluginViolation violation = 2;          // Violation if policy check failed
+  google.protobuf.Struct metadata = 3;   // Result metadata
+}
+
+// ============================================================================
+// Error and Status Messages
+// ============================================================================
+
+message PluginError {
+  string message = 1;                     // Error message
+  string plugin_name = 2;                 // Plugin that generated the error
+  string code = 3;                        // Error code
+  google.protobuf.Struct details = 4;    // Additional error details
+  int32 mcp_error_code = 5;              // MCP error code for client response
+}
+
+// Health check messages (following gRPC health checking protocol)
+message HealthCheckRequest {
+  string service = 1;  // Service name (empty for overall health)
+}
+
+message HealthCheckResponse {
+  enum ServingStatus {
+    UNKNOWN = 0;
+    SERVING = 1;
+    NOT_SERVING = 2;
+    SERVICE_UNKNOWN = 3;
+  }
+  ServingStatus status = 1;
+}

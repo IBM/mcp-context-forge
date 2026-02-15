@@ -1375,9 +1375,11 @@ class TransportType(str, Enum):
         HTTP (str): Standard HTTP-based transport.
         STDIO (str): Standard input/output transport.
         STREAMABLEHTTP (str): HTTP transport with streaming.
+        GRPC (str): gRPC transport for external plugins.
     """
 
     SSE = "SSE"
     HTTP = "HTTP"
     STDIO = "STDIO"
     STREAMABLEHTTP = "STREAMABLEHTTP"
+    GRPC = "GRPC"

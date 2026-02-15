@@ -12,10 +12,21 @@ Authors: Shriti Priya
 import ast
 from enum import Enum
 import re
+import time
 from typing import Union
+
+# Third-Party
+from prometheus_client import Histogram
 
 # Precompiled regex pattern for performance
 _POLICY_OPERATORS_RE = re.compile(r"\b(and|or|not)\b|[()]")
+
+# Prometheus metrics
+llm_guard_policy_compile_duration_seconds = Histogram(
+    "llm_guard_policy_compile_duration_seconds",
+    "Duration of policy compilation/evaluation in seconds",
+    buckets=(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0),
+)
 
 
 class ResponseGuardrailPolicy(Enum):
@@ -52,8 +63,18 @@ class GuardrailPolicy:
 
     def _safe_eval(self, node, variables):
         """Recursively evaluates an AST node safely."""
+        start_time = time.time()
+        try:
+            result = self._safe_eval_impl(node, variables)
+            return result
+        finally:
+            duration = time.time() - start_time
+            llm_guard_policy_compile_duration_seconds.observe(duration)
+
+    def _safe_eval_impl(self, node, variables):
+        """Internal implementation of safe evaluation."""
         if isinstance(node, ast.Expression):
-            return self._safe_eval(node.body, variables)
+            return self._safe_eval_impl(node.body, variables)
         elif isinstance(node, ast.Constant):
             return node.value
         elif isinstance(node, ast.Name):
@@ -61,8 +82,8 @@ class GuardrailPolicy:
                 return variables[node.id]
             raise ValueError(f"Unknown variable: {node.id}")
         elif isinstance(node, ast.BinOp):
-            left = self._safe_eval(node.left, variables)
-            right = self._safe_eval(node.right, variables)
+            left = self._safe_eval_impl(node.left, variables)
+            right = self._safe_eval_impl(node.right, variables)
             operators = {
                 ast.Add: lambda a, b: a + b,
                 ast.Sub: lambda a, b: a - b,
@@ -75,7 +96,7 @@ class GuardrailPolicy:
             if type(node.op) in operators:
                 return operators[type(node.op)](left, right)
         elif isinstance(node, ast.UnaryOp):
-            operand = self._safe_eval(node.operand, variables)
+            operand = self._safe_eval_impl(node.operand, variables)
             operators = {
                 ast.UAdd: lambda a: +a,
                 ast.USub: lambda a: -a,
@@ -87,18 +108,18 @@ class GuardrailPolicy:
             # Use lazy evaluation to preserve short-circuit semantics
             if isinstance(node.op, ast.And):
                 for v in node.values:
-                    if not self._safe_eval(v, variables):
+                    if not self._safe_eval_impl(v, variables):
                         return False
                 return True
             elif isinstance(node.op, ast.Or):
                 for v in node.values:
-                    if self._safe_eval(v, variables):
+                    if self._safe_eval_impl(v, variables):
                         return True
                 return False
         elif isinstance(node, ast.Compare):
-            left = self._safe_eval(node.left, variables)
+            left = self._safe_eval_impl(node.left, variables)
             for op, right_node in zip(node.ops, node.comparators):
-                right = self._safe_eval(right_node, variables)
+                right = self._safe_eval_impl(right_node, variables)
                 operators = {
                     ast.Eq: lambda a, b: a == b,
                     ast.NotEq: lambda a, b: a != b,

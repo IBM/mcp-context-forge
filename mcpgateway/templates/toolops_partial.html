@@ -1,9 +1,4 @@
 <!-- htmlhint doctype-first:false -->
-<div id="tool-ops-loading-indicator" class="flex items-center justify-center p-4 htmx-indicator" style="display: none;">
-  <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600 mr-4"></div>
-  <span class="text-gray-600 dark:text-gray-400">Loading tools...</span>
-</div>
-
 <div class="overflow-x-auto" id="tool-ops-table-container">
     <table class="min-w-full divide-y divide-gray-200 text-sm" id="toolTable">
         <thead class="bg-gray-50">
@@ -17,7 +12,8 @@
         </thead>
         <tbody class="bg-white divide-y divide-gray-200" id="toolBody">
             {% for tool in tools %}
-                <tr data-name="{{ tool.name.lower() }}" data-status="{{ 'enabled' if tool.enabled else 'disabled' }}">
+                {% set can_modify = is_admin or tool.owner_email == current_user_email or (tool.visibility == 'team' and tool.team_id and user_team_roles.get(tool.team_id|string) == 'owner') %}
+                <tr data-name="{{ tool.name.lower() }}" data-status="{{ 'enabled' if tool.enabled else 'disabled' }}" data-owner-email="{{ tool.owner_email or '' }}" data-team-id="{{ tool.team_id or '' }}" data-visibility="{{ tool.visibility or '' }}">
                     <td class="px-4 py-3">
                         <input type="checkbox" class="tool-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded"
                             data-tool="{{ tool.name }}###{{ tool.id }}">
@@ -41,6 +37,7 @@
                     </td>
                     <td class="px-2 py-4 whitespace-nowrap text-sm font-medium w-32">
                         <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
+                            {% if can_modify %}
                             <button onclick="enrichTool('{{ tool.id }}')"
                                     class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-teal-600 hover:bg-teal-50">
                                 Enrich
@@ -53,14 +50,17 @@
                                     class="col-span-2 px-2 py-1 text-xs font-medium rounded-md text-yellow-600 hover:bg-yellow-50">
                                 Validate
                             </button>
+                            {% endif %}
                             <button onclick="viewTool('{{ tool.id }}')"
                                     class="px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50">
                                 View
                             </button>
+                            {% if can_modify %}
                             <button onclick="editTool('{{ tool.id }}')"
                                     class="px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:bg-green-50">
                                 Edit
                             </button>
+                            {% endif %}
                         </div>
                     </td>
                 </tr>

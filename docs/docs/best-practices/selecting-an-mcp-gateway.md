@@ -1,9 +1,5 @@
 # How ContextForge Fits the Criteria for Selecting an Enterprise MCP Gateway
 
-!!! warning "Draft - Work in Progress"
-
-    This document is under active development. Information may not be 100% accurate and is subject to change. Please verify details independently before making decisions.
-
 A practical framework for evaluating MCP gateways, and how ContextForge addresses each criterion.
 
 ---

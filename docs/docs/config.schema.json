@@ -418,6 +418,12 @@
       "title": "Validation Strict",
       "type": "boolean"
     },
+    "json_schema_validation_strict": {
+      "default": true,
+      "description": "Strict JSON Schema validation for tools and prompts",
+      "title": "Json Schema Validation Strict",
+      "type": "boolean"
+    },
     "sanitize_output": {
       "default": true,
       "description": "Sanitize output to remove control characters",
@@ -1132,6 +1138,16 @@
       "description": "Enable TLS for gRPC connections by default",
       "title": "Mcpgateway Grpc Tls Enabled",
       "type": "boolean"
+    },
+    "mcpgateway_direct_proxy_enabled": {
+      "type": "boolean",
+      "default": false,
+      "description": "Enable direct_proxy gateway mode for pass-through MCP operations"
+    },
+    "mcpgateway_direct_proxy_timeout": {
+      "type": "integer",
+      "default": 30,
+      "description": "Default timeout in seconds for direct proxy MCP operations"
     },
     "mcpgateway_performance_tracking": {
       "default": false,
@@ -2568,7 +2584,8 @@
         "x-tenant-id",
         "x-user-id",
         "x-api-key",
-        "cookie"
+        "cookie",
+        "x-mcp-session-id"
       ],
       "items": {
         "type": "string"

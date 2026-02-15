@@ -9,6 +9,7 @@ Tests cover:
 - Three-source merging logic
 """
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 # Third-Party
@@ -32,6 +33,17 @@ def test_get_retention_cutoff_uses_hours(monkeypatch):
 
     delta = now - cutoff
     assert timedelta(hours=1) <= delta < timedelta(hours=2)
+
+
+def test_get_retention_cutoff_uses_days_when_raw_delete_disabled(monkeypatch):
+    monkeypatch.setattr(mqs.settings, "metrics_retention_days", 7)
+    monkeypatch.setattr(mqs.settings, "metrics_delete_raw_after_rollup", False)
+
+    now = datetime.now(timezone.utc)
+    cutoff = mqs.get_retention_cutoff()
+
+    delta = now - cutoff
+    assert timedelta(days=7) <= delta < timedelta(days=8)
 
 
 # ============================================================================
@@ -225,6 +237,15 @@ class TestGetCurrentHourAggregation:
         assert result.avg_response_time == 0.25
         assert result.raw_count == 100
         assert result.rollup_count == 0
+
+    def test_entity_id_adds_filter_clause(self):
+        db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.total = 0
+        db.execute.return_value.one.return_value = mock_result
+
+        # We don't assert on SQLAlchemy internals; we just cover the entity_id path.
+        assert mqs.get_current_hour_aggregation(db, "tool", entity_id="tool-1") is None
 
 
 # ============================================================================
@@ -439,3 +460,77 @@ class TestAggregateMetricsCombined:
         assert result.avg_response_time == 0.1
         assert result.raw_count == 50  # All from current hour
         assert result.rollup_count == 0
+
+    def test_combined_with_entity_id_adds_filters(self):
+        db = MagicMock()
+
+        empty_result = MagicMock()
+        empty_result.total = 0
+        empty_result.successful = 0
+        empty_result.failed = 0
+        empty_result.min_rt = None
+        empty_result.max_rt = None
+        empty_result.avg_rt = None
+        empty_result.last_time = None
+
+        db.execute.return_value.one.side_effect = [empty_result, empty_result, empty_result]
+
+        result = mqs.aggregate_metrics_combined(db, "tool", entity_id="tool-1")
+        assert result.total_executions == 0
+
+
+class TestGetTopEntitiesCombined:
+    def test_invalid_metric_type_raises(self):
+        db = MagicMock()
+        with pytest.raises(ValueError, match="Unknown metric type"):
+            mqs.get_top_entities_combined(db, "invalid_type", entity_model=object)
+
+    def test_include_deleted_and_failure_rate_order(self):
+        """Covers include_deleted union path, failure_rate ordering, and result dict construction."""
+        from mcpgateway.db import Tool
+
+        db = MagicMock()
+
+        row = SimpleNamespace(
+            id="tool-1",
+            name="Tool One",
+            execution_count=10,
+            successful=7,
+            failed=3,
+            avg_response_time=0.5,
+            last_execution=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+            is_deleted=True,
+        )
+
+        class _Result:
+            def fetchall(self):
+                return [row]
+
+        db.execute.return_value = _Result()
+
+        results = mqs.get_top_entities_combined(
+            db=db,
+            metric_type="tool",
+            entity_model=Tool,
+            limit=10,
+            order_by="failure_rate",
+            include_deleted=True,
+        )
+
+        assert results[0]["id"] == "tool-1"
+        assert results[0]["is_deleted"] is True
+        assert results[0]["success_rate"] == pytest.approx(70.0)
+
+    def test_order_by_avg_response_time(self):
+        """Cover the avg_response_time ordering branch."""
+        from mcpgateway.db import Tool
+
+        db = MagicMock()
+
+        class _Result:
+            def fetchall(self):
+                return []
+
+        db.execute.return_value = _Result()
+
+        assert mqs.get_top_entities_combined(db, "tool", entity_model=Tool, order_by="avg_response_time") == []

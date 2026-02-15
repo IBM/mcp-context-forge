@@ -9,7 +9,7 @@ MCP Gateway: Full Project Overview
 - Federation and administration: register servers, list tools/prompts/resources, manage teams/tokens, admin UI.
 - Agent-to-Agent (A2A) communication between MCP agents.
 - LLM proxying and chat interface with integrated tools/resources.
-- RBAC (Role-Based Access Control) with team and permission management.
+- Two-layer security: Token Scoping (data filtering) + RBAC (action authorization).
 - Comprehensive observability: OpenTelemetry, Prometheus metrics, structured logging.
 
 **Project Structure**
@@ -110,6 +110,21 @@ MCP Gateway: Full Project Overview
 - Auth: set `JWT_SECRET_KEY`; emit bearer tokens with the token utility for API calls.
 - TLS: generate with `make certs` and run `make serve-ssl`.
 - Plugins: external URLs validated; STDIO scripts must be `.py`. Timeouts and payload size guards in plugin executor.
+
+**Authentication & RBAC**
+
+- Two-layer security model:
+  - Layer 1 (Token Scoping): Controls what resources users CAN SEE via `teams` JWT claim
+  - Layer 2 (RBAC): Controls what actions users CAN DO via permission checks
+- Token scoping quick reference:
+  - Missing `teams` key → PUBLIC-ONLY (secure default)
+  - `teams: null` + `is_admin: true` → ADMIN BYPASS (unrestricted)
+  - `teams: []` → PUBLIC-ONLY (even for admins)
+  - `teams: ["team-id"]` → Team + Public resources
+- Built-in roles: `platform_admin` (global, all permissions), `team_admin`, `developer`, `viewer` (team-scoped)
+- Resource visibility: `public` (all users), `team` (team members), `private` (owner only)
+- Key implementation: `normalize_token_teams()` in `mcpgateway/auth.py` is single source of truth
+- Full documentation: `docs/docs/manage/rbac.md`, `docs/docs/architecture/multitenancy.md`
 
 **Makefile Reference (root)**
 - Dev/prod: `make dev`, `make serve`, `make serve-ssl`, `make certs`

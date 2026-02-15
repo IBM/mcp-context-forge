@@ -243,21 +243,96 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     "name": "team_admin",
                     "description": "Team administrator with team management permissions",
                     "scope": "team",
-                    "permissions": ["teams.read", "teams.update", "teams.join", "teams.manage_members", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": [
+                        "admin.dashboard",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.read",
+                        "teams.update",
+                        "teams.join",
+                        "teams.delete",
+                        "teams.manage_members",
+                        "tools.read",
+                        "tools.execute",
+                        "resources.read",
+                        "prompts.read",
+                        "a2a.read",
+                        "gateways.create",
+                        "servers.create",
+                        "tools.create",
+                        "resources.create",
+                        "prompts.create",
+                        "a2a.create",
+                        "gateways.update",
+                        "servers.update",
+                        "tools.update",
+                        "resources.update",
+                        "prompts.update",
+                        "a2a.update",
+                        "gateways.delete",
+                        "servers.delete",
+                        "tools.delete",
+                        "resources.delete",
+                        "prompts.delete",
+                        "a2a.delete",
+                        "a2a.invoke",
+                        "tokens.create",
+                        "tokens.read",
+                        "tokens.update",
+                        "tokens.revoke",
+                    ],
                     "is_system_role": True,
                 },
                 {
                     "name": "developer",
                     "description": "Developer with tool and resource access",
                     "scope": "team",
-                    "permissions": ["teams.join", "tools.read", "tools.execute", "resources.read", "prompts.read"],
+                    "permissions": [
+                        "admin.dashboard",
+                        "gateways.read",
+                        "servers.read",
+                        "servers.use",
+                        "teams.join",
+                        "tools.read",
+                        "tools.execute",
+                        "resources.read",
+                        "prompts.read",
+                        "a2a.read",
+                        "gateways.create",
+                        "servers.create",
+                        "tools.create",
+                        "resources.create",
+                        "prompts.create",
+                        "a2a.create",
+                        "gateways.update",
+                        "servers.update",
+                        "tools.update",
+                        "resources.update",
+                        "prompts.update",
+                        "a2a.update",
+                        "gateways.delete",
+                        "servers.delete",
+                        "tools.delete",
+                        "resources.delete",
+                        "prompts.delete",
+                        "a2a.delete",
+                        "a2a.invoke",
+                    ],
                     "is_system_role": True,
                 },
                 {
                     "name": "viewer",
-                    "description": "Read-only access to resources",
+                    "description": "Read-only access to resources and admin UI",
                     "scope": "team",
-                    "permissions": ["teams.join", "tools.read", "resources.read", "prompts.read"],
+                    "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read", "a2a.read"],
+                    "is_system_role": True,
+                },
+                {
+                    "name": "platform_viewer",
+                    "description": "Read-only access to resources and admin UI",
+                    "scope": "global",
+                    "permissions": ["admin.dashboard", "gateways.read", "servers.read", "teams.join", "tools.read", "resources.read", "prompts.read", "a2a.read"],
                     "is_system_role": True,
                 },
             ]
@@ -333,6 +408,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
 
             # Assign platform_admin role to admin user
             platform_admin_role = next((r for r in created_roles if r.name == "platform_admin"), None)
+            if not platform_admin_role:
+                # Role not in created_roles (creation may have failed) — look up from DB as fallback
+                platform_admin_role = await role_service.get_role_by_name("platform_admin", "global")
             if platform_admin_role:
                 try:
                     # Check if assignment already exists
@@ -345,7 +423,9 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         logger.info("Admin user already has platform_admin role")
 
                 except Exception as e:
-                    logger.error(f"Failed to assign platform_admin role: {e}")
+                    logger.error(f"Failed to assign platform_admin role to {admin_user.email}: {e}. Admin UI routes using allow_admin_bypass=False will return 403.")
+            else:
+                logger.error(f"platform_admin role not found — could not assign to {admin_user.email}. Admin UI routes using allow_admin_bypass=False will return 403.")
 
             logger.info("Default RBAC roles bootstrap completed successfully")
 

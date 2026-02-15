@@ -204,6 +204,7 @@ mcpContextForge:
 
     # ─ Cache behaviour ─
     CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
+                                     # Required for multi-worker session affinity
     CACHE_PREFIX: "mcpgw:"           # Prefix applied to every cache key
     SESSION_TTL: "3600"              # TTL (s) for user sessions
     MESSAGE_TTL: "600"               # TTL (s) for ephemeral messages (completions)
@@ -288,6 +289,10 @@ mcpContextForge:
     MCPGATEWAY_A2A_MAX_RETRIES: "3"     # maximum retry attempts for A2A calls
     MCPGATEWAY_A2A_METRICS_ENABLED: "true" # enable A2A agent metrics collection
 
+    # ─ Direct Proxy Configuration ─
+    MCPGATEWAY_DIRECT_PROXY_ENABLED: "false"  # enable direct_proxy gateway mode
+    MCPGATEWAY_DIRECT_PROXY_TIMEOUT: "30"     # timeout for direct proxy operations (seconds)
+
     # ─ MCP Server Catalog Configuration ─
     MCPGATEWAY_CATALOG_ENABLED: "true"  # enable MCP server catalog feature
     MCPGATEWAY_CATALOG_FILE: "mcp-catalog.yml" # path to catalog configuration file
@@ -348,6 +353,21 @@ mcpContextForge:
     INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # enable query param auth (default: disabled)
     INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # JSON array of allowed hosts, e.g. '["mcp.tavily.com"]'
 
+    # ─ SSRF Protection (Server-Side Request Forgery) ─
+    # Prevents gateway from accessing internal resources or cloud metadata services.
+    # Default: enabled with safe settings for internal/dev deployments.
+    # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
+    SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
+    SSRF_ALLOW_LOCALHOST: "true"               # allow localhost/127.x (set false for stricter security)
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"        # allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)
+    SSRF_DNS_FAIL_CLOSED: "false"              # reject on DNS failure (set true for stricter security)
+    # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
+    # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
+    # For strict production mode (external endpoints only):
+    # SSRF_ALLOW_LOCALHOST: "false"
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_DNS_FAIL_CLOSED: "true"
+
     # ─ Logging ─
     LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
     LOG_FORMAT: json                 # json or text format
@@ -369,6 +389,9 @@ mcpContextForge:
     # Logs all CRUD operations on resources for compliance (SOC2, HIPAA, etc.)
     # WARNING: Causes a DB write on EVERY API request - disable for load testing!
     AUDIT_TRAIL_ENABLED: "false"     # enable audit trail logging (default: false for performance)
+    # Permission audit logging (RBAC checks)
+    # WARNING: Writes a DB row per permission check - disable for load testing!
+    PERMISSION_AUDIT_ENABLED: "false"
 
     # ─ Execution Metrics Recording ─
     # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
@@ -412,6 +435,14 @@ mcpContextForge:
     # ─ Streaming sessions ─
     USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
     JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
+
+    # ─ Multi-Worker Session Affinity (ADR-038) ─
+    # Routes client requests to same worker for session continuity
+    # Requires: CACHE_TYPE=redis, USE_STATEFUL_SESSIONS=true, Redis accessible
+    MCPGATEWAY_SESSION_AFFINITY_ENABLED: "false"
+    MCPGATEWAY_SESSION_AFFINITY_TTL: "300"           # session ownership TTL (seconds)
+    MCPGATEWAY_SESSION_AFFINITY_MAX_SESSIONS: "1"   # max sessions per worker
+    MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT: "30"       # forwarded request timeout (seconds)
 
     # ─ Gateway/Server Connection Timeout ─
     FEDERATION_TIMEOUT: "120"        # HTTP timeout (seconds) for gateway and MCP server requests
@@ -627,6 +658,7 @@ mcpContextForge:
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
     VALIDATION_MIDDLEWARE_ENABLED: "false" # enable validation middleware for all requests
     VALIDATION_STRICT: "true" # reject requests with validation failures
+    JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
     SANITIZE_OUTPUT: "true" # strip control characters from responses
     ALLOWED_ROOTS: "[]" # allowed root paths (JSON array)
     MAX_PATH_DEPTH: "10" # maximum allowed path depth
@@ -776,6 +808,7 @@ mcpContextForge:
 
     # ─ Email-Based Authentication ─
     EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
+    PROTECT_ALL_ADMINS: "true"             # prevent any admin from being demoted or deactivated via API/UI
     PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
     PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
     PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
@@ -900,6 +933,12 @@ mcpContextForge:
     SSO_GENERIC_USERINFO_URL: ""           # userinfo endpoint URL
     SSO_GENERIC_ISSUER: ""                 # OIDC issuer URL
     SSO_GENERIC_SCOPE: "openid profile email" # OAuth scopes (space-separated)
+
+    # ─ Default Role Configuration ─
+    DEFAULT_ADMIN_ROLE: platform_admin     # global role assigned to admin users
+    DEFAULT_USER_ROLE: platform_viewer     # global role assigned to non-admin users
+    DEFAULT_TEAM_OWNER_ROLE: team_admin    # team-scoped role assigned to team owners
+    DEFAULT_TEAM_MEMBER_ROLE: viewer       # team-scoped role assigned to team members
 
     # ─ Personal Teams Configuration ─
     AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users

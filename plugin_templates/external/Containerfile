@@ -8,7 +8,12 @@ ARG PYTHON_VERSION=3.12
 ARG VERSION
 
 ENV APP_HOME=/app
+
+# Transport type: 'http', 'stdio', 'grpc', 'unix' (default: http)
 ENV PLUGINS_TRANSPORT=http
+
+# Set to 'true' to install gRPC dependencies (required for grpc/unix transports)
+ARG INSTALL_GRPC=false
 
 USER 0
 
@@ -28,7 +33,16 @@ USER 1001
 
 # Install plugin package
 COPY . .
-RUN pip install --no-cache-dir uv && python -m uv pip install .
+
+# Install base package, optionally with gRPC extras
+RUN pip install --no-cache-dir uv && \
+    if [ "${INSTALL_GRPC}" = "true" ]; then \
+        echo "Installing with gRPC support..." && \
+        python -m uv pip install ".[grpc]"; \
+    else \
+        echo "Installing without gRPC support..." && \
+        python -m uv pip install .; \
+    fi
 
 # Make default cache directory writable
 RUN mkdir -p -m 0776 ${HOME}/.cache

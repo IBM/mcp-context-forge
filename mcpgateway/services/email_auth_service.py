@@ -134,7 +134,22 @@ class EmailAuthService:
         """
         self.db = db
         self.password_service = Argon2PasswordService()
+        self._role_service = None
         logger.debug("EmailAuthService initialized")
+
+    @property
+    def role_service(self):
+        """Lazy-initialized RoleService to avoid circular imports.
+
+        Returns:
+            RoleService: Instance of RoleService
+        """
+        if self._role_service is None:
+            # First-Party
+            from mcpgateway.services.role_service import RoleService  # pylint: disable=import-outside-toplevel
+
+            self._role_service = RoleService(self.db)
+        return self._role_service
 
     def validate_email(self, email: str) -> bool:
         """Validate email address format.
@@ -298,7 +313,18 @@ class EmailAuthService:
             logger.error(f"Error getting user by email {email}: {e}")
             return None
 
-    async def create_user(self, email: str, password: str, full_name: Optional[str] = None, is_admin: bool = False, auth_provider: str = "local", skip_password_validation: bool = False) -> EmailUser:
+    async def create_user(
+        self,
+        email: str,
+        password: str,
+        full_name: Optional[str] = None,
+        is_admin: bool = False,
+        is_active: bool = True,
+        password_change_required: bool = False,
+        auth_provider: str = "local",
+        skip_password_validation: bool = False,
+        granted_by: Optional[str] = None,
+    ) -> EmailUser:
         """Create a new user with email authentication.
 
         Args:
@@ -306,8 +332,11 @@ class EmailAuthService:
             password: Plain text password (will be hashed)
             full_name: Optional full name for display
             is_admin: Whether user has admin privileges
+            is_active: Whether user account is active (default: True)
+            password_change_required: Whether user must change password on next login (default: False)
             auth_provider: Authentication provider ('local', 'github', etc.)
             skip_password_validation: Skip password policy validation (for bootstrap)
+            granted_by: Email of user creating this user (for role assignment audit trail)
 
         Returns:
             EmailUser: The created user object
@@ -321,10 +350,13 @@ class EmailAuthService:
             # user = await service.create_user(
             #     email="new@example.com",
             #     password="secure123",
-            #     full_name="New User"
+            #     full_name="New User",
+            #     is_active=True,
+            #     password_change_required=False
             # )
             # user.email          # Returns: 'new@example.com'
             # user.full_name      # Returns: 'New User'
+            # user.is_active      # Returns: True
         """
         # Normalize email to lowercase
         email = email.lower().strip()
@@ -343,7 +375,17 @@ class EmailAuthService:
         password_hash = await self.password_service.hash_password_async(password)
 
         # Create new user (record password change timestamp)
-        user = EmailUser(email=email, password_hash=password_hash, full_name=full_name, is_admin=is_admin, auth_provider=auth_provider, password_changed_at=utc_now())
+        user = EmailUser(
+            email=email,
+            password_hash=password_hash,
+            full_name=full_name,
+            is_admin=is_admin,
+            is_active=is_active,
+            password_change_required=password_change_required,
+            auth_provider=auth_provider,
+            password_changed_at=utc_now(),
+            admin_origin="api" if is_admin else None,
+        )
 
         try:
             self.db.add(user)
@@ -352,7 +394,8 @@ class EmailAuthService:
 
             logger.info(f"Created new user: {email}")
 
-            # Create personal team if enabled
+            # Create personal team first if enabled (needed for team-scoped role assignment)
+            personal_team_id = None
             if getattr(settings, "auto_create_personal_teams", True):
                 try:
                     # Import here to avoid circular imports
@@ -361,10 +404,47 @@ class EmailAuthService:
 
                     personal_team_service = PersonalTeamService(self.db)
                     personal_team = await personal_team_service.create_personal_team(user)
-                    logger.info(f"Created personal team '{personal_team.name}' for user {email}")
+                    personal_team_id = personal_team.id  # Get team_id directly from created team
+                    logger.info(f"Created personal team '{personal_team.name}' (ID: {personal_team_id}) for user {email}")
                 except Exception as e:
                     logger.warning(f"Failed to create personal team for {email}: {e}")
                     # Don't fail user creation if personal team creation fails
+
+            # Auto-assign dual roles using RoleService (after personal team creation)
+            try:
+                granter = granted_by or email  # Use granted_by if provided, otherwise self-granted
+
+                # Determine global role based on admin status
+                global_role_name = settings.default_admin_role if is_admin else settings.default_user_role
+                global_role = await self.role_service.get_role_by_name(global_role_name, "global")
+
+                if global_role:
+                    try:
+                        await self.role_service.assign_role_to_user(user_email=email, role_id=global_role.id, scope="global", scope_id=None, granted_by=granter)
+                        logger.info(f"Assigned {global_role_name} role (global scope) to user {email}")
+                    except ValueError as e:
+                        logger.warning(f"Could not assign {global_role_name} role to {email}: {e}")
+                else:
+                    logger.warning(f"{global_role_name} role not found. User {email} created without global role.")
+
+                # Assign team owner role with team scope (if personal team exists)
+                if personal_team_id:
+                    team_owner_role_name = settings.default_team_owner_role
+                    team_owner_role = await self.role_service.get_role_by_name(team_owner_role_name, "team")
+
+                    if team_owner_role:
+                        try:
+                            await self.role_service.assign_role_to_user(user_email=email, role_id=team_owner_role.id, scope="team", scope_id=personal_team_id, granted_by=granter)
+                            logger.info(f"Assigned {team_owner_role_name} role (team scope: {personal_team_id}) to user {email}")
+                        except ValueError as e:
+                            logger.warning(f"Could not assign {team_owner_role_name} role to {email}: {e}")
+                    else:
+                        logger.warning(f"{team_owner_role_name} role not found. User {email} created without team owner role.")
+
+            except Exception as role_error:
+                logger.error(f"Failed to assign roles to user {email}: {role_error}")
+                # Don't fail user creation if role assignment fails
+                # User can be assigned roles manually later
 
             # Log registration event
             registration_event = EmailAuthEvent.create_registration_event(user_email=email, success=True)
@@ -425,24 +505,33 @@ class EmailAuthService:
                 logger.info(f"Authentication failed for {email}: account disabled")
                 return None
 
-            if user.is_account_locked():
+            is_protected_admin = user.is_admin and settings.protect_all_admins
+
+            if user.is_account_locked() and not is_protected_admin:
                 failure_reason = "Account is locked"
                 logger.info(f"Authentication failed for {email}: account locked")
                 return None
+
+            # Clear lockout for protected admins so they can always attempt login
+            if is_protected_admin and user.is_account_locked():
+                logger.info(f"Clearing lockout for protected admin {email}")
+                user.reset_failed_attempts()
+                self.db.commit()
 
             # Verify password
             if not await self.password_service.verify_password_async(password, user.password_hash):
                 failure_reason = "Invalid password"
 
-                # Increment failed attempts
-                max_attempts = getattr(settings, "max_failed_login_attempts", 5)
-                lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
+                # Increment failed attempts (skip for protected admins)
+                if not is_protected_admin:
+                    max_attempts = getattr(settings, "max_failed_login_attempts", 5)
+                    lockout_duration = getattr(settings, "account_lockout_duration_minutes", 30)
 
-                is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
+                    is_locked = user.increment_failed_attempts(max_attempts, lockout_duration)
 
-                if is_locked:
-                    logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
-                    failure_reason = "Account locked due to too many failed attempts"
+                    if is_locked:
+                        logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
+                        failure_reason = "Account locked due to too many failed attempts"
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
@@ -982,23 +1071,38 @@ class EmailAuthService:
             logger.error(f"Error getting auth events: {e}")
             return []
 
-    async def update_user(self, email: str, full_name: Optional[str] = None, is_admin: Optional[bool] = None, password: Optional[str] = None) -> EmailUser:
+    async def update_user(
+        self,
+        email: str,
+        full_name: Optional[str] = None,
+        is_admin: Optional[bool] = None,
+        is_active: Optional[bool] = None,
+        password_change_required: Optional[bool] = None,
+        password: Optional[str] = None,
+        admin_origin_source: Optional[str] = None,
+    ) -> EmailUser:
         """Update user information.
 
         Args:
             email: User's email address (primary key)
             full_name: New full name (optional)
             is_admin: New admin status (optional)
+            is_active: New active status (optional)
+            password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
+            admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
 
         Returns:
             EmailUser: Updated user object
 
         Raises:
-            ValueError: If user doesn't exist
+            ValueError: If user doesn't exist, if protect_all_admins blocks the change, or if it would remove the last active admin
             PasswordValidationError: If password doesn't meet policy
         """
         try:
+            # Normalize email to match create_user() / get_user_by_email() behavior
+            email = email.lower().strip()
+
             # Get existing user
             stmt = select(EmailUser).where(EmailUser.email == email)
             result = self.db.execute(stmt)
@@ -1007,19 +1111,81 @@ class EmailAuthService:
             if not user:
                 raise ValueError(f"User {email} not found")
 
+            # Admin protection guard
+            if user.is_admin and user.is_active:
+                would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
+                if would_lose_admin:
+                    if settings.protect_all_admins:
+                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
+                    if await self.is_last_active_admin(email):
+                        raise ValueError("Cannot demote or deactivate the last remaining active admin user")
+
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
 
             if is_admin is not None:
-                user.is_admin = is_admin
+                # Track admin_origin when status actually changes
+                if is_admin != user.is_admin:
+                    user.is_admin = is_admin
+                    user.admin_origin = admin_origin_source if is_admin else None
+
+                    # Sync global role assignment with is_admin flag:
+                    # Promotion: revoke default_user_role, assign default_admin_role
+                    # Demotion: revoke default_admin_role, assign default_user_role
+                    try:
+                        admin_role_name = settings.default_admin_role
+                        user_role_name = settings.default_user_role
+                        admin_role = await self.role_service.get_role_by_name(admin_role_name, "global")
+                        user_role = await self.role_service.get_role_by_name(user_role_name, "global")
+
+                        if is_admin:
+                            # Promotion: assign admin role, revoke user role
+                            if admin_role:
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
+                                if not existing or not existing.is_active:
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned {admin_role_name} role to {email}")
+                            else:
+                                logger.warning(f"{admin_role_name} role not found, cannot assign to {email}")
+
+                            if user_role:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked {user_role_name} role from {email}")
+                        else:
+                            # Demotion: revoke admin role, assign user role
+                            if admin_role:
+                                revoked = await self.role_service.revoke_role_from_user(user_email=email, role_id=admin_role.id, scope="global", scope_id=None)
+                                if revoked:
+                                    logger.info(f"Revoked {admin_role_name} role from {email}")
+
+                            if user_role:
+                                existing = await self.role_service.get_user_role_assignment(user_email=email, role_id=user_role.id, scope="global", scope_id=None)
+                                if not existing or not existing.is_active:
+                                    await self.role_service.assign_role_to_user(user_email=email, role_id=user_role.id, scope="global", scope_id=None, granted_by=email)
+                                    logger.info(f"Assigned {user_role_name} role to {email}")
+                            else:
+                                logger.warning(f"{user_role_name} role not found, cannot assign to {email}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to sync global roles for {email}: {e}")
+                        # Don't fail user update if role sync fails
+
+            if is_active is not None:
+                user.is_active = is_active
 
             if password is not None:
-                if not self.validate_password(password):
-                    raise ValueError("Password does not meet security requirements")
+                self.validate_password(password)
                 user.password_hash = await self.password_service.hash_password_async(password)
-                user.password_change_required = False  # Clear password change requirement
-                user.password_changed_at = utc_now()  # Update password change timestamp
+                # Only clear password_change_required if it wasn't explicitly set
+                if password_change_required is None:
+                    user.password_change_required = False
+                user.password_changed_at = utc_now()
+
+            # Set password_change_required after password processing to allow explicit override
+            if password_change_required is not None:
+                user.password_change_required = password_change_required
 
             user.updated_at = datetime.now(timezone.utc)
 
@@ -1155,7 +1321,13 @@ class EmailAuthService:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
 
-            # Delete related auth events first
+            # Delete all role assignments for the user
+            try:
+                await self.role_service.delete_all_user_roles(email)
+            except Exception as e:
+                logger.warning(f"Failed to delete role assignments for {email}: {e}")
+
+            # Delete related auth events
             auth_events_stmt = delete(EmailAuthEvent).where(EmailAuthEvent.user_email == email)
             self.db.execute(auth_events_stmt)
 

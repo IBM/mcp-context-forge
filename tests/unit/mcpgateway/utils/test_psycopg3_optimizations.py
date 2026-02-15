@@ -2,7 +2,9 @@
 """Tests for psycopg3 optimization helpers."""
 
 # Standard
+import builtins
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from typing import Any, List
 
 # Third-Party
@@ -125,3 +127,190 @@ def test_get_raw_connection(monkeypatch):
             raise RuntimeError("boom")
 
     assert psy.get_raw_connection(ConnDB()) is None
+
+
+def test_bulk_insert_with_copy_psycopg3_success(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+
+    class DummyCopy:
+        def __init__(self):
+            self.writes = []
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyCursor:
+        def __init__(self):
+            self.copy_calls = []
+            self.copy_obj = DummyCopy()
+
+        def copy(self, cmd):
+            self.copy_calls.append(cmd)
+            return self.copy_obj
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class DummyRawConn:
+        def __init__(self):
+            self.cursor_obj = DummyCursor()
+
+        def cursor(self):
+            return self.cursor_obj
+
+    raw_conn = DummyRawConn()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    db = DummyDB()
+    count = psy.bulk_insert_with_copy(db, "items", ["id", "name"], [(1, "a"), (2, "b")])
+
+    assert count == 2
+    assert raw_conn.cursor_obj.copy_calls
+
+
+def test_execute_pipelined_psycopg3_success(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+
+    class DummyCursor:
+        def __init__(self, rows, raise_on_fetch=False):
+            self._rows = rows
+            self._raise_on_fetch = raise_on_fetch
+
+        def fetchall(self):
+            if self._raise_on_fetch:
+                raise RuntimeError("fetch failed")
+            return self._rows
+
+    class DummyRawConn:
+        def __init__(self):
+            self.executed = []
+            self._call_count = 0
+
+        def pipeline(self):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, params):
+            self.executed.append((sql, params))
+            self._call_count += 1
+            if self._call_count == 2:
+                return DummyCursor([], raise_on_fetch=True)
+            return DummyCursor([("ok",)])
+
+    raw_conn = DummyRawConn()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    db = DummyDB()
+    results = psy.execute_pipelined(db, [("select 1", {"id": 1}), ("select 2", {"id": 2})])
+
+    assert results == [[("ok",)], []]
+
+
+def test_execute_pipelined_empty_queries(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+    assert psy.execute_pipelined(db=None, queries=[]) == []
+
+
+def test_get_raw_connection_psycopg3_success(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+    raw_conn = object()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    assert psy.get_raw_connection(DummyDB()) is raw_conn
+
+
+def test_is_psycopg3_backend_true_when_postgresql_psycopg(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", None)
+    monkeypatch.setattr("mcpgateway.db.backend", "postgresql", raising=False)
+    monkeypatch.setattr("mcpgateway.db.driver", "psycopg", raising=False)
+
+    assert psy.is_psycopg3_backend() is True
+
+
+def test_is_psycopg3_backend_importerror_sets_false(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", None)
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "mcpgateway.db":
+            raise ImportError("boom")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    assert psy.is_psycopg3_backend() is False
+
+
+def test_bulk_insert_with_copy_psycopg3_empty_rows_returns_zero(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+
+    raw_conn = object()
+
+    class DummyDB:
+        def connection(self):
+            return SimpleNamespace(connection=SimpleNamespace(dbapi_connection=raw_conn))
+
+    assert psy.bulk_insert_with_copy(DummyDB(), "items", ["id"], []) == 0
+
+
+def test_bulk_insert_with_copy_psycopg3_exception_falls_back(monkeypatch):
+    monkeypatch.setattr(psy, "_is_psycopg3", True)
+    monkeypatch.setattr(psy, "_bulk_insert_fallback", lambda *args, **kwargs: 123)
+
+    class FailingDB:
+        def connection(self):
+            raise RuntimeError("no raw connection")
+
+    assert psy.bulk_insert_with_copy(FailingDB(), "items", ["id"], [(1,)]) == 123
+
+
+def test_bulk_insert_metrics_empty_returns_zero():
+    assert psy.bulk_insert_metrics(db=None, table_name="metrics", metrics=[]) == 0
+
+
+def test_bulk_insert_metrics_respects_explicit_columns(monkeypatch):
+    captured = {}
+
+    def fake_bulk_insert(db, table_name, columns, rows, schema=None):
+        captured["columns"] = list(columns)
+        captured["rows"] = rows
+        return len(rows)
+
+    monkeypatch.setattr(psy, "bulk_insert_with_copy", fake_bulk_insert)
+
+    count = psy.bulk_insert_metrics(
+        db=None,
+        table_name="metrics",
+        metrics=[
+            {"tool_id": "t1", "value": 1},
+            {"tool_id": "t2", "value": 2},
+        ],
+        columns=["value", "tool_id"],
+    )
+
+    assert count == 2
+    assert captured["columns"] == ["value", "tool_id"]
+    assert captured["rows"] == [[1, "t1"], [2, "t2"]]

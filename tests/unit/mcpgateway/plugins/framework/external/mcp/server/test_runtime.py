@@ -10,6 +10,8 @@ Tests for external client on stdio.
 # Standard
 import asyncio
 import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -132,3 +134,186 @@ async def test_resource_post_fetch(monkeypatch, server):
     assert result
     assert result["result"]
     assert result["result"]["continue_processing"]
+
+
+@pytest.mark.asyncio
+async def test_get_plugin_configs_requires_server(monkeypatch):
+    monkeypatch.setattr(runtime, "SERVER", None)
+    with pytest.raises(RuntimeError):
+        await runtime.get_plugin_configs()
+
+
+@pytest.mark.asyncio
+async def test_get_plugin_config_returns_empty_dict(monkeypatch):
+    server = MagicMock()
+    server.get_plugin_config = AsyncMock(return_value=None)
+    monkeypatch.setattr(runtime, "SERVER", server)
+    result = await runtime.get_plugin_config(name="missing")
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_invoke_hook_requires_server(monkeypatch):
+    monkeypatch.setattr(runtime, "SERVER", None)
+    with pytest.raises(RuntimeError):
+        await runtime.invoke_hook("hook", "plugin", {}, {})
+
+
+def test_ssl_config_with_tls(tmp_path):
+    from mcpgateway.plugins.framework.models import MCPServerConfig, MCPServerTLSConfig
+
+    cert_path = tmp_path / "cert.pem"
+    key_path = tmp_path / "key.pem"
+    ca_path = tmp_path / "ca.pem"
+    cert_path.write_text("cert")
+    key_path.write_text("key")
+    ca_path.write_text("ca")
+
+    config = MCPServerConfig(
+        host="127.0.0.1",
+        port=8000,
+        tls=MCPServerTLSConfig(
+            certfile=str(cert_path),
+            keyfile=str(key_path),
+            ca_bundle=str(ca_path),
+            keyfile_password="secret",
+            ssl_cert_reqs=2,
+        ),
+    )
+
+    server = object.__new__(runtime.SSLCapableFastMCP)
+    server.server_config = config
+    ssl_config = runtime.SSLCapableFastMCP._get_ssl_config(server)
+
+    assert ssl_config["ssl_keyfile"] == str(key_path)
+    assert ssl_config["ssl_certfile"] == str(cert_path)
+    assert ssl_config["ssl_ca_certs"] == str(ca_path)
+    assert ssl_config["ssl_keyfile_password"] == "secret"
+
+
+@pytest.mark.asyncio
+async def test_start_health_check_server(monkeypatch):
+    server = object.__new__(runtime.SSLCapableFastMCP)
+    server.settings = SimpleNamespace(host="127.0.0.1", port=8000, log_level="INFO")
+
+    served = MagicMock()
+
+    class DummyServer:
+        def __init__(self, config):
+            self.config = config
+
+        async def serve(self):
+            served()
+
+    monkeypatch.setattr(runtime.uvicorn, "Config", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(runtime.uvicorn, "Server", lambda config: DummyServer(config))
+
+    await runtime.SSLCapableFastMCP._start_health_check_server(server, 9000)
+    served.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_streamable_http_async_with_ssl(monkeypatch):
+    from mcpgateway.plugins.framework.models import MCPServerConfig
+
+    server = object.__new__(runtime.SSLCapableFastMCP)
+    server.server_config = MCPServerConfig(host="127.0.0.1", port=8000)
+    server.settings = SimpleNamespace(host="127.0.0.1", port=8000, log_level="INFO")
+    server.streamable_http_app = lambda: SimpleNamespace(routes=[])
+
+    monkeypatch.setattr(runtime.SSLCapableFastMCP, "_get_ssl_config", lambda self: {"ssl_keyfile": "/tmp/key.pem"})
+    monkeypatch.setattr(server, "_start_health_check_server", AsyncMock())
+
+    served = MagicMock()
+
+    class DummyServer:
+        def __init__(self, config):
+            self.config = config
+
+        async def serve(self):
+            served()
+
+    monkeypatch.setattr(runtime.uvicorn, "Config", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(runtime.uvicorn, "Server", lambda config: DummyServer(config))
+
+    await runtime.SSLCapableFastMCP.run_streamable_http_async(server)
+    assert server._start_health_check_server.await_count == 1
+    served.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_stdio_transport(monkeypatch):
+    created = {}
+
+    class DummyServer:
+        async def initialize(self):
+            return True
+
+        async def shutdown(self):
+            created["shutdown"] = True
+
+        def get_server_config(self):
+            return None
+
+    class DummyFastMCP:
+        def __init__(self, *args, **kwargs):
+            created["mcp"] = self
+
+        def tool(self, name):
+            def decorator(fn):
+                created.setdefault("tools", []).append(name)
+                return fn
+
+            return decorator
+
+        async def run_stdio_async(self):
+            created["ran_stdio"] = True
+
+    monkeypatch.setattr(runtime, "ExternalPluginServer", lambda: DummyServer())
+    monkeypatch.setattr(runtime, "FastMCP", DummyFastMCP)
+    monkeypatch.setenv("PLUGINS_TRANSPORT", "stdio")
+
+    await runtime.run()
+
+    assert created["ran_stdio"]
+    assert created["shutdown"]
+    runtime.SERVER = None
+
+
+@pytest.mark.asyncio
+async def test_run_http_transport(monkeypatch):
+    created = {}
+
+    class DummyServer:
+        async def initialize(self):
+            return True
+
+        async def shutdown(self):
+            created["shutdown"] = True
+
+        def get_server_config(self):
+            return None
+
+    class DummyMCP:
+        def __init__(self, *args, **kwargs):
+            created["mcp"] = self
+
+        def tool(self, name):
+            def decorator(fn):
+                created.setdefault("tools", []).append(name)
+                return fn
+
+            return decorator
+
+        async def run_streamable_http_async(self):
+            created["ran_http"] = True
+
+    monkeypatch.setattr(runtime, "ExternalPluginServer", lambda: DummyServer())
+    monkeypatch.setattr(runtime, "SSLCapableFastMCP", DummyMCP)
+    monkeypatch.setenv("PLUGINS_TRANSPORT", "http")
+
+    await runtime.run()
+
+    assert created["ran_http"]
+    assert created["shutdown"]
+    runtime.SERVER = None

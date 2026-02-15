@@ -180,11 +180,12 @@ def _validate_redirect_uri(redirect_uri: str, request: Request | None = None) ->
 
     # Check against app_domain (if configured)
     if hasattr(settings, "app_domain") and settings.app_domain:
-        # app_domain is typically just a hostname, allow both http and https
-        app_domain = settings.app_domain.lower()
-        if redirect_host == app_domain:
+        # app_domain is an HttpUrl - extract the hostname for comparison
+        app_domain_host = urlparse(str(settings.app_domain)).hostname or ""
+        app_domain_host = app_domain_host.lower()
+        if redirect_host == app_domain_host:
             # Only allow HTTPS in production, or HTTP for localhost
-            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain in ("localhost", "127.0.0.1")):
+            if redirect_scheme == "https" or (redirect_scheme == "http" and app_domain_host in ("localhost", "127.0.0.1")):
                 return True
 
     # Check against allowed_origins (full origin match including scheme and port)
@@ -308,8 +309,14 @@ async def handle_sso_callback(
 
     sso_service = SSOService(db)
 
-    # Handle OAuth callback
-    user_info = await sso_service.handle_oauth_callback(provider_id, code, state)
+    # Handle OAuth callback — returns (user_info, token_data) or None
+    user_info: Optional[Dict[str, object]] = None
+    token_data: Dict[str, object] = {}
+
+    callback_result = await sso_service.handle_oauth_callback_with_tokens(provider_id, code, state)
+    if callback_result:
+        user_info, token_data = callback_result
+
     if not user_info:
         # Redirect back to login with error
         # Third-Party
@@ -334,9 +341,34 @@ async def handle_sso_callback(
 
     # Set secure HTTP-only cookie using the same method as email auth
     # First-Party
-    from mcpgateway.utils.security_cookies import set_auth_cookie
+    from mcpgateway.utils.security_cookies import CookieTooLargeError, set_auth_cookie
 
-    set_auth_cookie(redirect_response, access_token, remember_me=False)
+    try:
+        set_auth_cookie(redirect_response, access_token, remember_me=False)
+    except CookieTooLargeError:
+        redirect_response = RedirectResponse(
+            url=f"{root_path}/admin/login?error=token_too_large",
+            status_code=302,
+        )
+        return redirect_response
+
+    # Persist Keycloak ID token as short-lived, HTTP-only hint for RP-initiated logout.
+    # Without id_token_hint, some Keycloak versions show confirmation and may preserve SSO.
+    id_token = token_data.get("id_token")
+    if provider_id == "keycloak" and isinstance(id_token, str) and id_token:
+        if len(id_token) > 3800:  # Leave room for cookie metadata within browser 4KB limit
+            logger.warning("Keycloak id_token too large for cookie storage (%d bytes). RP-initiated logout will not include id_token_hint.", len(id_token))
+        else:
+            use_secure = (settings.environment == "production") or settings.secure_cookies
+            redirect_response.set_cookie(
+                key="sso_id_token_hint",
+                value=id_token,
+                max_age=settings.token_expiry * 60,  # match session token lifetime
+                httponly=True,
+                secure=use_secure,
+                samesite=settings.cookie_samesite,
+                path=settings.app_root_path or "/",
+            )
 
     return redirect_response
 
@@ -369,9 +401,9 @@ async def create_sso_provider(
     if existing:
         raise HTTPException(status_code=409, detail=f"SSO provider '{provider_data.id}' already exists")
 
-    provider = await sso_service.create_provider(provider_data.dict())
+    provider = await sso_service.create_provider(provider_data.model_dump())
 
-    return {
+    result = {
         "id": provider.id,
         "name": provider.name,
         "display_name": provider.display_name,
@@ -379,6 +411,9 @@ async def create_sso_provider(
         "is_enabled": provider.is_enabled,
         "created_at": provider.created_at,
     }
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.get("/admin/providers", response_model=List[Dict])
@@ -406,7 +441,7 @@ async def list_all_sso_providers(
     result = db.execute(stmt)
     providers = result.scalars().all()
 
-    return [
+    result = [
         {
             "id": provider.id,
             "name": provider.name,
@@ -420,6 +455,9 @@ async def list_all_sso_providers(
         }
         for provider in providers
     ]
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.get("/admin/providers/{provider_id}", response_model=Dict)
@@ -448,7 +486,7 @@ async def get_sso_provider(
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {
+    result = {
         "id": provider.id,
         "name": provider.name,
         "display_name": provider.display_name,
@@ -466,6 +504,9 @@ async def get_sso_provider(
         "created_at": provider.created_at,
         "updated_at": provider.updated_at,
     }
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.put("/admin/providers/{provider_id}", response_model=Dict)
@@ -493,7 +534,7 @@ async def update_sso_provider(
     sso_service = SSOService(db)
 
     # Filter out None values
-    update_data = {k: v for k, v in provider_data.dict().items() if v is not None}
+    update_data = {k: v for k, v in provider_data.model_dump().items() if v is not None}
     if not update_data:
         raise HTTPException(status_code=400, detail="No update data provided")
 
@@ -501,7 +542,7 @@ async def update_sso_provider(
     if not provider:
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
-    return {
+    result = {
         "id": provider.id,
         "name": provider.name,
         "display_name": provider.display_name,
@@ -509,6 +550,9 @@ async def update_sso_provider(
         "is_enabled": provider.is_enabled,
         "updated_at": provider.updated_at,
     }
+    db.commit()
+    db.close()
+    return result
 
 
 @sso_router.delete("/admin/providers/{provider_id}")
@@ -536,6 +580,8 @@ async def delete_sso_provider(
     if not sso_service.delete_provider(provider_id):
         raise HTTPException(status_code=404, detail=f"SSO provider '{provider_id}' not found")
 
+    db.commit()
+    db.close()
     return {"message": f"SSO provider '{provider_id}' deleted successfully"}
 
 

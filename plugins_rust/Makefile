@@ -1,6 +1,21 @@
-# Makefile for Rust plugins
+# Makefile for Rust plugins (Workspace)
 # Copyright 2025
 # SPDX-License-Identifier: Apache-2.0
+#
+# WORKSPACE vs PLUGIN OPERATIONS
+#
+# Workspace operations (this Makefile):
+#   make dev          - Build & install plugins_rust (all plugins aggregated)
+#   make test         - Test all plugins in workspace
+#   make bench        - Benchmark all plugins
+#
+# Plugin operations (plugin-specific Makefile):
+#   cd pii_filter && make dev   - Build & install pii_filter_rust only
+#   cd pii_filter && make test  - Test pii_filter only
+#   make plugin-pii-filter-dev  - Same as above (delegate from workspace)
+#
+# Use plugin-specific operations for faster iteration during development.
+# Use workspace operations for integration testing and releases.
 
 .PHONY: help build dev test clean check lint fmt bench audit doc install
 
@@ -15,61 +30,59 @@ RED := \033[0;31m
 NC := \033[0m # No Color
 
 help: ## Show this help message
-	@echo "$(BLUE)Rust Plugins Makefile$(NC)"
+	@echo "$(BLUE)Rust Plugins Makefile (Workspace)$(NC)"
 	@echo ""
 	@echo "$(GREEN)Available targets:$(NC)"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
-	@echo "$(YELLOW)Examples:$(NC)"
-	@echo "  make dev          # Build and install in development mode"
-	@echo "  make test         # Run all tests"
-	@echo "  make bench        # Run benchmarks"
-	@echo "  make check        # Run all checks (fmt, clippy, test)"
+	@echo "$(YELLOW)Workspace Examples:$(NC)"
+	@echo "  make dev          # Build and install plugins_rust (all plugins)"
+	@echo "  make test         # Run tests for all plugins"
+	@echo "  make bench        # Run benchmarks for all plugins"
+	@echo ""
+	@echo "$(YELLOW)Plugin Examples:$(NC)"
+	@echo "  cd pii_filter && make dev"
 
-# Build targets
-build: ## Build release version
-	@echo "$(GREEN)Building release version...$(NC)"
+# Build targets (workspace aggregate)
+build: ## Build workspace aggregate module (plugins_rust)
+	@echo "$(GREEN)Building workspace module (plugins_rust)...$(NC)"
 	maturin build --release
 
-build-debug: ## Build debug version
-	@echo "$(YELLOW)Building debug version...$(NC)"
+build-debug: ## Build workspace module (debug)
+	@echo "$(YELLOW)Building workspace module (debug)...$(NC)"
 	maturin build
 
-dev: ## Build and install in development mode (editable)
-	@echo "$(GREEN)Building and installing in development mode...$(NC)"
+dev: ## Build and install workspace module (plugins_rust) in development mode
+	@echo "$(GREEN)Building and installing workspace module (plugins_rust)...$(NC)"
 	maturin develop --release
 
-dev-debug: ## Build and install debug version in development mode
-	@echo "$(YELLOW)Building debug version in development mode...$(NC)"
+dev-debug: ## Build and install workspace module (debug) in development mode
+	@echo "$(YELLOW)Building workspace module (debug)...$(NC)"
 	maturin develop
 
-install: build ## Build and install (non-editable)
-	@echo "$(GREEN)Installing built package...$(NC)"
-	pip install --force-reinstall dist/*.whl
+install: ## Build and install workspace module (uses maturin develop)
+	@echo "$(GREEN)Installing workspace module...$(NC)"
+	maturin develop --release
+	@echo "$(GREEN)Verifying installation...$(NC)"
+	@python -c "import plugins_rust; import os; import time; stat = os.stat(plugins_rust.__file__); print('✓ plugins_rust installed at:', plugins_rust.__file__); print('✓ Version:', getattr(plugins_rust, '__version__', 'unknown')); print('✓ Install time:', time.ctime(stat.st_mtime))" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
+	@echo "$(GREEN)Installation verified successfully!$(NC)"
 
-# Testing targets
-test: ## Run all Rust tests (unit tests only, excludes integration tests requiring Python)
-	@echo "$(GREEN)Running Rust tests...$(NC)"
-	cargo test --lib --bins --verbose --no-default-features
+# Testing targets (workspace)
+test: ## Run Rust tests for all plugins in workspace
+	@echo "$(GREEN)Running workspace tests...$(NC)"
+	cargo test --workspace
 
-test-integration: dev ## Run integration tests (requires Python module built)
-	@echo "$(GREEN)Running integration tests (with Python module)...$(NC)"
-	cargo test --test integration --verbose
+test-verbose: ## Run workspace tests (verbose)
+	@echo "$(GREEN)Running workspace tests (verbose)...$(NC)"
+	cargo test --workspace --verbose
 
-test-python: ## Run Python tests (requires dev install)
+test-python: ## Run Python tests for workspace (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd .. && pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py -v
+	cd .. && uv run pytest tests/unit/mcpgateway/plugins/ -k rust -v
 
 test-differential: ## Run differential tests (Rust vs Python)
 	@echo "$(GREEN)Running differential tests...$(NC)"
-	cd .. && pytest tests/differential/test_pii_filter_differential.py -v
-
-test-all: test test-integration test-python test-differential ## Run all tests (Rust + Python)
-	@echo "$(GREEN)All tests completed!$(NC)"
-
-# Code quality targets
-check: fmt clippy test ## Run all checks (format, lint, test)
-	@echo "$(GREEN)All checks passed!$(NC)"
+	cd .. && uv run pytest tests/differential/ -k differential -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
@@ -83,22 +96,25 @@ clippy: ## Run clippy linter
 	@echo "$(GREEN)Running clippy...$(NC)"
 	cargo clippy --all-targets --all-features -- -D warnings
 
-lint: clippy ## Alias for clippy
-	@echo "$(GREEN)Linting completed!$(NC)"
+# Benchmarking targets (workspace)
+bench: ## Run Rust benchmarks for all plugins
+	@echo "$(GREEN)Running workspace benchmarks...$(NC)"
+	cargo bench --workspace
 
-# Benchmarking targets
-bench: ## Run Rust benchmarks with Criterion
-	@echo "$(GREEN)Running Rust benchmarks...$(NC)"
-	cargo bench
-
-bench-compare: dev ## Run Python comparison benchmarks
-	@echo "$(GREEN)Running Python vs Rust comparison...$(NC)"
-	cd .. && python benchmarks/compare_pii_filter.py
-
-bench-save: dev ## Run benchmarks and save results
-	@echo "$(GREEN)Running benchmarks and saving results...$(NC)"
-	cd .. && python benchmarks/compare_pii_filter.py --output benchmark-results.json
-	@echo "$(GREEN)Results saved to ../benchmark-results.json$(NC)"
+bench-compare: ## Run Python comparison benchmarks for all plugins
+	@echo "$(GREEN)Running Python vs Rust comparison benchmarks...$(NC)"
+	@test -d "$(HOME)/.venv/mcpgateway" || { echo "$(RED)Virtual environment not found. Run 'make venv' from project root first.$(NC)"; exit 1; }
+	@for dir in */benchmarks; do \
+		if [ -d "$$dir" ]; then \
+			plugin=$$(dirname "$$dir"); \
+			echo "$(BLUE)Running benchmarks for $$plugin...$(NC)"; \
+			if [ -f "$$dir/compare_$${plugin}.py" ]; then \
+				cd "$$plugin" && $(HOME)/.venv/mcpgateway/bin/python benchmarks/compare_$${plugin}.py && cd ..; \
+			else \
+				echo "$(YELLOW)No compare script found for $$plugin$(NC)"; \
+			fi; \
+		fi; \
+	done
 
 bench-all: bench bench-compare ## Run all benchmarks (Rust + Python comparison)
 	@echo "$(GREEN)All benchmarks completed!$(NC)"
@@ -116,21 +132,17 @@ audit-fix: ## Run security audit and apply fixes
 # Documentation targets
 doc: ## Build Rust documentation
 	@echo "$(GREEN)Building documentation...$(NC)"
-	cargo doc --no-deps --document-private-items
+	cargo doc --workspace --no-deps --document-private-items
 
 doc-open: doc ## Build and open documentation in browser
 	@echo "$(GREEN)Opening documentation...$(NC)"
-	cargo doc --no-deps --document-private-items --open
+	cargo doc --workspace --no-deps --document-private-items --open
 
 # Coverage targets
 coverage: ## Generate code coverage report
 	@echo "$(GREEN)Generating code coverage...$(NC)"
 	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
-	cargo tarpaulin --out Html --out Xml --output-dir coverage
-
-coverage-open: coverage ## Generate and open coverage report
-	@echo "$(GREEN)Opening coverage report...$(NC)"
-	@command -v xdg-open >/dev/null 2>&1 && xdg-open coverage/index.html || open coverage/index.html
+	cargo tarpaulin --workspace --lib --no-default-features --out Html --out Xml --output-dir coverage
 
 # Cleaning targets
 clean: ## Remove build artifacts
@@ -152,23 +164,6 @@ clean-all: clean ## Remove all generated files including caches
 	rm -rf ~/.cargo/registry/cache/
 	rm -rf ~/.cargo/git/db/
 
-# Development workflow targets
-dev-cycle: fmt clippy test ## Quick development cycle (format, lint, test)
-	@echo "$(GREEN)Development cycle completed!$(NC)"
-
-ci: fmt-check clippy test ## Run CI checks (format check, lint, test)
-	@echo "$(GREEN)CI checks passed!$(NC)"
-
-pre-commit: fmt clippy test ## Run pre-commit checks
-	@echo "$(GREEN)Pre-commit checks passed!$(NC)"
-
-# Utility targets
-verify: ## Verify installation
-	@echo "$(GREEN)Verifying Rust installation...$(NC)"
-	@python -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter available')" && \
-		echo "$(GREEN)✓ Installation verified$(NC)" || \
-		echo "$(RED)✗ Installation failed - run 'make dev' first$(NC)"
-
 info: ## Show build information
 	@echo "$(BLUE)Build Information:$(NC)"
 	@echo "  Rust version:    $$(rustc --version)"
@@ -176,10 +171,11 @@ info: ## Show build information
 	@echo "  Maturin version: $$(maturin --version 2>/dev/null || echo 'not installed')"
 	@echo "  Python version:  $$(python --version)"
 	@echo ""
-	@echo "$(BLUE)Project Information:$(NC)"
-	@echo "  Name:    plugins_rust"
+	@echo "$(BLUE)Workspace Information:$(NC)"
+	@echo "  Name:    plugins_rust (workspace aggregate)"
 	@echo "  Version: $$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)"
 	@echo "  License: Apache-2.0"
+	@echo "  Plugins: pii_filter"
 
 deps: ## Install/update dependencies
 	@echo "$(GREEN)Installing/updating dependencies...$(NC)"
@@ -214,13 +210,6 @@ release-build: clean ## Build release packages for all platforms
 	@echo "$(GREEN)Building release packages...$(NC)"
 	maturin build --release --out dist
 
-release-check: fmt-check clippy test audit ## Run all release checks
-	@echo "$(GREEN)Release checks passed!$(NC)"
-
-release: release-check release-build ## Full release workflow (checks + build)
-	@echo "$(GREEN)Release build completed!$(NC)"
-	@echo "$(YELLOW)Wheels created in dist/:$(NC)"
-	@ls -lh dist/
 
 # Watch targets (requires cargo-watch)
 watch: ## Watch for changes and run tests
@@ -235,7 +224,8 @@ watch-dev: ## Watch for changes and rebuild in dev mode
 profile: ## Profile Rust code with flamegraph
 	@command -v cargo-flamegraph >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-flamegraph...$(NC)"; cargo install flamegraph; }
 	@echo "$(GREEN)Profiling with flamegraph...$(NC)"
-	cargo flamegraph --bench pii_filter
+	@echo "$(YELLOW)Note: Specify benchmark with --bench flag$(NC)"
+	cargo flamegraph --workspace
 
 # Statistics
 stats: ## Show code statistics
@@ -249,20 +239,15 @@ stats: ## Show code statistics
 	@echo "$(BLUE)Dependency Tree:$(NC)"
 	@cargo tree --depth 1
 
-# Quick commands
-q: dev-cycle ## Quick: format, lint, test (alias for dev-cycle)
-
-qq: fmt test ## Very quick: format and test only (no clippy)
-
+# All PHONY targets
 .PHONY: help build build-debug dev dev-debug install \
-        test test-integration test-python test-differential test-all \
-        check fmt fmt-check clippy lint \
-        bench bench-compare bench-save bench-all \
+        test test-verbose test-python test-differential \
+        fmt fmt-check clippy \
+        bench bench-compare bench-all \
         audit audit-fix \
         doc doc-open \
-        coverage coverage-open \
+        coverage \
         clean clean-all \
-        dev-cycle ci pre-commit \
-        verify info deps upgrade-deps-check upgrade-deps \
-        release-build release-check release \
-        watch watch-dev profile stats q qq
+        info deps upgrade-deps-check upgrade-deps \
+        release-build \
+        watch watch-dev profile stats

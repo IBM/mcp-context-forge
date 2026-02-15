@@ -220,7 +220,7 @@ class RegistryCache:
         # Sort keys for consistent hashing
         sorted_items = sorted(kwargs.items())
         filter_str = str(sorted_items)
-        return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324 # noqa: DUO130
+        return hashlib.md5(filter_str.encode()).hexdigest()  # nosec B324  # noqa: DUO130
 
     async def _get_redis_client(self):
         """Get Redis client if available.
@@ -657,7 +657,11 @@ class CacheInvalidationSubscriber:
         logger.info("CacheInvalidationSubscriber stopped")
 
     async def _listen_loop(self) -> None:
-        """Background loop that listens for and processes invalidation messages."""
+        """Background loop that listens for and processes invalidation messages.
+
+        Raises:
+            asyncio.CancelledError: If the task is cancelled during shutdown.
+        """
         logger.debug("CacheInvalidationSubscriber listen loop started")
         try:
             while self._started and not (self._stop_event and self._stop_event.is_set()):
@@ -681,6 +685,7 @@ class CacheInvalidationSubscriber:
                     await asyncio.sleep(0.1)
         except asyncio.CancelledError:
             logger.debug("CacheInvalidationSubscriber listen loop cancelled")
+            raise
         finally:
             logger.debug("CacheInvalidationSubscriber listen loop exited")
 

@@ -162,6 +162,10 @@ class TagValidator:
         if not tags:
             return []
 
+        # If already in correct dict format, validate and return as-is
+        if isinstance(tags[0], dict):
+            return [t for t in tags if isinstance(t, dict) and "id" in t and "label" in t]
+
         # Filter out None values and convert everything to strings
         string_tags = [str(tag) for tag in tags if tag is not None]
 
@@ -219,7 +223,7 @@ class TagValidator:
         return errors
 
 
-def validate_tags_field(tags: Optional[List[str]]) -> List[str]:
+def validate_tags_field(tags: Optional[List[str]]) -> List[Dict[str, str]]:
     """Pydantic field validator for tags.
 
     Use this function as a field validator in Pydantic models.

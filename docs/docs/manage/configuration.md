@@ -32,6 +32,7 @@ These settings are enabled by default for security—only disable for backward c
 | `REQUIRE_JTI` | Require JTI claim in tokens for revocation support | `true` |
 | `REQUIRE_TOKEN_EXPIRATION` | Require exp claim in tokens | `true` |
 | `PUBLIC_REGISTRATION_ENABLED` | Allow public user self-registration | `false` |
+| `PROTECT_ALL_ADMINS` | Prevent any admin from being demoted or deactivated via API/UI | `true` |
 
 ### ⚙️ Project Defaults (Dev Setup)
 
@@ -274,6 +275,20 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### Direct Proxy Mode
+
+| Setting                              | Description                                    | Default | Options |
+| ------------------------------------ | ---------------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_DIRECT_PROXY_ENABLED`    | Enable direct_proxy gateway mode               | `false` | bool    |
+| `MCPGATEWAY_DIRECT_PROXY_TIMEOUT`    | Timeout for direct proxy operations (seconds)  | `30`    | int     |
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=false` (default): Gateways cannot use `gateway_mode=direct_proxy`; existing ones fall back to cache mode
+- `MCPGATEWAY_DIRECT_PROXY_ENABLED=true`: Enables pass-through MCP operations bypassing the caching layer
+
+**Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
+
 ### ToolOps
 
 ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
@@ -423,6 +438,7 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | `PASSWORD_REQUIRE_SPECIAL`    | Require special characters in passwords          | `true`                | bool    |
 | `MAX_FAILED_LOGIN_ATTEMPTS`   | Maximum failed login attempts before lockout     | `5`                   | int > 0 |
 | `ACCOUNT_LOCKOUT_DURATION_MINUTES` | Account lockout duration in minutes        | `30`                  | int > 0 |
+| `PROTECT_ALL_ADMINS`         | Prevent any admin from being demoted or deactivated via API/UI. When false, only the last active admin is protected. | `true` | bool |
 
 ### MCP Client Authentication
 
@@ -597,6 +613,61 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
     - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
     - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
 
+### SSRF Protection
+
+MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.
+
+| Setting                     | Description                                                      | Default | Options |
+| --------------------------- | ---------------------------------------------------------------- | ------- | ------- |
+| `SSRF_PROTECTION_ENABLED`   | Master switch for SSRF protection                                | `true`  | bool    |
+| `SSRF_ALLOW_LOCALHOST`      | Allow localhost/loopback addresses (127.0.0.0/8, ::1)           | `true`  | bool    |
+| `SSRF_ALLOW_PRIVATE_NETWORKS` | Allow RFC 1918 private IPs (10.x, 172.16.x, 192.168.x)        | `true`  | bool    |
+| `SSRF_DNS_FAIL_CLOSED`      | Reject URLs when DNS resolution fails                           | `false` | bool    |
+| `SSRF_BLOCKED_NETWORKS`     | CIDR ranges always blocked (cloud metadata by default)          | See below | JSON array |
+| `SSRF_BLOCKED_HOSTS`        | Hostnames always blocked (case-insensitive)                     | See below | JSON array |
+
+**Default Blocked Networks** (always blocked regardless of other settings):
+```json
+["169.254.169.254/32", "169.254.169.123/32", "fd00::1/128", "169.254.0.0/16", "fe80::/10"]
+```
+
+**Default Blocked Hosts**:
+```json
+["metadata.google.internal", "metadata.internal"]
+```
+
+!!! warning "Cloud Metadata Protection"
+    Cloud metadata endpoints (169.254.169.254) are **always blocked by default** to prevent credential exposure in cloud environments (AWS, GCP, Azure). This protects against SSRF attacks that attempt to steal instance credentials.
+
+!!! note "DNS Resolution Behavior"
+    The SSRF protection resolves ALL IP addresses for a hostname (both A and AAAA records) and validates each one. If ANY resolved IP is blocked, the request is rejected.
+
+    - **DNS fail-open** (default): Unresolvable hostnames are allowed (hostname blocklist still applies)
+    - **DNS fail-closed** (`SSRF_DNS_FAIL_CLOSED=true`): Unresolvable hostnames are rejected
+
+    For maximum security, enable `SSRF_DNS_FAIL_CLOSED=true` in production. Note that DNS rebinding attacks (where DNS changes between validation and connection) require additional mitigations like a dedicated SSRF proxy.
+
+!!! tip "Configuration Modes"
+    **Development/Internal Mode** (default): Localhost and private networks allowed, only cloud metadata blocked.
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=true
+    SSRF_ALLOW_PRIVATE_NETWORKS=true
+    ```
+
+    **Strict Production Mode** (external endpoints only):
+    ```bash
+    SSRF_PROTECTION_ENABLED=true
+    SSRF_ALLOW_LOCALHOST=false
+    SSRF_ALLOW_PRIVATE_NETWORKS=false
+    ```
+
+    **Custom Blocked Networks** (add additional ranges):
+    ```bash
+    SSRF_BLOCKED_NETWORKS='["169.254.169.254/32","169.254.0.0/16","100.64.0.0/10"]'
+    ```
+    The `100.64.0.0/10` range blocks Carrier-Grade NAT (CGNAT) used by some cloud providers.
+
 ### Ed25519 Certificate Signing
 
 MCP Gateway supports **Ed25519 digital signatures** for certificate validation and integrity verification.
@@ -645,6 +716,7 @@ MCP Gateway includes automatic response compression middleware that reduces band
 | `LOG_MAX_SIZE_MB`       | Max file size before rotation (MB) | `1`               | int                        |
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | int                        |
 | `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
+| `PERMISSION_AUDIT_ENABLED` | Enable permission audit logging (writes a row per permission check) | `false` | bool |
 
 ### Observability (OpenTelemetry)
 
@@ -654,7 +726,7 @@ MCP Gateway includes **vendor-agnostic OpenTelemetry support** for distributed t
 | ------------------------------- | ---------------------------------------------- | --------------------- | ------------------------------------------ |
 | `OTEL_ENABLE_OBSERVABILITY`     | Master switch for observability               | `false`               | bool                                       |
 | `OTEL_SERVICE_NAME`             | Service identifier in traces                   | `mcp-gateway`         | string                                     |
-| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-BETA-2`               | string                                     |
+| `OTEL_SERVICE_VERSION`          | Service version in traces                      | `1.0.0-RC-1`               | string                                     |
 | `OTEL_DEPLOYMENT_ENVIRONMENT`   | Environment tag (dev/staging/prod)            | `development`         | string                                     |
 | `OTEL_TRACES_EXPORTER`          | Trace exporter backend                         | `otlp`                | `otlp`, `jaeger`, `zipkin`, `console`, `none` |
 | `OTEL_RESOURCE_ATTRIBUTES`      | Custom resource attributes                     | (empty)               | `key=value,key2=value2`                   |
@@ -766,6 +838,17 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `PROMPT_CACHE_SIZE`     | Cached prompt templates          | `100`    | int > 0 |
 | `MAX_PROMPT_SIZE`       | Max prompt template size (bytes) | `102400` | int > 0 |
 | `PROMPT_RENDER_TIMEOUT` | Jinja render timeout (secs)      | `10`     | int > 0 |
+
+### Schema Validation
+
+| Setting | Description | Default | Options |
+| :--- | :--- | :--- | :--- |
+| `JSON_SCHEMA_VALIDATION_STRICT` | Enforce strict JSON Schema validation for tools and prompts | `true` | bool |
+
+**Strict Mode Scenarios:**
+
+- **`true` (Default)**: Invalid schemas (e.g., unknown types, malformed JSON Schema) will cause registration to **fail** with a 400 error. This ensures that only valid, spec-compliant tools and prompts are registered, preventing runtime issues later.
+- **`false`**: Invalid schemas will be **logged as warnings** but successfully persisted. Use this **only** for backward compatibility if you have legacy tools with broken schemas that cannot be immediately updated. Invalid schemas may still cause runtime errors when used by LLMs or downstream tools.
 
 ### Health Checks
 

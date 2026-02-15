@@ -33,8 +33,11 @@ class TestResourcePluginIntegration:
         Base.metadata.create_all(engine)
         SessionLocal = sessionmaker(bind=engine)
         db = SessionLocal()
-        yield db
-        db.close()
+        try:
+            yield db
+        finally:
+            db.close()
+            engine.dispose()
 
     @pytest.fixture
     def resource_service_with_mock_plugins(self):

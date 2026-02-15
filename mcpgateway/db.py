@@ -955,6 +955,7 @@ class Permissions:
     # Server permissions
     SERVERS_CREATE = "servers.create"
     SERVERS_READ = "servers.read"
+    SERVERS_USE = "servers.use"
     SERVERS_UPDATE = "servers.update"
     SERVERS_DELETE = "servers.delete"
     SERVERS_MANAGE = "servers.manage"
@@ -969,6 +970,24 @@ class Permissions:
     ADMIN_SYSTEM_CONFIG = "admin.system_config"
     ADMIN_USER_MANAGEMENT = "admin.user_management"
     ADMIN_SECURITY_AUDIT = "admin.security_audit"
+    ADMIN_OVERVIEW = "admin.overview"
+    ADMIN_DASHBOARD = "admin.dashboard"
+    ADMIN_EVENTS = "admin.events"
+    ADMIN_GRPC = "admin.grpc"
+    ADMIN_PLUGINS = "admin.plugins"
+
+    # A2A Agent permissions
+    A2A_CREATE = "a2a.create"
+    A2A_READ = "a2a.read"
+    A2A_UPDATE = "a2a.update"
+    A2A_DELETE = "a2a.delete"
+    A2A_INVOKE = "a2a.invoke"
+
+    # Tag permissions
+    TAGS_READ = "tags.read"
+    TAGS_CREATE = "tags.create"
+    TAGS_UPDATE = "tags.update"
+    TAGS_DELETE = "tags.delete"
 
     # Special permissions
     ALL_PERMISSIONS = "*"  # Wildcard for all permissions
@@ -1053,6 +1072,8 @@ class EmailUser(Base):
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Track how admin status was granted: "sso" (synced from IdP), "manual" (Admin UI), "api" (API grant), or None (legacy)
+    admin_origin: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
 
     # Status fields
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -2759,6 +2780,7 @@ class Tool(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=True)
+    original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     integration_type: Mapped[str] = mapped_column(String(20), default="MCP")
     request_type: Mapped[str] = mapped_column(String(20), default="SSE")
@@ -4465,6 +4487,11 @@ class Gateway(Base):
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
 
+    # Gateway mode: 'cache' (default) or 'direct_proxy'
+    # - 'cache': Tools/resources/prompts are cached in database upon gateway registration (current behavior)
+    # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
+    gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 
@@ -5322,6 +5349,9 @@ def validate_tool_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
+    Raises:
+        ValueError: If the tool input schema is invalid.
+
     """
     # You can use mapper and connection later, if required.
     _ = mapper
@@ -5341,14 +5371,20 @@ def validate_tool_schema(mapper, connection, target):
             return
 
         try:
-            validator = jsonschema.validators.validator_for(schema)
+            # If $schema is missing, default to Draft 2020-12 as per MCP spec.
+            if schema.get("$schema") is None:
+                validator_cls = jsonschema.Draft202012Validator
+            else:
+                validator_cls = jsonschema.validators.validator_for(schema)
 
-            if validator.__name__ not in allowed_validator_names:
-                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+            if validator_cls.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
 
-            validator.check_schema(schema)
+            validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
             logger.warning(f"Invalid tool input schema: {str(e)}")
+            if settings.json_schema_validation_strict:
+                raise ValueError(f"Invalid tool input schema: {str(e)}") from e
 
 
 def validate_tool_name(mapper, connection, target):
@@ -5382,6 +5418,8 @@ def validate_prompt_schema(mapper, connection, target):
         connection: The database connection.
         target: The target object being validated.
 
+    Raises:
+        ValueError: If the prompt argument schema is invalid.
     """
     # You can use mapper and connection later, if required.
     _ = mapper
@@ -5401,14 +5439,20 @@ def validate_prompt_schema(mapper, connection, target):
             return
 
         try:
-            validator = jsonschema.validators.validator_for(schema)
+            # If $schema is missing, default to Draft 2020-12 as per MCP spec.
+            if schema.get("$schema") is None:
+                validator_cls = jsonschema.Draft202012Validator
+            else:
+                validator_cls = jsonschema.validators.validator_for(schema)
 
-            if validator.__name__ not in allowed_validator_names:
-                logger.warning(f"Unsupported JSON Schema draft: {validator.__name__}")
+            if validator_cls.__name__ not in allowed_validator_names:
+                logger.warning(f"Unsupported JSON Schema draft: {validator_cls.__name__}")
 
-            validator.check_schema(schema)
+            validator_cls.check_schema(schema)
         except jsonschema.exceptions.SchemaError as e:
             logger.warning(f"Invalid prompt argument schema: {str(e)}")
+            if settings.json_schema_validation_strict:
+                raise ValueError(f"Invalid prompt argument schema: {str(e)}") from e
 
 
 # Register validation listeners
@@ -5535,49 +5579,8 @@ def get_for_update(
     return db.execute(stmt).scalar_one_or_none()
 
 
-@contextmanager
-def fresh_db_session() -> Generator[Session, Any, None]:
-    """Get a fresh database session for isolated operations.
-
-    Use this when you need a new session independent of the request lifecycle,
-    such as for metrics recording after releasing the main session.
-
-    This is a synchronous context manager that creates a new database session
-    from the SessionLocal factory. The session is automatically committed on
-    successful exit or rolled back on exception, then closed.
-
-    Note: Prior to this fix, sessions were closed without commit, causing
-    PostgreSQL to implicitly rollback all transactions (even read-only SELECTs).
-    This was causing ~40% rollback rate under load.
-
-    Yields:
-        Session: A fresh SQLAlchemy database session.
-
-    Raises:
-        Exception: Any exception raised during database operations is re-raised
-            after rolling back the transaction.
-
-    Examples:
-        >>> from mcpgateway.db import fresh_db_session
-        >>> with fresh_db_session() as db:
-        ...     hasattr(db, 'query')
-        True
-    """
-    db = SessionLocal()
-    try:
-        yield db
-        db.commit()  # Commit on successful exit (even for read-only operations)
-    except Exception:
-        try:
-            db.rollback()  # Explicit rollback on exception
-        except Exception:
-            try:
-                db.invalidate()  # Connection broken, discard from pool
-            except Exception:
-                pass  # nosec B110 - Best effort cleanup on connection failure
-        raise
-    finally:
-        db.close()
+# Using the existing get_db generator to create a context manager for fresh sessions
+fresh_db_session = contextmanager(get_db)  # type: ignore
 
 
 def patch_string_columns_for_mariadb(base, engine_) -> None:

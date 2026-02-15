@@ -56,6 +56,7 @@ from pathlib import Path
 import re
 import sys
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from urllib.parse import urlparse
 
 # Third-Party
 from cryptography.hazmat.primitives import serialization
@@ -223,6 +224,9 @@ class Settings(BaseSettings):
     embed_environment_in_tokens: bool = Field(default=False, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=False, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
 
+    # JSON Schema Validation for registration (Tool Input Schemas, Prompt schemas, etc)
+    json_schema_validation_strict: bool = Field(default=True, description="Strict schema validation mode - reject invalid JSON schemas")
+
     # SSO Configuration
     sso_enabled: bool = Field(default=False, description="Enable Single Sign-On authentication")
     sso_github_enabled: bool = Field(default=False, description="Enable GitHub OAuth authentication")
@@ -245,11 +249,18 @@ class Settings(BaseSettings):
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
+    sso_keycloak_public_base_url: Optional[str] = Field(
+        default=None,
+        description="Browser-facing Keycloak base URL for authorization redirects (e.g., http://localhost:8180)",
+    )
     sso_keycloak_realm: str = Field(default="master", description="Keycloak realm name")
     sso_keycloak_client_id: Optional[str] = Field(default=None, description="Keycloak client ID")
     sso_keycloak_client_secret: Optional[SecretStr] = Field(default=None, description="Keycloak client secret")
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
+    sso_keycloak_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})")
+    sso_keycloak_default_role: Optional[str] = Field(default=None, description="Default Context Forge role for Keycloak users without role mapping")
+    sso_keycloak_resolve_team_scope_to_personal_team: bool = Field(default=False, description="Resolve team-scoped Keycloak role mappings to the user's personal team")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
 
     # Security Validation & Sanitization
@@ -329,6 +340,63 @@ class Settings(BaseSettings):
         description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
     )
 
+    # ===================================
+    # SSRF Protection Configuration
+    # ===================================
+    # Server-Side Request Forgery (SSRF) protection prevents the gateway from being
+    # used to access internal resources or cloud metadata services.
+
+    ssrf_protection_enabled: bool = Field(
+        default=True,
+        description="Enable SSRF protection for gateway/tool URLs. Blocks access to dangerous endpoints.",
+    )
+
+    ssrf_blocked_networks: List[str] = Field(
+        default=[
+            # Cloud metadata services (ALWAYS dangerous - credential exposure)
+            "169.254.169.254/32",  # AWS/GCP/Azure instance metadata
+            "169.254.169.123/32",  # AWS NTP service
+            "fd00::1/128",  # IPv6 cloud metadata
+            # Link-local (often used for cloud metadata)
+            "169.254.0.0/16",  # Full link-local IPv4 range
+            "fe80::/10",  # IPv6 link-local
+        ],
+        description=(
+            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. " "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
+        ),
+    )
+
+    ssrf_blocked_hosts: List[str] = Field(
+        default=[
+            "metadata.google.internal",  # GCP metadata hostname
+            "metadata.internal",  # Generic cloud metadata
+        ],
+        description="Hostnames to block for SSRF protection. Matched case-insensitively.",
+    )
+
+    ssrf_allow_localhost: bool = Field(
+        default=True,
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
+    )
+
+    ssrf_allow_private_networks: bool = Field(
+        default=True,
+        description=(
+            "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). "
+            "Set to false if the gateway should only access public internet endpoints. "
+            "Default true for internal deployment compatibility."
+        ),
+    )
+
+    ssrf_dns_fail_closed: bool = Field(
+        default=False,
+        description=(
+            "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved "
+            "are rejected. When false (default), unresolvable hostnames are allowed through "
+            "(hostname blocklist still applies). Set to true for stricter security."
+        ),
+    )
+
     # OAuth Configuration
     oauth_request_timeout: int = Field(default=30, description="OAuth request timeout in seconds")
     oauth_max_retries: int = Field(default=3, description="Maximum retries for OAuth token requests")
@@ -379,6 +447,10 @@ class Settings(BaseSettings):
         default=False,
         description="Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
     )
+    protect_all_admins: bool = Field(
+        default=True,
+        description="When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
+    )
     platform_admin_email: str = Field(default="admin@example.com", description="Platform administrator email address")
     platform_admin_password: SecretStr = Field(default=SecretStr("changeme"), description="Platform administrator password")
     default_user_password: SecretStr = Field(default=SecretStr("changeme"), description="Default password for new users")  # nosec B105
@@ -405,8 +477,8 @@ class Settings(BaseSettings):
     password_prevent_reuse: bool = Field(default=True, description="Prevent reusing the current password when changing")
     password_max_age_days: int = Field(default=90, description="Password maximum age in days before expiry forces a change")
     # Account Security Configuration
-    max_failed_login_attempts: int = Field(default=5, description="Maximum failed login attempts before account lockout")
-    account_lockout_duration_minutes: int = Field(default=30, description="Account lockout duration in minutes")
+    max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
+    account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
@@ -415,6 +487,12 @@ class Settings(BaseSettings):
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
+
+    # Default Role Configuration
+    default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
+    default_user_role: str = Field(default="platform_viewer", description="Global role assigned to non-admin users")
+    default_team_owner_role: str = Field(default="team_admin", description="Team-scoped role assigned to team owners (e.g. personal team creator)")
+    default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members")
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
@@ -443,6 +521,10 @@ class Settings(BaseSettings):
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
+
+    # Direct Proxy Configuration (disabled by default)
+    mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
+    mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")
 
     # ===================================
     # Performance Monitoring Configuration
@@ -1075,6 +1157,10 @@ class Settings(BaseSettings):
     # When enabled, it logs all CRUD operations (create, read, update, delete) on resources.
     # WARNING: This causes a database write on every API request and can cause significant load.
     audit_trail_enabled: bool = Field(default=False, description="Enable audit trail logging to database for compliance")
+    permission_audit_enabled: bool = Field(
+        default=False,
+        description="Enable permission audit logging for RBAC checks (writes a row per permission check)",
+    )
 
     # Security Logging Configuration
     # Security event logging is disabled by default for performance.
@@ -1326,13 +1412,7 @@ class Settings(BaseSettings):
     mcp_session_pool_health_check_methods: List[str] = ["ping", "skip"]
     # Timeout in seconds for each health check attempt
     mcp_session_pool_health_check_timeout: float = 5.0
-    mcp_session_pool_identity_headers: List[str] = [
-        "authorization",
-        "x-tenant-id",
-        "x-user-id",
-        "x-api-key",
-        "cookie",
-    ]
+    mcp_session_pool_identity_headers: List[str] = ["authorization", "x-tenant-id", "x-user-id", "x-api-key", "cookie", "x-mcp-session-id"]
     # Timeout for session/transport cleanup operations (__aexit__ calls).
     # This prevents CPU spin loops when internal tasks (like post_writer waiting on
     # memory streams) don't respond to cancellation. Does NOT affect tool execution
@@ -1374,6 +1454,12 @@ class Settings(BaseSettings):
     # Lower values = faster recovery, but more orphaned tasks.
     # Env: ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS
     anyio_cancel_delivery_max_iterations: int = 100
+
+    # Session Affinity
+    mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
+    mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
+    mcpgateway_session_affinity_max_sessions: int = 1  # Max sessions per identity for affinity
+    mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
 
     # Prompts
     prompt_cache_size: int = 100
@@ -1510,6 +1596,8 @@ class Settings(BaseSettings):
     # streamable http transport
     use_stateful_sessions: bool = False  # Set to False to use stateless sessions without event store
     json_response_enabled: bool = True  # Enable JSON responses instead of SSE streams
+    streamable_http_max_events_per_stream: int = 100  # Ring buffer capacity per stream
+    streamable_http_event_ttl: int = 3600  # Event stream TTL in seconds (1 hour)
 
     # Core plugin settings
     plugins_enabled: bool = Field(default=False, description="Enable the plugin framework")
@@ -2083,8 +2171,9 @@ Disallow: /
                     f"http://127.0.0.1:{self.port}",
                 }
             else:
-                # Production origins - construct from app_domain
-                self.allowed_origins = {f"https://{self.app_domain}", f"https://app.{self.app_domain}", f"https://admin.{self.app_domain}"}
+                # Production origins - construct from app_domain (extract hostname from HttpUrl)
+                app_domain_host = urlparse(str(self.app_domain)).hostname or "localhost"
+                self.allowed_origins = {f"https://{app_domain_host}", f"https://app.{app_domain_host}", f"https://admin.{app_domain_host}"}
 
         # Validate proxy auth configuration
         if not self.mcp_client_auth_enabled and not self.trust_proxy_auth:

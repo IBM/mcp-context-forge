@@ -111,3 +111,14 @@ def test_encode_decode_uses_cached_aesgcm(monkeypatch):
 
     assert decode_auth(token1) == data1
     assert decode_auth(token2) == data2
+
+
+def test_get_key_accepts_secretstr(monkeypatch):
+    """_get_passphrase should unwrap SecretStr values."""
+    from pydantic import SecretStr
+    from mcpgateway.utils.services_auth import clear_crypto_cache
+
+    clear_crypto_cache()
+    monkeypatch.setattr(settings, "auth_encryption_secret", SecretStr("secretstr-value"))
+    key = get_key()
+    assert isinstance(key, bytes)

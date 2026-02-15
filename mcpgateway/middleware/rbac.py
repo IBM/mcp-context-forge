@@ -12,6 +12,7 @@ functions for protecting routes.
 """
 
 # Standard
+import functools
 from functools import wraps
 import logging
 from typing import Callable, Generator, List, Optional
@@ -25,7 +26,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
-from mcpgateway.db import SessionLocal
+from mcpgateway.db import fresh_db_session, SessionLocal
 from mcpgateway.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
@@ -36,6 +37,9 @@ security = HTTPBearer(auto_error=False)
 
 def get_db() -> Generator[Session, None, None]:
     """Get database session for dependency injection.
+
+    DEPRECATED: Use fresh_db_session() context manager instead to avoid session accumulation.
+    This function is kept for backwards compatibility with endpoints that still use Depends(get_db).
 
     Commits the transaction on successful completion to avoid implicit rollbacks
     for read-only operations. Rolls back explicitly on exception.
@@ -72,6 +76,9 @@ def get_db() -> Generator[Session, None, None]:
 async def get_permission_service(db: Session = Depends(get_db)) -> PermissionService:
     """Get permission service instance for dependency injection.
 
+    DEPRECATED: Use PermissionService(db) directly with fresh_db_session() context manager instead.
+    This function is kept for backwards compatibility with endpoints that still use dependency injection.
+
     Args:
         db: Database session
 
@@ -86,16 +93,16 @@ async def get_permission_service(db: Session = Depends(get_db)) -> PermissionSer
     return PermissionService(db)
 
 
-async def get_current_user_with_permissions(
-    request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None), db: Session = Depends(get_db)
-):
+async def get_current_user_with_permissions(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security), jwt_token: Optional[str] = Cookie(default=None)):
     """Extract current user from JWT token and prepare for permission checking.
+
+    Uses fresh_db_session() context manager to avoid session accumulation under high load.
+    Database sessions are created only when needed and closed immediately after use.
 
     Args:
         request: FastAPI request object for IP/user-agent extraction
         credentials: HTTP Bearer credentials
         jwt_token: JWT token from cookie
-        db: Database session
 
     Returns:
         dict: User information with permission checking context
@@ -136,18 +143,15 @@ async def get_current_user_with_permissions(
                         # First-Party
                         from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
-                        user = db.execute(select(EmailUser).where(EmailUser.email == proxy_user)).scalar_one_or_none()
-                        if user:
-                            is_admin = user.is_admin
-                            full_name = user.full_name or proxy_user
+                        # Use fresh_db_session for short-lived database access
+                        with fresh_db_session() as db:
+                            user = db.execute(select(EmailUser).where(EmailUser.email == proxy_user)).scalar_one_or_none()
+                            if user:
+                                is_admin = user.is_admin
+                                full_name = user.full_name or proxy_user
                     except Exception as e:
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
-
-                # CRITICAL: Release DB connection early to prevent idle-in-transaction
-                # All data has been extracted; session not needed during HTTP calls
-                db.commit()
-                db.close()
 
                 return {
                     "email": proxy_user,
@@ -180,9 +184,6 @@ async def get_current_user_with_permissions(
                 )
 
             # auth_required=false: allow anonymous access
-            # CRITICAL: Release DB connection early to prevent idle-in-transaction
-            db.commit()
-            db.close()
 
             return {
                 "email": "anonymous",
@@ -215,10 +216,6 @@ async def get_current_user_with_permissions(
                 detail="Authentication required but no auth method configured",
             )
 
-        # CRITICAL: Release DB connection early to prevent idle-in-transaction
-        db.commit()
-        db.close()
-
         return {
             "email": "anonymous",
             "full_name": "Anonymous User",
@@ -234,37 +231,50 @@ async def get_current_user_with_permissions(
         }
 
     # Standard JWT authentication flow
-    # Try multiple sources for the token, prioritizing manual cookie reading
+    # Try multiple sources for the token, prioritizing Authorization header for API requests
     token = None
+    token_from_cookie = False
 
-    # 1. First try manual cookie reading (most reliable)
-    if request.cookies:
+    # 1. First try Authorization header (preferred for API requests)
+    if credentials and credentials.credentials:
+        token = credentials.credentials
+
+    # 2. Try manual cookie reading (for browser requests)
+    if not token and request.cookies:
         # Try both jwt_token and access_token cookie names
         manual_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
         if manual_token:
             token = manual_token
-
-    # 2. Then try Authorization header
-    if not token and credentials and credentials.credentials:
-        token = credentials.credentials
+            token_from_cookie = True
 
     # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
+        token_from_cookie = True
+
+    # Check if this is a browser/admin-UI request (not an external API request)
+    accept_header = request.headers.get("accept", "")
+    is_htmx = request.headers.get("hx-request") == "true"
+    referer = request.headers.get("referer", "")
+    is_admin_ui_request = "/admin" in referer
+    is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
+
+    # SECURITY: Reject cookie-only authentication for API requests
+    # Cookies should only be used for browser/HTML requests (including admin UI fetch calls)
+    if token_from_cookie and not is_browser_request:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Cookie authentication not allowed for API requests. Use Authorization header.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     if not token:
         # For browser requests (HTML Accept header or HTMX), redirect to login
-        accept_header = request.headers.get("accept", "")
-        is_htmx = request.headers.get("hx-request") == "true"
-        if "text/html" in accept_header or is_htmx:
+        if is_browser_request:
             raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
 
         # If auth is disabled, return the stock admin user
         if not settings.auth_required:
-            # CRITICAL: Release DB connection early to prevent idle-in-transaction
-            db.commit()
-            db.close()
-
             return {
                 "email": settings.platform_admin_email,
                 "full_name": "Platform Admin",
@@ -299,10 +309,8 @@ async def get_current_user_with_permissions(
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
 
-        # CRITICAL: Release DB connection early to prevent idle-in-transaction
-        # All user data has been extracted; session not needed during HTTP calls
-        db.commit()
-        db.close()
+        # Get token_use from request.state (set by get_current_user)
+        token_use = getattr(request.state, "token_use", None)
 
         # Add request context for permission auditing
         return {
@@ -315,6 +323,7 @@ async def get_current_user_with_permissions(
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
+            "token_use": token_use,  # Include token_use for RBAC team derivation
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency
         }
@@ -330,12 +339,143 @@ async def get_current_user_with_permissions(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
 
 
-def require_permission(permission: str, resource_type: Optional[str] = None):
+# --- Team derivation helpers for multi-team session tokens ---
+
+
+@functools.lru_cache(maxsize=1)
+def _get_resource_param_to_model():
+    """Lazy-initialize the resource param to model mapping.
+
+    Returns:
+        dict: Mapping of URL parameter names to SQLAlchemy model classes.
+    """
+    # First-Party
+    from mcpgateway.db import A2AAgent, Gateway, Prompt, Resource, Server, Tool  # pylint: disable=import-outside-toplevel
+
+    return {
+        "tool_id": Tool,
+        "server_id": Server,
+        "resource_id": Resource,
+        "prompt_id": Prompt,
+        "gateway_id": Gateway,
+        "agent_id": A2AAgent,
+    }
+
+
+def _derive_team_from_resource(kwargs, db_session) -> Optional[str]:
+    """Look up resource's team_id from DB for RBAC context (Tier 1).
+
+    For endpoints that target a specific resource (get, update, delete, execute),
+    derive the team context from the resource's owner team.
+
+    Args:
+        kwargs: Endpoint function kwargs containing resource ID params
+        db_session: Active SQLAlchemy session
+
+    Returns:
+        team_id string if found, None otherwise
+    """
+    mapping = _get_resource_param_to_model()
+    for param_name, model_cls in mapping.items():
+        resource_id = kwargs.get(param_name)
+        if resource_id:
+            try:
+                resource = db_session.get(model_cls, resource_id)
+                if resource:
+                    return getattr(resource, "team_id", None)
+            except Exception:  # nosec B110 - DB lookup failure falls through to None
+                pass
+            return None  # Resource not found; let endpoint handle 404
+    return None  # No resource ID param
+
+
+async def _derive_team_from_payload(kwargs) -> Optional[str]:
+    """Extract team_id from create payload objects or form data (Tier 3).
+
+    For create endpoints, derive team context from the Pydantic payload or form data.
+
+    Args:
+        kwargs: Endpoint function kwargs
+
+    Returns:
+        team_id string if found, None otherwise
+    """
+    # Try Pydantic payload objects (API endpoints)
+    for param_name in ("gateway", "tool", "server", "resource", "prompt", "agent"):
+        payload_obj = kwargs.get(param_name)
+        if payload_obj and hasattr(payload_obj, "team_id"):
+            tid = getattr(payload_obj, "team_id", None)
+            if tid:
+                return tid
+
+    # Try request form data (admin UI endpoints)
+    # Note: use 'is not None' rather than truthiness check because some
+    # objects (e.g. Pydantic models) may be truthy yet lack .headers.
+    request = kwargs.get("request")
+    if request is not None and isinstance(request, Request):
+        content_type = request.headers.get("content-type", "")
+        if "form" in content_type:
+            try:
+                form = await request.form()
+                tid = form.get("team_id")
+                if tid:
+                    return tid
+            except Exception:  # nosec B110 - Form parse failure is non-fatal
+                pass
+
+    return None
+
+
+# Permissions that indicate create/mutate operations (not safe for "any-team" aggregation)
+_MUTATE_PERMISSION_ACTIONS = frozenset(
+    {
+        "create",
+        "update",
+        "delete",
+        "execute",
+        "invoke",
+        "toggle",
+        "set_state",
+        "revoke",
+        "manage_members",
+        "join",
+        "manage",
+        "share",
+        "invite",
+        "use",
+    }
+)
+
+
+def _is_mutate_permission(permission: str) -> bool:
+    """Check if a permission string represents a mutate operation.
+
+    Handles both dot-separated (tools.create) and colon-separated
+    (admin.sso_providers:create) permission formats.
+
+    Args:
+        permission: Permission string like 'tools.create' or 'admin.sso_providers:create'.
+
+    Returns:
+        bool: True if the permission's action component is a mutating operation.
+    """
+    # Handle colon separator: admin.sso_providers:create → action is "create"
+    if ":" in permission:
+        action = permission.rsplit(":", 1)[-1]
+        return action in _MUTATE_PERMISSION_ACTIONS
+    parts = permission.split(".")
+    return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
+
+
+def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Decorator to require specific permission for accessing an endpoint.
 
     Args:
         permission: Required permission (e.g., 'tools.create')
         resource_type: Optional resource type for resource-specific permissions
+        allow_admin_bypass: If True (default), admin users bypass all permission checks.
+                           If False, even admins must have explicit permissions.
+                           Use False for admin UI routes to enforce granular RBAC.
 
     Returns:
         Callable: Decorated function that enforces the permission requirement
@@ -385,22 +525,10 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             Raises:
                 HTTPException: If user authentication or permission check fails
             """
-            # Extract user context from kwargs
-            user_context = None
-            for _, value in kwargs.items():
-                if isinstance(value, dict) and "email" in value:
-                    user_context = value
-                    break
-
-            if not user_context:
+            # Extract user context from named kwargs only (security: avoid picking up request body dicts)
+            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
-
-            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
-            db_session = kwargs.get("db") or user_context.get("db")
-            if not db_session:
-                # Create fresh db session as fallback
-                db_session = SessionLocal()
-            permission_service = PermissionService(db_session)
 
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")
@@ -409,6 +537,24 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
             if not team_id:
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
+
+            # For multi-team session tokens (team_id is None), derive team from context
+            check_any_team = False
+            if not team_id and user_context.get("token_use") == "session":
+                db_session = kwargs.get("db") or user_context.get("db")
+                if db_session:
+                    # Tier 1: Try to derive team from existing resource
+                    team_id = _derive_team_from_resource(kwargs, db_session)
+                    # Tier 3: Try to derive team from create payload / form
+                    if team_id is None:
+                        team_id = await _derive_team_from_payload(kwargs)
+                # If still no team_id, check permission across all of the user's teams.
+                # This separates authorization ("does this user have the permission?")
+                # from resource scoping ("which team owns this resource?"). Team
+                # assignment is enforced downstream by endpoint logic (e.g.
+                # verify_team_for_user, token team membership checks).
+                if not team_id:
+                    check_any_team = True
 
             # First, check if any plugins want to handle permission checking
             # First-Party
@@ -462,14 +608,35 @@ def require_permission(permission: str, resource_type: Optional[str] = None):
                     )
 
             # No plugin handled it, fall through to standard RBAC check
-            granted = await permission_service.check_permission(
-                user_email=user_context["email"],
-                permission=permission,
-                resource_type=resource_type,
-                team_id=team_id,
-                ip_address=user_context.get("ip_address"),
-                user_agent=user_context.get("user_agent"),
-            )
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                # Use existing session from endpoint or user_context
+                permission_service = PermissionService(db_session)
+                granted = await permission_service.check_permission(
+                    user_email=user_context["email"],
+                    permission=permission,
+                    resource_type=resource_type,
+                    team_id=team_id,
+                    ip_address=user_context.get("ip_address"),
+                    user_agent=user_context.get("user_agent"),
+                    allow_admin_bypass=allow_admin_bypass,
+                    check_any_team=check_any_team,
+                )
+            else:
+                # Create fresh db session for permission check
+                with fresh_db_session() as db:
+                    permission_service = PermissionService(db)
+                    granted = await permission_service.check_permission(
+                        user_email=user_context["email"],
+                        permission=permission,
+                        resource_type=resource_type,
+                        team_id=team_id,
+                        ip_address=user_context.get("ip_address"),
+                        user_agent=user_context.get("user_agent"),
+                        allow_admin_bypass=allow_admin_bypass,
+                        check_any_team=check_any_team,
+                    )
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
@@ -534,20 +701,22 @@ def require_admin_permission():
             Raises:
                 HTTPException: If user authentication or admin permission check fails
             """
-            # Extract user context from kwargs
-            user_context = None
-            for _, value in kwargs.items():
-                if isinstance(value, dict) and "email" in value and "db" in value:
-                    user_context = value
-                    break
-
-            if not user_context:
+            # Extract user context from named kwargs only (security: avoid picking up request body dicts)
+            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            # Create permission service and check admin permissions
-            permission_service = PermissionService(user_context["db"])
-
-            has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                # Use existing session from endpoint or user_context
+                permission_service = PermissionService(db_session)
+                has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
+            else:
+                # Create fresh db session for permission check
+                with fresh_db_session() as db:
+                    permission_service = PermissionService(db)
+                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"])
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -561,12 +730,14 @@ def require_admin_permission():
     return decorator
 
 
-def require_any_permission(permissions: List[str], resource_type: Optional[str] = None):
+def require_any_permission(permissions: List[str], resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Decorator to require any of the specified permissions for accessing an endpoint.
 
     Args:
         permissions: List of permissions, user needs at least one
         resource_type: Optional resource type for resource-specific permissions
+        allow_admin_bypass: If True (default), admin users bypass all permission checks.
+                           If False, even admins must have explicit permissions.
 
     Returns:
         Callable: Decorated function that enforces the permission requirements
@@ -616,18 +787,10 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             Raises:
                 HTTPException: If user authentication or any-permission check fails
             """
-            # Extract user context from kwargs
-            user_context = None
-            for _, value in kwargs.items():
-                if isinstance(value, dict) and "email" in value and "db" in value:
-                    user_context = value
-                    break
-
-            if not user_context:
+            # Extract user context from named kwargs only (security: avoid picking up request body dicts)
+            user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
+            if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
-
-            # Create permission service
-            permission_service = PermissionService(user_context["db"])
 
             # Extract team_id from path parameters if available
             team_id = kwargs.get("team_id")
@@ -637,19 +800,61 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 # check if user_context has team_id
                 team_id = user_context.get("team_id", None)
 
-            # Check if user has any of the required permissions
-            granted = False
-            for permission in permissions:
-                if await permission_service.check_permission(
-                    user_email=user_context["email"],
-                    permission=permission,
-                    resource_type=resource_type,
-                    team_id=team_id,
-                    ip_address=user_context.get("ip_address"),
-                    user_agent=user_context.get("user_agent"),
-                ):
-                    granted = True
-                    break
+            # For multi-team session tokens (team_id is None), derive team from context
+            check_any_team = False
+            if not team_id and user_context.get("token_use") == "session":
+                db_session = kwargs.get("db") or user_context.get("db")
+                if db_session:
+                    # Tier 1: Try to derive team from existing resource
+                    team_id = _derive_team_from_resource(kwargs, db_session)
+                    # Tier 3: Try to derive team from create payload / form
+                    if team_id is None:
+                        team_id = await _derive_team_from_payload(kwargs)
+                # If still no team_id, check permission across all of the user's teams.
+                # Authorization ("does this user have the permission?") is separate
+                # from resource scoping ("which team owns this resource?").
+                if not team_id:
+                    check_any_team = True
+
+            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
+            db_session = kwargs.get("db") or user_context.get("db")
+            if db_session:
+                # Use existing session from endpoint or user_context
+                permission_service = PermissionService(db_session)
+                # Check if user has any of the required permissions
+                granted = False
+                for permission in permissions:
+                    if await permission_service.check_permission(
+                        user_email=user_context["email"],
+                        permission=permission,
+                        resource_type=resource_type,
+                        team_id=team_id,
+                        ip_address=user_context.get("ip_address"),
+                        user_agent=user_context.get("user_agent"),
+                        allow_admin_bypass=allow_admin_bypass,
+                        check_any_team=check_any_team,
+                    ):
+                        granted = True
+                        break
+            else:
+                # Create fresh db session for permission check
+                with fresh_db_session() as db:
+                    permission_service = PermissionService(db)
+                    # Check if user has any of the required permissions
+                    granted = False
+                    for permission in permissions:
+                        if await permission_service.check_permission(
+                            user_email=user_context["email"],
+                            permission=permission,
+                            resource_type=resource_type,
+                            team_id=team_id,
+                            ip_address=user_context.get("ip_address"),
+                            user_agent=user_context.get("user_agent"),
+                            allow_admin_bypass=allow_admin_bypass,
+                            check_any_team=check_any_team,
+                        ):
+                            granted = True
+                            break
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permissions={permissions}, resource_type={resource_type}")
@@ -682,7 +887,7 @@ class PermissionChecker:
             user_context: User context from get_current_user_with_permissions
         """
         self.user_context = user_context
-        self.permission_service = PermissionService(user_context["db"])
+        self.db_session = user_context.get("db")
 
     async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has specific permission.
@@ -696,15 +901,30 @@ class PermissionChecker:
         Returns:
             bool: True if user has permission
         """
-        return await self.permission_service.check_permission(
-            user_email=self.user_context["email"],
-            permission=permission,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            team_id=team_id,
-            ip_address=self.user_context.get("ip_address"),
-            user_agent=self.user_context.get("user_agent"),
-        )
+        if self.db_session:
+            # Use existing session
+            permission_service = PermissionService(self.db_session)
+            return await permission_service.check_permission(
+                user_email=self.user_context["email"],
+                permission=permission,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                team_id=team_id,
+                ip_address=self.user_context.get("ip_address"),
+                user_agent=self.user_context.get("user_agent"),
+            )
+        # Create fresh db session
+        with fresh_db_session() as db:
+            permission_service = PermissionService(db)
+            return await permission_service.check_permission(
+                user_email=self.user_context["email"],
+                permission=permission,
+                resource_type=resource_type,
+                resource_id=resource_id,
+                team_id=team_id,
+                ip_address=self.user_context.get("ip_address"),
+                user_agent=self.user_context.get("user_agent"),
+            )
 
     async def has_admin_permission(self) -> bool:
         """Check if user has admin permissions.
@@ -712,7 +932,14 @@ class PermissionChecker:
         Returns:
             bool: True if user has admin permissions
         """
-        return await self.permission_service.check_admin_permission(self.user_context["email"])
+        if self.db_session:
+            # Use existing session
+            permission_service = PermissionService(self.db_session)
+            return await permission_service.check_admin_permission(self.user_context["email"])
+        # Create fresh db session
+        with fresh_db_session() as db:
+            permission_service = PermissionService(db)
+            return await permission_service.check_admin_permission(self.user_context["email"])
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.
@@ -725,10 +952,34 @@ class PermissionChecker:
         Returns:
             bool: True if user has at least one permission
         """
-        for permission in permissions:
-            if await self.has_permission(permission, resource_type, team_id=team_id):
-                return True
-        return False
+        if self.db_session:
+            # Use existing session for all checks
+            permission_service = PermissionService(self.db_session)
+            for permission in permissions:
+                if await permission_service.check_permission(
+                    user_email=self.user_context["email"],
+                    permission=permission,
+                    resource_type=resource_type,
+                    team_id=team_id,
+                    ip_address=self.user_context.get("ip_address"),
+                    user_agent=self.user_context.get("user_agent"),
+                ):
+                    return True
+            return False
+        # Create single fresh session for all checks (avoid N sessions for N permissions)
+        with fresh_db_session() as db:
+            permission_service = PermissionService(db)
+            for permission in permissions:
+                if await permission_service.check_permission(
+                    user_email=self.user_context["email"],
+                    permission=permission,
+                    resource_type=resource_type,
+                    team_id=team_id,
+                    ip_address=self.user_context.get("ip_address"),
+                    user_agent=self.user_context.get("user_agent"),
+                ):
+                    return True
+            return False
 
     async def require_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None) -> None:
         """Require specific permission, raise HTTPException if not granted.

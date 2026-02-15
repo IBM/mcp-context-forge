@@ -145,7 +145,7 @@ The project maintains production-grade quality through comprehensive GitHub Acti
 
 **Testing & Coverage:**
 
-- **Tests & Coverage** (`pytest.yml`): Comprehensive test suite across Python 3.11-3.12 with pytest, branch coverage measurement (70% threshold), doctest validation (40% threshold), and coverage reporting
+- **Tests & Coverage** (`pytest.yml`): Comprehensive test suite across Python 3.11-3.12 with pytest, branch coverage measurement (80% threshold), doctest validation (40% threshold), and coverage reporting
 - **Playwright UI Tests**: End-to-end browser automation testing for admin UI workflows
 
 **Security Scanning:**

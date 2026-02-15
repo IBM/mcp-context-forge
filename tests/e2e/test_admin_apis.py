@@ -42,9 +42,9 @@ import uuid  # noqa: E402
 
 # Third-Party
 from httpx import AsyncClient  # noqa: E402
+from pydantic import SecretStr  # noqa: E402
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
-
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -55,6 +55,9 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %
 # -------------------------
 # Test Configuration
 # -------------------------
+TEST_JWT_SECRET = "e2e-test-jwt-secret-key-with-minimum-32-bytes"
+
+
 def create_test_jwt_token():
     """Create a proper JWT token for testing with required audience and issuer."""
     # Standard
@@ -75,7 +78,7 @@ def create_test_jwt_token():
     }
 
     # Use the test JWT secret key
-    return jwt.encode(payload, "my-test-key", algorithm="HS256")
+    return jwt.encode(payload, TEST_JWT_SECRET, algorithm="HS256")
 
 
 TEST_JWT_TOKEN = create_test_jwt_token()
@@ -103,17 +106,88 @@ async def client(app_with_temp_db):
     # Local
     from tests.utils.rbac_mocks import create_mock_user_context
 
+    # Ensure tests use a strong JWT secret to avoid weak-key warnings.
+    from mcpgateway.config import settings
+
+    original_jwt_secret = settings.jwt_secret_key
+    if hasattr(original_jwt_secret, "get_secret_value") and callable(getattr(original_jwt_secret, "get_secret_value", None)):
+        settings.jwt_secret_key = SecretStr(TEST_JWT_SECRET)
+    else:
+        settings.jwt_secret_key = TEST_JWT_SECRET
+
     # Get the actual test database session from the app
     test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
 
     def get_test_db_session():
         """Get the actual test database session."""
         if callable(test_db_dependency):
-            return next(test_db_dependency())
-        return test_db_dependency
+            test_db_gen = test_db_dependency()
+            return next(test_db_gen), test_db_gen
+        return test_db_dependency, None
 
     # Create mock user context with actual test database session
-    test_db_session = get_test_db_session()
+    test_db_session, test_db_generator = get_test_db_session()
+
+    # Admin UI endpoints enforce granular RBAC (allow_admin_bypass=False).
+    # Seed a platform_admin-style role grant so /admin/* endpoints return 200
+    # without patching RBAC decorators (which can leak under xdist).
+    from sqlalchemy import select
+
+    from mcpgateway.db import EmailUser, Role, UserRole
+
+    if test_db_session.get(EmailUser, "admin@example.com") is None:
+        test_db_session.add(
+            EmailUser(
+                email="admin@example.com",
+                password_hash="not-a-real-hash",
+                full_name="Test Admin",
+                is_admin=True,
+                is_active=True,
+            )
+        )
+        test_db_session.commit()
+
+    role = test_db_session.execute(select(Role).where(Role.name == "platform_admin", Role.scope == "global")).scalars().first()
+    if role is None:
+        role = Role(
+            name="platform_admin",
+            description="Test platform admin role (wildcard permissions)",
+            scope="global",
+            permissions=["*"],
+            created_by="admin@example.com",
+            is_system_role=True,
+            is_active=True,
+        )
+        test_db_session.add(role)
+        test_db_session.commit()
+        test_db_session.refresh(role)
+
+    assignment = (
+        test_db_session.execute(
+            select(UserRole).where(
+                UserRole.user_email == "admin@example.com",
+                UserRole.role_id == role.id,
+                UserRole.scope == "global",
+                UserRole.scope_id.is_(None),
+                UserRole.is_active.is_(True),
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if assignment is None:
+        test_db_session.add(
+            UserRole(
+                user_email="admin@example.com",
+                role_id=role.id,
+                scope="global",
+                scope_id=None,
+                granted_by="admin@example.com",
+                is_active=True,
+            )
+        )
+        test_db_session.commit()
+
     test_user_context = create_mock_user_context(email="admin@example.com", full_name="Test Admin", is_admin=True)
     test_user_context["db"] = test_db_session
 
@@ -146,6 +220,13 @@ async def client(app_with_temp_db):
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
     app_with_temp_db.dependency_overrides.pop(require_admin_auth, None)
     app_with_temp_db.dependency_overrides.pop(get_jwt_token, None)
+    settings.jwt_secret_key = original_jwt_secret
+    if test_db_generator is not None:
+        test_db_generator.close()
+    try:
+        test_db_session.close()
+    except Exception:
+        pass
 
 
 @pytest_asyncio.fixture
@@ -335,10 +416,12 @@ class TestAdminToolAPIs:
 
     async def test_admin_tool_name_conflict(self, client: AsyncClient, mock_settings):
         """Test creating tool with duplicate name via admin UI for private, team, and public scopes."""
+        # Standard
         import uuid
 
         unique_name = f"duplicate_tool_{uuid.uuid4().hex[:8]}"
         # create a real team and use its ID
+        # First-Party
         from mcpgateway.services.team_management_service import TeamManagementService
 
         # Get db session from test fixture context
@@ -349,6 +432,7 @@ class TestAdminToolAPIs:
         else:
             # Fallback: import get_db and use it directly if available
             try:
+                # First-Party
                 from mcpgateway.db import get_db
 
                 db = next(get_db())
@@ -849,7 +933,8 @@ class TestTeamFiltering:
     async def test_tools_ids_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/tools/ids respects team_id parameter."""
         # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Tool as DbTool
         from mcpgateway.services.team_management_service import TeamManagementService
 
         # Get db session from app's dependency overrides or directly from get_db
@@ -984,6 +1069,7 @@ class TestTeamFiltering:
         }
 
         # Manually insert the tool since we can't POST as another user
+        # First-Party
         from mcpgateway.db import Tool as DbTool
 
         db_tool = DbTool(
@@ -1145,7 +1231,8 @@ class TestTeamFiltering:
     async def test_gateways_partial_with_team_id(self, client, app_with_temp_db):
         """Test that /admin/gateways/partial respects team_id parameter."""
         # First-Party
-        from mcpgateway.db import get_db, Gateway as DbGateway
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.db import get_db
         from mcpgateway.services.team_management_service import TeamManagementService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
@@ -1202,7 +1289,8 @@ class TestTeamFiltering:
     async def test_visibility_private_not_visible_to_other_team_members(self, client, app_with_temp_db):
         """Test that visibility=private resources are NOT visible to other team members."""
         # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Tool as DbTool
         from mcpgateway.services.team_management_service import TeamManagementService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
@@ -1253,10 +1341,13 @@ class TestAdminListingGracefulErrorHandling:
         This test verifies the graceful error handling by mocking convert_tool_to_read
         to fail for one tool while succeeding for others.
         """
-        # First-Party
-        from mcpgateway.db import get_db, Tool as DbTool
-        from mcpgateway.services.tool_service import ToolService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Tool as DbTool
+        from mcpgateway.services.tool_service import ToolService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1303,7 +1394,7 @@ class TestAdminListingGracefulErrorHandling:
         # Store original convert_tool_to_read method
         original_convert = ToolService.convert_tool_to_read
 
-        def mock_convert(self, tool, include_metrics=False, include_auth=True):
+        def mock_convert(self, tool, include_metrics=False, include_auth=True, **kwargs):
             """Mock that raises ValueError for the corrupted tool."""
             if tool.id == corrupted_tool_id:
                 raise ValueError("Simulated corrupted data: invalid auth_value")
@@ -1339,9 +1430,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_resources_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/resources returns valid resources even when one fails conversion."""
-        from mcpgateway.db import get_db, Resource as DbResource
-        from mcpgateway.services.resource_service import ResourceService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Resource as DbResource
+        from mcpgateway.services.resource_service import ResourceService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1402,9 +1497,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_prompts_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/prompts returns valid prompts even when one fails conversion."""
-        from mcpgateway.db import get_db, Prompt as DbPrompt
-        from mcpgateway.services.prompt_service import PromptService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Prompt as DbPrompt
+        from mcpgateway.services.prompt_service import PromptService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1480,9 +1579,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_servers_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/servers returns valid servers even when one fails conversion."""
-        from mcpgateway.db import get_db, Server as DbServer
-        from mcpgateway.services.server_service import ServerService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import get_db
+        from mcpgateway.db import Server as DbServer
+        from mcpgateway.services.server_service import ServerService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1540,9 +1643,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_gateways_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/gateways returns valid gateways even when one fails conversion."""
-        from mcpgateway.db import get_db, Gateway as DbGateway
-        from mcpgateway.services.gateway_service import GatewayService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import Gateway as DbGateway
+        from mcpgateway.db import get_db
+        from mcpgateway.services.gateway_service import GatewayService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())
@@ -1612,9 +1719,13 @@ class TestAdminListingGracefulErrorHandling:
 
     async def test_admin_a2a_listing_continues_on_conversion_error(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/a2a returns valid A2A agents even when one fails conversion."""
-        from mcpgateway.db import get_db, A2AAgent as DbA2AAgent
-        from mcpgateway.services.a2a_service import A2AAgentService
+        # Standard
         from unittest.mock import patch
+
+        # First-Party
+        from mcpgateway.db import A2AAgent as DbA2AAgent
+        from mcpgateway.db import get_db
+        from mcpgateway.services.a2a_service import A2AAgentService
 
         test_db_dependency = app_with_temp_db.dependency_overrides.get(get_db) or get_db
         db = next(test_db_dependency())

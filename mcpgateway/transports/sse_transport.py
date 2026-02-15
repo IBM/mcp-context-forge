@@ -344,6 +344,50 @@ class SSETransport(Transport):
         True
     """
 
+    # Regex for validating session IDs (alphanumeric, hyphens, underscores, max 128 chars)
+    _SESSION_ID_PATTERN = None
+
+    @staticmethod
+    def _is_valid_session_id(session_id: str) -> bool:
+        """Validate session ID format for security.
+
+        Valid session IDs are alphanumeric with hyphens and underscores, max 128 chars.
+        This prevents injection attacks via malformed session IDs.
+
+        Args:
+            session_id: The session ID to validate.
+
+        Returns:
+            True if the session ID is valid, False otherwise.
+
+        Examples:
+            >>> SSETransport._is_valid_session_id("abc123")
+            True
+            >>> SSETransport._is_valid_session_id("abc-123_def")
+            True
+            >>> SSETransport._is_valid_session_id("a" * 128)
+            True
+            >>> SSETransport._is_valid_session_id("a" * 129)
+            False
+            >>> SSETransport._is_valid_session_id("")
+            False
+            >>> SSETransport._is_valid_session_id("abc/def")
+            False
+            >>> SSETransport._is_valid_session_id("abc:def")
+            False
+        """
+        # Standard
+        import re  # pylint: disable=import-outside-toplevel
+
+        if not session_id or len(session_id) > 128:
+            return False
+
+        # Lazy compile pattern
+        if SSETransport._SESSION_ID_PATTERN is None:
+            SSETransport._SESSION_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+        return bool(SSETransport._SESSION_ID_PATTERN.match(session_id))
+
     def __init__(self, base_url: str = None):
         """Initialize SSE transport.
 
@@ -377,6 +421,7 @@ class SSETransport(Transport):
         self._connected = False
         self._message_queue = asyncio.Queue()
         self._client_gone = asyncio.Event()
+        # Server generates session_id for SSE - client receives it in endpoint event
         self._session_id = str(uuid.uuid4())
 
         logger.info("Creating SSE transport with base_url=%s, session_id=%s", self._base_url, self._session_id)
@@ -650,6 +695,9 @@ class SSETransport(Transport):
 
             Yields:
                 SSE event as bytes (pre-formatted SSE frame)
+
+            Raises:
+                asyncio.CancelledError: If the generator is cancelled.
             """
             # Send the endpoint event first
             yield _build_sse_frame(b"endpoint", endpoint_url.encode(), settings.sse_retry_timeout)
@@ -761,6 +809,7 @@ class SSETransport(Transport):
             except asyncio.CancelledError:
                 logger.info("SSE event generator cancelled: %s", self._session_id)
                 self._client_gone.set()
+                raise
             except GeneratorExit:
                 logger.info("SSE generator exit: %s", self._session_id)
                 self._client_gone.set()

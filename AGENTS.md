@@ -36,6 +36,7 @@ plugins/                    # Plugin implementations (see plugins/AGENTS.md)
 charts/                     # Helm charts (see charts/AGENTS.md)
 deployment/                 # Infrastructure configs (see deployment/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
+a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
@@ -66,6 +67,45 @@ make autoflake isort black pre-commit
 make flake8 bandit interrogate pylint verify
 ```
 
+## Authentication & RBAC Overview
+
+MCP Gateway implements a **two-layer security model**:
+
+1. **Token Scoping (Layer 1)**: Controls what resources a user CAN SEE (data filtering)
+2. **RBAC (Layer 2)**: Controls what actions a user CAN DO (permission checks)
+
+### Token Scoping Quick Reference
+
+The `teams` claim in JWT tokens determines resource visibility:
+
+| JWT `teams` State | `is_admin: true` | `is_admin: false` |
+|-------------------|------------------|-------------------|
+| Key MISSING | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
+| `teams: null` | ADMIN BYPASS | PUBLIC-ONLY `[]` |
+| `teams: []` | PUBLIC-ONLY `[]` | PUBLIC-ONLY `[]` |
+| `teams: ["t1"]` | Team + Public | Team + Public |
+
+**Key behaviors:**
+
+- Missing `teams` key = public-only access (secure default)
+- Admin bypass requires BOTH `teams: null` AND `is_admin: true`
+- `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth
+
+### Built-in Roles
+
+| Role | Scope | Key Permissions |
+|------|-------|-----------------|
+| `platform_admin` | global | `*` (all) |
+| `team_admin` | team | teams.*, tools.read/execute, resources.read |
+| `developer` | team | tools.read/execute, resources.read |
+| `viewer` | team | tools.read, resources.read (read-only) |
+
+### Documentation
+
+- **Full RBAC guide**: `docs/docs/manage/rbac.md`
+- **Multi-tenancy architecture**: `docs/docs/architecture/multitenancy.md`
+- **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
+
 ## Key Environment Variables
 
 ```bash
@@ -80,7 +120,7 @@ RELOAD=true
 JWT_SECRET_KEY=your-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
-AUTH_REQUIRED=true
+AUTH_REQUIRED=true                   # Set false ONLY for development
 AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
 
 # Features
@@ -207,6 +247,7 @@ make test
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
 - Require green lint and tests before PR
+- Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
 
 ## Important Constraints
 

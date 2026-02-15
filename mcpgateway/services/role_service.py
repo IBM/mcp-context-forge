@@ -16,7 +16,7 @@ import logging
 from typing import List, Optional
 
 # Third-Party
-from sqlalchemy import and_, select
+from sqlalchemy import and_, delete, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -519,7 +519,7 @@ class RoleService:
         role.updated_at = utc_now()
 
         # Deactivate all user assignments of this role
-        self.db.execute(select(UserRole).where(UserRole.role_id == role_id)).update({"is_active": False})
+        self.db.execute(update(UserRole).where(UserRole.role_id == role_id).values(is_active=False))
 
         self.db.commit()
 
@@ -869,3 +869,24 @@ class RoleService:
             current = result.scalar_one_or_none()
 
         return False
+
+    async def delete_all_user_roles(self, user_email: str) -> int:
+        """Delete all role assignments for a user.
+
+        Hard-deletes all role assignments (active and inactive) for the given user.
+        Intended for use when permanently deleting a user account.
+
+        Note: Does not commit the transaction. The caller is responsible for
+        committing (e.g., as part of a larger user deletion operation).
+
+        Args:
+            user_email: Email of user whose roles should be deleted
+
+        Returns:
+            int: Number of role assignments deleted
+        """
+        stmt = delete(UserRole).where(UserRole.user_email == user_email)
+        result = self.db.execute(stmt)
+        deleted_count = result.rowcount
+        logger.info(f"Deleted {deleted_count} role assignment(s) for user {user_email}")
+        return deleted_count

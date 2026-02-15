@@ -743,6 +743,34 @@ class TestListRoleAssignments:
         assert result == all_assignments
 
 
+class TestDeleteAllUserRoles:
+    """Test delete_all_user_roles method."""
+
+    @pytest.mark.asyncio
+    async def test_delete_all_user_roles_success(self, role_service, mock_db):
+        """Test successful deletion of all user role assignments."""
+        mock_result = Mock()
+        mock_result.rowcount = 3
+        mock_db.execute.return_value = mock_result
+
+        result = await role_service.delete_all_user_roles("user@example.com")
+
+        assert result == 3
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_all_user_roles_no_roles(self, role_service, mock_db):
+        """Test deletion when user has no role assignments."""
+        mock_result = Mock()
+        mock_result.rowcount = 0
+        mock_db.execute.return_value = mock_result
+
+        result = await role_service.delete_all_user_roles("noroles@example.com")
+
+        assert result == 0
+        mock_db.execute.assert_called_once()
+
+
 class TestWouldCreateCycle:
     """Test _would_create_cycle method."""
 

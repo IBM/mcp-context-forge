@@ -14,9 +14,12 @@
 #  DOCKER COMPOSE PROFILES
 #
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
+#  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
+#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
+#  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
 #
 #  TLS Quick Start:
 #    make compose-tls                    # HTTP:8080 + HTTPS:8443
@@ -47,6 +50,9 @@ volumes:                # Named volumes survive podman-compose down/up
   grafanadata:
   prometheusdata:
   lokidata:
+  tempodata:
+  locust_token:
+  keycloakdata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -103,7 +109,7 @@ services:
   # ──────────────────────────────────────────────────────────────────────
   gateway:
     image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest} # Use the local latest image. Run `make docker-prod` to build it.
-    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-1 # Use the release MCP Context Forge image
+    #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2 # Use the release MCP Context Forge image
     #image: ghcr.io/ibm/mcp-context-forge:0.7.0 # Testing migration from 0.7.0
     build:
       context: .
@@ -223,8 +229,27 @@ services:
       - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
+      - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
+      # ═══════════════════════════════════════════════════════════════════════════
+      # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - SSO_ENABLED=${SSO_ENABLED:-false}
+      - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
+      - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
+      - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
+      - SSO_KEYCLOAK_REALM=${SSO_KEYCLOAK_REALM:-mcp-gateway}
+      - SSO_KEYCLOAK_CLIENT_ID=${SSO_KEYCLOAK_CLIENT_ID:-mcp-gateway}
+      - SSO_KEYCLOAK_CLIENT_SECRET=${SSO_KEYCLOAK_CLIENT_SECRET:-keycloak-dev-secret}
+      - SSO_KEYCLOAK_MAP_REALM_ROLES=${SSO_KEYCLOAK_MAP_REALM_ROLES:-true}
+      - SSO_KEYCLOAK_MAP_CLIENT_ROLES=${SSO_KEYCLOAK_MAP_CLIENT_ROLES:-false}
+      - SSO_KEYCLOAK_GROUPS_CLAIM=${SSO_KEYCLOAK_GROUPS_CLAIM:-groups}
+      - SSO_KEYCLOAK_ROLE_MAPPINGS=${SSO_KEYCLOAK_ROLE_MAPPINGS:-{}}
+      - SSO_KEYCLOAK_DEFAULT_ROLE=${SSO_KEYCLOAK_DEFAULT_ROLE:-}
+      - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
+      - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
+      - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
@@ -236,6 +261,27 @@ services:
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
+      # ═══════════════════════════════════════════════════════════════════════════
+      # SSRF Protection (Server-Side Request Forgery)
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Prevents gateway from accessing internal resources or cloud metadata services.
+      # Default: enabled with safe settings for dev/internal deployments.
+      # Cloud metadata (169.254.169.254, etc.) is ALWAYS blocked by default.
+      # - SSRF_PROTECTION_ENABLED=true           # Master switch (default: true)
+      # - SSRF_ALLOW_LOCALHOST=true              # Allow localhost (default: true for dev)
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=true       # Allow 10.x, 172.16.x, 192.168.x (default: true)
+      # - SSRF_DNS_FAIL_CLOSED=false             # Reject on DNS failure (default: false = fail open)
+      # For strict production mode (external endpoints only):
+      # - SSRF_ALLOW_LOCALHOST=false
+      # - SSRF_ALLOW_PRIVATE_NETWORKS=false
+      # - SSRF_DNS_FAIL_CLOSED=true
+
+      # Uncomment to enable stateful sessions for Streamable HTTP transport
+      # - USE_STATEFUL_SESSIONS=true
+
+      # Uncomment to enable session affinity between downstream (from client) and upstrean (to MCP server) sessions
+      # - MCPGATEWAY_SESSION_AFFINITY_ENABLED=true
+
       ## Uncomment to enable HTTPS (run `make certs` first)
       # - SSL=true
       # - CERT_FILE=/app/certs/cert.pem
@@ -248,6 +294,9 @@ services:
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
+      # Uncomment to enable direct proxy mode
+      # - MCPGATEWAY_DIRECT_PROXY_ENABLED=false
+      # - MCPGATEWAY_DIRECT_PROXY_TIMEOUT=30
       # Authentication configuration
       - AUTH_REQUIRED=true
       - MCP_CLIENT_AUTH_ENABLED=true
@@ -272,6 +321,7 @@ services:
       - COMPRESSION_ENABLED=false
       # Disable optional middlewares for maximum throughput
       - VALIDATION_MIDDLEWARE_ENABLED=true
+      - JSON_SCHEMA_VALIDATION_STRICT=true
       - CORRELATION_ID_ENABLED=false
       - LLMCHAT_ENABLED=true
       - OBSERVABILITY_ENABLED=false
@@ -459,6 +509,15 @@ services:
       # - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-otlp}
       # - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
 
+      # OpenTelemetry (Tempo / OTLP) - enabled automatically by `make monitoring-up`
+      - LOG_FORMAT=${LOG_FORMAT:-text}  # text (human) or json (Loki-friendly)
+      - OTEL_ENABLE_OBSERVABILITY=${OTEL_ENABLE_OBSERVABILITY:-false}
+      - OTEL_TRACES_EXPORTER=${OTEL_TRACES_EXPORTER:-otlp}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://tempo:4317}
+      - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
+      - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+
     # TCP kernel tuning for high-concurrency MCP tool invocations
     # Each tool call creates a new connection → many TIME_WAIT sockets
     sysctls:
@@ -516,9 +575,9 @@ services:
     # ──────────────────────────────────────────────────────────────────────
     # Volume Mounts
     # ──────────────────────────────────────────────────────────────────────
-    # Uncomment to mount catalog configuration and SSL certificates
-    # volumes:
-    #   - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+    # Mount catalog configuration and SSL certificates
+    volumes:
+      - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
       # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:
@@ -533,6 +592,52 @@ services:
     # 1. Generate keys: make certs-jwt
     # 2. Uncomment volumes mount above
     # 3. Switch JWT_ALGORITHM to RS256 and uncomment JWT_*_KEY_PATH variables
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Keycloak - Local Identity Provider for SSO development/testing
+  # Admin Console: http://localhost:8180 (admin/changeme)
+  # Usage: docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+  # ──────────────────────────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    restart: unless-stopped
+    profiles: ["sso"]
+    networks: [mcpnet]
+    ports:
+      - "8180:8080"
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-changeme}
+      - KC_HOSTNAME=${KC_HOSTNAME:-localhost}
+      - KC_HOSTNAME_PORT=${KC_HOSTNAME_PORT:-8180}
+      - KC_HOSTNAME_STRICT=${KC_HOSTNAME_STRICT:-false}
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+      - KC_METRICS_ENABLED=false
+    command: ["start-dev", "--import-realm"]
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloakdata:/opt/keycloak/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bash",
+          "-ec",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -Eq '\"status\"[[:space:]]*:[[:space:]]*\"UP\"' <&3"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
 ###############################################################################
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
@@ -707,14 +812,14 @@ services:
       - SERVER_IDLE_TIMEOUT=600        # Close unused server connections after 10 min
       # Timeout settings
       - QUERY_WAIT_TIMEOUT=60          # Max wait for available connection before failing request
-      - CLIENT_IDLE_TIMEOUT=300        # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
+      - CLIENT_IDLE_TIMEOUT=60         # Close idle client connections (aligned with IDLE_TRANSACTION_TIMEOUT)
       - SERVER_CONNECT_TIMEOUT=5       # Timeout for new connections to PostgreSQL
       # Transaction cleanup - critical for avoiding idle-in-transaction buildup
       # NOTE: In transaction pooling, session-level advisory locks (used by migrations)
       # can stick unless the reset query clears them; DISCARD ALL is safest.
       - SERVER_RESET_QUERY=DISCARD ALL # Reset connection state when returned to pool
       - SERVER_RESET_QUERY_ALWAYS=1    # Always run reset query even after clean transactions
-      - IDLE_TRANSACTION_TIMEOUT=300   # Kill transactions idle > 300s (increased from 120s to handle slow MCP calls)
+      - IDLE_TRANSACTION_TIMEOUT=30    # Kill transactions idle > 30s to prevent connection pool exhaustion
       # Authentication
       - AUTH_TYPE=scram-sha-256        # Match PostgreSQL auth method
     depends_on:
@@ -924,6 +1029,25 @@ services:
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
+  # Tempo - Distributed tracing backend (OTLP receiver + TraceQL query API)
+  # Completes the Grafana observability stack: Prometheus (metrics) + Loki (logs) + Tempo (traces)
+  # Query traces via Grafana Explore → Tempo datasource using TraceQL
+  # ──────────────────────────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "3200:3200"      # Tempo HTTP API / query frontend
+      - "4317:4317"      # OTLP gRPC receiver
+      - "4318:4318"      # OTLP HTTP receiver
+    command: ["-config.file=/etc/tempo.yaml"]
+    volumes:
+      - ./infra/monitoring/tempo/tempo.yaml:/etc/tempo.yaml:ro
+      - tempodata:/var/tempo
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
   # Promtail - Log collector for Loki
   # Collects logs from all containers via Docker socket
   # ──────────────────────────────────────────────────────────────────────
@@ -965,6 +1089,8 @@ services:
       - ./infra/monitoring/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
     depends_on:
       - prometheus
+      - loki
+      - tempo
     profiles: ["monitoring"]
 
 ###############################################################################
@@ -1351,7 +1477,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing", "monitoring"]
+    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
   # Auto-registration service - registers fast_test_server with gateway
@@ -1417,7 +1543,236 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing", "monitoring"]
+    profiles: ["testing", "monitoring", "sso"]
+
+  ###############################################################################
+  # A2A Echo Agent - Lightweight A2A-compatible agent for end-to-end testing
+  # Provides a simple JSON-RPC endpoint and A2A discovery card (no LLM dependency)
+  # Usage: docker compose --profile testing up -d
+  ###############################################################################
+  a2a_echo_agent:
+    build:
+      context: ./a2a-agents/go/a2a-echo-agent
+      dockerfile: Dockerfile
+    image: mcpgateway/a2a-echo-agent:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9100:9100"
+    environment:
+      - A2A_ECHO_ADDR=0.0.0.0:9100
+      - A2A_ECHO_NAME=a2a-echo-agent
+      - A2A_ECHO_LOG_LEVEL=info
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9100/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles: ["testing", "sso"]
+
+  ###############################################################################
+  # Auto-registration service - registers a2a_echo_agent with gateway
+  ###############################################################################
+  register_a2a_echo:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      a2a_echo_agent:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering a2a_echo_agent with gateway..."
+
+        # Generate JWT token (stdout only)
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        python3 -c "
+        import json
+        import os
+        import urllib.request
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            body = json.dumps(data).encode('utf-8') if data is not None else None
+            req = urllib.request.Request(url, data=body, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.loads(resp.read().decode('utf-8'))
+
+        # Delete existing agent if present
+        try:
+            agents = api_request('GET', '/a2a')
+            items = agents if isinstance(agents, list) else agents.get('agents', agents.get('items', []))
+            for a in items:
+                if a.get('name') == 'a2a-echo-agent':
+                    print(f'Deleting existing A2A agent {a.get(\"id\")}...')
+                    api_request('DELETE', f'/a2a/{a.get(\"id\")}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register agent (JSON-RPC endpoint at /)
+        payload = {
+            'agent': {
+                'name': 'a2a-echo-agent',
+                'description': 'Lightweight A2A echo agent for docker-compose testing',
+                'endpoint_url': 'http://a2a_echo_agent:9100/',
+                'agent_type': 'jsonrpc',
+                'protocol_version': '0.3.0',
+                'capabilities': {'echo': True, 'preferredTransport': 'JSONRPC'},
+                'tags': ['testing', 'a2a', 'echo']
+            },
+            'visibility': 'public'
+        }
+
+        result = api_request('POST', '/a2a', payload)
+        print(f'✅ Registered a2a_echo_agent: {result.get(\"id\", \"unknown\")}')
+        "
+        echo "✅ Registration complete!"
+    profiles: ["testing", "sso"]
+
+  ###############################################################################
+  # Locust JWT token generator - produces a gateway JWT for containerized load tests
+  ###############################################################################
+  locust_token:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    restart: "no"
+    # The gateway image runs as non-root (uid 1001). Docker named volumes are
+    # root-owned by default, so writing /tokens/gateway.jwt can fail unless we
+    # run this one-shot init container as root.
+    user: "0"
+    volumes:
+      - locust_token:/tokens
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        echo "Generating JWT token for Locust..."
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+        printf "%s" "$$TOKEN" > /tokens/gateway.jwt
+        echo ""
+        echo "✅ Token written to /tokens/gateway.jwt"
+    profiles: ["testing", "sso"]
+
+  ###############################################################################
+  # Locust - Containerized load testing with web UI (master + optional workers)
+  # Web UI: http://localhost:8089
+  # Target: http://nginx:80 (internal network)
+  ###############################################################################
+  locust:
+    image: locustio/locust:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    # Run as the host UID/GID (set by Makefile) so reports written to ./reports
+    # don't end up root-owned and so non-1000 host users don't hit EACCES.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    ports:
+      - "8089:8089"
+    working_dir: /mnt/locust
+    volumes:
+      - ./tests/loadtest:/mnt/locust:ro
+      - locust_token:/tokens:ro
+      - ./reports:/mnt/reports
+    depends_on:
+      gateway:
+        condition: service_healthy
+      nginx:
+        condition: service_healthy
+      locust_token:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        while [ ! -s /tokens/gateway.jwt ]; do echo "Waiting for gateway JWT..."; sleep 0.5; done
+        export MCPGATEWAY_BEARER_TOKEN="$$(cat /tokens/gateway.jwt)"
+        MODE="$${LOCUST_MODE:-master}"
+        if [ "$$MODE" = "headless" ]; then
+          exec locust -f /mnt/locust/locustfile.py \
+            --host=http://nginx:80 \
+            --users="$${LOCUST_USERS:-100}" \
+            --spawn-rate="$${LOCUST_SPAWN_RATE:-10}" \
+            --run-time="$${LOCUST_RUN_TIME:-5m}" \
+            --headless \
+            --html=/mnt/reports/locust_report.html \
+            --csv=/mnt/reports/locust \
+            --only-summary
+        fi
+
+        exec locust -f /mnt/locust/locustfile.py \
+          --host=http://nginx:80 \
+          --web-host=0.0.0.0 --web-port=8089 \
+          --master --expect-workers="$${LOCUST_EXPECT_WORKERS:-1}" \
+          --class-picker
+    environment:
+      - HOME=/tmp
+      - LOCUST_EXPECT_WORKERS=${LOCUST_EXPECT_WORKERS:-1}
+      - LOCUST_MODE=${LOCUST_MODE:-master}          # master (default) or headless
+      - LOCUST_USERS=${LOCUST_USERS:-100}
+      - LOCUST_SPAWN_RATE=${LOCUST_SPAWN_RATE:-10}
+      - LOCUST_RUN_TIME=${LOCUST_RUN_TIME:-5m}
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing", "sso"]
+
+  locust_worker:
+    image: locustio/locust:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    working_dir: /mnt/locust
+    volumes:
+      - ./tests/loadtest:/mnt/locust:ro
+      - locust_token:/tokens:ro
+    depends_on:
+      locust:
+        condition: service_started
+      locust_token:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        while [ ! -s /tokens/gateway.jwt ]; do echo "Waiting for gateway JWT..."; sleep 0.5; done
+        export MCPGATEWAY_BEARER_TOKEN="$$(cat /tokens/gateway.jwt)"
+        exec locust -f /mnt/locust/locustfile.py \
+          --host=http://nginx:80 \
+          --worker --master-host=locust
+    environment:
+      - HOME=/tmp
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 128M
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool
@@ -1541,31 +1896,84 @@ services:
 #
 #  Features:
 #  - Auto-generates self-signed certificates on first run
-#  - Custom certs: place your own cert.pem/key.pem in ./certs/ before starting
+#  - Supports custom certificates (CA-signed or your own)
+#  - Supports passphrase-protected keys (auto-decrypted for nginx)
 #  - HTTPS on port 8443, HTTP on port 8080 (both available)
 #  - Compatible with other profiles: --profile tls --profile monitoring
 #
-#  Custom Certificate Usage:
+#  ═══════════════════════════════════════════════════════════════════════════
+#  Bringing Your Own Certificates
+#  ═══════════════════════════════════════════════════════════════════════════
+#
+#  Option 1: Unencrypted Private Key (no passphrase)
+#  ───────────────────────────────────────────────────────────────────────────
 #    mkdir -p certs
-#    cp /path/to/your/cert.pem certs/cert.pem
-#    cp /path/to/your/key.pem certs/key.pem
+#    cp /path/to/your/certificate.pem certs/cert.pem
+#    cp /path/to/your/private-key.pem certs/key.pem
 #    make compose-tls
+#
+#  Option 2: Passphrase-Protected Private Key
+#  ───────────────────────────────────────────────────────────────────────────
+#    mkdir -p certs
+#    cp /path/to/your/certificate.pem certs/cert.pem
+#    cp /path/to/your/encrypted-key.pem certs/key-encrypted.pem
+#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
+#    make compose-tls
+#
+#  The cert_init service will automatically decrypt key-encrypted.pem to
+#  key.pem for nginx (nginx doesn't support passphrase-protected keys).
+#
+#  Option 3: Generate Self-Signed with Passphrase
+#  ───────────────────────────────────────────────────────────────────────────
+#    make certs-passphrase                         # Generates cert + key-encrypted.pem
+#    echo "KEY_FILE_PASSWORD=your-passphrase" >> .env
+#    make compose-tls                              # Auto-decrypts for nginx
 ###############################################################################
 
   # ──────────────────────────────────────────────────────────────────────
   # Certificate Initialization - Auto-generates self-signed certs if missing
+  # Supports passphrase-protected keys via KEY_FILE_PASSWORD
   # ──────────────────────────────────────────────────────────────────────
   cert_init:
     image: alpine/openssl:latest
     volumes:
       - ./certs:/certs
+    environment:
+      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
+        # Check if we have an encrypted key that needs decryption
+        if [ -f /certs/key-encrypted.pem ] && [ -n "${KEY_FILE_PASSWORD}" ]; then
+          # Validate: encrypted key requires matching certificate
+          if [ ! -f /certs/cert.pem ]; then
+            echo "❌ Found key-encrypted.pem but cert.pem is missing"
+            echo "   Please provide both files: cert.pem and key-encrypted.pem"
+            exit 1
+          fi
+          echo "🔓 Decrypting passphrase-protected key for nginx..."
+          if [ -f /certs/key.pem ]; then
+            echo "⚠️  Overwriting existing key.pem with decrypted version"
+          fi
+          # Decrypt the key for nginx (nginx doesn't support passphrase-protected keys)
+          # Using env: prefix to avoid exposing password in process listing
+          openssl rsa -in /certs/key-encrypted.pem -out /certs/key.pem -passin env:KEY_FILE_PASSWORD
+          if [ $? -eq 0 ]; then
+            chmod 640 /certs/key.pem
+            echo "✅ Successfully decrypted key-encrypted.pem to key.pem"
+          else
+            echo "❌ Failed to decrypt key-encrypted.pem - check KEY_FILE_PASSWORD"
+            exit 1
+          fi
+        fi
+
+        # Check if we already have unencrypted certs
         if [ -f /certs/cert.pem ] && [ -f /certs/key.pem ]; then
           echo "✅ Certificates found in ./certs - using existing"
           exit 0
         fi
+
+        # Generate new self-signed certificate (without passphrase for nginx)
         echo "🔏 Generating self-signed TLS certificate..."
         mkdir -p /certs
         openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
@@ -1625,3 +2033,42 @@ services:
           cpus: '2'
           memory: 512M
     profiles: ["tls"]
+
+###############################################################################
+#  MCP INSPECTOR - Interactive MCP client for debugging and testing
+#  Usage: make inspector-up  (or: docker compose --profile inspector up -d)
+#  Access: http://localhost:6274
+#
+#  Connect to the gateway's virtual server from the Inspector UI:
+#    1. Transport: Streamable HTTP
+#    2. URL: http://nginx:80/servers/9779b6698cbd4b4995ee04a4fab38737/mcp
+#    3. Add header:  Authorization: Bearer <your-jwt-token>
+#
+#  Generate a JWT token:
+#    python -m mcpgateway.utils.create_jwt_token \
+#      --username admin@example.com --exp 10080 --secret my-test-key --algo HS256
+###############################################################################
+
+  mcp_inspector:
+    image: ghcr.io/modelcontextprotocol/inspector:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "6274:6274"    # Inspector web UI
+      - "6277:6277"    # Inspector MCP proxy server
+    environment:
+      - HOST=0.0.0.0                   # Bind to all interfaces (required in Docker)
+      - MCP_AUTO_OPEN_ENABLED=false    # Don't attempt to open browser in container
+      - DANGEROUSLY_OMIT_AUTH=true     # Skip proxy token (safe: local dev only)
+    depends_on:
+      gateway:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    profiles: ["inspector", "sso"]

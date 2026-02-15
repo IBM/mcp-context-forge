@@ -17,14 +17,16 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import timedelta
 import secrets
-from typing import List, Optional
+from typing import Any, List, Optional
 
 # Third-Party
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.cache.auth_cache import auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -74,6 +76,28 @@ class TeamInvitationService:
             'TeamInvitationService'
         """
         self.db = db
+
+    @staticmethod
+    def _fire_and_forget(coro: Any) -> None:
+        """Schedule a background coroutine and close it if scheduling fails.
+
+        Args:
+            coro: The coroutine to schedule as a background task.
+
+        Raises:
+            Exception: If asyncio.create_task fails (e.g. no running loop).
+        """
+        try:
+            task = asyncio.create_task(coro)
+            if asyncio.iscoroutine(coro) and not isinstance(task, asyncio.Task):
+                close = getattr(coro, "close", None)
+                if callable(close):
+                    close()
+        except Exception:
+            close = getattr(coro, "close", None)
+            if callable(close):
+                close()
+            raise
 
     def _generate_invitation_token(self) -> str:
         """Generate a secure invitation token.
@@ -238,7 +262,7 @@ class TeamInvitationService:
             logger.error(f"Failed to get invitation by token: {e}")
             return None
 
-    async def accept_invitation(self, token: str, accepting_user_email: Optional[str] = None) -> bool:
+    async def accept_invitation(self, token: str, accepting_user_email: Optional[str] = None) -> EmailTeamMember:
         """Accept a team invitation.
 
         Args:
@@ -246,7 +270,7 @@ class TeamInvitationService:
             accepting_user_email: Email of user accepting (for validation)
 
         Returns:
-            bool: True if invitation was accepted successfully, False otherwise
+            EmailTeamMember: The created team membership record
 
         Raises:
             ValueError: If invitation is invalid or expired
@@ -317,21 +341,15 @@ class TeamInvitationService:
 
             # Invalidate auth cache for user's team membership
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                asyncio.create_task(auth_cache.invalidate_team(invitation.email))
-                asyncio.create_task(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
-                asyncio.create_task(auth_cache.invalidate_user_teams(invitation.email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(invitation.email))
+                self._fire_and_forget(auth_cache.invalidate_team(invitation.email))
+                self._fire_and_forget(auth_cache.invalidate_user_role(invitation.email, invitation.team_id))
+                self._fire_and_forget(auth_cache.invalidate_user_teams(invitation.email))
+                self._fire_and_forget(auth_cache.invalidate_team_membership(invitation.email))
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on invitation acceptance: {cache_error}")
 
             logger.info(f"User {invitation.email} accepted invitation to team {invitation.team_id}")
-            return True
+            return membership
 
         except Exception as e:
             self.db.rollback()

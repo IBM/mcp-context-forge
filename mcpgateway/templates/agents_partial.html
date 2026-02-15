@@ -19,7 +19,8 @@
   <tbody id="agents-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
     {% for agent in data %}
     {% set agent_label = agent.name or agent.id %}
-      <tr data-enabled="{{ agent.enabled|lower }}">
+    {% set can_modify = is_admin or agent.ownerEmail == current_user_email or (agent.visibility == 'team' and agent.teamId and user_team_roles.get(agent.teamId|string) == 'owner') %}
+      <tr data-enabled="{{ agent.enabled|lower }}" data-owner-email="{{ agent.ownerEmail }}" data-team-id="{{ agent.teamId or '' }}" data-visibility="{{ agent.visibility }}">
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
           <div class="grid grid-cols-2 gap-x-2 gap-y-0 max-w-48">
             <!-- Row 1: Test -->
@@ -33,8 +34,11 @@
 
             <!-- Row 2: View | Edit -->
             <button onclick="viewAgent('{{ agent.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-900/20 transition-colors">View</button>
+            {% if can_modify %}
             <button onclick="editA2AAgent('{{ agent.id }}')" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors">Edit</button>
+            {% endif %}
 
+            {% if can_modify %}
             <!-- Row 3 & 4: Activate/Deactivate | Delete -->
             <div class="col-span-2 flex flex-col space-y-1">
               <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents" onsubmit="return handleToggleSubmit(event, 'a2a')">
@@ -45,13 +49,14 @@
                 <button type="submit" class="flex items-center justify-center px-2 py-1 text-xs font-medium rounded-md text-red-600 hover:text-red-900 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/20 transition-colors">Delete</button>
               </form>
             </div>
+            {% endif %}
           </div>
         </td>
         <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
         <td class="px-6 py-4 whitespace-nowrap">
           <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
         </td>
-        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-600 dark:text-gray-400">{{ agent.description if agent.description else '' }}</td>
+        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-600 dark:text-gray-400">{{ (agent.description if agent.description else '') | decode_html }}</td>
         <td class="px-6 py-4 whitespace-normal break-all text-sm text-gray-600 dark:text-gray-400 max-w-xs">{{ agent.endpointUrl }}</td>
         <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
           {% if agent.tags %}

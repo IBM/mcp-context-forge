@@ -9,6 +9,7 @@ Welcome! This guide is for developers contributing to MCP Gateway. Whether you'r
 | Page                                                                              | Description                                                                    |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | [Building Locally](building.md)                                                   | How to install dependencies, set up a virtual environment, and run the gateway |
+| [Developer Workstation](developer-workstation.md)                                 | Local workstation setup, troubleshooting, and Keycloak SSO development login   |
 | [Packaging](packaging.md)                                                         | How to build a release, container image, or prebuilt binary                    |
 | [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
@@ -56,7 +57,7 @@ Test coverage includes:
 * Integration tests under `tests/integration/`
 * End-to-end tests under `tests/e2e/`
 * UI automation under `tests/playwright/` (Playwright)
-* Load testing under `tests/locust/` (Locust)
+* Load testing under `tests/loadtest/` (Locust)
 * Example payload performance testing under `tests/hey/`
 
 Use:
@@ -66,7 +67,7 @@ make test                        # run full suite
 pytest tests/unit/               # run only unit tests
 pytest tests/e2e/                # run end-to-end scenarios
 pytest tests/playwright/         # run UI automation tests
-locust -f tests/locust/locustfile.py --host=http://localhost:4444  # load testing
+locust -f tests/loadtest/locustfile.py --host=http://localhost:4444  # load testing
 ```
 
 Note: JavaScript unit tests are not yet implemented; frontend testing relies on Playwright for UI automation.

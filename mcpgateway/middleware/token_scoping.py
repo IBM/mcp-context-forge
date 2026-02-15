@@ -21,6 +21,7 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
 
 # First-Party
+from mcpgateway.auth import normalize_token_teams
 from mcpgateway.db import Permissions
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -58,25 +59,34 @@ _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
 _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
-    ("POST", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_CREATE),
+    ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
+    ("POST", re.compile(r"^/tools/[^/]+/"), Permissions.TOOLS_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
     # Resources permissions
     ("GET", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_READ),
-    ("POST", re.compile(r"^/resources(?:$|/)"), Permissions.RESOURCES_CREATE),
+    ("POST", re.compile(r"^/resources/?$"), Permissions.RESOURCES_CREATE),  # Only exact /resources or /resources/
+    ("POST", re.compile(r"^/resources/subscribe(?:$|/)"), Permissions.RESOURCES_READ),  # SSE subscription
+    ("POST", re.compile(r"^/resources/[^/]+/"), Permissions.RESOURCES_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_UPDATE),
     ("DELETE", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/resources(?:$|/)"), Permissions.RESOURCES_READ),
     # Prompts permissions
     ("GET", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_READ),
-    ("POST", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_CREATE),
+    ("POST", re.compile(r"^/prompts/?$"), Permissions.PROMPTS_CREATE),  # Only exact /prompts or /prompts/
+    ("POST", re.compile(r"^/prompts/[^/]+/"), Permissions.PROMPTS_UPDATE),  # POST to sub-resources (state, toggle)
+    ("POST", re.compile(r"^/prompts/[^/]+$"), Permissions.PROMPTS_READ),  # MCP spec prompt retrieval (POST /prompts/{id})
     ("PUT", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_UPDATE),
     ("DELETE", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_DELETE),
     # Server management permissions
+    ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
-    ("POST", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_CREATE),
+    ("POST", re.compile(r"^/servers/?$"), Permissions.SERVERS_CREATE),  # Only exact /servers or /servers/
+    ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
+    ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
+    ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
@@ -325,7 +335,7 @@ class TokenScopingMiddleware:
                 return path_server_id == server_id
 
         # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc"]
+        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc"]
 
         # Check exact root path separately
         if request_path == "/":
@@ -854,24 +864,28 @@ class TokenScopingMiddleware:
             # TEAM VALIDATION: Use single DB session for both team checks
             # This reduces connection pool overhead from 2 sessions to 1 for resource endpoints
             user_email = payload.get("sub") or payload.get("email")  # Extract user email for ownership check
-            is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
 
-            # Determine token_teams based on whether "teams" key exists and is not None
-            # - Key absent OR null + admin = None (unrestricted bypass)
-            # - Key absent OR null + non-admin = [] (public-only, secure default)
-            # - Key present with non-None value = normalize the value
-            teams_value = payload.get("teams") if "teams" in payload else None
-            if teams_value is not None:
-                token_teams = self._normalize_teams(teams_value)
-            elif is_admin:
-                # Admin without teams key (or teams: null) = unrestricted (skip team checks)
-                token_teams = None
+            # Resolve teams based on token_use claim
+            token_use = payload.get("token_use")
+            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                # Session token: resolve teams from DB/cache directly
+                # Cannot rely on request.state.token_teams — AuthContextMiddleware
+                # is gated by security_logging_enabled (defaults to False)
+                # First-Party
+                from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+
+                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+                user_info = {"is_admin": is_admin}
+                token_teams = await _resolve_teams_from_db(user_email, user_info)
             else:
-                # Non-admin without teams key (or teams: null) = public-only (secure default)
-                token_teams = []
+                # API token or legacy: use embedded teams with normalize_token_teams
+                token_teams = normalize_token_teams(payload)
 
-            # Admin with no team restrictions bypasses team validation entirely
-            if is_admin and token_teams is None:
+            # Check if admin bypass is active (token_teams is None means admin with explicit null teams)
+            is_admin_bypass = token_teams is None
+
+            # Admin with explicit null teams bypasses team validation entirely
+            if is_admin_bypass:
                 logger.debug(f"Admin bypass: skipping team validation for {user_email}")
                 # Skip to other checks (server_id, IP, etc.)
             elif token_teams:

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """Render JMeter plans by inlining shared REST/MCP fragments.
 
 Usage:

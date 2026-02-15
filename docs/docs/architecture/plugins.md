@@ -1,7 +1,7 @@
 # Plugin Framework Specification
 
 **Version**: 1.0
-**Status**: Draft
+**Status**: Stable
 
 The MCP Context Forge Plugin Framework provides a comprehensive, production-ready system for extending MCP Gateway functionality through pluggable middleware components. These plugins interpose calls to MCP and agentic components to apply security, AI, business logic, and monitoring capabilities to existing flows. This specification defines the architecture, interfaces, and protocols for developing, deploying, and managing plugins within the MCP ecosystem.
 
@@ -383,7 +383,7 @@ documentation:
 testing:
   unit_tests: "tests/unit/"
   integration_tests: "tests/integration/"
-  coverage_threshold: 90
+  coverage_threshold: 80
 
 # Compatibility and versioning
 compatibility:

@@ -142,6 +142,55 @@ make venv          # first run only; installs MkDocs + plugins
 make serve         # http://127.0.0.1:8000 with live reload
 ```
 
+## Local Keycloak SSO (Development)
+
+Use the SSO compose profile when you want to test login and role mapping behavior locally.
+
+### Start the stack
+
+```bash
+make compose-sso
+```
+
+Optional smoke check:
+
+```bash
+make sso-test-login
+```
+
+### Default local credentials
+
+- Keycloak admin console: `http://localhost:8180`
+- Keycloak admin user: `admin`
+- Keycloak admin password: `changeme`
+- Gateway login page: `http://localhost:8080/admin/login`
+- Keycloak realm: `mcp-gateway`
+- Keycloak client: `mcp-gateway`
+
+Pre-seeded test users (all use password `changeme`):
+
+- `admin@example.com` (realm role `gateway-admin`)
+- `developer@example.com` (realm role `gateway-developer`)
+- `viewer@example.com` (realm role `gateway-viewer`)
+- `newuser@example.com` (no explicit `gateway-*` role; used to test default-role behavior)
+
+### Login flow
+
+1. Open `http://localhost:8080/admin/login`.
+2. Click `Continue with Keycloak`.
+3. Sign in with one of the test users above.
+4. After callback to the gateway, validate role behavior in Admin UI/API.
+
+If you land back on `.../admin/login?error=sso_failed`, re-run:
+
+```bash
+make sso-test-login
+```
+
+This verifies provider discovery, test users, and the full browser callback redirect to `/admin`.
+
+For full provider configuration details, see [Keycloak OIDC Setup Tutorial](../manage/sso-keycloak-tutorial.md).
+
 ## Signing commits
 
 To ensure commit integrity and comply with the DCO, sign your commits with a `Signed-off-by` trailer. Configure your Git settings:
@@ -150,7 +199,7 @@ To ensure commit integrity and comply with the DCO, sign your commits with a `Si
 # ~/.gitconfig
 [user]
     name = Your Name
-    email = your-exail@example.com
+    email = your-email@example.com
 
 [init]
     defaultBranch = main  # Use 'main' instead of 'master' when creating new repos
@@ -168,6 +217,6 @@ To ensure commit integrity and comply with the DCO, sign your commits with a `Si
     template = ~/.git-commit-template
 ```
 
--   **Setup**: Replace Your Name and your-exail@example.com with your details.
+-   **Setup**: Replace Your Name and your-email@example.com with your details.
 -   **Signing**: Use git cm "Your message" to create signed commits automatically with the configured alias.
 -   **Sign-off**: Use git commit -s -m "Your message" for manual signed commits without the alias.

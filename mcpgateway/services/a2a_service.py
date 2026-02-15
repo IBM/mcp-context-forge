@@ -637,6 +637,8 @@ class A2AAgentService:
         # This ensures unauthenticated requests with token_teams=[] only see public agents
         if user_email or token_teams is not None:
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            # Default is public-only access (empty teams) when no teams are available.
+            effective_teams: List[str] = []
             if token_teams is not None:
                 effective_teams = token_teams
             elif user_email:
@@ -644,8 +646,6 @@ class A2AAgentService:
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)
                 effective_teams = [team.id for team in user_teams]
-            else:
-                effective_teams = []
 
             query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
 
@@ -1012,7 +1012,9 @@ class A2AAgentService:
                 # Update the slug when name changes
                 agent.slug = new_slug
             # Update fields
-            update_data = agent_data.model_dump(exclude_unset=True)
+            # Avoid `model_dump()` here: tests use `model_construct()` to create intentionally invalid
+            # payloads, and `model_dump()` emits serializer warnings when encountering unexpected types.
+            update_data = {field: getattr(agent_data, field) for field in agent_data.model_fields_set}
 
             # Track original auth_type and endpoint_url before updates
             original_auth_type = agent.auth_type

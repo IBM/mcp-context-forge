@@ -168,6 +168,26 @@ async def test_complete_resource_values():
 
 
 @pytest.mark.asyncio
+async def test_handle_completion_resource_ref_path():
+    service = CompletionService()
+    resources = [DummyResource("https://example.com/a"), DummyResource("https://example.com/b")]
+
+    class DummySession:
+        def execute(self, query):
+            return FakeScalarsAllResult(resources)
+
+    request = {
+        "ref": {"type": "ref/resource", "uri": "template://resource"},
+        "argument": {"name": "uri", "value": "example.com"},
+    }
+    result = await service.handle_completion(DummySession(), request)
+
+    comp = result.completion
+    assert comp["total"] == 2
+    assert len(comp["values"]) == 2
+
+
+@pytest.mark.asyncio
 async def test_unregister_completions():
     service = CompletionService()
     service.register_completions("arg1", ["a", "b"])

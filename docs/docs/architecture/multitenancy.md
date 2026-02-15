@@ -307,6 +307,110 @@ Enforcement summary:
 
 ---
 
+## Token Scoping Model
+
+### How Token Scoping Works
+
+Token scoping is the mechanism that determines which resources a user can **see** based on the `teams` claim in their JWT token. The `normalize_token_teams()` function in `mcpgateway/auth.py` is the **single source of truth** for interpreting JWT team claims.
+
+### Secure-First Defaults
+
+The token scoping system follows a **secure-first design principle**: when in doubt, access is restricted.
+
+| JWT `teams` State | `is_admin` | Result | Access Level |
+|-------------------|------------|--------|--------------|
+| Key MISSING | any | `[]` | PUBLIC-ONLY (secure default) |
+| Key `null` | `true` | `None` | ADMIN BYPASS (unrestricted) |
+| Key `null` | `false` | `[]` | PUBLIC-ONLY (no bypass) |
+| Key `[]` (empty) | any | `[]` | PUBLIC-ONLY |
+| Key `["t1", "t2"]` | any | `["t1", "t2"]` | TEAM-SCOPED |
+
+!!! warning "Critical Security Behavior"
+    A **missing** `teams` key always results in public-only access, even for admin users. Admin bypass requires **explicit** `teams: null` combined with `is_admin: true`.
+
+### Multi-Team Token Behavior
+
+When a token contains multiple teams (`teams: ["team-1", "team-2"]`):
+
+- **Listing queries**: Return resources visible to ANY of the user's teams
+- **`request.state.team_id`**: Set to the **first** team in the list
+- **Resource creation**: Uses `request.state.team_id` as default if not explicitly specified
+
+This means the first team in the token's teams array has special significance for default resource ownership.
+
+### Return Value Semantics
+
+The `normalize_token_teams()` function returns:
+
+| Return Value | Meaning | Query Behavior |
+|--------------|---------|----------------|
+| `None` | Admin bypass | Skip ALL team filtering |
+| `[]` (empty list) | Public-only | Filter to `visibility='public'` ONLY |
+| `["t1", "t2"]` | Team-scoped | Filter to team resources + public |
+
+---
+
+## Two-Layer Security Model
+
+MCP Gateway implements two distinct security layers that work together:
+
+### Layer 1: Token Scoping (Data Filtering)
+
+**Purpose**: Controls what resources a user CAN SEE
+
+- Enforced by `TokenScopingMiddleware` and service layer queries
+- Based on the `teams` claim in the JWT token
+- Filters database queries based on visibility rules
+- Applied **before** RBAC checks
+
+### Layer 2: RBAC (Action Authorization)
+
+**Purpose**: Controls what actions a user CAN DO
+
+- Enforced by `@require_permission` decorators
+- Based on role assignments and permission sets
+- Checks if user has permission for the requested action
+- Applied **after** token scoping passes
+
+### Request Flow
+
+```
+Request: POST /tools/{id}/execute
+    │
+    ▼
+┌─────────────────────────────┐
+│ Token Scoping (Layer 1)     │ ← Can user ACCESS this tool?
+│ - Check visibility          │   (public/team/private)
+│ - Check team membership     │
+└─────────────────────────────┘
+    │ (allowed)
+    ▼
+┌─────────────────────────────┐
+│ RBAC Permission (Layer 2)   │ ← Can user EXECUTE tools?
+│ @require_permission(        │   (tools.execute permission)
+│   "tools.execute")          │
+└─────────────────────────────┘
+    │ (allowed)
+    ▼
+┌─────────────────────────────┐
+│ Execute Operation           │
+└─────────────────────────────┘
+```
+
+### Enforcement Points Matrix
+
+| Location | Token Scoping | RBAC | Notes |
+|----------|--------------|------|-------|
+| Token Scoping Middleware | ✅ | N/A | Request-level data filtering |
+| REST API Endpoints | ✅ | ✅ | `@require_permission` decorators |
+| RPC Handler (`/rpc`) | ✅ | Varies | Method-specific checks |
+| Admin UI | ✅ | ✅ | Permission-based rendering |
+| Service Layer | ✅ | N/A | Database query filtering |
+| WebSocket | ✅ | ✅ | Forwards auth to /rpc |
+| MCP Transport | ✅ | N/A | Streamable HTTP filtering |
+
+---
+
 ## Resource Scoping & Visibility
 
 ### Resource Architecture
@@ -1151,6 +1255,22 @@ flowchart TD
 | Viewer | Team | Member teams | No access | No access | No access | No access |
 
 **Note**: Team Owner/Member roles from the team management system work alongside RBAC roles. A user can have both team membership status (Owner/Member) and RBAC role assignments (Team Admin/Developer/Viewer) within the same team.
+
+### Token Scoping Invariants
+
+These behaviors are enforced consistently across all access paths:
+
+1. `normalize_token_teams()` is the ONLY function that interprets JWT team claims
+2. Missing `teams` key always returns `[]` (public-only, secure default)
+3. Admin bypass requires BOTH `teams: null` AND `is_admin: true`
+4. Empty teams list (`[]`) results in public-only access, even for admins
+5. All list endpoints pass `token_teams` to the service layer
+6. Service layer applies visibility filtering based on `token_teams`
+7. Public-only tokens can ONLY access `visibility='public'` resources
+
+### Related Documentation
+
+For detailed information on RBAC configuration, token scoping, and permission management, see [RBAC Configuration](../manage/rbac.md).
 
 ---
 
