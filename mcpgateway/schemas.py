@@ -1284,6 +1284,7 @@ class ToolRead(BaseModelWithConfigDict):
     original_name: str
     url: Optional[str]
     description: Optional[str]
+    original_description: Optional[str] = None
     request_type: str
     integration_type: str
     headers: Optional[Dict[str, str]]

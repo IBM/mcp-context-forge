@@ -527,6 +527,7 @@ class ToolService:
             "original_name": tool.original_name,
             "url": tool.url,
             "description": tool.description,
+            "original_description": tool.original_description,
             "integration_type": tool.integration_type,
             "request_type": tool.request_type,
             "headers": tool.headers or {},
@@ -1114,6 +1115,7 @@ class ToolService:
                 display_name=tool.displayName or tool.name,
                 url=str(tool.url),
                 description=tool.description,
+                original_description=tool.description,
                 integration_type=tool.integration_type,
                 request_type=tool.request_type,
                 headers=tool.headers,
@@ -1556,6 +1558,8 @@ class ToolService:
                     existing_tool.display_name = tool.displayName or tool.name
                     existing_tool.url = str(tool.url)
                     existing_tool.description = tool.description
+                    if getattr(existing_tool, "original_description", None) is None:
+                        existing_tool.original_description = tool.description
                     existing_tool.integration_type = tool.integration_type
                     existing_tool.request_type = tool.request_type
                     existing_tool.headers = tool.headers
@@ -1675,6 +1679,7 @@ class ToolService:
             display_name=tool.displayName or name,
             url=str(tool.url),
             description=tool.description,
+            original_description=tool.description,
             integration_type=tool.integration_type,
             request_type=tool.request_type,
             headers=tool.headers,
