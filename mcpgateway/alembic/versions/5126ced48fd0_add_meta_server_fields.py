@@ -2,7 +2,7 @@
 """Add meta-server fields to servers table
 
 Revision ID: 5126ced48fd0
-Revises: z1a2b3c4d5e6
+Revises: c3d4e5f6a7b8
 Create Date: 2026-02-12 10:00:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = "5126ced48fd0"
-down_revision = "z1a2b3c4d5e6"
+down_revision = "c3d4e5f6a7b8"
 branch_labels = None
 depends_on = None
 
