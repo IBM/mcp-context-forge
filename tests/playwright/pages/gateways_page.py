@@ -381,21 +381,25 @@ class GatewaysPage(BasePage):
     def search_gateways(self, query: str) -> None:
         """Search for gateways using the search input.
 
-        Waits for the server-side HTMX partial response before returning.
+        Search is server-side via HTMX with a debounce, so we wait for
+        network activity to settle after filling the input.
 
         Args:
             query: Search query string
         """
-        with self.page.expect_response(lambda r: "/admin/gateways/partial" in r.url, timeout=10000):
-            self.search_input.fill(query)
+        self.search_input.fill(query)
+        self.page.wait_for_timeout(500)
+        self.page.wait_for_load_state("networkidle", timeout=10000)
 
     def clear_search(self) -> None:
         """Clear the gateway search.
 
-        Waits for the server-side HTMX partial response before returning.
+        Triggers an HTMX reload of the gateways table, then waits for
+        the network to settle.
         """
-        with self.page.expect_response(lambda r: "/admin/gateways/partial" in r.url, timeout=10000):
-            self.click_locator(self.clear_search_btn)
+        self.click_locator(self.clear_search_btn)
+        self.page.wait_for_timeout(500)
+        self.page.wait_for_load_state("networkidle", timeout=10000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.

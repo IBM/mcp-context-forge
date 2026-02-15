@@ -238,10 +238,12 @@ class AdminPage(BasePage):
     def search_servers(self, query: str) -> None:
         """Search for servers.
 
-        Waits for the server-side HTMX partial response before returning.
+        Search is server-side via HTMX with a debounce, so we wait for
+        network activity to settle after filling the input.
         """
-        with self.page.expect_response(lambda r: "/admin/servers/partial" in r.url, timeout=10000):
-            self.fill_locator(self.search_input, query)
+        self.fill_locator(self.search_input, query)
+        self.page.wait_for_timeout(500)
+        self.page.wait_for_load_state("networkidle", timeout=10000)
 
     def get_server_count(self) -> int:
         """Get number of servers displayed."""
