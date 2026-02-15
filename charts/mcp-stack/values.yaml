@@ -832,6 +832,23 @@ mcpContextForge:
     PASSWORD_MAX_AGE_DAYS: "90"             # maximum password age in days
     MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
     ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
+    ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED: "true" # send lockout notification emails
+    PASSWORD_RESET_ENABLED: "true"          # master switch for forgot/reset password flow
+    PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: "60" # reset token validity window in minutes
+    PASSWORD_RESET_RATE_LIMIT: "5"          # max reset requests per email within rate window
+    PASSWORD_RESET_RATE_WINDOW_MINUTES: "15" # reset request rate-limit window in minutes
+    PASSWORD_RESET_INVALIDATE_SESSIONS: "true" # invalidate active sessions after reset
+    PASSWORD_RESET_MIN_RESPONSE_MS: "250"   # minimum forgot-password response duration
+    SMTP_ENABLED: "false"                   # enable SMTP delivery for auth notifications
+    SMTP_HOST: ""                           # SMTP host (required when SMTP_ENABLED=true)
+    SMTP_PORT: "587"                        # SMTP port
+    SMTP_USER: ""                           # SMTP username
+    SMTP_PASSWORD: ""                       # SMTP password
+    SMTP_FROM_EMAIL: ""                     # sender email for auth notifications
+    SMTP_FROM_NAME: "MCP Gateway"           # sender display name for auth notifications
+    SMTP_USE_TLS: "true"                    # use STARTTLS for SMTP
+    SMTP_USE_SSL: "false"                   # use implicit SSL/TLS (typically port 465)
+    SMTP_TIMEOUT_SECONDS: "15"              # SMTP timeout in seconds
     MIN_PASSWORD_LENGTH: "12"              # minimum password length for validation
     MIN_SECRET_LENGTH: "32"                # minimum secret key length for validation
     REQUIRE_STRONG_SECRETS: "false"        # enforce strong secrets (fail startup on weak secrets)

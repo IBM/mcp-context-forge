@@ -108,6 +108,16 @@
               </div>
             </div>
 
+            <div
+              id="success-message"
+              class="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-green-700 dark:text-green-300 rounded-xl text-sm hidden"
+            >
+              <div class="flex items-center">
+                <i class="fas fa-check-circle mr-2"></i>
+                <span id="success-text"></span>
+              </div>
+            </div>
+
             {% if secure_cookie_warning %}
             <div class="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 rounded-xl text-sm">
               <div class="flex items-start">
@@ -198,6 +208,17 @@
                   </button>
                 </div>
               </div>
+
+              {% if password_reset_enabled %}
+              <div class="text-right">
+                <a
+                  href="{{ root_path }}/admin/forgot-password"
+                  class="text-sm text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
+                >
+                  Forgot password?
+                </a>
+              </div>
+              {% endif %}
 
               <button
                 type="submit"
@@ -555,6 +576,26 @@
       function handleErrorMessages() {
         const urlParams = new URLSearchParams(window.location.search);
         const error = urlParams.get("error");
+        const notice = urlParams.get("notice");
+
+        if (notice) {
+          let noticeMessage = "Success";
+          switch (notice) {
+            case "reset_email_sent":
+              noticeMessage =
+                "If the account exists, a password reset link has been sent.";
+              break;
+            case "password_reset_success":
+              noticeMessage =
+                "Password reset successful. Sign in with your new password.";
+              break;
+            default:
+              noticeMessage = notice
+                .replace(/_/g, " ")
+                .replace(/\b\w/g, (l) => l.toUpperCase());
+          }
+          showSuccess(noticeMessage);
+        }
 
         if (error) {
           let errorMessage = "Login failed";
@@ -581,6 +622,9 @@
               errorMessage =
                 "Your account has too many team memberships for cookie-based authentication. Please contact your administrator.";
               break;
+            case "password_reset_disabled":
+              errorMessage = "Password reset is disabled by the administrator.";
+              break;
             default:
               errorMessage = error
                 .replace(/_/g, " ")
@@ -588,6 +632,17 @@
           }
           showError(errorMessage);
         }
+      }
+
+      function showSuccess(message) {
+        const successDiv = document.getElementById("success-message");
+        const successText = document.getElementById("success-text");
+        successText.textContent = message;
+        successDiv.classList.remove("hidden");
+
+        setTimeout(() => {
+          successDiv.classList.add("hidden");
+        }, 10000);
       }
 
       // Show error message

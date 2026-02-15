@@ -376,6 +376,7 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.resources.requests.cpu | string | `"100m"` |  |
 | mcpContextForge.resources.requests.memory | string | `"512Mi"` |  |
 | mcpContextForge.secret.ACCOUNT_LOCKOUT_DURATION_MINUTES | string | `"30"` |  |
+| mcpContextForge.secret.ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.ARGON2ID_MEMORY_COST | string | `"65536"` |  |
 | mcpContextForge.secret.ARGON2ID_PARALLELISM | string | `"1"` |  |
 | mcpContextForge.secret.ARGON2ID_TIME_COST | string | `"3"` |  |
@@ -427,6 +428,12 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.OTEL_EXPORTER_ZIPKIN_ENDPOINT | string | `""` |  |
 | mcpContextForge.secret.OTEL_RESOURCE_ATTRIBUTES | string | `""` |  |
 | mcpContextForge.secret.PASSWORD_MIN_LENGTH | string | `"8"` |  |
+| mcpContextForge.secret.PASSWORD_RESET_ENABLED | string | `"true"` |  |
+| mcpContextForge.secret.PASSWORD_RESET_INVALIDATE_SESSIONS | string | `"true"` |  |
+| mcpContextForge.secret.PASSWORD_RESET_MIN_RESPONSE_MS | string | `"250"` |  |
+| mcpContextForge.secret.PASSWORD_RESET_RATE_LIMIT | string | `"5"` |  |
+| mcpContextForge.secret.PASSWORD_RESET_RATE_WINDOW_MINUTES | string | `"15"` |  |
+| mcpContextForge.secret.PASSWORD_RESET_TOKEN_EXPIRY_MINUTES | string | `"60"` |  |
 | mcpContextForge.secret.PASSWORD_REQUIRE_LOWERCASE | string | `"false"` |  |
 | mcpContextForge.secret.PASSWORD_REQUIRE_NUMBERS | string | `"false"` |  |
 | mcpContextForge.secret.PASSWORD_REQUIRE_SPECIAL | string | `"false"` |  |
@@ -489,6 +496,16 @@ Kubernetes: `>=1.21.0-0`
 | mcpContextForge.secret.SSO_PRESERVE_ADMIN_AUTH | string | `"true"` |  |
 | mcpContextForge.secret.SSO_REQUIRE_ADMIN_APPROVAL | string | `"false"` |  |
 | mcpContextForge.secret.SSO_TRUSTED_DOMAINS | string | `"[]"` |  |
+| mcpContextForge.secret.SMTP_ENABLED | string | `"false"` |  |
+| mcpContextForge.secret.SMTP_FROM_EMAIL | string | `""` |  |
+| mcpContextForge.secret.SMTP_FROM_NAME | string | `"MCP Gateway"` |  |
+| mcpContextForge.secret.SMTP_HOST | string | `""` |  |
+| mcpContextForge.secret.SMTP_PASSWORD | string | `""` |  |
+| mcpContextForge.secret.SMTP_PORT | string | `"587"` |  |
+| mcpContextForge.secret.SMTP_TIMEOUT_SECONDS | string | `"15"` |  |
+| mcpContextForge.secret.SMTP_USER | string | `""` |  |
+| mcpContextForge.secret.SMTP_USE_SSL | string | `"false"` |  |
+| mcpContextForge.secret.SMTP_USE_TLS | string | `"true"` |  |
 | mcpContextForge.secret.TOKEN_EXPIRY | string | `"10080"` |  |
 | mcpContextForge.secret.TRUST_PROXY_AUTH | string | `"false"` |  |
 | mcpContextForge.secret.VALIDATE_TOKEN_ENVIRONMENT | string | `"false"` |  |
