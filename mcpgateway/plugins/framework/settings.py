@@ -129,6 +129,11 @@ class LazySettingsWrapper:
         """Clear the cached settings instance so the next access re-reads from env."""
         get_settings.cache_clear()
 
+    @staticmethod
+    def cache_clear() -> None:
+        """Clear the cached settings instance so the next access re-reads from env."""
+        get_settings.cache_clear()
+
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it
 
