@@ -18,12 +18,24 @@ from mcpgateway.services.argon2_service import Argon2PasswordService
 
 
 async def _generate_hash(password: str) -> str:
+    """Generate an Argon2id hash for a plaintext password.
+
+    Args:
+        password: Plaintext password.
+
+    Returns:
+        str: Argon2id encoded hash.
+    """
     service = Argon2PasswordService()
     return await service.hash_password_async(password)
 
 
 def main() -> int:
-    """Run CLI entrypoint for generating password hashes."""
+    """Run CLI entrypoint for generating password hashes.
+
+    Returns:
+        int: Process exit code (`0` success, non-zero on validation failure).
+    """
     parser = argparse.ArgumentParser(description="Generate an Argon2id password hash for MCP Gateway users.")
     parser.add_argument("--password", help="Password value. If omitted, a secure prompt is used.")
     args = parser.parse_args()

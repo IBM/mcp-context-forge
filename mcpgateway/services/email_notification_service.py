@@ -38,6 +38,11 @@ class AuthEmailNotificationService:
 
     @staticmethod
     def _smtp_password() -> Optional[str]:
+        """Resolve SMTP password from settings.
+
+        Returns:
+            Optional[str]: SMTP password string or None when unset.
+        """
         raw = getattr(settings, "smtp_password", None)
         if raw is None:
             return None
@@ -47,9 +52,25 @@ class AuthEmailNotificationService:
 
     @staticmethod
     def _smtp_ready() -> bool:
+        """Check whether minimum SMTP settings are available.
+
+        Returns:
+            bool: True when SMTP delivery is enabled and required fields exist.
+        """
         return bool(getattr(settings, "smtp_enabled", False) and getattr(settings, "smtp_host", None) and getattr(settings, "smtp_from_email", None))
 
     def _render_template(self, template_name: str, context: Dict[str, Any], fallback_title: str, fallback_body: str) -> str:
+        """Render an email template with graceful fallback.
+
+        Args:
+            template_name: Jinja template filename.
+            context: Rendering context values.
+            fallback_title: Fallback HTML title when template fails.
+            fallback_body: Fallback body text when template fails.
+
+        Returns:
+            str: Rendered HTML email body.
+        """
         try:
             template = self._jinja.get_template(template_name)
             return template.render(**context)
@@ -64,17 +85,45 @@ class AuthEmailNotificationService:
 
     @staticmethod
     def _html_to_text(value: str) -> str:
+        """Convert simple HTML content to plain text.
+
+        Args:
+            value: HTML value.
+
+        Returns:
+            str: Text-only representation.
+        """
         no_tags = re.sub(r"<[^>]+>", " ", value)
         compact = re.sub(r"\s+", " ", no_tags).strip()
         return compact
 
     async def _send_email(self, to_email: str, subject: str, html_body: str) -> bool:
+        """Send an email asynchronously.
+
+        Args:
+            to_email: Destination email address.
+            subject: Message subject.
+            html_body: HTML message body.
+
+        Returns:
+            bool: True when message is sent successfully.
+        """
         if not self._smtp_ready():
             logger.info("SMTP not configured. Skipping email to %s with subject '%s'.", to_email, subject)
             return False
         return await asyncio.to_thread(self._send_email_sync, to_email, subject, html_body)
 
     def _send_email_sync(self, to_email: str, subject: str, html_body: str) -> bool:
+        """Send an email synchronously over SMTP.
+
+        Args:
+            to_email: Destination email address.
+            subject: Message subject.
+            html_body: HTML message body.
+
+        Returns:
+            bool: True when message is sent successfully.
+        """
         from_email = str(getattr(settings, "smtp_from_email", "") or "")
         from_name = str(getattr(settings, "smtp_from_name", "MCP Gateway") or "MCP Gateway")
         smtp_user = getattr(settings, "smtp_user", None)
@@ -116,7 +165,17 @@ class AuthEmailNotificationService:
             return False
 
     async def send_password_reset_email(self, to_email: str, full_name: Optional[str], reset_url: str, expires_minutes: int) -> bool:
-        """Send password-reset email containing a one-time reset link."""
+        """Send password-reset email containing a one-time reset link.
+
+        Args:
+            to_email: Destination email address.
+            full_name: Optional display name for salutation.
+            reset_url: Password-reset link.
+            expires_minutes: Link validity duration.
+
+        Returns:
+            bool: True when message is sent successfully.
+        """
         display_name = full_name or to_email.split("@")[0]
         subject = "Reset your MCP Gateway password"
         body = self._render_template(
@@ -128,7 +187,15 @@ class AuthEmailNotificationService:
         return await self._send_email(to_email, subject, body)
 
     async def send_password_reset_confirmation_email(self, to_email: str, full_name: Optional[str]) -> bool:
-        """Send post-reset confirmation email."""
+        """Send post-reset confirmation email.
+
+        Args:
+            to_email: Destination email address.
+            full_name: Optional display name for salutation.
+
+        Returns:
+            bool: True when message is sent successfully.
+        """
         display_name = full_name or to_email.split("@")[0]
         subject = "Your MCP Gateway password was changed"
         body = self._render_template(
@@ -140,7 +207,17 @@ class AuthEmailNotificationService:
         return await self._send_email(to_email, subject, body)
 
     async def send_account_lockout_email(self, to_email: str, full_name: Optional[str], locked_until_iso: str, reset_url: str) -> bool:
-        """Notify the user that login attempts triggered a temporary lockout."""
+        """Notify the user that login attempts triggered a temporary lockout.
+
+        Args:
+            to_email: Destination email address.
+            full_name: Optional display name for salutation.
+            locked_until_iso: ISO timestamp for lockout expiry.
+            reset_url: Forgot-password URL for recovery.
+
+        Returns:
+            bool: True when message is sent successfully.
+        """
         display_name = full_name or to_email.split("@")[0]
         subject = "Your MCP Gateway account was temporarily locked"
         body = self._render_template(

@@ -3155,7 +3155,14 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
 @admin_router.get("/forgot-password")
 async def admin_forgot_password_page(request: Request) -> Response:
-    """Render forgot-password page."""
+    """Render forgot-password page.
+
+    Args:
+        request: Incoming HTTP request.
+
+    Returns:
+        Response: Forgot-password page response.
+    """
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
@@ -3173,7 +3180,15 @@ async def admin_forgot_password_page(request: Request) -> Response:
 
 @admin_router.post("/forgot-password")
 async def admin_forgot_password_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    """Handle forgot-password form submission."""
+    """Handle forgot-password form submission.
+
+    Args:
+        request: Incoming HTTP request with form data.
+        db: Database session dependency.
+
+    Returns:
+        RedirectResponse: Redirect to login or forgot-password page with status.
+    """
     root_path = request.scope.get("root_path", "")
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
@@ -3199,7 +3214,16 @@ async def admin_forgot_password_handler(request: Request, db: Session = Depends(
 
 @admin_router.get("/reset-password/{token}")
 async def admin_reset_password_page(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
-    """Render password reset form for a token."""
+    """Render password reset form for a token.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        Response: Reset-password page response.
+    """
     root_path = settings.app_root_path
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
@@ -3232,7 +3256,16 @@ async def admin_reset_password_page(token: str, request: Request, db: Session = 
 
 @admin_router.post("/reset-password/{token}")
 async def admin_reset_password_handler(token: str, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    """Handle password reset form submission."""
+    """Handle password reset form submission.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request with reset form data.
+        db: Database session dependency.
+
+    Returns:
+        RedirectResponse: Redirect to login or reset page with status.
+    """
     root_path = request.scope.get("root_path", "")
     if not getattr(settings, "email_auth_enabled", False):
         return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
@@ -6763,7 +6796,17 @@ async def admin_unlock_user(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> HTMLResponse:
-    """Unlock a user account from the admin UI."""
+    """Unlock a user account from the admin UI.
+
+    Args:
+        user_email: URL-encoded email for the user to unlock.
+        _request: Incoming HTTP request.
+        db: Database session dependency.
+        user: Current authenticated user context.
+
+    Returns:
+        HTMLResponse: Updated user card HTML or error snippet.
+    """
     if not settings.email_auth_enabled:
         return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
 

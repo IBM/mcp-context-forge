@@ -309,29 +309,58 @@ class EmailAuthService:
 
     @staticmethod
     def _hash_reset_token(token: str) -> str:
-        """Hash a plaintext password-reset token using SHA-256."""
+        """Hash a plaintext password-reset token using SHA-256.
+
+        Args:
+            token: Plaintext reset token.
+
+        Returns:
+            str: Hex-encoded SHA-256 digest.
+        """
         return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _minimum_reset_response_seconds() -> float:
+        """Get minimum forgot-password response duration.
+
+        Returns:
+            float: Minimum response duration in seconds.
+        """
         min_ms = max(0, int(getattr(settings, "password_reset_min_response_ms", 250)))
         return min_ms / 1000.0
 
     @staticmethod
     def _build_forgot_password_url() -> str:
+        """Build the absolute forgot-password page URL.
+
+        Returns:
+            str: Absolute forgot-password URL.
+        """
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
         return f"{app_domain}{root_path}/admin/forgot-password"
 
     @staticmethod
     def _build_reset_password_url(token: str) -> str:
+        """Build the absolute reset-password URL for a token.
+
+        Args:
+            token: Plaintext reset token.
+
+        Returns:
+            str: Absolute reset-password URL.
+        """
         safe_token = urllib.parse.quote(token, safe="")
         app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
         root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
         return f"{app_domain}{root_path}/admin/reset-password/{safe_token}"
 
     async def _invalidate_user_auth_cache(self, email: str) -> None:
-        """Invalidate cached authentication data for a user."""
+        """Invalidate cached authentication data for a user.
+
+        Args:
+            email: User email for cache invalidation.
+        """
         try:
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
@@ -352,7 +381,17 @@ class EmailAuthService:
         failure_reason: Optional[str] = None,
         details: Optional[dict] = None,
     ) -> None:
-        """Persist a custom authentication/security event."""
+        """Persist a custom authentication/security event.
+
+        Args:
+            event_type: Event type identifier.
+            success: Whether the event succeeded.
+            user_email: Related user email, if available.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+            failure_reason: Failure detail when `success` is False.
+            details: Additional structured event payload.
+        """
         try:
             event = EmailAuthEvent(
                 user_email=user_email,
@@ -370,7 +409,15 @@ class EmailAuthService:
             logger.warning("Failed to persist auth event %s for %s: %s", event_type, user_email, exc)
 
     def _recent_password_reset_request_count(self, email: str, now: datetime) -> int:
-        """Count recent password-reset requests for rate limiting."""
+        """Count recent password-reset requests for rate limiting.
+
+        Args:
+            email: Email to count requests for.
+            now: Current UTC timestamp.
+
+        Returns:
+            int: Number of reset requests in the current rate-limit window.
+        """
         window_minutes = int(getattr(settings, "password_reset_rate_window_minutes", 15))
         window_start = now - timedelta(minutes=window_minutes)
         stmt = (
@@ -669,6 +716,14 @@ class EmailAuthService:
 
         The function intentionally returns generic outcomes to avoid account
         enumeration while still allowing rate-limit enforcement.
+
+        Args:
+            email: User email requesting password reset.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            PasswordResetRequestResult: Reset request processing outcome.
         """
         start_time = time.monotonic()
         normalized_email = (email or "").lower().strip()
@@ -749,7 +804,19 @@ class EmailAuthService:
         return PasswordResetRequestResult(rate_limited=False, email_sent=email_sent)
 
     async def validate_password_reset_token(self, token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> PasswordResetToken:
-        """Validate a one-time password reset token."""
+        """Validate a one-time password reset token.
+
+        Args:
+            token: Plaintext password reset token.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            PasswordResetToken: Matching valid reset token record.
+
+        Raises:
+            AuthenticationError: If token is missing, invalid, used, or expired.
+        """
         if not token:
             password_reset_completions_counter.labels(outcome="invalid_token").inc()
             self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, None, ip_address, user_agent, failure_reason="Missing token")
@@ -784,7 +851,21 @@ class EmailAuthService:
         return reset_token
 
     async def reset_password_with_token(self, token: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
-        """Complete password reset using a validated one-time token."""
+        """Complete password reset using a validated one-time token.
+
+        Args:
+            token: Plaintext password reset token.
+            new_password: New password value.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            bool: True when password reset completed successfully.
+
+        Raises:
+            AuthenticationError: If token or associated user is invalid.
+            PasswordValidationError: If new password violates policy or reuse checks.
+        """
         reset_token = await self.validate_password_reset_token(token, ip_address=ip_address, user_agent=user_agent)
         user = await self.get_user_by_email(reset_token.user_email)
         if not user or not user.is_active:
@@ -831,7 +912,20 @@ class EmailAuthService:
         return True
 
     async def unlock_user_account(self, email: str, unlocked_by: Optional[str] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> EmailUser:
-        """Clear lockout state for a user account."""
+        """Clear lockout state for a user account.
+
+        Args:
+            email: User email to unlock.
+            unlocked_by: Admin/user identifier who performed unlock.
+            ip_address: Source IP address.
+            user_agent: Source user agent string.
+
+        Returns:
+            EmailUser: Updated user record after unlock.
+
+        Raises:
+            ValueError: If the target user cannot be found.
+        """
         normalized_email = email.lower().strip()
         user = await self.get_user_by_email(normalized_email)
         if not user:
@@ -1627,9 +1721,6 @@ class EmailAuthService:
 
             # Invalidate all auth caches for deleted user
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 

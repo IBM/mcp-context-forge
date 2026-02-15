@@ -423,7 +423,19 @@ async def change_password(password_request: ChangePasswordRequest, request: Requ
 
 @email_auth_router.post("/forgot-password", response_model=SuccessResponse)
 async def forgot_password(reset_request: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
-    """Request a one-time password reset token via email."""
+    """Request a one-time password reset token via email.
+
+    Args:
+        reset_request: Forgot-password request payload.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Generic success response to avoid account enumeration.
+
+    Raises:
+        HTTPException: If password reset is disabled or the request is rate limited.
+    """
     if not getattr(settings, "password_reset_enabled", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
 
@@ -440,7 +452,19 @@ async def forgot_password(reset_request: ForgotPasswordRequest, request: Request
 
 @email_auth_router.get("/reset-password/{token}", response_model=PasswordResetTokenValidationResponse)
 async def validate_password_reset_token(token: str, request: Request, db: Session = Depends(get_db)):
-    """Validate a password reset token before submitting a new password."""
+    """Validate a password reset token before submitting a new password.
+
+    Args:
+        token: One-time reset token.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        PasswordResetTokenValidationResponse: Token validity and expiration data.
+
+    Raises:
+        HTTPException: If password reset is disabled or token validation fails.
+    """
     if not getattr(settings, "password_reset_enabled", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
 
@@ -460,7 +484,20 @@ async def validate_password_reset_token(token: str, request: Request, db: Sessio
 
 @email_auth_router.post("/reset-password/{token}", response_model=SuccessResponse)
 async def complete_password_reset(token: str, reset_request: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
-    """Complete password reset with a valid one-time token."""
+    """Complete password reset with a valid one-time token.
+
+    Args:
+        token: One-time reset token.
+        reset_request: Reset-password payload with new credentials.
+        request: Incoming HTTP request.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Password reset completion status.
+
+    Raises:
+        HTTPException: If password reset is disabled or reset validation fails.
+    """
     if not getattr(settings, "password_reset_enabled", True):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Password reset is disabled")
 
@@ -811,7 +848,19 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 @email_auth_router.post("/admin/users/{user_email}/unlock", response_model=SuccessResponse)
 @require_permission("admin.user_management")
 async def unlock_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
-    """Unlock a user account by clearing lockout state and failed login counter."""
+    """Unlock a user account by clearing lockout state and failed login counter.
+
+    Args:
+        user_email: Email address of the user to unlock.
+        current_user_ctx: Authenticated admin context.
+        db: Database session dependency.
+
+    Returns:
+        SuccessResponse: Unlock operation result.
+
+    Raises:
+        HTTPException: If user is missing or unlock operation fails.
+    """
     auth_service = EmailAuthService(db)
 
     try:

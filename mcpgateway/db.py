@@ -1439,11 +1439,19 @@ class PasswordResetToken(Base):
     __table_args__ = (Index("ix_password_reset_tokens_expires_at", "expires_at"),)
 
     def is_expired(self) -> bool:
-        """Return True when the token has expired."""
+        """Return whether the reset token has expired.
+
+        Returns:
+            bool: True when `expires_at` is in the past.
+        """
         return self.expires_at <= utc_now()
 
     def is_used(self) -> bool:
-        """Return True when token was already consumed or invalidated."""
+        """Return whether the reset token was already consumed.
+
+        Returns:
+            bool: True when `used_at` is set.
+        """
         return self.used_at is not None
 
 

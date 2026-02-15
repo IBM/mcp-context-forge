@@ -5393,7 +5393,14 @@ class ResetPasswordRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_password_match(self):
-        """Ensure password and confirmation are identical."""
+        """Ensure password and confirmation are identical.
+
+        Returns:
+            ResetPasswordRequest: Validated request instance.
+
+        Raises:
+            ValueError: If the password and confirmation do not match.
+        """
         if self.new_password != self.confirm_password:
             raise ValueError("Passwords do not match")
         return self
