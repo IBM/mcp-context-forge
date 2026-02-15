@@ -147,6 +147,17 @@ Support for any OpenID Connect compatible identity provider including Auth0, Aut
 
 **Note**: For Keycloak, use the dedicated [Keycloak SSO Setup Guide](sso-keycloak-tutorial.md) which leverages auto-discovery for simpler configuration.
 
+## Local Compose SSO (Keycloak)
+
+For local end-to-end SSO testing, use the preconfigured compose profile:
+
+```bash
+make compose-sso
+make sso-test-login
+```
+
+This starts Keycloak on `http://localhost:8180` and enables SSO bootstrap in the gateway automatically.
+
 ## Quick Start
 
 ### 1. Enable SSO
@@ -378,6 +389,8 @@ Add Microsoft Graph API permissions for enhanced user profile access:
 # Keycloak OIDC Configuration (with auto-discovery)
 SSO_KEYCLOAK_ENABLED=true
 SSO_KEYCLOAK_BASE_URL=https://keycloak.yourcompany.com
+# Optional when gateway reaches Keycloak internally (e.g. Docker DNS):
+# SSO_KEYCLOAK_PUBLIC_BASE_URL=https://login.yourcompany.com
 SSO_KEYCLOAK_REALM=master
 SSO_KEYCLOAK_CLIENT_ID=mcp-gateway
 SSO_KEYCLOAK_CLIENT_SECRET=your-client-secret-value

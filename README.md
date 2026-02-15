@@ -775,6 +775,7 @@ For the complete list of 300+ environment variables organized by category (authe
 | `make serve` | Gunicorn | **4444** | SQLite | Production single-node (multi-worker) |
 | `make serve-ssl` | Gunicorn | **4444** | SQLite | Production single-node with HTTPS |
 | `make compose-up` | Docker Compose + Nginx | **8080** | PostgreSQL + Redis | Full stack (3 replicas, load-balanced) |
+| `make compose-sso` | Docker Compose + Keycloak | **8080 / 8180** | PostgreSQL + Redis | Local SSO testing (Keycloak profile) |
 | `make testing-up` | Docker Compose + Nginx | **8080** | PostgreSQL + Redis | Testing environment |
 
 ### Development Server (Uvicorn)
@@ -808,6 +809,8 @@ make serve-ssl           # Gunicorn behind HTTPS on :4444 (uses ./certs)
 
 ```bash
 make compose-up          # Start full stack: PostgreSQL, Redis, 3 gateway replicas, Nginx on :8080
+make compose-sso         # Start SSO stack with Keycloak on :8180
+make sso-test-login      # Run SSO smoke checks (providers + login URL + test users)
 make compose-logs        # Tail logs from all services
 make compose-down        # Stop the stack
 ```

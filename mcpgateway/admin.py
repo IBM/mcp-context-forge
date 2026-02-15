@@ -152,6 +152,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.validate_signature import sign_data
+from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Conditional imports for gRPC support (only if grpcio is installed)
 try:
@@ -2881,6 +2882,41 @@ async def admin_ui(
             # Determine the admin user email
             admin_email = get_user_email(user)
             is_admin_flag = bool(user.get("is_admin") if isinstance(user, dict) else True)
+            full_name = getattr(settings, "platform_admin_full_name", "Platform User")
+            if isinstance(user, dict):
+                full_name = user.get("full_name") or full_name
+            else:
+                full_name = getattr(user, "full_name", full_name) or full_name
+
+            # Preserve auth provider across admin UI token refreshes so logout behavior
+            # can reliably detect SSO sessions (e.g., Keycloak) later.
+            auth_provider = "local"
+            if isinstance(user, dict):
+                provider_from_user = user.get("auth_provider")
+                if isinstance(provider_from_user, str) and provider_from_user.strip():
+                    auth_provider = provider_from_user.strip()
+            else:
+                provider_from_user = getattr(user, "auth_provider", None)
+                if isinstance(provider_from_user, str) and provider_from_user.strip():
+                    auth_provider = provider_from_user.strip()
+
+            # get_current_user_with_permissions may not include auth_provider in its dict.
+            # Fall back to the current jwt_token cookie payload before refreshing it.
+            if auth_provider == "local":
+                jwt_cookie = request.cookies.get("jwt_token")
+                if isinstance(jwt_cookie, str) and jwt_cookie:
+                    try:
+                        existing_payload = await verify_jwt_token_cached(jwt_cookie, request)
+                        existing_user = existing_payload.get("user")
+                        provider_from_token = existing_user.get("auth_provider") if isinstance(existing_user, dict) else None
+                        if not provider_from_token:
+                            provider_from_token = existing_payload.get("auth_provider")
+                        if isinstance(provider_from_token, str) and provider_from_token.strip():
+                            auth_provider = provider_from_token.strip()
+                    except Exception as provider_error:  # nosec B110 - best-effort provider preservation
+                        LOGGER.warning("Could not resolve auth_provider from existing JWT cookie; SSO logout may not function correctly: %s", provider_error)
+                        if settings.sso_keycloak_enabled:
+                            auth_provider = "keycloak"
 
             # Generate a lightweight session JWT token
             now = datetime.now(timezone.utc)
@@ -2891,9 +2927,10 @@ async def admin_ui(
                 "iat": int(now.timestamp()),
                 "exp": int((now + timedelta(minutes=settings.token_expiry)).timestamp()),
                 "jti": str(uuid.uuid4()),
-                "user": {"email": admin_email, "full_name": getattr(settings, "platform_admin_full_name", "Platform User"), "is_admin": is_admin_flag, "auth_provider": "local"},
+                "auth_provider": auth_provider,
+                "user": {"email": admin_email, "full_name": full_name, "is_admin": is_admin_flag, "auth_provider": auth_provider},
                 "token_use": "session",  # nosec B105 - token type marker, not a password
-                "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
+                "scopes": {"server_id": None, "permissions": ["*"] if is_admin_flag else [], "ip_restrictions": [], "time_restrictions": {}},
             }
 
             # Generate token using centralized token creation
@@ -3181,21 +3218,136 @@ async def _admin_logout(request: Request) -> Response:
         >>> asyncio.run(test_logout_get())
         True
     """
+
+    async def _extract_auth_provider_from_jwt_cookie() -> Optional[str]:
+        """Best-effort auth provider resolution from the current JWT cookie.
+
+        Returns:
+            Optional[str]: Auth provider from JWT payload, if available.
+        """
+        cookies = getattr(request, "cookies", None)
+        if not cookies or not hasattr(cookies, "get"):
+            return None
+        token = cookies.get("jwt_token")
+        if not isinstance(token, str) or not token:
+            return None
+        try:
+            payload = await verify_jwt_token_cached(token, request)
+        except Exception as exc:  # nosec B110 - best-effort provider detection during logout
+            LOGGER.warning("Failed to verify JWT during logout - SSO session may not be cleared: %s", exc)
+            if settings.sso_keycloak_enabled:
+                return "keycloak"
+            return None
+
+        user_payload = payload.get("user")
+        if isinstance(user_payload, dict):
+            user_provider = user_payload.get("auth_provider")
+            if isinstance(user_provider, str) and user_provider:
+                return user_provider
+
+        auth_provider = payload.get("auth_provider")
+        if isinstance(auth_provider, str) and auth_provider:
+            return auth_provider
+        return None
+
+    def _build_absolute_login_url(root_path: str) -> Optional[str]:
+        """Build an absolute login URL using request URL, with app_domain fallback.
+
+        Args:
+            root_path (str): Application root path from request scope.
+
+        Returns:
+            Optional[str]: Absolute login URL when resolvable, otherwise ``None``.
+        """
+        login_path = f"{root_path}/admin/login"
+        request_url = getattr(request, "url", None)
+        scheme = getattr(request_url, "scheme", None) if request_url is not None else None
+        netloc = getattr(request_url, "netloc", None) if request_url is not None else None
+        if isinstance(scheme, str) and scheme and isinstance(netloc, str) and netloc:
+            return f"{scheme}://{netloc}{login_path}"
+
+        app_domain = str(getattr(settings, "app_domain", "") or "").rstrip("/")
+        if app_domain:
+            return f"{app_domain}{login_path}"
+        return None
+
+    def _build_keycloak_logout_url(root_path: str) -> Optional[str]:
+        """Build Keycloak RP-initiated logout URL when all required config is available.
+
+        Args:
+            root_path (str): Application root path from request scope.
+
+        Returns:
+            Optional[str]: Keycloak logout URL when all inputs are valid, otherwise ``None``.
+        """
+        if not settings.sso_keycloak_enabled or not settings.sso_keycloak_base_url:
+            return None
+
+        login_url = _build_absolute_login_url(root_path)
+        if not login_url:
+            LOGGER.warning("Cannot build Keycloak logout URL: unable to resolve absolute login URL")
+            return None
+
+        keycloak_base = (settings.sso_keycloak_public_base_url or settings.sso_keycloak_base_url or "").rstrip("/")
+        realm = str(settings.sso_keycloak_realm or "").strip()
+        if not keycloak_base or not realm:
+            LOGGER.warning("Cannot build Keycloak logout URL: missing keycloak_base or realm configuration")
+            return None
+
+        logout_endpoint = f"{keycloak_base}/realms/{urllib.parse.quote(realm, safe='')}/protocol/openid-connect/logout"
+        query_params: Dict[str, str] = {
+            "post_logout_redirect_uri": login_url,
+            # Legacy Keycloak compatibility
+            "redirect_uri": login_url,
+        }
+        if settings.sso_keycloak_client_id:
+            query_params["client_id"] = settings.sso_keycloak_client_id
+
+        cookies = getattr(request, "cookies", None)
+        if cookies and hasattr(cookies, "get"):
+            id_token_hint = cookies.get("sso_id_token_hint")
+            if isinstance(id_token_hint, str) and id_token_hint:
+                # Only include the hint if the id_token has not expired.
+                # Keycloak rejects expired id_token_hint with an error page.
+                try:
+                    payload_b64 = id_token_hint.split(".")[1]
+                    payload_b64 += "=" * (-len(payload_b64) % 4)  # pad base64
+                    claims = orjson.loads(binascii.a2b_base64(payload_b64))
+                    if claims.get("exp", 0) > time.time():
+                        query_params["id_token_hint"] = id_token_hint
+                    else:
+                        LOGGER.info("Omitting expired id_token_hint from Keycloak logout URL")
+                except Exception:
+                    LOGGER.debug("Could not decode id_token_hint; omitting from logout URL")
+
+        return f"{logout_endpoint}?{urllib.parse.urlencode(query_params)}"
+
     LOGGER.info(f"Admin user logging out (method: {request.method})")
     root_path = request.scope.get("root_path", "")
 
-    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec
-    # For POST requests (user-initiated), redirect to login page
+    # For GET requests (OIDC front-channel logout), return 200 OK per OIDC spec.
     if request.method == "GET":
-        # Front-channel logout: clear cookie and return 200
         response = Response(content="Logged out", status_code=200)
     else:
-        # User-initiated logout: clear cookie and redirect to login
         response = RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
 
-    # Clear JWT token cookie using centralized security cookie utility
-    clear_auth_cookie(response)
+        auth_provider = await _extract_auth_provider_from_jwt_cookie()
+        if auth_provider == "keycloak":
+            keycloak_logout_url = _build_keycloak_logout_url(root_path)
+            if keycloak_logout_url:
+                LOGGER.info("Redirecting to Keycloak RP-initiated logout endpoint")
+                response = RedirectResponse(url=keycloak_logout_url, status_code=303)
 
+    # Always clear local JWT session cookie.
+    clear_auth_cookie(response)
+    use_secure = (settings.environment == "production") or settings.secure_cookies
+    response.delete_cookie(
+        key="sso_id_token_hint",
+        path=settings.app_root_path or "/",
+        secure=use_secure,
+        httponly=True,
+        samesite=settings.cookie_samesite,
+    )
     return response
 
 
