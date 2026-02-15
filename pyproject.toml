@@ -623,6 +623,20 @@ markers = [
     "benchmark: marks tests as performance benchmarks (migration testing)",
     "integration: marks tests as integration tests (require external services)",
     "postgresql: marks tests that require PostgreSQL database",
+    "mcp20251125: marks MCP 2025-11-25 compliance tests",
+    "mcp_core: marks MCP core compliance tests",
+    "mcp_required: marks MCP MUST-level compliance checks",
+    "mcp_recommended: marks MCP SHOULD-level compliance checks",
+    "mcp_optional: marks MCP MAY/optional compliance checks",
+    "mcp_base: marks JSON-RPC and envelope compliance checks",
+    "mcp_lifecycle: marks initialize/capability lifecycle checks",
+    "mcp_transport_core: marks streamable-http/transport checks",
+    "mcp_server_features: marks tools/resources/prompts/logging checks",
+    "mcp_client_features: marks roots/sampling/elicitation checks",
+    "mcp_utilities: marks ping/cancel/progress/pagination checks",
+    "mcp_tasks: marks tasks capability checks",
+    "mcp_auth: marks authorization discovery checks",
+    "mcp_security: marks security compliance checks",
 ]
 
 # Playwright-specific test discovery patterns
