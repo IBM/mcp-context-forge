@@ -1,11 +1,7 @@
 """add_tool_embedding_table
 
 Revision ID: bab4694b3e90
-<<<<<<< Updated upstream
-Revises: 5126ced48fd0
-=======
 Revises: 8a16a77260f0
->>>>>>> Stashed changes
 Create Date: 2026-02-10 14:11:14.392859
 
 """
@@ -15,15 +11,10 @@ from alembic import op
 import sqlalchemy as sa
 try:
     from pgvector.sqlalchemy import Vector # type: ignore
-<<<<<<< Updated upstream
-except ImportError:
-    Vector = None
-=======
     HAS_PGVECTOR = True
 except ImportError:
     Vector = None
     HAS_PGVECTOR = False
->>>>>>> Stashed changes
 
 
 # revision identifiers, used by Alembic.
