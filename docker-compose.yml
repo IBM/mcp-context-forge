@@ -17,6 +17,7 @@
 #  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
 #  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
@@ -1452,6 +1453,107 @@ services:
         echo "Token written to /tmp/gateway-token.txt"
 
         echo "✅ Setup complete!"
+
+  ###############################################################################
+  # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing
+  # Introduces artificial latency on every tool call. Use for testing gateway
+  # timeout enforcement, circuit breaker behaviour, and session pool resilience.
+  # Usage: docker compose --profile resilience up -d
+  ###############################################################################
+  slow_time_server:
+    build:
+      context: ./mcp-servers/go/slow-time-server
+      dockerfile: Dockerfile
+    image: mcpgateway/slow-time-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8889:8081"    # Map host port 8889 to container port 8081
+    environment:
+      - DEFAULT_LATENCY=${SLOW_TIME_LATENCY:-5s}
+      - FAILURE_RATE=${SLOW_TIME_FAILURE_RATE:-0.0}
+    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8081", "-log-level=info"]
+    healthcheck:
+      test: ["CMD", "/slow-time-server", "-health", "-port=8081"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles: ["resilience"]
+
+  ###############################################################################
+  # Auto-registration service - registers slow_time_server with gateway
+  ###############################################################################
+  register_slow_time:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      slow_time_server:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering slow_time_server with gateway..."
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+        import sys
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Delete existing gateway if present
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'slow_time':
+                    print(f'Found existing gateway {gw[\"id\"]}, deleting...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'slow_time',
+                'url': 'http://slow_time_server:8081/http',
+                'transport': 'STREAMABLEHTTP'
+            })
+            gateway_id = result.get('id')
+            print(f'✅ Registered slow_time_server (gateway_id: {gateway_id})')
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            exit(1)
+        "
+        echo "✅ Registration complete!"
+    profiles: ["resilience"]
 
   ###############################################################################
   # Fast Test Server - Ultra-fast Rust MCP server for performance testing

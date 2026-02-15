@@ -1273,6 +1273,87 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
 
 # =============================================================================
+# help: 🛡️  RESILIENCE TESTING STACK (slow-time-server)
+# help: resilience-up          - Start slow-time-server for timeout/circuit breaker testing
+# help: resilience-down        - Stop resilience testing stack
+# help: resilience-logs        - Show resilience stack logs
+# help: resilience-locust      - Run Locust load test against slow-time-server (10 users, 120s)
+# help: resilience-locust-ui   - Start Locust web UI for slow-time-server
+# help: resilience-jmeter      - Run JMeter baseline test against slow-time-server (20 threads, 5min)
+
+RESILIENCE_HOST ?= http://localhost:8889
+RESILIENCE_LOCUSTFILE := tests/loadtest/locustfile_slow_time_server.py
+RESILIENCE_JMETER_PLAN := tests/jmeter/slow_time_server_baseline.jmx
+
+resilience-up:                             ## Start slow-time-server for resilience testing
+	@echo "Starting resilience testing stack (slow-time-server on port 8889)..."
+	$(COMPOSE_CMD_MONITOR) --profile resilience up -d
+	@echo ""
+	@echo "Resilience stack started!"
+	@echo ""
+	@echo "   Slow Time Server: $(RESILIENCE_HOST)"
+	@echo "     REST API:       $(RESILIENCE_HOST)/api/v1/time?delay=5"
+	@echo "     MCP SSE:        $(RESILIENCE_HOST)/sse"
+	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/http"
+	@echo "     API Docs:       $(RESILIENCE_HOST)/api/v1/docs"
+	@echo "     Health:         $(RESILIENCE_HOST)/health"
+	@echo ""
+	@echo "   Run: make resilience-locust  or  make resilience-jmeter"
+
+resilience-down:                           ## Stop resilience testing stack
+	@echo "Stopping resilience testing stack..."
+	$(COMPOSE_CMD_MONITOR) --profile resilience down --remove-orphans
+	@echo "Resilience stack stopped."
+
+resilience-logs:                           ## Show resilience stack logs
+	$(COMPOSE_CMD_MONITOR) --profile resilience logs -f --tail=100
+
+resilience-locust:                         ## Run Locust load test against slow-time-server (10 users, 120s)
+	@echo "Running resilience Locust load test..."
+	@echo "   Host: $(RESILIENCE_HOST)"
+	@echo "   Users: 10, Duration: 120s"
+	@echo "   Requires: make resilience-up"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(RESILIENCE_LOCUSTFILE) \
+			--host=$(RESILIENCE_HOST) \
+			--users=10 \
+			--spawn-rate=2 \
+			--run-time=120s \
+			--headless \
+			--html=reports/loadtest_resilience.html \
+			--csv=reports/loadtest_resilience \
+			--only-summary"
+	@echo "Report: reports/loadtest_resilience.html"
+
+resilience-locust-ui:                      ## Start Locust web UI for slow-time-server
+	@echo "Starting Locust web UI for resilience testing..."
+	@echo "   Open http://localhost:8090 in your browser"
+	@echo "   Host: $(RESILIENCE_HOST)"
+	@echo "   Requires: make resilience-up"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(RESILIENCE_LOCUSTFILE) \
+			--host=$(RESILIENCE_HOST) \
+			--web-host=0.0.0.0 --web-port=8090"
+
+resilience-jmeter: jmeter-check            ## Run JMeter baseline test against slow-time-server (20 threads, 5min)
+	@echo "Running resilience JMeter baseline test..."
+	@echo "   Slow Time Server: $(RESILIENCE_HOST)"
+	@echo "   Threads: 20, Duration: 5 minutes"
+	@echo "   Requires: make resilience-up"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(RESILIENCE_JMETER_PLAN) \
+		-JSLOW_TIME_URL=$(RESILIENCE_HOST) \
+		-JTHREADS=20 -JRAMP_UP=30 -JDURATION=300 \
+		-l $(JMETER_RESULTS_DIR)/resilience_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/resilience_$$TIMESTAMP \
+		$(JMETER_SUMMARISER) $(JMETER_OPTS)
+	@echo "Report: $(JMETER_RESULTS_DIR)/resilience_*/index.html"
+
+# =============================================================================
 # help: 🎯 BENCHMARK STACK (Go benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
