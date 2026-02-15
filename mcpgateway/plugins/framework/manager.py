@@ -490,7 +490,7 @@ class PluginManager:
             >>> manager = PluginManager("new_config.yaml")
         """
         with cls.__lock:
-            for d in cls._added_plugin_dirs:
+            for d in cls.__shared_state.get("_added_plugin_dirs", []):
                 if d in sys.path:
                     sys.path.remove(d)
             cls._added_plugin_dirs = []
