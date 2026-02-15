@@ -17,7 +17,7 @@ import pytest
 # Save original RBAC decorator functions at conftest import time.
 # Conftest files load before test modules, so these should be the real functions.
 import mcpgateway.middleware.rbac as _rbac_mod
-from mcpgateway.plugins.framework.settings import get_settings
+from mcpgateway.plugins.framework.settings import settings
 
 _ORIG_REQUIRE_PERMISSION = _rbac_mod.require_permission
 _ORIG_REQUIRE_ADMIN_PERMISSION = _rbac_mod.require_admin_permission
@@ -63,7 +63,7 @@ def mock_permission_service(monkeypatch):
 
 @pytest.fixture(autouse=True)
 def clear_plugins_settings_cache():
-    """Clear the get_settings LRU cache so env changes take effect per test."""
-    get_settings.cache_clear()
+    """Clear the settings LRU cache so env changes take effect per test."""
+    settings.cache_clear()
     yield
-    get_settings.cache_clear()
+    settings.cache_clear()
