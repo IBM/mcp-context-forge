@@ -66,4 +66,3 @@ def clear_plugins_settings_cache():
     """Clear the settings LRU cache so env changes take effect per test."""
     settings.cache_clear()
     yield
-    settings.cache_clear()
