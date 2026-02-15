@@ -7,6 +7,7 @@ with a single, configurable policy engine.
 """
 
 # Standard
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 import logging
@@ -26,70 +27,43 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+@dataclass
 class Subject:
     """Represents the entity requesting access (user, service, token)."""
-
-    def __init__(self, email: str, roles: List[str] = None, teams: List[str] = None, is_admin: bool = False, permissions: List[str] = None, attributes: Dict[str, Any] = None):
-        """Initialize a Subject for access control.
-
-        Args:
-            email: User email address
-            roles: List of role names
-            teams: List of team IDs
-            is_admin: Whether user has admin privileges
-            permissions: List of permission strings
-            attributes: Additional subject attributes
-        """
-        self.email = email
-        self.roles = roles or []
-        self.teams = teams or []
-        self.is_admin = is_admin
-        self.permissions = permissions or []
-        self.attributes = attributes or {}
+    
+    email: str
+    roles: List[str] = field(default_factory=list)
+    teams: List[str] = field(default_factory=list)
+    is_admin: bool = False
+    permissions: List[str] = field(default_factory=list)
+    attributes: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
 class Resource:
     """Represents the thing being accessed."""
-
-    def __init__(
-        self, resource_type: str, resource_id: Optional[str] = None, owner: Optional[str] = None, team_id: Optional[str] = None, visibility: Optional[str] = None, attributes: Dict[str, Any] = None
-    ):
-        """Initialize a Resource.
-
-        Args:
-            resource_type: Type of resource (e.g., "tool", "server")
-            resource_id: Unique resource identifier
-            owner: Email of resource owner
-            team_id: ID of owning team
-            visibility: Resource visibility (private/team/public)
-            attributes: Additional resource attributes
-        """
-        self.type = resource_type
-        self.id = resource_id
-        self.owner = owner
-        self.team_id = team_id
-        self.visibility = visibility
-        self.attributes = attributes or {}
+    
+    type: str  # renamed from resource_type
+    id: Optional[str] = None  # renamed from resource_id  
+    owner: Optional[str] = None
+    team_id: Optional[str] = None
+    visibility: Optional[str] = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass
 class Context:
     """Ambient request context."""
-
-    def __init__(self, ip_address: Optional[str] = None, user_agent: Optional[str] = None, request_id: Optional[str] = None, timestamp: Optional[datetime] = None, attributes: Dict[str, Any] = None):
-        """Initialize a Context.
-
-        Args:
-            ip_address: Client IP address
-            user_agent: Client user agent string
-            request_id: Unique request identifier
-            timestamp: Request timestamp
-            attributes: Additional context attributes
-        """
-        self.ip_address = ip_address
-        self.user_agent = user_agent
-        self.request_id = request_id
-        self.timestamp = timestamp or datetime.now(timezone.utc)
-        self.attributes = attributes or {}
+    
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    request_id: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    attributes: Dict[str, Any] = field(default_factory=dict)
+    
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now(timezone.utc)
 
 
 class AccessDecision:
@@ -202,7 +176,7 @@ class PolicyEngine:
             decision = await policy_engine.check_access(
                 subject=Subject(email=user.email, permissions=user.permissions, is_admin=user.is_admin),
                 permission="tools.read",
-                resource=Resource(resource_type="tool", resource_id=tool_id)
+                resource=Resource(type="tool", id=tool_id)
             )
             if not decision.allowed:
                 raise HTTPException(403, detail=decision.reason)
@@ -218,8 +192,8 @@ class PolicyEngine:
                 reason="Admin bypass: user has admin privileges",
                 permission=permission,
                 subject_email=subject.email,
-                resource_type=resource.type if resource else None,
-                resource_id=resource.id if resource else None,
+                type=resource.type if resource else None,
+                id=resource.id if resource else None,
                 matching_policies=["admin-bypass"],
             )
             await self._log_decision(decision)
@@ -232,8 +206,8 @@ class PolicyEngine:
                 reason=f"User has required permission: {permission}",
                 permission=permission,
                 subject_email=subject.email,
-                resource_type=resource.type if resource else None,
-                resource_id=resource.id if resource else None,
+                type=resource.type if resource else None,
+                id=resource.id if resource else None,
                 matching_policies=["direct-permission"],
             )
             await self._log_decision(decision)
@@ -252,8 +226,8 @@ class PolicyEngine:
             reason=f"Permission denied: user lacks '{permission}' permission",
             permission=permission,
             subject_email=subject.email,
-            resource_type=resource.type if resource else None,
-            resource_id=resource.id if resource else None,
+            type=resource.type if resource else None,
+            id=resource.id if resource else None,
             matching_policies=[],
         )
         await self._log_decision(decision)
@@ -280,8 +254,8 @@ class PolicyEngine:
                 reason="Resource owner has full access",
                 permission=permission,
                 subject_email=subject.email,
-                resource_type=resource.type,
-                resource_id=resource.id,
+                type=resource.type,
+                id=resource.id,
                 matching_policies=["owner-access"],
             )
 
@@ -293,8 +267,8 @@ class PolicyEngine:
                     reason=f"Team member access: user in team {resource.team_id}",
                     permission=permission,
                     subject_email=subject.email,
-                    resource_type=resource.type,
-                    resource_id=resource.id,
+                    type=resource.type,
+                    id=resource.id,
                     matching_policies=["team-access"],
                 )
 
@@ -307,14 +281,14 @@ class PolicyEngine:
                     reason="Public resource with read permission",
                     permission=permission,
                     subject_email=subject.email,
-                    resource_type=resource.type,
-                    resource_id=resource.id,
+                    type=resource.type,
+                    id=resource.id,
                     matching_policies=["public-access"],
                 )
 
         # Deny by default
         return AccessDecision(
-            allowed=False, reason="No resource-level access granted", permission=permission, subject_email=subject.email, resource_type=resource.type, resource_id=resource.id, matching_policies=[]
+            allowed=False, reason="No resource-level access granted", permission=permission, subject_email=subject.email, type=resource.type, id=resource.id, matching_policies=[]
         )
 
     async def _log_decision(self, decision: AccessDecision) -> None:
@@ -336,6 +310,32 @@ class PolicyEngine:
             f"allowed={decision.allowed}, "
             f"reason={decision.reason}"
         )
+
+
+# ---------------------------------------------------------------------------
+# New Decorator (uses PolicyEngine instead of old RBAC)
+# ---------------------------------------------------------------------------
+
+
+def require_permission_v2(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
+    """
+    New decorator using PolicyEngine (Phase 1 - #2019).
+
+    This will eventually replace the old @require_permission decorator.
+
+    Args:
+        permission: Required permission (e.g., 'servers.read')
+        resource_type: Optional resource type
+        allow_admin_bypass: If False, even admins must have explicit permission (default: True)
+
+    Returns:
+        Callable: Decorator that enforces permission checks
+
+    Usage:
+        @require_permission_v2("servers.read")
+        async def list_servers(...):
+            ...
+    """
     def decorator(func):
         """Decorate function with permission enforcement.
 
@@ -394,7 +394,7 @@ class PolicyEngine:
             subject = Subject(email=email, roles=roles, teams=teams, is_admin=is_admin, permissions=permissions)
 
             # Build Resource (basic - can be enhanced)
-            resource = Resource(resource_type=resource_type or permission.split(".")[0], resource_id=None) if resource_type else None  # Not known at decorator time
+            resource = Resource(type=resource_type or permission.split(".")[0], id=None) if resource_type else None  # Not known at decorator time
 
             # Check access (pass allow_admin_bypass to check_access)
             decision = await policy_engine.check_access(
