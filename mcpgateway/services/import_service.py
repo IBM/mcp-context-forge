@@ -984,7 +984,7 @@ class ImportService:
                         db_tool = db.execute(stmt).scalar_one_or_none()
                         if db_tool:
                             db_tool.original_description = orig_desc
-                    db.flush()
+                    db.commit()
 
             # Update status based on results
             status.created_entities += result["created"]

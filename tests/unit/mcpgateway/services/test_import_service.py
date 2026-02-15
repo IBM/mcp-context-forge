@@ -2888,7 +2888,7 @@ async def test_process_tools_bulk_restores_original_description(import_service, 
     assert status.created_entities == 1
     # original_description should be restored from export data
     assert mock_tool.original_description == "Original upstream description"
-    mock_db.flush.assert_called_once()
+    mock_db.commit.assert_called()
 
     # Verify batch_id was passed to register_tools_bulk
     call_kwargs = import_service.tool_service.register_tools_bulk.call_args[1]
@@ -2929,4 +2929,3 @@ async def test_process_tools_bulk_skips_restore_when_no_creates(import_service, 
     assert status.skipped_entities == 1
     # No DB queries for restore since nothing was created
     mock_db.execute.return_value.scalar_one_or_none.assert_not_called()
-    mock_db.flush.assert_not_called()
