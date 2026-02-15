@@ -6,8 +6,9 @@ MCP server implementation guidance for AI coding assistants.
 
 ```
 mcp-servers/
-├── go/                         # Go MCP servers (5 implementations)
+├── go/                         # Go MCP servers (6 implementations)
 │   ├── fast-time-server/       # Time/date operations
+│   ├── slow-time-server/       # Configurable-latency testing server
 │   ├── calculator-server/      # Math operations
 │   ├── system-monitor-server/  # System metrics
 │   ├── benchmark-server/       # Performance benchmarking
