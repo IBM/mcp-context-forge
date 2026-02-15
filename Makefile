@@ -1273,6 +1273,36 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
 
 # =============================================================================
+# help: 🛡️  RESILIENCE TESTING STACK (slow-time-server)
+# help: resilience-up          - Start slow-time-server for timeout/circuit breaker testing
+# help: resilience-down        - Stop resilience testing stack
+# help: resilience-logs        - Show resilience stack logs
+
+resilience-up:                             ## Start slow-time-server for resilience testing
+	@echo "Starting resilience testing stack (slow-time-server on port 8889)..."
+	$(COMPOSE_CMD_MONITOR) --profile resilience up -d
+	@echo ""
+	@echo "Resilience stack started!"
+	@echo ""
+	@echo "   Slow Time Server: http://localhost:8889"
+	@echo "     REST API:       http://localhost:8889/api/v1/time?delay=5"
+	@echo "     MCP SSE:        http://localhost:8889/sse"
+	@echo "     MCP HTTP:       http://localhost:8889/http"
+	@echo "     API Docs:       http://localhost:8889/api/v1/docs"
+	@echo "     Health:         http://localhost:8889/health"
+	@echo ""
+	@echo "   Run locust test:"
+	@echo "     locust -f tests/loadtest/locustfile_slow_time_server.py --host=http://localhost:8889"
+
+resilience-down:                           ## Stop resilience testing stack
+	@echo "Stopping resilience testing stack..."
+	$(COMPOSE_CMD_MONITOR) --profile resilience down --remove-orphans
+	@echo "Resilience stack stopped."
+
+resilience-logs:                           ## Show resilience stack logs
+	$(COMPOSE_CMD_MONITOR) --profile resilience logs -f --tail=100
+
+# =============================================================================
 # help: 🎯 BENCHMARK STACK (Go benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack

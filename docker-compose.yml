@@ -16,7 +16,8 @@
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
 #  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
-#  --profile testing:     Adds Locust (web UI), A2A echo agent, slow_time_server, fast_test_server + auto-registration
+#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
@@ -1457,7 +1458,7 @@ services:
   # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing
   # Introduces artificial latency on every tool call. Use for testing gateway
   # timeout enforcement, circuit breaker behaviour, and session pool resilience.
-  # Usage: docker compose --profile testing up -d
+  # Usage: docker compose --profile resilience up -d
   ###############################################################################
   slow_time_server:
     build:
@@ -1486,7 +1487,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 64M
-    profiles: ["testing"]
+    profiles: ["resilience"]
 
   ###############################################################################
   # Auto-registration service - registers slow_time_server with gateway
@@ -1552,7 +1553,7 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing"]
+    profiles: ["resilience"]
 
   ###############################################################################
   # Fast Test Server - Ultra-fast Rust MCP server for performance testing

@@ -22,10 +22,10 @@ The **slow-time-server** is a configurable-latency Go-based MCP server designed 
 
 ### Using Docker Compose (Recommended)
 
-The slow-time-server is included in the `testing` profile:
+The slow-time-server is included in the `resilience` profile:
 
 ```bash
-docker compose --profile testing up -d
+docker compose --profile resilience up -d
 ```
 
 This starts the server on port **8889** (mapped from container port 8081) and automatically registers it with the gateway.
@@ -268,7 +268,7 @@ A Locust test file is provided at `tests/loadtest/locustfile_slow_time_server.py
 
 ```bash
 # Via docker compose (testing profile includes Locust)
-docker compose --profile testing up -d
+docker compose --profile resilience up -d
 
 # Or run directly
 locust -f tests/loadtest/locustfile_slow_time_server.py \
