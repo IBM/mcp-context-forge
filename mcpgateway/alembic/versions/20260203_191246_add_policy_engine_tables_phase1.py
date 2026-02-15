@@ -9,7 +9,6 @@ Create Date: 2026-02-03
 # Third-Party
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision = "policy_engine_phase1"
@@ -46,7 +45,7 @@ def upgrade():
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("effect", sa.String(length=10), nullable=False),
         sa.Column("priority", sa.Integer(), nullable=True),
-        sa.Column("conditions", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("conditions", sa.JSON, nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
@@ -69,8 +68,8 @@ def upgrade():
         sa.Column("resource_id", sa.String(length=255), nullable=True),
         sa.Column("decision", sa.String(length=10), nullable=False),
         sa.Column("reason", sa.Text(), nullable=True),
-        sa.Column("matching_policies", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("context", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("matching_policies", sa.JSON, nullable=True),
+        sa.Column("context", sa.JSON, nullable=True),
         sa.Column("request_id", sa.String(length=100), nullable=True),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -88,8 +87,8 @@ def upgrade():
         sa.Column("resource_type", sa.String(length=50), nullable=False),
         sa.Column("resource_id", sa.String(length=255), nullable=True),
         sa.Column("policy_id", sa.UUID(), nullable=True),
-        sa.Column("allowed_roles", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("denied_users", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("allowed_roles", sa.JSON, nullable=True),
+        sa.Column("denied_users", sa.JSON, nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
         sa.ForeignKeyConstraint(
