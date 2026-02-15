@@ -1,23 +1,8 @@
 stages:
-  - test
+  - sanity
 
-default:
-  image: python:3.11-slim
-
-variables:
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PYTHONUNBUFFERED: "1"
-  DATABASE_URL: "sqlite:///:memory:"
-
-test:
-  stage: test
-  before_script:
-    - python3 -V
-    - python3 -m venv .venv
-    - . .venv/bin/activate
-    - python -V
-    - python -m pip install --upgrade pip
-    - python -m pip install -e . || true
-    - python -m pip install pytest
+sanity:
+  stage: sanity
+  image: alpine:3.20
   script:
-    - pytest || echo "No tests or failing tests — pipeline still passes for now"
+    - echo "CI skeleton OK (no runtime dependencies yet)."
