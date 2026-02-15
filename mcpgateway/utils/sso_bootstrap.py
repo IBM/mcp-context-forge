@@ -226,7 +226,11 @@ def get_predefined_sso_providers() -> List[Dict]:
             # First-Party
             from mcpgateway.utils.keycloak_discovery import discover_keycloak_endpoints_sync
 
-            endpoints = discover_keycloak_endpoints_sync(settings.sso_keycloak_base_url, settings.sso_keycloak_realm)
+            endpoints = discover_keycloak_endpoints_sync(
+                settings.sso_keycloak_base_url,
+                settings.sso_keycloak_realm,
+                public_base_url=getattr(settings, "sso_keycloak_public_base_url", None),
+            )
 
             if endpoints:
                 providers.append(
@@ -241,7 +245,6 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "token_url": endpoints["token_url"],
                         "userinfo_url": endpoints["userinfo_url"],
                         "issuer": endpoints["issuer"],
-                        "jwks_uri": endpoints.get("jwks_uri"),
                         "scope": "openid profile email",
                         "trusted_domains": settings.sso_trusted_domains,
                         "auto_create_users": settings.sso_auto_create_users,
@@ -249,18 +252,25 @@ def get_predefined_sso_providers() -> List[Dict]:
                         "provider_metadata": {
                             "realm": settings.sso_keycloak_realm,
                             "base_url": settings.sso_keycloak_base_url,
+                            "public_base_url": getattr(settings, "sso_keycloak_public_base_url", None),
                             "map_realm_roles": settings.sso_keycloak_map_realm_roles,
                             "map_client_roles": settings.sso_keycloak_map_client_roles,
                             "username_claim": settings.sso_keycloak_username_claim,
                             "email_claim": settings.sso_keycloak_email_claim,
                             "groups_claim": settings.sso_keycloak_groups_claim,
+                            # Keep JWKS endpoint in provider metadata because SSOProvider
+                            # model has no dedicated jwks_uri column.
+                            "jwks_uri": endpoints.get("jwks_uri"),
+                            "role_mappings": getattr(settings, "sso_keycloak_role_mappings", {}),
+                            "default_role": getattr(settings, "sso_keycloak_default_role", None),
+                            "resolve_team_scope_to_personal_team": getattr(settings, "sso_keycloak_resolve_team_scope_to_personal_team", False),
                         },
                     }
                 )
             else:
                 logger.error(f"Failed to discover Keycloak endpoints for realm '{settings.sso_keycloak_realm}' at {settings.sso_keycloak_base_url}")
         except Exception as e:
-            logger.error(f"Error bootstrapping Keycloak provider: {e}")
+            logger.error(f"Error bootstrapping Keycloak provider: {type(e).__name__}: {e}", exc_info=True)
 
     # Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.)
     if settings.sso_generic_enabled and settings.sso_generic_client_id and settings.sso_generic_provider_id:

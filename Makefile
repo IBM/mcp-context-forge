@@ -4756,6 +4756,12 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
+# help: compose-sso           - Start stack with Keycloak SSO profile enabled
+# help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
+# help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
+# help: compose-sso-down      - Stop & remove SSO-profile containers (keep named volumes)
+# help: compose-sso-clean     - ✨ Down SSO stack and delete named volumes (data-loss ⚠)
+# help: sso-test-login        - Run SSO smoke checks against compose stack
 # help: compose-lite-up       - Start lite stack (reduced resources for local dev)
 # help: compose-lite-down     - Stop lite stack
 # help: compose-restart      - Recreate changed containers, pulling / building as needed
@@ -4820,7 +4826,8 @@ define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
-.PHONY: compose-up compose-lite-up compose-restart compose-build compose-pull \
+.PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login \
+	compose-lite-up compose-restart compose-build compose-pull \
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
@@ -4854,6 +4861,70 @@ compose-upgrade-pg18: compose-validate
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+
+compose-sso: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐 Starting stack with SSO profile (Keycloak)..."
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+	@echo "✅ SSO stack started."
+	@echo "   Gateway:  http://localhost:8080"
+	@echo "   Keycloak: http://localhost:8180 (admin/changeme)"
+
+compose-sso-monitoring: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐📊 Starting stack with SSO + monitoring profiles..."
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_TRACES_EXPORTER=otlp \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile monitoring up -d
+	@echo "✅ SSO + monitoring stack started."
+
+compose-sso-testing: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐🧪 Starting stack with SSO + testing (+ inspector) profiles..."
+	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make compose-sso-testing)"
+	@mkdir -p reports
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	@echo "✅ SSO + testing stack started."
+
+compose-sso-down: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping SSO stack..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso down --remove-orphans
+	@echo "✅ SSO stack stopped."
+
+compose-sso-clean: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🧹 Stopping SSO stack and removing volumes..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso down -v --remove-orphans
+	@echo "✅ SSO stack and volumes removed."
+
+sso-test-login:
+	@echo "🧪 Running SSO smoke checks..."
+	@COMPOSE_CMD="$(COMPOSE_CMD)" ./scripts/test-sso-flow.sh
 
 compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
 	@if [ ! -f "docker-compose.override.lite.yml" ]; then \
@@ -7349,3 +7420,34 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+# -----------------------------------------------------------------------------
+# Temporary CI toggle for Conventional Commit message linting
+# -----------------------------------------------------------------------------
+# Default is disabled to avoid blocking in-flight PRs with legacy commit titles.
+# Re-enable by setting COMMITLINT_ENFORCED=1 in CI or locally.
+COMMITLINT_ENFORCED ?= 0
+COMMITLINT_FROM ?= HEAD~1
+COMMITLINT_TO ?= HEAD
+LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
+
+linting-workflow-commitlint:         ## 📝  Conventional Commits linting (toggleable)
+	@/bin/bash -c "set -euo pipefail; \
+		if [ '$(COMMITLINT_ENFORCED)' != '1' ]; then \
+			echo '⏭️ commitlint disabled (set COMMITLINT_ENFORCED=1 to enable)'; \
+			exit 0; \
+		fi; \
+		echo '📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)...'; \
+		command -v node >/dev/null 2>&1 || { echo '❌ node not found'; exit 1; }; \
+		command -v npm >/dev/null 2>&1 || { echo '❌ npm not found'; exit 1; }; \
+		mkdir -p '$(LINT_NODE_ROOT)/commitlint' '$(LINT_NODE_ROOT)/npm-cache'; \
+		cd '$(LINT_NODE_ROOT)/commitlint'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional; \
+		cd '$(CURDIR)'; \
+		NODE_PATH='$(LINT_NODE_ROOT)/commitlint/node_modules' \
+			node '$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js' \
+			--extends @commitlint/config-conventional \
+			--from '$(COMMITLINT_FROM)' \
+			--to '$(COMMITLINT_TO)'"
