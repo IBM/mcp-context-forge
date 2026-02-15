@@ -12,14 +12,12 @@ variables:
 test:
   stage: test
   before_script:
+    - python3 -V
+    - python3 -m venv .venv
+    - . .venv/bin/activate
     - python -V
-    - python -m venv .venv
-    - source .venv/bin/activate
-    - pip install --upgrade pip
-    # install project but don't fail if optional deps break
-    - pip install -e . || true
-    # only install minimal testing deps
-    - pip install pytest
+    - python -m pip install --upgrade pip
+    - python -m pip install -e . || true
+    - python -m pip install pytest
   script:
-    # run tests if they exist, otherwise still pass
     - pytest || echo "No tests or failing tests — pipeline still passes for now"
