@@ -6168,6 +6168,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                 >
                   Expires In (Days)
+                  {% if require_token_expiration %}
+                  <span class="text-red-500">*</span>
+                  {% endif %}
                 </label>
                 <input
                   type="number"
@@ -6175,9 +6178,23 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   min="1"
                   max="365"
                   value="30"
+                  {% if require_token_expiration %}required{% endif %}
+                  {% if require_token_expiration %}
+                  oninvalid="this.setCustomValidity('Expiration is required by server policy. Please enter the number of days (e.g., 30, 90, 365).')"
+                  oninput="this.setCustomValidity('')"
+                  {% endif %}
                   class="mt-1 px-1.5 block w-full border border-gray-300 rounded-md shadow-sm bg-gray-100 dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
                   placeholder="30"
                 />
+                {% if require_token_expiration %}
+                <p class="mt-1 text-xs text-red-600 dark:text-red-400 font-medium">
+                  Token expiration is required by server policy (REQUIRE_TOKEN_EXPIRATION=true).
+                </p>
+                {% else %}
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Leave empty for tokens that never expire
+                </p>
+                {% endif %}
               </div>
             </div>
             <div>
