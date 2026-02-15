@@ -1,0 +1,250 @@
+{{- if .Values.tls.enabled }}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+{{- $gatewayService := printf "%s-mcpgateway" $fullName -}}
+{{- $gatewayPort := .Values.mcpContextForge.service.port -}}
+{{- $tlsSecretName := .Values.tls.certificate.existingSecret | default (printf "%s-nginx-tls-cert" $fullName) -}}
+
+{{- if and (not .Values.tls.certificate.existingSecret) .Values.tls.certificate.selfSigned.enabled }}
+{{- $cert := genSelfSignedCert .Values.tls.certificate.selfSigned.commonName .Values.tls.certificate.selfSigned.ipAddresses .Values.tls.certificate.selfSigned.dnsNames (.Values.tls.certificate.selfSigned.durationDays | int) -}}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $tlsSecretName }}
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-tls
+  type: kubernetes.io/tls
+data:
+  {{ .Values.tls.certificate.certKey }}: {{ $cert.Cert | b64enc }}
+  {{ .Values.tls.certificate.privateKeyKey }}: {{ $cert.Key | b64enc }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-nginx-tls-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-tls
+data:
+  nginx.conf: |
+    worker_processes auto;
+
+    events {
+      worker_connections 8192;
+    }
+
+    http {
+      include /etc/nginx/mime.types;
+      default_type application/octet-stream;
+      sendfile on;
+      keepalive_timeout 65;
+      server_tokens off;
+
+      proxy_cache_path /var/cache/nginx levels=1:2 keys_zone=mcp_cache:100m max_size=1g inactive=10m use_temp_path=off;
+
+      upstream gateway_upstream {
+        server {{ $gatewayService }}:{{ $gatewayPort }};
+        keepalive 32;
+      }
+
+      server {
+        listen 80;
+
+        location = /health {
+          access_log off;
+          add_header Content-Type text/plain;
+          return 200 "ok\n";
+        }
+
+        location = /nginx_status {
+          stub_status on;
+          access_log off;
+          allow all;
+        }
+
+        {{- if .Values.tls.forceHttps }}
+        location / {
+          return 301 https://$host$request_uri;
+        }
+        {{- else }}
+        location / {
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Connection "";
+          proxy_cache mcp_cache;
+          proxy_cache_revalidate on;
+          proxy_cache_min_uses 1;
+          proxy_cache_use_stale error timeout invalid_header updating http_500 http_502 http_503 http_504;
+          proxy_cache_lock on;
+          proxy_cache_background_update on;
+          proxy_cache_valid 200 1m;
+          proxy_cache_valid 404 10s;
+          add_header X-Cache-Status $upstream_cache_status;
+          proxy_pass http://gateway_upstream;
+        }
+        {{- end }}
+      }
+
+      server {
+        listen 443 ssl;
+        ssl_certificate /etc/nginx/certs/{{ .Values.tls.certificate.certKey }};
+        ssl_certificate_key /etc/nginx/certs/{{ .Values.tls.certificate.privateKeyKey }};
+
+        location = /health {
+          access_log off;
+          add_header Content-Type text/plain;
+          return 200 "ok\n";
+        }
+
+        location = /nginx_status {
+          stub_status on;
+          access_log off;
+          allow all;
+        }
+
+        location / {
+          proxy_http_version 1.1;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+          proxy_set_header X-Forwarded-Proto $scheme;
+          proxy_set_header Connection "";
+          proxy_cache mcp_cache;
+          proxy_cache_revalidate on;
+          proxy_cache_min_uses 1;
+          proxy_cache_use_stale error timeout invalid_header updating http_500 http_502 http_503 http_504;
+          proxy_cache_lock on;
+          proxy_cache_background_update on;
+          proxy_cache_valid 200 1m;
+          proxy_cache_valid 404 10s;
+          add_header X-Cache-Status $upstream_cache_status;
+          proxy_pass http://gateway_upstream;
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-nginx-tls
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-tls
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-nginx-tls
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-nginx-tls
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      {{- if .Values.tls.sysctls }}
+      securityContext:
+        sysctls:
+          {{- range .Values.tls.sysctls }}
+          {{- $parts := splitList "=" . }}
+          - name: {{ index $parts 0 | quote }}
+            value: {{ index $parts 1 | quote }}
+          {{- end }}
+      {{- end }}
+      containers:
+        - name: nginx-tls
+          image: "{{ .Values.tls.image.repository }}:{{ .Values.tls.image.tag }}"
+          imagePullPolicy: {{ .Values.tls.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.tls.service.httpPort }}
+            - name: https
+              containerPort: {{ .Values.tls.service.httpsPort }}
+          {{- with .Values.tls.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          {{- with .Values.tls.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          resources:
+{{- toYaml .Values.tls.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: certs
+              mountPath: /etc/nginx/certs
+              readOnly: true
+            - name: cache
+              mountPath: /var/cache/nginx
+      volumes:
+        - name: config
+          configMap:
+            name: {{ $fullName }}-nginx-tls-config
+        - name: certs
+          secret:
+            secretName: {{ $tlsSecretName }}
+        - name: cache
+          {{- if .Values.tls.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ $fullName }}-nginx-tls-cache
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-nginx-tls
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-tls
+spec:
+  type: {{ .Values.tls.service.type }}
+  selector:
+    app: {{ $fullName }}-nginx-tls
+  ports:
+    - name: http
+      port: {{ .Values.tls.service.httpPort }}
+      targetPort: {{ .Values.tls.service.httpPort }}
+      protocol: TCP
+    - name: https
+      port: {{ .Values.tls.service.httpsPort }}
+      targetPort: {{ .Values.tls.service.httpsPort }}
+      protocol: TCP
+{{- if .Values.tls.persistence.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullName }}-nginx-tls-cache
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-nginx-tls
+spec:
+  accessModes:
+    {{- range .Values.tls.persistence.accessModes }}
+    - {{ . }}
+    {{- end }}
+  resources:
+    requests:
+      storage: {{ .Values.tls.persistence.size }}
+  {{- if .Values.tls.persistence.storageClassName }}
+  storageClassName: {{ .Values.tls.persistence.storageClassName }}
+  {{- end }}
+{{- end }}
+{{- end }}
