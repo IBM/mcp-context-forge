@@ -25,6 +25,7 @@ def reset_plugin_manager_state():
     PluginManager.reset()
     yield
 
+
 @pytest.fixture(autouse=True)
 def clear_plugins_settings_cache(reset_plugin_manager_state):
     """Clear the settings LRU cache so env changes take effect per test."""
