@@ -1149,6 +1149,21 @@ def test_email_user_failed_attempts_flow():
     assert user.locked_until is not None
 
 
+def test_password_reset_token_helpers():
+    token = db.PasswordResetToken(
+        user_email="user@example.com",
+        token_hash="abcd" * 16,
+        expires_at=db.utc_now() + timedelta(minutes=10),
+    )
+    assert token.is_expired() is False
+    assert token.is_used() is False
+
+    token.expires_at = db.utc_now() - timedelta(minutes=1)
+    token.used_at = db.utc_now()
+    assert token.is_expired() is True
+    assert token.is_used() is True
+
+
 def test_email_user_team_helpers():
     team = db.EmailTeam(name="Team", slug="team", created_by="user@example.com", is_personal=False)
     personal_team = db.EmailTeam(name="Personal", slug="personal", created_by="user@example.com", is_personal=True)
