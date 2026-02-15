@@ -28,6 +28,7 @@ def _write_file(tmp_path: Path, name: str) -> str:
 
 def test_bool_parsing_via_settings(monkeypatch):
     """Bool fields on PluginsSettings handle true/false strings correctly."""
+    # First-Party
     from mcpgateway.plugins.framework.settings import PluginsSettings
 
     monkeypatch.setenv("PLUGINS_CLIENT_MTLS_VERIFY", "true")
@@ -196,3 +197,15 @@ def test_plugin_config_external_config_disallowed():
     mcp = MCPClientConfig(proto=TransportType.SSE, url="https://example.com")
     with pytest.raises(ValueError):
         PluginConfig(name="external", kind=EXTERNAL_PLUGIN_TYPE, config={"x": 1}, mcp=mcp)
+
+
+def test_transport_type_enum_parity():
+    """Ensure framework and common TransportType enums stay in sync."""
+    # First-Party
+    from mcpgateway.plugins.framework.models import TransportType as FrameworkTransportType
+
+    common_members = {m.name: m.value for m in TransportType}
+    framework_members = {m.name: m.value for m in FrameworkTransportType}
+    assert framework_members == common_members, (
+        f"TransportType enums diverged. " f"Common-only: {set(common_members) - set(framework_members)}, " f"Framework-only: {set(framework_members) - set(common_members)}"
+    )
