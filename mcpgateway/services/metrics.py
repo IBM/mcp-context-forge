@@ -50,6 +50,27 @@ from prometheus_fastapi_instrumentator import Instrumentator
 # First-Party
 from mcpgateway.config import settings
 
+
+def _get_registry_collector(metric_name: str):
+    """Best-effort lookup for a registered collector by metric name.
+
+    Prometheus client's public API does not expose a lookup helper, and tests
+    may instantiate multiple apps in the same process. We use a guarded access
+    to the internal registry mapping to avoid duplicate registrations.
+
+    Args:
+        metric_name (str): Metric name to look up.
+
+    Returns:
+        Any: Registered collector for the metric name, if available.
+    """
+
+    names_to_collectors = getattr(REGISTRY, "_names_to_collectors", None)
+    if not isinstance(names_to_collectors, dict):
+        return None
+    return names_to_collectors.get(metric_name)
+
+
 # Global Metrics
 # Exposed for import by services/plugins to increment counters
 tool_timeout_counter = Counter(
@@ -125,46 +146,84 @@ def setup_metrics(app):
             db_engine = "unknown"
 
         # Custom labels gauge with automatic database engine detection
+        # NOTE: setup_metrics may be invoked multiple times in a single process
+        # (tests instantiate multiple FastAPI apps). Prometheus client registries
+        # do not allow registering the same metric name twice, so we must re-use
+        # an existing collector when present.
         custom_labels = dict(kv.split("=") for kv in os.getenv("METRICS_CUSTOM_LABELS", "").split(",") if "=" in kv)
 
         # Always include database engine in metrics
         custom_labels["engine"] = db_engine
 
-        if custom_labels:
-            app_info_gauge = Gauge(
-                "app_info",
-                "Static labels for the application",
-                labelnames=list(custom_labels.keys()),
-                registry=REGISTRY,
-            )
-            app_info_gauge.labels(**custom_labels).set(1)
+        # Use a deterministic label order for stable registration.
+        # Keep `engine` first, then any custom labels sorted.
+        extra_label_names = sorted(label for label in custom_labels.keys() if label != "engine")
+        desired_label_names = ["engine", *extra_label_names]
+
+        app_info_gauge = _get_registry_collector("app_info")
+        if app_info_gauge is None:
+            try:
+                app_info_gauge = Gauge(
+                    "app_info",
+                    "Static labels for the application",
+                    labelnames=desired_label_names,
+                    registry=REGISTRY,
+                )
+            except ValueError:
+                # Another test/app instance registered it first; reuse it.
+                app_info_gauge = _get_registry_collector("app_info")
+
+        if app_info_gauge is not None:
+            labelnames = getattr(app_info_gauge, "_labelnames", ())
+            if labelnames:
+                labels = {name: custom_labels.get(name, "") for name in labelnames}
+                app_info_gauge.labels(**labels).set(1)
+            else:
+                app_info_gauge.set(1)
 
         excluded = [pattern.strip() for pattern in (settings.METRICS_EXCLUDED_HANDLERS or "").split(",") if pattern.strip()]
 
         # Add database metrics gauge
-        db_info_gauge = Gauge(
-            "database_info",
-            "Database engine information",
-            labelnames=["engine", "url_scheme"],
-            registry=REGISTRY,
-        )
+        db_info_gauge = _get_registry_collector("database_info")
+        if db_info_gauge is None:
+            try:
+                db_info_gauge = Gauge(
+                    "database_info",
+                    "Database engine information",
+                    labelnames=["engine", "url_scheme"],
+                    registry=REGISTRY,
+                )
+            except ValueError:
+                db_info_gauge = _get_registry_collector("database_info")
 
         # Extract URL scheme for additional context
         url_scheme = database_url.split("://", maxsplit=1)[0] if "://" in database_url else "unknown"
-        db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
+        if db_info_gauge is not None:
+            db_info_gauge.labels(engine=db_engine, url_scheme=url_scheme).set(1)
 
         # Add HTTP connection pool metrics with lazy initialization
         # These gauges are updated from app lifespan after SharedHttpClient is ready
-        http_pool_max_connections = Gauge(
-            "http_pool_max_connections",
-            "Maximum allowed HTTP connections in the pool",
-            registry=REGISTRY,
-        )
-        http_pool_max_keepalive = Gauge(
-            "http_pool_max_keepalive_connections",
-            "Maximum idle keepalive connections to retain",
-            registry=REGISTRY,
-        )
+        http_pool_max_connections = _get_registry_collector("http_pool_max_connections")
+        if http_pool_max_connections is None:
+            try:
+                http_pool_max_connections = Gauge(
+                    "http_pool_max_connections",
+                    "Maximum allowed HTTP connections in the pool",
+                    registry=REGISTRY,
+                )
+            except ValueError:
+                http_pool_max_connections = _get_registry_collector("http_pool_max_connections")
+
+        http_pool_max_keepalive = _get_registry_collector("http_pool_max_keepalive_connections")
+        if http_pool_max_keepalive is None:
+            try:
+                http_pool_max_keepalive = Gauge(
+                    "http_pool_max_keepalive_connections",
+                    "Maximum idle keepalive connections to retain",
+                    registry=REGISTRY,
+                )
+            except ValueError:
+                http_pool_max_keepalive = _get_registry_collector("http_pool_max_keepalive_connections")
 
         # Store update function as a module-level attribute so it can be called
         # from the application lifespan after SharedHttpClient is initialized
@@ -177,8 +236,10 @@ def setup_metrics(app):
                 # Only update if client is initialized
                 if SharedHttpClient._instance and SharedHttpClient._instance._initialized:  # pylint: disable=protected-access
                     stats = SharedHttpClient._instance.get_pool_stats()  # pylint: disable=protected-access
-                    http_pool_max_connections.set(stats.get("max_connections", 0))
-                    http_pool_max_keepalive.set(stats.get("max_keepalive", 0))
+                    if http_pool_max_connections is not None:
+                        http_pool_max_connections.set(stats.get("max_connections", 0))
+                    if http_pool_max_keepalive is not None:
+                        http_pool_max_keepalive.set(stats.get("max_keepalive", 0))
                     # Note: httpx doesn't expose current connection count, only limits
             except Exception:  # nosec B110
                 pass  # Silently skip if client not initialized or error occurs
