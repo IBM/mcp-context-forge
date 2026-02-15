@@ -64,6 +64,18 @@ circuit_breaker_open_counter = Counter(
     ["tool_name"],
 )
 
+password_reset_requests_counter = Counter(
+    "password_reset_requests_total",
+    "Total number of password reset requests",
+    ["outcome"],
+)
+
+password_reset_completions_counter = Counter(
+    "password_reset_completions_total",
+    "Total number of password reset completion attempts",
+    ["outcome"],
+)
+
 
 def setup_metrics(app):
     """

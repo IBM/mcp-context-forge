@@ -21,11 +21,17 @@ Examples:
 """
 
 # Standard
+import asyncio
 import base64
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import re
+import secrets
+import time
 from typing import Optional
+import urllib.parse
 import warnings
 
 # Third-Party
@@ -36,10 +42,12 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, utc_now
+from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, PasswordResetToken, utc_now
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
+from mcpgateway.services.email_notification_service import AuthEmailNotificationService
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
 from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
@@ -57,6 +65,14 @@ class UsersListResult:
     next_cursor: Optional[str] = None
     pagination: Optional[PaginationMeta] = None
     links: Optional[PaginationLinks] = None
+
+
+@dataclass(frozen=True)
+class PasswordResetRequestResult:
+    """Result for forgot-password requests."""
+
+    rate_limited: bool
+    email_sent: bool
 
 
 class EmailValidationError(Exception):
@@ -134,6 +150,7 @@ class EmailAuthService:
         """
         self.db = db
         self.password_service = Argon2PasswordService()
+        self.email_notification_service = AuthEmailNotificationService()
         self._role_service = None
         logger.debug("EmailAuthService initialized")
 
@@ -289,6 +306,81 @@ class EmailAuthService:
             raise PasswordValidationError("Password must contain at least one special character")
 
         return True
+
+    @staticmethod
+    def _hash_reset_token(token: str) -> str:
+        """Hash a plaintext password-reset token using SHA-256."""
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _minimum_reset_response_seconds() -> float:
+        min_ms = max(0, int(getattr(settings, "password_reset_min_response_ms", 250)))
+        return min_ms / 1000.0
+
+    @staticmethod
+    def _build_forgot_password_url() -> str:
+        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
+        root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
+        return f"{app_domain}{root_path}/admin/forgot-password"
+
+    @staticmethod
+    def _build_reset_password_url(token: str) -> str:
+        safe_token = urllib.parse.quote(token, safe="")
+        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
+        root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
+        return f"{app_domain}{root_path}/admin/reset-password/{safe_token}"
+
+    async def _invalidate_user_auth_cache(self, email: str) -> None:
+        """Invalidate cached authentication data for a user."""
+        try:
+            # First-Party
+            from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
+
+            await asyncio.wait_for(asyncio.shield(auth_cache.invalidate_user(email)), timeout=5.0)
+        except asyncio.TimeoutError:
+            logger.warning("Auth cache invalidation timed out for %s - continuing", email)
+        except Exception as cache_error:  # nosec B110
+            logger.debug("Failed to invalidate auth cache for %s: %s", email, cache_error)
+
+    def _log_auth_event(
+        self,
+        event_type: str,
+        success: bool,
+        user_email: Optional[str],
+        ip_address: Optional[str] = None,
+        user_agent: Optional[str] = None,
+        failure_reason: Optional[str] = None,
+        details: Optional[dict] = None,
+    ) -> None:
+        """Persist a custom authentication/security event."""
+        try:
+            event = EmailAuthEvent(
+                user_email=user_email,
+                event_type=event_type,
+                success=success,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                failure_reason=failure_reason,
+                details=orjson.dumps(details).decode() if details else None,
+            )
+            self.db.add(event)
+            self.db.commit()
+        except Exception as exc:
+            self.db.rollback()
+            logger.warning("Failed to persist auth event %s for %s: %s", event_type, user_email, exc)
+
+    def _recent_password_reset_request_count(self, email: str, now: datetime) -> int:
+        """Count recent password-reset requests for rate limiting."""
+        window_minutes = int(getattr(settings, "password_reset_rate_window_minutes", 15))
+        window_start = now - timedelta(minutes=window_minutes)
+        stmt = (
+            select(func.count(EmailAuthEvent.id))  # pylint: disable=not-callable
+            .where(EmailAuthEvent.event_type == "PASSWORD_RESET_REQUESTED")
+            .where(EmailAuthEvent.user_email == email)
+            .where(EmailAuthEvent.timestamp >= window_start)
+        )
+        count = self.db.execute(stmt).scalar()
+        return int(count or 0)
 
     async def get_user_by_email(self, email: str) -> Optional[EmailUser]:
         """Get user by email address.
@@ -532,6 +624,26 @@ class EmailAuthService:
                     if is_locked:
                         logger.warning(f"Account locked for {email} after {max_attempts} failed attempts")
                         failure_reason = "Account locked due to too many failed attempts"
+                        lockout_notifications_enabled = getattr(settings, "account_lockout_notification_enabled", True)
+                        if isinstance(lockout_notifications_enabled, bool) and lockout_notifications_enabled:
+                            locked_until_iso = user.locked_until.isoformat() if user.locked_until else "unknown"
+                            try:
+                                await self.email_notification_service.send_account_lockout_email(
+                                    to_email=user.email,
+                                    full_name=user.full_name,
+                                    locked_until_iso=locked_until_iso,
+                                    reset_url=self._build_forgot_password_url(),
+                                )
+                            except Exception as email_exc:
+                                logger.warning("Failed to send lockout notification for %s: %s", email, email_exc)
+                        self._log_auth_event(
+                            event_type="ACCOUNT_LOCKED",
+                            success=True,
+                            user_email=email,
+                            ip_address=ip_address,
+                            user_agent=user_agent,
+                            details={"locked_until": user.locked_until.isoformat() if user.locked_until else None},
+                        )
 
                 self.db.commit()
                 logger.info(f"Authentication failed for {email}: invalid password")
@@ -551,6 +663,193 @@ class EmailAuthService:
             auth_event = EmailAuthEvent.create_login_attempt(user_email=email, success=auth_success, ip_address=ip_address, user_agent=user_agent, failure_reason=failure_reason)
             self.db.add(auth_event)
             self.db.commit()
+
+    async def request_password_reset(self, email: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> PasswordResetRequestResult:
+        """Create a password reset token and send reset email when user exists.
+
+        The function intentionally returns generic outcomes to avoid account
+        enumeration while still allowing rate-limit enforcement.
+        """
+        start_time = time.monotonic()
+        normalized_email = (email or "").lower().strip()
+        now = utc_now()
+        _ = self._hash_reset_token(secrets.token_urlsafe(32))
+
+        rate_limit = int(getattr(settings, "password_reset_rate_limit", 5))
+        is_rate_limited = bool(normalized_email and self._recent_password_reset_request_count(normalized_email, now) >= rate_limit)
+        if is_rate_limited:
+            password_reset_requests_counter.labels(outcome="rate_limited").inc()
+            self._log_auth_event(
+                event_type="PASSWORD_RESET_RATE_LIMITED",
+                success=False,
+                user_email=normalized_email or None,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            remaining = self._minimum_reset_response_seconds() - (time.monotonic() - start_time)
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            return PasswordResetRequestResult(rate_limited=True, email_sent=False)
+
+        user = await self.get_user_by_email(normalized_email) if normalized_email else None
+        self._log_auth_event(
+            event_type="PASSWORD_RESET_REQUESTED",
+            success=True,
+            user_email=normalized_email or None,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+        email_sent = False
+        if user and user.is_active:
+            token_plaintext = secrets.token_urlsafe(48)
+            token_hash = self._hash_reset_token(token_plaintext)
+            expires_minutes = int(getattr(settings, "password_reset_token_expiry_minutes", 60))
+            expires_at = now + timedelta(minutes=expires_minutes)
+
+            existing_stmt = select(PasswordResetToken).where(PasswordResetToken.user_email == user.email).where(PasswordResetToken.used_at.is_(None)).where(PasswordResetToken.expires_at > now)
+            for existing in self.db.execute(existing_stmt).scalars().all():
+                existing.used_at = now
+
+            token_record = PasswordResetToken(
+                user_email=user.email,
+                token_hash=token_hash,
+                expires_at=expires_at,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            self.db.add(token_record)
+            self.db.commit()
+
+            try:
+                email_sent = await self.email_notification_service.send_password_reset_email(
+                    to_email=user.email,
+                    full_name=user.full_name,
+                    reset_url=self._build_reset_password_url(token_plaintext),
+                    expires_minutes=expires_minutes,
+                )
+            except Exception as exc:
+                logger.warning("Failed to send password reset email to %s: %s", user.email, exc)
+
+            password_reset_requests_counter.labels(outcome="accepted").inc()
+            self._log_auth_event(
+                event_type="PASSWORD_RESET_EMAIL_SENT",
+                success=True,
+                user_email=user.email,
+                ip_address=ip_address,
+                user_agent=user_agent,
+                details={"token_hash": token_hash, "expires_at": expires_at.isoformat(), "email_sent": email_sent},
+            )
+        else:
+            password_reset_requests_counter.labels(outcome="accepted").inc()
+
+        remaining = self._minimum_reset_response_seconds() - (time.monotonic() - start_time)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
+        return PasswordResetRequestResult(rate_limited=False, email_sent=email_sent)
+
+    async def validate_password_reset_token(self, token: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> PasswordResetToken:
+        """Validate a one-time password reset token."""
+        if not token:
+            password_reset_completions_counter.labels(outcome="invalid_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, None, ip_address, user_agent, failure_reason="Missing token")
+            raise AuthenticationError("This reset link is invalid")
+
+        token_hash = self._hash_reset_token(token)
+        stmt = select(PasswordResetToken).where(PasswordResetToken.token_hash == token_hash)
+        reset_token = self.db.execute(stmt).scalar_one_or_none()
+
+        if not reset_token:
+            password_reset_completions_counter.labels(outcome="invalid_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, None, ip_address, user_agent, failure_reason="Invalid token hash")
+            raise AuthenticationError("This reset link is invalid")
+
+        if not hmac.compare_digest(reset_token.token_hash, token_hash):
+            password_reset_completions_counter.labels(outcome="invalid_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, reset_token.user_email, ip_address, user_agent, failure_reason="Token hash mismatch")
+            raise AuthenticationError("This reset link is invalid")
+
+        if reset_token.is_used():
+            password_reset_completions_counter.labels(outcome="used_token").inc()
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, reset_token.user_email, ip_address, user_agent, failure_reason="Token already used")
+            raise AuthenticationError("This reset link has already been used")
+
+        if reset_token.is_expired():
+            password_reset_completions_counter.labels(outcome="expired_token").inc()
+            self._log_auth_event("PASSWORD_RESET_TOKEN_EXPIRED", False, reset_token.user_email, ip_address, user_agent, details={"token_hash": token_hash})
+            self._log_auth_event("PASSWORD_RESET_ATTEMPTED", False, reset_token.user_email, ip_address, user_agent, failure_reason="Token expired")
+            raise AuthenticationError("This reset link has expired")
+
+        self._log_auth_event("PASSWORD_RESET_ATTEMPTED", True, reset_token.user_email, ip_address, user_agent)
+        return reset_token
+
+    async def reset_password_with_token(self, token: str, new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
+        """Complete password reset using a validated one-time token."""
+        reset_token = await self.validate_password_reset_token(token, ip_address=ip_address, user_agent=user_agent)
+        user = await self.get_user_by_email(reset_token.user_email)
+        if not user or not user.is_active:
+            password_reset_completions_counter.labels(outcome="invalid_user").inc()
+            raise AuthenticationError("This reset link is invalid")
+
+        self.validate_password(new_password)
+        if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+            password_reset_completions_counter.labels(outcome="reused_password").inc()
+            raise PasswordValidationError("New password must be different from current password")
+
+        now = utc_now()
+        user.password_hash = await self.password_service.hash_password_async(new_password)
+        user.password_change_required = False
+        user.password_changed_at = now
+        user.failed_login_attempts = 0
+        user.locked_until = None
+
+        reset_token.used_at = now
+        outstanding_stmt = select(PasswordResetToken).where(PasswordResetToken.user_email == user.email).where(PasswordResetToken.id != reset_token.id).where(PasswordResetToken.used_at.is_(None))
+        for outstanding in self.db.execute(outstanding_stmt).scalars().all():
+            outstanding.used_at = now
+
+        self.db.commit()
+
+        if getattr(settings, "password_reset_invalidate_sessions", True):
+            await self._invalidate_user_auth_cache(user.email)
+
+        email_sent = False
+        try:
+            email_sent = await self.email_notification_service.send_password_reset_confirmation_email(to_email=user.email, full_name=user.full_name)
+        except Exception as exc:
+            logger.warning("Failed to send password reset confirmation for %s: %s", user.email, exc)
+
+        password_reset_completions_counter.labels(outcome="success").inc()
+        self._log_auth_event(
+            event_type="PASSWORD_RESET_COMPLETED",
+            success=True,
+            user_email=user.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details={"email_sent": email_sent},
+        )
+        return True
+
+    async def unlock_user_account(self, email: str, unlocked_by: Optional[str] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> EmailUser:
+        """Clear lockout state for a user account."""
+        normalized_email = email.lower().strip()
+        user = await self.get_user_by_email(normalized_email)
+        if not user:
+            raise ValueError(f"User {normalized_email} not found")
+
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.updated_at = utc_now()
+        self.db.commit()
+        self._log_auth_event(
+            event_type="ACCOUNT_UNLOCKED",
+            success=True,
+            user_email=user.email,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details={"unlocked_by": unlocked_by},
+        )
+        return user
 
     async def change_password(self, email: str, old_password: Optional[str], new_password: str, ip_address: Optional[str] = None, user_agent: Optional[str] = None) -> bool:
         """Change a user's password.
@@ -612,22 +911,9 @@ class EmailAuthService:
 
             # Invalidate auth cache for user
             try:
-                # Standard
-                import asyncio  # pylint: disable=import-outside-toplevel
-
-                # First-Party
-                from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
-
-                # Ensure cache invalidation runs before returning to avoid stale
-                # auth context being used by subsequent requests. Use a timeout
-                # to prevent blocking if Redis is slow or unresponsive.
-                # Shield the task to prevent cancellation on timeout - allows Redis
-                # operations to complete in background even if we stop waiting.
-                await asyncio.wait_for(asyncio.shield(auth_cache.invalidate_user(email)), timeout=5.0)
-            except asyncio.TimeoutError:
-                logger.warning(f"Auth cache invalidation timed out for {email} - continuing in background")
-            except Exception as cache_error:
-                logger.debug(f"Failed to invalidate auth cache on password change: {cache_error}")
+                await self._invalidate_user_auth_cache(email)
+            except Exception as cache_error:  # nosec B110 - best effort cache invalidation
+                logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)
 
             logger.info(f"Password changed successfully for {email}")
 

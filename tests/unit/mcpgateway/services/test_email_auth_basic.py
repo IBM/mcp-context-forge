@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser
+from mcpgateway.db import EmailAuthEvent, EmailTeam, EmailTeamMember, EmailUser, PasswordResetToken
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, EmailValidationError, PasswordValidationError, UserExistsError
 
@@ -838,6 +838,111 @@ class TestEmailAuthServiceUserManagement:
             assert result is None
 
     # =========================================================================
+    # Password Reset Flow Tests
+    # =========================================================================
+
+    @pytest.mark.asyncio
+    async def test_request_password_reset_rate_limited(self, service):
+        """Test forgot-password rate limiting."""
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_reset_rate_limit = 1
+            mock_settings.password_reset_min_response_ms = 0
+            mock_settings.password_reset_rate_window_minutes = 15
+
+            with patch.object(service, "_recent_password_reset_request_count", return_value=1):
+                result = await service.request_password_reset(email="user@example.com")
+
+        assert result.rate_limited is True
+        assert result.email_sent is False
+
+    @pytest.mark.asyncio
+    async def test_request_password_reset_existing_user_creates_token(self, service, mock_db):
+        """Test forgot-password request creates token for active user."""
+        user = MagicMock(spec=EmailUser)
+        user.email = "user@example.com"
+        user.full_name = "User Test"
+        user.is_active = True
+
+        existing_result = MagicMock()
+        existing_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = existing_result
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_reset_rate_limit = 5
+            mock_settings.password_reset_min_response_ms = 0
+            mock_settings.password_reset_rate_window_minutes = 15
+            mock_settings.password_reset_token_expiry_minutes = 60
+            mock_settings.app_domain = "http://localhost:4444"
+            mock_settings.app_root_path = ""
+
+            with patch.object(service, "_recent_password_reset_request_count", return_value=0):
+                with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=user)):
+                    with patch.object(service.email_notification_service, "send_password_reset_email", new=AsyncMock(return_value=True)):
+                        result = await service.request_password_reset(email="user@example.com")
+
+        assert result.rate_limited is False
+        assert result.email_sent is True
+        added_types = [type(call.args[0]) for call in mock_db.add.call_args_list]
+        assert PasswordResetToken in added_types
+
+    @pytest.mark.asyncio
+    async def test_validate_password_reset_token_expired(self, service, mock_db):
+        """Test expired reset token is rejected."""
+        token = "token123"
+        token_hash = service._hash_reset_token(token)
+
+        reset_token = MagicMock(spec=PasswordResetToken)
+        reset_token.user_email = "user@example.com"
+        reset_token.token_hash = token_hash
+        reset_token.is_used.return_value = False
+        reset_token.is_expired.return_value = True
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = reset_token
+
+        with pytest.raises(AuthenticationError, match="expired"):
+            await service.validate_password_reset_token(token)
+
+    @pytest.mark.asyncio
+    async def test_reset_password_with_token_success(self, service, mock_db, mock_password_service):
+        """Test successful password reset with valid token."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        reset_token = MagicMock(spec=PasswordResetToken)
+        reset_token.id = "token-id"
+        reset_token.user_email = "user@example.com"
+        reset_token.used_at = None
+
+        user = MagicMock(spec=EmailUser)
+        user.email = "user@example.com"
+        user.is_active = True
+        user.password_hash = "old_hash"
+        user.full_name = "User Name"
+
+        outstanding_result = MagicMock()
+        outstanding_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = outstanding_result
+
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_policy_enabled = False
+            mock_settings.password_prevent_reuse = True
+            mock_settings.password_reset_invalidate_sessions = True
+
+            with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
+                with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=user)):
+                    with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock(return_value=None)):
+                        with patch.object(service.email_notification_service, "send_password_reset_confirmation_email", new=AsyncMock(return_value=True)):
+                            result = await service.reset_password_with_token(token="token", new_password="NewPassword123!")
+
+        assert result is True
+        assert user.password_hash == "new_hashed_password"
+        assert user.password_change_required is False
+        assert user.failed_login_attempts == 0
+        assert user.locked_until is None
+        assert reset_token.used_at is not None
+
+    # =========================================================================
     # Password Change Tests
     # =========================================================================
 
@@ -875,6 +980,7 @@ class TestEmailAuthServiceUserManagement:
         with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
             with patch("mcpgateway.services.email_auth_service.utc_now", side_effect=Exception("utc-now-failure")):
                 # Avoid hitting real Redis/cache interactions
+                # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache
 
                 with patch.object(auth_cache, "invalidate_user", new=AsyncMock(return_value=None)):
@@ -896,6 +1002,7 @@ class TestEmailAuthServiceUserManagement:
     @pytest.mark.asyncio
     async def test_change_password_auth_cache_invalidation_timeout_is_non_fatal(self, service, mock_user, mock_password_service):
         """Test change_password continues when auth cache invalidation times out."""
+        # Standard
         import asyncio
 
         service.password_service = mock_password_service
@@ -907,6 +1014,7 @@ class TestEmailAuthServiceUserManagement:
             raise asyncio.TimeoutError()
 
         with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+            # First-Party
             from mcpgateway.cache.auth_cache import auth_cache
 
             with patch.object(auth_cache, "invalidate_user", new=AsyncMock(return_value=None)):
@@ -930,6 +1038,7 @@ class TestEmailAuthServiceUserManagement:
         mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
 
         with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+            # First-Party
             from mcpgateway.cache.auth_cache import auth_cache
 
             with patch.object(auth_cache, "invalidate_user", new=AsyncMock(side_effect=RuntimeError("cache-down"))):
@@ -1332,7 +1441,9 @@ class TestEmailAuthServiceUserListing:
 
         users = [MagicMock(spec=EmailUser, email="a@example.com"), MagicMock(spec=EmailUser, email="b@example.com")]
         pagination = PaginationMeta(page=1, per_page=30, total_items=2, total_pages=1, has_next=False, has_prev=False)
-        links = PaginationLinks(self="/admin/teams/team-123/non-members?page=1&per_page=30", first="/admin/teams/team-123/non-members?page=1&per_page=30", last="/admin/teams/team-123/non-members?page=1&per_page=30")
+        links = PaginationLinks(
+            self="/admin/teams/team-123/non-members?page=1&per_page=30", first="/admin/teams/team-123/non-members?page=1&per_page=30", last="/admin/teams/team-123/non-members?page=1&per_page=30"
+        )
 
         with patch(
             "mcpgateway.services.email_auth_service.unified_paginate",

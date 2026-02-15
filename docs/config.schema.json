@@ -161,6 +161,12 @@
       "title": "Validate Token Environment",
       "type": "boolean"
     },
+    "json_schema_validation_strict": {
+      "default": true,
+      "description": "Strict schema validation mode - reject invalid JSON schemas",
+      "title": "Json Schema Validation Strict",
+      "type": "boolean"
+    },
     "sso_enabled": {
       "default": false,
       "description": "Enable Single Sign-On authentication",
@@ -348,6 +354,19 @@
       "description": "Keycloak base URL (e.g., https://keycloak.example.com)",
       "title": "Sso Keycloak Base Url"
     },
+    "sso_keycloak_public_base_url": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Browser-facing Keycloak base URL for authorization redirects (e.g., http://localhost:8180)",
+      "title": "Sso Keycloak Public Base Url"
+    },
     "sso_keycloak_realm": {
       "default": "master",
       "description": "Keycloak realm name",
@@ -394,6 +413,33 @@
       "title": "Sso Keycloak Map Client Roles",
       "type": "boolean"
     },
+    "sso_keycloak_role_mappings": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})",
+      "title": "Sso Keycloak Role Mappings",
+      "type": "object"
+    },
+    "sso_keycloak_default_role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default Context Forge role for Keycloak users without role mapping",
+      "title": "Sso Keycloak Default Role"
+    },
+    "sso_keycloak_resolve_team_scope_to_personal_team": {
+      "default": false,
+      "description": "Resolve team-scoped Keycloak role mappings to the user's personal team",
+      "title": "Sso Keycloak Resolve Team Scope To Personal Team",
+      "type": "boolean"
+    },
     "sso_keycloak_username_claim": {
       "default": "preferred_username",
       "description": "JWT claim for username",
@@ -416,12 +462,6 @@
       "default": true,
       "description": "Strict validation mode - reject on violations",
       "title": "Validation Strict",
-      "type": "boolean"
-    },
-    "json_schema_validation_strict": {
-      "default": true,
-      "description": "Strict JSON Schema validation for tools and prompts",
-      "title": "Json Schema Validation Strict",
       "type": "boolean"
     },
     "sanitize_output": {
@@ -778,6 +818,57 @@
       "title": "Insecure Queryparam Auth Allowed Hosts",
       "type": "array"
     },
+    "ssrf_protection_enabled": {
+      "default": true,
+      "description": "Enable SSRF protection for gateway/tool URLs. Blocks access to dangerous endpoints.",
+      "title": "Ssrf Protection Enabled",
+      "type": "boolean"
+    },
+    "ssrf_blocked_networks": {
+      "default": [
+        "169.254.169.254/32",
+        "169.254.169.123/32",
+        "fd00::1/128",
+        "169.254.0.0/16",
+        "fe80::/10"
+      ],
+      "description": "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Ssrf Blocked Networks",
+      "type": "array"
+    },
+    "ssrf_blocked_hosts": {
+      "default": [
+        "metadata.google.internal",
+        "metadata.internal"
+      ],
+      "description": "Hostnames to block for SSRF protection. Matched case-insensitively.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Ssrf Blocked Hosts",
+      "type": "array"
+    },
+    "ssrf_allow_localhost": {
+      "default": true,
+      "description": "Allow localhost/loopback addresses (127.0.0.0/8, ::1). Set to false to block localhost access for stricter security. Default true for development compatibility.",
+      "title": "Ssrf Allow Localhost",
+      "type": "boolean"
+    },
+    "ssrf_allow_private_networks": {
+      "default": true,
+      "description": "Allow RFC 1918 private network addresses (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16). Set to false if the gateway should only access public internet endpoints. Default true for internal deployment compatibility.",
+      "title": "Ssrf Allow Private Networks",
+      "type": "boolean"
+    },
+    "ssrf_dns_fail_closed": {
+      "default": false,
+      "description": "Fail closed on DNS resolution errors. When true, URLs that cannot be resolved are rejected. When false (default), unresolvable hostnames are allowed through (hostname blocklist still applies). Set to true for stricter security.",
+      "title": "Ssrf Dns Fail Closed",
+      "type": "boolean"
+    },
     "oauth_request_timeout": {
       "default": 30,
       "description": "OAuth request timeout in seconds",
@@ -873,6 +964,12 @@
       "default": false,
       "description": "Allow unauthenticated users to self-register accounts. When false, only admins can create users via /admin/users endpoint.",
       "title": "Public Registration Enabled",
+      "type": "boolean"
+    },
+    "protect_all_admins": {
+      "default": true,
+      "description": "When true (default), prevent any admin from being demoted, deactivated, or locked out via API/UI. When false, only the last active admin is protected.",
+      "title": "Protect All Admins",
       "type": "boolean"
     },
     "platform_admin_email": {
@@ -994,15 +1091,147 @@
       "type": "integer"
     },
     "max_failed_login_attempts": {
-      "default": 5,
+      "default": 10,
       "description": "Maximum failed login attempts before account lockout",
       "title": "Max Failed Login Attempts",
       "type": "integer"
     },
     "account_lockout_duration_minutes": {
-      "default": 30,
+      "default": 1,
       "description": "Account lockout duration in minutes",
       "title": "Account Lockout Duration Minutes",
+      "type": "integer"
+    },
+    "account_lockout_notification_enabled": {
+      "default": true,
+      "description": "Send lockout notification emails when accounts are locked",
+      "title": "Account Lockout Notification Enabled",
+      "type": "boolean"
+    },
+    "password_reset_enabled": {
+      "default": true,
+      "description": "Enable self-service password reset workflow",
+      "title": "Password Reset Enabled",
+      "type": "boolean"
+    },
+    "password_reset_token_expiry_minutes": {
+      "default": 60,
+      "description": "Password reset token expiration time in minutes",
+      "title": "Password Reset Token Expiry Minutes",
+      "type": "integer"
+    },
+    "password_reset_rate_limit": {
+      "default": 5,
+      "description": "Maximum password reset requests allowed per email in each rate-limit window",
+      "title": "Password Reset Rate Limit",
+      "type": "integer"
+    },
+    "password_reset_rate_window_minutes": {
+      "default": 15,
+      "description": "Password reset request rate-limit window in minutes",
+      "title": "Password Reset Rate Window Minutes",
+      "type": "integer"
+    },
+    "password_reset_invalidate_sessions": {
+      "default": true,
+      "description": "Invalidate active sessions after password reset",
+      "title": "Password Reset Invalidate Sessions",
+      "type": "boolean"
+    },
+    "password_reset_min_response_ms": {
+      "default": 250,
+      "description": "Minimum response duration for forgot-password requests to reduce timing side channels",
+      "title": "Password Reset Min Response Ms",
+      "type": "integer"
+    },
+    "smtp_enabled": {
+      "default": false,
+      "description": "Enable SMTP email delivery for password reset and account lockout notifications",
+      "title": "Smtp Enabled",
+      "type": "boolean"
+    },
+    "smtp_host": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "SMTP server host",
+      "title": "Smtp Host"
+    },
+    "smtp_port": {
+      "default": 587,
+      "description": "SMTP server port",
+      "title": "Smtp Port",
+      "type": "integer"
+    },
+    "smtp_user": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "SMTP username",
+      "title": "Smtp User"
+    },
+    "smtp_password": {
+      "anyOf": [
+        {
+          "format": "password",
+          "type": "string",
+          "writeOnly": true
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "SMTP password",
+      "title": "Smtp Password"
+    },
+    "smtp_from_email": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "From email address used for auth notifications",
+      "title": "Smtp From Email"
+    },
+    "smtp_from_name": {
+      "default": "MCP Gateway",
+      "description": "From display name used for auth notifications",
+      "title": "Smtp From Name",
+      "type": "string"
+    },
+    "smtp_use_tls": {
+      "default": true,
+      "description": "Use STARTTLS for SMTP connections",
+      "title": "Smtp Use Tls",
+      "type": "boolean"
+    },
+    "smtp_use_ssl": {
+      "default": false,
+      "description": "Use implicit SSL/TLS for SMTP connections",
+      "title": "Smtp Use Ssl",
+      "type": "boolean"
+    },
+    "smtp_timeout_seconds": {
+      "default": 15,
+      "description": "SMTP connection timeout in seconds",
+      "title": "Smtp Timeout Seconds",
       "type": "integer"
     },
     "auto_create_personal_teams": {
@@ -1040,6 +1269,30 @@
       "description": "Require email verification for team invitations",
       "title": "Require Email Verification For Invites",
       "type": "boolean"
+    },
+    "default_admin_role": {
+      "default": "platform_admin",
+      "description": "Global role assigned to admin users",
+      "title": "Default Admin Role",
+      "type": "string"
+    },
+    "default_user_role": {
+      "default": "platform_viewer",
+      "description": "Global role assigned to non-admin users",
+      "title": "Default User Role",
+      "type": "string"
+    },
+    "default_team_owner_role": {
+      "default": "team_admin",
+      "description": "Team-scoped role assigned to team owners (e.g. personal team creator)",
+      "title": "Default Team Owner Role",
+      "type": "string"
+    },
+    "default_team_member_role": {
+      "default": "viewer",
+      "description": "Team-scoped role assigned to team members",
+      "title": "Default Team Member Role",
+      "type": "string"
     },
     "mcpgateway_ui_enabled": {
       "default": false,
@@ -1138,6 +1391,18 @@
       "description": "Enable TLS for gRPC connections by default",
       "title": "Mcpgateway Grpc Tls Enabled",
       "type": "boolean"
+    },
+    "mcpgateway_direct_proxy_enabled": {
+      "default": false,
+      "description": "Enable direct_proxy gateway mode for pass-through MCP operations",
+      "title": "Mcpgateway Direct Proxy Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_direct_proxy_timeout": {
+      "default": 30,
+      "description": "Default timeout in seconds for direct proxy MCP operations",
+      "title": "Mcpgateway Direct Proxy Timeout",
+      "type": "integer"
     },
     "mcpgateway_performance_tracking": {
       "default": false,
@@ -1904,6 +2169,12 @@
       "title": "Audit Trail Enabled",
       "type": "boolean"
     },
+    "permission_audit_enabled": {
+      "default": false,
+      "description": "Enable permission audit logging for RBAC checks (writes a row per permission check)",
+      "title": "Permission Audit Enabled",
+      "type": "boolean"
+    },
     "security_logging_enabled": {
       "default": false,
       "description": "Enable security event logging to database",
@@ -2461,14 +2732,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "image/png",
-        "text/plain",
         "image/gif",
+        "text/plain",
         "image/jpeg",
-        "application/json",
+        "image/png",
         "text/markdown",
-        "application/xml",
-        "text/html"
+        "text/html",
+        "application/json",
+        "application/xml"
       ],
       "items": {
         "type": "string"
@@ -2601,6 +2872,26 @@
     "anyio_cancel_delivery_max_iterations": {
       "default": 100,
       "title": "Anyio Cancel Delivery Max Iterations",
+      "type": "integer"
+    },
+    "mcpgateway_session_affinity_enabled": {
+      "default": false,
+      "title": "Mcpgateway Session Affinity Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_session_affinity_ttl": {
+      "default": 300,
+      "title": "Mcpgateway Session Affinity Ttl",
+      "type": "integer"
+    },
+    "mcpgateway_session_affinity_max_sessions": {
+      "default": 1,
+      "title": "Mcpgateway Session Affinity Max Sessions",
+      "type": "integer"
+    },
+    "mcpgateway_pool_rpc_forward_timeout": {
+      "default": 30,
+      "title": "Mcpgateway Pool Rpc Forward Timeout",
       "type": "integer"
     },
     "prompt_cache_size": {
@@ -2906,6 +3197,16 @@
       "default": true,
       "title": "Json Response Enabled",
       "type": "boolean"
+    },
+    "streamable_http_max_events_per_stream": {
+      "default": 100,
+      "title": "Streamable Http Max Events Per Stream",
+      "type": "integer"
+    },
+    "streamable_http_event_ttl": {
+      "default": 3600,
+      "title": "Streamable Http Event Ttl",
+      "type": "integer"
     },
     "plugins_enabled": {
       "default": false,

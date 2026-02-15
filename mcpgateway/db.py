@@ -1131,7 +1131,12 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        return utc_now() < self.locked_until
+        if utc_now() >= self.locked_until:
+            # Lockout expired: reset counters so users get a fresh attempt window.
+            self.failed_login_attempts = 0
+            self.locked_until = None
+            return False
+        return True
 
     def get_display_name(self) -> str:
         """Get the user's display name.
@@ -1409,6 +1414,37 @@ class EmailAuthEvent(Base):
             EmailAuthEvent: New authentication event
         """
         return cls(user_email=user_email, event_type="password_change", success=success, ip_address=ip_address, user_agent=user_agent)
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token record.
+
+    Stores only a SHA-256 hash of the user-facing token. Tokens are one-time use
+    and expire after a configured duration.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_reset_tokens_expires_at", "expires_at"),)
+
+    def is_expired(self) -> bool:
+        """Return True when the token has expired."""
+        return self.expires_at <= utc_now()
+
+    def is_used(self) -> bool:
+        """Return True when token was already consumed or invalidated."""
+        return self.used_at is not None
 
 
 class EmailTeam(Base):

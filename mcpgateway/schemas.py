@@ -5375,6 +5375,38 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class ForgotPasswordRequest(BaseModel):
+    """Request schema for forgot-password flow."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    email: EmailStr = Field(..., description="Email address for password reset")
+
+
+class ResetPasswordRequest(BaseModel):
+    """Request schema for completing password reset."""
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    new_password: str = Field(..., min_length=8, description="New password to set")
+    confirm_password: str = Field(..., min_length=8, description="Password confirmation")
+
+    @model_validator(mode="after")
+    def validate_password_match(self):
+        """Ensure password and confirmation are identical."""
+        if self.new_password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class PasswordResetTokenValidationResponse(BaseModel):
+    """Response schema for reset-token validation."""
+
+    valid: bool = Field(..., description="Whether token is currently valid")
+    message: str = Field(..., description="Validation status message")
+    expires_at: Optional[datetime] = Field(None, description="Token expiration timestamp when valid")
+
+
 class EmailUserResponse(BaseModel):
     """Response schema for user information.
 
@@ -5417,6 +5449,9 @@ class EmailUserResponse(BaseModel):
     last_login: Optional[datetime] = Field(None, description="Last successful login")
     email_verified: bool = Field(False, description="Whether email is verified")
     password_change_required: bool = Field(False, description="Whether user must change password on next login")
+    failed_login_attempts: int = Field(0, description="Current failed login attempts counter")
+    locked_until: Optional[datetime] = Field(None, description="Account lock expiration timestamp")
+    is_locked: bool = Field(False, description="Whether the account is currently locked")
 
     @classmethod
     def from_email_user(cls, user) -> "EmailUserResponse":
@@ -5428,6 +5463,13 @@ class EmailUserResponse(BaseModel):
         Returns:
             EmailUserResponse: Response schema instance
         """
+        locked_until_raw = getattr(user, "locked_until", None)
+        locked_until = locked_until_raw if isinstance(locked_until_raw, datetime) else None
+        failed_attempts_raw = getattr(user, "failed_login_attempts", 0)
+        try:
+            failed_attempts = int(failed_attempts_raw or 0)
+        except (TypeError, ValueError):
+            failed_attempts = 0
         return cls(
             email=user.email,
             full_name=user.full_name,
@@ -5438,6 +5480,9 @@ class EmailUserResponse(BaseModel):
             last_login=user.last_login,
             email_verified=user.is_email_verified(),
             password_change_required=user.password_change_required,
+            failed_login_attempts=failed_attempts,
+            locked_until=locked_until,
+            is_locked=bool(locked_until and locked_until > datetime.now(timezone.utc)),
         )
 
 
