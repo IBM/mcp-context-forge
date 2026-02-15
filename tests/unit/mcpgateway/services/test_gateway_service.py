@@ -3807,6 +3807,7 @@ class TestUpdateOrCreateTools:
         existing.original_name = "my-tool"
         existing.url = "http://old-url.com"
         existing.description = "old desc"
+        existing.original_description = "old desc"
         existing.integration_type = "MCP"
         existing.request_type = "POST"
         existing.headers = {}
