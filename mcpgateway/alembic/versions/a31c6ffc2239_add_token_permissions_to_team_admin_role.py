@@ -36,6 +36,37 @@ NEW_PERMISSIONS = [
 ]
 
 
+def _load_permissions(raw_permissions: object) -> list[str]:
+    """Normalize stored permissions into a list of strings.
+
+    PostgreSQL JSON/JSONB columns return native Python lists via psycopg,
+    while SQLite returns JSON-encoded strings. Handle both safely.
+
+    Args:
+        raw_permissions: Raw permissions value from the database row.
+
+    Returns:
+        list[str]: Normalized list of permission strings.
+    """
+    if not raw_permissions:
+        return []
+
+    parsed = raw_permissions
+    if isinstance(parsed, (bytes, bytearray)):
+        parsed = parsed.decode("utf-8")
+
+    if isinstance(parsed, str):
+        try:
+            parsed = json.loads(parsed)
+        except json.JSONDecodeError:
+            return []
+
+    if isinstance(parsed, list):
+        return [perm for perm in parsed if isinstance(perm, str)]
+
+    return []
+
+
 def upgrade() -> None:
     """Add token permissions to team_admin role.
 
@@ -66,7 +97,7 @@ def upgrade() -> None:
         return
 
     role_id = row[0]
-    current_permissions = json.loads(row[1]) if row[1] else []
+    current_permissions = _load_permissions(row[1])
 
     # Merge new permissions (idempotent)
     updated = False
@@ -129,7 +160,7 @@ def downgrade() -> None:
         return
 
     role_id = row[0]
-    current_permissions = json.loads(row[1]) if row[1] else []
+    current_permissions = _load_permissions(row[1])
 
     # Remove the token permissions
     updated_permissions = [p for p in current_permissions if p not in NEW_PERMISSIONS]
