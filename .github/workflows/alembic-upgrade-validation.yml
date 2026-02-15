@@ -1,0 +1,68 @@
+name: Alembic Upgrade Validation
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "mcpgateway/alembic/**"
+      - "scripts/ci/run_upgrade_validation.sh"
+      - ".github/workflows/alembic-upgrade-validation.yml"
+  push:
+    branches: ["main"]
+    paths:
+      - "mcpgateway/alembic/**"
+      - "scripts/ci/run_upgrade_validation.sh"
+      - ".github/workflows/alembic-upgrade-validation.yml"
+  workflow_dispatch:
+    inputs:
+      base_image:
+        description: "Base release image used for upgrade checks"
+        required: false
+        default: "ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2"
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  upgrade-validation:
+    name: SQLite + PostgreSQL Fresh/Upgrade
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    env:
+      TARGET_IMAGE: mcpgateway/mcpgateway:upgrade-ci-${{ github.sha }}
+      ARTIFACT_DIR: artifacts/upgrade-validation
+      BASE_IMAGE: ${{ github.event.inputs.base_image || 'ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build candidate image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile.lite
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ env.TARGET_IMAGE }}
+          cache-from: type=gha,scope=alembic-upgrade-validation
+          cache-to: type=gha,mode=max,scope=alembic-upgrade-validation
+
+      - name: Run upgrade validation
+        run: |
+          bash scripts/ci/run_upgrade_validation.sh
+
+      - name: Upload upgrade validation logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: alembic-upgrade-validation-logs
+          path: artifacts/upgrade-validation
+          if-no-files-found: ignore
+          retention-days: 14
