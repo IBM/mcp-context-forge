@@ -26,6 +26,13 @@ DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "MCP Gateway" --cleanup
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
+MCP_2025_TEST_DIR ?= tests/compliance/mcp_2025_11_25
+MCP_2025_ARTIFACTS_DIR ?= artifacts/mcp-2025-11-25
+MCP_2025_MARKER ?= mcp20251125
+MCP_2025_PYTEST_ARGS ?=
+MCP_2025_BASE_URL ?=
+MCP_2025_RPC_PATH ?= /mcp/
+MCP_2025_BEARER_TOKEN ?=
 
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
@@ -580,12 +587,17 @@ clean:
 # help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
 # help: test-db-perf         - Run database performance and N+1 query detection tests
 # help: test-db-perf-verbose - Run database performance tests with full SQL query output
+# help: 2025-11-25        - Run full MCP 2025-11-25 compliance suite (manual)
+# help: 2025-11-25-core   - Run MCP core compliance subset
+# help: 2025-11-25-tasks  - Run MCP tasks compliance subset
+# help: 2025-11-25-auth   - Run MCP authorization compliance subset
+# help: 2025-11-25-report - Run MCP suite and emit JUnit XML + Markdown reports
 # help: dev-query-log        - Run dev server with query logging to file (N+1 detection)
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -783,6 +795,83 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export SQLALCHEMY_ECHO=true && \
 		uv run --active pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+
+2025-11-25:                      ## Run full MCP 2025-11-25 compliance suite
+	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-core:                 ## Run MCP core compliance subset
+	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-tasks:                ## Run MCP tasks compliance subset
+	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-auth:                 ## Run MCP authorization compliance subset
+	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-report:               ## Run MCP suite and emit JUnit XML + Markdown reports
+	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
+			--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
+			--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
+			$(MCP_2025_PYTEST_ARGS)"
+	@echo "✅ Compliance artifacts:"
+	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/junit.xml"
+	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/report.md"
 
 dev-query-log:                   ## Run dev server with query logging to file
 	@echo "📊 Starting dev server with database query logging"
