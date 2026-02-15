@@ -17617,7 +17617,10 @@ function initializeSearchInputs() {
     const tokensSearchInput = document.getElementById("tokens-search-input");
     if (tokensSearchInput) {
         const clonedTokensInput = tokensSearchInput.cloneNode(true);
-        tokensSearchInput.parentNode.replaceChild(clonedTokensInput, tokensSearchInput);
+        tokensSearchInput.parentNode.replaceChild(
+            clonedTokensInput,
+            tokensSearchInput,
+        );
         const freshTokensInput = document.getElementById("tokens-search-input");
         if (freshTokensInput) {
             freshTokensInput.addEventListener("input", function () {
