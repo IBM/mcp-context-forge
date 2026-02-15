@@ -4134,8 +4134,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     fields_to_update = False
 
                     # Check basic field changes
+                    # Compare against original_description (upstream value) rather than description
+                    # (which may have been customized by the user)
                     basic_fields_changed = (
-                        existing_tool.url != gateway.url or existing_tool.description != tool.description or existing_tool.integration_type != "MCP" or existing_tool.request_type != tool.request_type
+                        existing_tool.url != gateway.url
+                        or existing_tool.original_description != tool.description
+                        or existing_tool.integration_type != "MCP"
+                        or existing_tool.request_type != tool.request_type
                     )
 
                     # Check schema and configuration changes
@@ -4153,7 +4158,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         fields_to_update = True
                     if fields_to_update:
                         existing_tool.url = gateway.url
-                        existing_tool.description = tool.description
+                        # Only overwrite user-facing description if it hasn't been customized
+                        # (mirrors original_name/custom_name pattern)
+                        if existing_tool.description == existing_tool.original_description:
+                            existing_tool.description = tool.description
+                        existing_tool.original_description = tool.description
                         existing_tool.integration_type = "MCP"
                         existing_tool.request_type = tool.request_type
                         existing_tool.headers = tool.headers

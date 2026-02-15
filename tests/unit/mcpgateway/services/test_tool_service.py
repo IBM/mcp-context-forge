@@ -4868,6 +4868,7 @@ class TestToolServiceHelpers:
             original_name="tool-name",
             url="https://example.com/tool",
             description="desc",
+            original_description="desc",
             integration_type="http",
             request_type="http",
             headers=None,

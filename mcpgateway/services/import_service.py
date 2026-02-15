@@ -966,6 +966,21 @@ class ImportService:
                 conflict_strategy=conflict_strategy.value,
             )
 
+            # Restore original_description from export data where available.
+            # register_tools_bulk sets original_description=description, but the
+            # export payload may carry the real upstream original_description.
+            orig_desc_map = {d["name"]: d["original_description"] for d in tools_data if d.get("original_description") and d.get("original_description") != d.get("description")}
+            if orig_desc_map:
+                # Third-Party
+                from sqlalchemy import select
+
+                for tool_name, orig_desc in orig_desc_map.items():
+                    stmt = select(Tool).where(Tool.name == tool_name)
+                    db_tool = db.execute(stmt).scalar_one_or_none()
+                    if db_tool:
+                        db_tool.original_description = orig_desc
+                db.flush()
+
             # Update status based on results
             status.created_entities += result["created"]
             status.updated_entities += result["updated"]

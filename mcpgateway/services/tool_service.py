@@ -527,6 +527,7 @@ class ToolService:
             "original_name": tool.original_name,
             "url": tool.url,
             "description": tool.description,
+            "original_description": tool.original_description,
             "integration_type": tool.integration_type,
             "request_type": tool.request_type,
             "headers": tool.headers or {},
