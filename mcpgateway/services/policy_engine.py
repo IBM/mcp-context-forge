@@ -324,10 +324,11 @@ class PolicyEngine:
         Args:
             decision: The access decision to log
 
-        NOTE: This will write to access_decisions table once we create it.
-        For now, just log to console.
+        NOTE: Database audit logging will be implemented in Phase 2.
+        For Phase 1, we log to application logs at DEBUG level.
+        The AccessDecisionLog table is created and ready for Phase 2.
         """
-        logger.info(
+        logger.debug(
             f"Access Decision [{decision.decision_id}]: "
             f"subject={decision.subject_email}, "
             f"permission={decision.permission}, "
@@ -335,37 +336,6 @@ class PolicyEngine:
             f"allowed={decision.allowed}, "
             f"reason={decision.reason}"
         )
-
-
-# ---------------------------------------------------------------------------
-# New Decorator (uses PolicyEngine instead of old RBAC)
-# ---------------------------------------------------------------------------
-
-
-def require_permission_v2(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
-    """
-    New decorator using PolicyEngine (Phase 1 - #2019).
-
-    This will eventually replace the old @require_permission decorator.
-    For now, it coexists with the old system via feature flag.
-
-    Args:
-        permission: Required permission (e.g., 'servers.read')
-        resource_type: Optional resource type
-        allow_admin_bypass: If False, even admins must have explicit permission (default: True)
-
-    Returns:
-        Callable: Decorator that enforces permission checks
-
-    Usage:
-        @require_permission_v2("servers.read")
-        async def list_servers(...):
-            ...
-    """
-    # Standard
-
-    # Third-Party
-
     def decorator(func):
         """Decorate function with permission enforcement.
 
