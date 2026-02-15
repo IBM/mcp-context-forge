@@ -209,11 +209,20 @@ def upgrade() -> None:
             for member in members_without_roles:
                 user_email, team_id, membership_role = member
                 role_id = team_owner_role_id if membership_role == "owner" else team_member_role_id
+                # Use self-grant for compatibility with deployments where granted_by
+                # enforces a foreign key to email_users.email.
                 bind.execute(
                     text(
-                        "INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, granted_at, is_active) VALUES (:id, :user_email, :role_id, 'team', :team_id, 'system_migration', :granted_at, true)"
+                        "INSERT INTO user_roles (id, user_email, role_id, scope, scope_id, granted_by, granted_at, is_active) VALUES (:id, :user_email, :role_id, 'team', :team_id, :granted_by, :granted_at, true)"
                     ),
-                    {"id": _generate_uuid(), "user_email": user_email, "role_id": role_id, "team_id": team_id, "granted_at": datetime.now(timezone.utc)},
+                    {
+                        "id": _generate_uuid(),
+                        "user_email": user_email,
+                        "role_id": role_id,
+                        "team_id": team_id,
+                        "granted_by": user_email,
+                        "granted_at": datetime.now(timezone.utc),
+                    },
                 )
 
             total += len(members_without_roles)
@@ -225,13 +234,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     """Revert user_roles migration.
 
-    Phase 1 (deterministic): Remove backfill rows created by upgrade, identified
-    by granted_by='system_migration'. This is always safe regardless of env.
+    Note: Phase 2 backfill rows (granted_by=user_email) cannot be selectively
+    removed without risking deletion of legitimate role assignments. They are
+    left intact as valid team-role grants.
 
-    Phase 2 (environment-dependent): Attempt to revert role name remapping using
-    current runtime settings. WARNING: This assumes the current DEFAULT_*_ROLE
-    env vars match those used during upgrade. If env vars have changed between
-    upgrade and downgrade, the remap reversal may produce incorrect results.
+    Role remap reversal (environment-dependent): Attempts to revert role name
+    remapping using current runtime settings. WARNING: This assumes the current
+    DEFAULT_*_ROLE env vars match those used during upgrade. If env vars have
+    changed between upgrade and downgrade, the reversal may be incorrect.
     """
     bind = op.get_bind()
     inspector = sa.inspect(bind)
@@ -244,13 +254,10 @@ def downgrade() -> None:
     print("=== Reverting user_roles migration ===")
     total = 0
 
-    # Phase 1: Remove backfill rows (always safe and deterministic)
-    result = bind.execute(text("DELETE FROM user_roles WHERE granted_by = 'system_migration'"))
-    deleted = getattr(result, "rowcount", 0)
-    total += deleted
-    print(f"  ✓ Deleted {deleted} system_migration role assignments")
+    # Note: Phase 2 backfill rows used granted_by=user_email (self-grant) for
+    # FK safety, so they cannot be distinguished from legitimate assignments.
 
-    # Phase 2: Attempt role remap reversal (environment-dependent)
+    # Attempt role remap reversal (environment-dependent)
     new_admin_role = settings.default_admin_role
     new_user_role = settings.default_user_role
     new_team_owner_role = settings.default_team_owner_role
