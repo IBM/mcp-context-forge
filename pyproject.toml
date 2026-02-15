@@ -65,7 +65,6 @@ dependencies = [
     "oauthlib>=3.3.1",
     "orjson>=3.11.5",
     "parse>=1.20.2",
-    "pgvector>=0.2.4",
     "prometheus-fastapi-instrumentator>=7.1.0",
     "prometheus_client>=0.24.1",
     "psutil>=7.2.2",
@@ -176,6 +175,11 @@ dev = [
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
 [project.optional-dependencies]
+# PostgreSQL with vector search support
+postgres-vector = [
+    "psycopg[c,binary]>=3.3.2",
+    "pgvector>=0.3.6",
+]
 
 # Optional dependency groups (runtime)
 # Redis with hiredis C parser for up to 83x faster response parsing
@@ -698,7 +702,8 @@ ignore_unused = [
   "snakeviz",
   "types-tabulate",
   "twine",
-  "uvicorn"
+  "uvicorn",
+  "pgvector"
 ]
 
 # --------------------------------------------------------------------
