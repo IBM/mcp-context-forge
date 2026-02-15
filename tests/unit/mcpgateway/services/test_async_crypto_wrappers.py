@@ -168,13 +168,18 @@ class TestEncryptionServiceAsyncWrappers:
 
     @pytest.mark.asyncio
     async def test_async_decrypt_handles_invalid_input(self):
-        """Test that decrypt_secret_async handles invalid input gracefully."""
+        """Test that decrypt_secret_async returns None for corrupted encrypted data.
+
+        When data has v2: prefix but invalid JSON/corrupt bundle, it should
+        return None since it's clearly meant to be encrypted data.
+        """
         # First-Party
         from mcpgateway.services.encryption_service import EncryptionService
 
         service = EncryptionService(SecretStr("test-key"), time_cost=1, memory_cost=1024)
 
-        result = await service.decrypt_secret_async("not_valid_encrypted_data")
+        # Data with v2: prefix but corrupted/invalid bundle should return None
+        result = await service.decrypt_secret_async("v2:{invalid_json_here}")
 
         assert result is None
 
