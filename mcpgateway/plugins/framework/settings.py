@@ -140,6 +140,11 @@ class LazySettingsWrapper:
             return env_flag.strip().lower() in {"1", "true", "yes", "on"}
         return get_settings().enabled
 
+    @staticmethod
+    def cache_clear() -> None:
+        """Clear the cached settings instance so the next access re-reads from env."""
+        get_settings.cache_clear()
+
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it
 
