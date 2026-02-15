@@ -381,34 +381,21 @@ class GatewaysPage(BasePage):
     def search_gateways(self, query: str) -> None:
         """Search for gateways using the search input.
 
+        Waits for the server-side HTMX partial response before returning.
+
         Args:
             query: Search query string
         """
-        # Fill the search input
-        self.search_input.fill(query)
-
-        # Trigger the search using JavaScript to ensure the filtering happens
-        # The page uses client-side filtering that listens to input events
-        self.page.evaluate(
-            """
-            (searchQuery) => {
-                const searchInput = document.getElementById('gateways-search-input');
-                if (searchInput) {
-                    searchInput.value = searchQuery;
-                    // Trigger input event to activate the search filter
-                    searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    searchInput.dispatchEvent(new Event('keyup', { bubbles: true }));
-                }
-            }
-        """,
-            query,
-        )
-
-        self.page.wait_for_timeout(500)  # Wait for client-side filtering to complete
+        with self.page.expect_response(lambda r: "/admin/gateways/partial" in r.url, timeout=10000):
+            self.search_input.fill(query)
 
     def clear_search(self) -> None:
-        """Clear the gateway search."""
-        self.click_locator(self.clear_search_btn)
+        """Clear the gateway search.
+
+        Waits for the server-side HTMX partial response before returning.
+        """
+        with self.page.expect_response(lambda r: "/admin/gateways/partial" in r.url, timeout=10000):
+            self.click_locator(self.clear_search_btn)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.

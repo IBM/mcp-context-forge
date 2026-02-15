@@ -282,14 +282,21 @@ class ServersPage(BasePage):
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
 
+        Waits for the server-side HTMX partial response before returning.
+
         Args:
             query: Search query string
         """
-        self.fill_locator(self.search_input, query)
+        with self.page.expect_response(lambda r: "/admin/servers/partial" in r.url, timeout=10000):
+            self.fill_locator(self.search_input, query)
 
     def clear_search(self) -> None:
-        """Clear the server search."""
-        self.click_locator(self.clear_search_btn)
+        """Clear the server search.
+
+        Waits for the server-side HTMX partial response before returning.
+        """
+        with self.page.expect_response(lambda r: "/admin/servers/partial" in r.url, timeout=10000):
+            self.click_locator(self.clear_search_btn)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive servers checkbox.

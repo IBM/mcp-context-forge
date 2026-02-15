@@ -413,21 +413,17 @@ class TestServersExtended:
         catalog_search = servers_page.page.locator("#catalog-search-input")
         expect(catalog_search).to_be_visible()
 
-        # Search for something that won't match
-        catalog_search.fill("nonexistent-xyz-server-999")
-
-        # Wait for filtering to take effect
-        servers_page.wait_for_count_change(servers_page.server_items.locator(":visible"), initial_count, timeout=5000)
+        # Search for something that won't match (waits for HTMX partial response)
+        with servers_page.page.expect_response(lambda r: "/admin/servers/partial" in r.url, timeout=10000):
+            catalog_search.fill("nonexistent-xyz-server-999")
 
         # Verify filtering occurred
         filtered_count = servers_page.server_items.locator(":visible").count()
         assert filtered_count < initial_count
 
-        # Clear search
-        catalog_search.fill("")
-
-        # Wait for servers to be restored
-        servers_page.wait_for_count_change(servers_page.server_items.locator(":visible"), filtered_count, timeout=5000)
+        # Clear search (waits for HTMX partial response)
+        with servers_page.page.expect_response(lambda r: "/admin/servers/partial" in r.url, timeout=10000):
+            catalog_search.fill("")
 
         # Verify servers are restored
         restored_count = servers_page.get_server_count()

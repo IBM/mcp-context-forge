@@ -862,15 +862,33 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 
 
 def _escape_like(value: str) -> str:
-    """Escape SQL LIKE wildcard characters for safe use in LIKE/contains clauses.
+    """Escape SQL LIKE wildcard characters.
 
     Args:
         value (str): Raw search string.
 
     Returns:
-        str: Escaped string safe for use in ``LIKE`` expressions.
+        str: Escaped string safe for use in ``LIKE`` expressions with ``ESCAPE '\\'``.
     """
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _like_contains(column, value: str):
+    """Case-insensitive substring match with proper LIKE wildcard escaping.
+
+    Wraps the escaped *value* with ``%`` wildcards and adds an explicit
+    ``ESCAPE '\\\\'`` clause so that ``%`` and ``_`` in the search term are
+    treated literally on all backends (SQLite requires the clause).
+
+    Args:
+        column: SQLAlchemy column expression (pre-wrapped with ``func.lower``
+            / ``coalesce`` as needed by the caller).
+        value: Raw search term — escaping is applied internally.
+
+    Returns:
+        A SQLAlchemy binary expression suitable for ``.where()``.
+    """
+    return column.like("%" + _escape_like(value) + "%", escape="\\")
 
 
 async def _get_user_team_ids(user: dict, db: Session) -> list:
@@ -1818,9 +1836,9 @@ async def admin_servers_partial_html(
     if search_query:
         query = query.where(
             or_(
-                func.lower(DbServer.id).contains(_escape_like(search_query)),
-                func.lower(DbServer.name).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbServer.description, "")).contains(_escape_like(search_query)),
+                _like_contains(func.lower(DbServer.id), search_query),
+                _like_contains(func.lower(DbServer.name), search_query),
+                _like_contains(func.lower(coalesce(DbServer.description, "")), search_query),
             )
         )
 
@@ -7295,12 +7313,12 @@ async def admin_tools_partial_html(
     if search_query:
         query = query.where(
             or_(
-                func.lower(DbTool.id).contains(_escape_like(search_query)),
-                func.lower(DbTool.original_name).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbTool.display_name, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbTool.custom_name, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbTool.description, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbTool.url, "")).contains(_escape_like(search_query)),
+                _like_contains(func.lower(DbTool.id), search_query),
+                _like_contains(func.lower(DbTool.original_name), search_query),
+                _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.description, "")), search_query),
+                _like_contains(func.lower(coalesce(DbTool.url, "")), search_query),
             )
         )
 
@@ -7717,12 +7735,12 @@ async def admin_search_tools(
     # Using the same priority as display: displayName -> customName -> original_name
     if search_query:
         search_conditions = [
-            func.lower(DbTool.id).contains(_escape_like(search_query)),
-            func.lower(DbTool.original_name).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbTool.display_name, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbTool.custom_name, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbTool.description, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbTool.url, "")).contains(_escape_like(search_query)),
+            _like_contains(func.lower(DbTool.id), search_query),
+            _like_contains(func.lower(DbTool.original_name), search_query),
+            _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
+            _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
+            _like_contains(func.lower(coalesce(DbTool.description, "")), search_query),
+            _like_contains(func.lower(coalesce(DbTool.url, "")), search_query),
         ]
         query = query.where(or_(*search_conditions))
 
@@ -7864,10 +7882,10 @@ async def admin_prompts_partial_html(
     if search_query:
         query = query.where(
             or_(
-                func.lower(DbPrompt.id).contains(_escape_like(search_query)),
-                func.lower(DbPrompt.original_name).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbPrompt.display_name, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbPrompt.description, "")).contains(_escape_like(search_query)),
+                _like_contains(func.lower(DbPrompt.id), search_query),
+                _like_contains(func.lower(DbPrompt.original_name), search_query),
+                _like_contains(func.lower(coalesce(DbPrompt.display_name, "")), search_query),
+                _like_contains(func.lower(coalesce(DbPrompt.description, "")), search_query),
             )
         )
 
@@ -8074,10 +8092,10 @@ async def admin_gateways_partial_html(
     if search_query:
         query = query.where(
             or_(
-                func.lower(DbGateway.id).contains(_escape_like(search_query)),
-                func.lower(DbGateway.name).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbGateway.url, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbGateway.description, "")).contains(_escape_like(search_query)),
+                _like_contains(func.lower(DbGateway.id), search_query),
+                _like_contains(func.lower(DbGateway.name), search_query),
+                _like_contains(func.lower(coalesce(DbGateway.url, "")), search_query),
+                _like_contains(func.lower(coalesce(DbGateway.description, "")), search_query),
             )
         )
 
@@ -8309,10 +8327,10 @@ async def admin_search_gateways(
 
     if search_query:
         search_conditions = [
-            func.lower(DbGateway.id).contains(_escape_like(search_query)),
-            func.lower(DbGateway.name).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbGateway.url, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbGateway.description, "")).contains(_escape_like(search_query)),
+            _like_contains(func.lower(DbGateway.id), search_query),
+            _like_contains(func.lower(DbGateway.name), search_query),
+            _like_contains(func.lower(coalesce(DbGateway.url, "")), search_query),
+            _like_contains(func.lower(coalesce(DbGateway.description, "")), search_query),
         ]
         query = query.where(or_(*search_conditions))
 
@@ -8483,9 +8501,9 @@ async def admin_search_servers(
 
     if search_query:
         search_conditions = [
-            func.lower(DbServer.id).contains(_escape_like(search_query)),
-            func.lower(DbServer.name).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbServer.description, "")).contains(_escape_like(search_query)),
+            _like_contains(func.lower(DbServer.id), search_query),
+            _like_contains(func.lower(DbServer.name), search_query),
+            _like_contains(func.lower(coalesce(DbServer.description, "")), search_query),
         ]
         query = query.where(or_(*search_conditions))
 
@@ -8630,10 +8648,10 @@ async def admin_resources_partial_html(
     if search_query:
         query = query.where(
             or_(
-                func.lower(DbResource.id).contains(_escape_like(search_query)),
-                func.lower(DbResource.name).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbResource.uri, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbResource.description, "")).contains(_escape_like(search_query)),
+                _like_contains(func.lower(DbResource.id), search_query),
+                _like_contains(func.lower(DbResource.name), search_query),
+                _like_contains(func.lower(coalesce(DbResource.uri, "")), search_query),
+                _like_contains(func.lower(coalesce(DbResource.description, "")), search_query),
             )
         )
 
@@ -9004,10 +9022,10 @@ async def admin_search_resources(
 
     if search_query:
         search_conditions = [
-            func.lower(DbResource.id).contains(_escape_like(search_query)),
-            func.lower(DbResource.name).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbResource.uri, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbResource.description, "")).contains(_escape_like(search_query)),
+            _like_contains(func.lower(DbResource.id), search_query),
+            _like_contains(func.lower(DbResource.name), search_query),
+            _like_contains(func.lower(coalesce(DbResource.uri, "")), search_query),
+            _like_contains(func.lower(coalesce(DbResource.description, "")), search_query),
         ]
         query = query.where(or_(*search_conditions))
 
@@ -9124,10 +9142,10 @@ async def admin_search_prompts(
 
     if search_query:
         search_conditions = [
-            func.lower(DbPrompt.id).contains(_escape_like(search_query)),
-            func.lower(DbPrompt.original_name).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbPrompt.display_name, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbPrompt.description, "")).contains(_escape_like(search_query)),
+            _like_contains(func.lower(DbPrompt.id), search_query),
+            _like_contains(func.lower(DbPrompt.original_name), search_query),
+            _like_contains(func.lower(coalesce(DbPrompt.display_name, "")), search_query),
+            _like_contains(func.lower(coalesce(DbPrompt.description, "")), search_query),
         ]
         query = query.where(or_(*search_conditions))
 
@@ -9222,7 +9240,7 @@ async def admin_tokens_partial_html(
 
     # Apply search filter on name (case-insensitive)
     if q and isinstance(q, str):
-        query = query.where(EmailApiToken.name.ilike(f"%{_escape_like(q.strip().lower())}%"))
+        query = query.where(EmailApiToken.name.ilike(f"%{_escape_like(q.strip().lower())}%", escape="\\"))
 
     query = query.order_by(desc(EmailApiToken.created_at))
 
@@ -9374,7 +9392,7 @@ async def admin_search_tokens(
 
     # Apply search filter on name (case-insensitive)
     if q and isinstance(q, str):
-        query = query.where(EmailApiToken.name.ilike(f"%{_escape_like(q.strip().lower())}%"))
+        query = query.where(EmailApiToken.name.ilike(f"%{_escape_like(q.strip().lower())}%", escape="\\"))
 
     query = query.order_by(desc(EmailApiToken.created_at)).limit(limit)
 
@@ -9505,10 +9523,10 @@ async def admin_a2a_partial_html(
     if search_query:
         query = query.where(
             or_(
-                func.lower(DbA2AAgent.id).contains(_escape_like(search_query)),
-                func.lower(DbA2AAgent.name).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbA2AAgent.endpoint_url, "")).contains(_escape_like(search_query)),
-                func.lower(coalesce(DbA2AAgent.description, "")).contains(_escape_like(search_query)),
+                _like_contains(func.lower(DbA2AAgent.id), search_query),
+                _like_contains(func.lower(DbA2AAgent.name), search_query),
+                _like_contains(func.lower(coalesce(DbA2AAgent.endpoint_url, "")), search_query),
+                _like_contains(func.lower(coalesce(DbA2AAgent.description, "")), search_query),
             )
         )
 
@@ -9757,10 +9775,10 @@ async def admin_search_a2a_agents(
 
     if search_query:
         search_conditions = [
-            func.lower(DbA2AAgent.id).contains(_escape_like(search_query)),
-            func.lower(DbA2AAgent.name).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbA2AAgent.endpoint_url, "")).contains(_escape_like(search_query)),
-            func.lower(coalesce(DbA2AAgent.description, "")).contains(_escape_like(search_query)),
+            _like_contains(func.lower(DbA2AAgent.id), search_query),
+            _like_contains(func.lower(DbA2AAgent.name), search_query),
+            _like_contains(func.lower(coalesce(DbA2AAgent.endpoint_url, "")), search_query),
+            _like_contains(func.lower(coalesce(DbA2AAgent.description, "")), search_query),
         ]
         query = query.where(or_(*search_conditions))
 

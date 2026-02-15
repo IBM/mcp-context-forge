@@ -236,8 +236,12 @@ class AdminPage(BasePage):
         self.click_locator(self.add_server_btn)
 
     def search_servers(self, query: str) -> None:
-        """Search for servers."""
-        self.fill_locator(self.search_input, query)
+        """Search for servers.
+
+        Waits for the server-side HTMX partial response before returning.
+        """
+        with self.page.expect_response(lambda r: "/admin/servers/partial" in r.url, timeout=10000):
+            self.fill_locator(self.search_input, query)
 
     def get_server_count(self) -> int:
         """Get number of servers displayed."""
