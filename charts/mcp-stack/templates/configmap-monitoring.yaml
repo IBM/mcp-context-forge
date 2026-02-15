@@ -1,0 +1,238 @@
+{{- if .Values.monitoring.enabled }}
+{{- $prometheusName := printf "%s-prometheus" (include "mcp-stack.fullname" .) -}}
+{{- $lokiName := printf "%s-loki" (include "mcp-stack.fullname" .) -}}
+{{- $tempoName := printf "%s-tempo" (include "mcp-stack.fullname" .) -}}
+{{- $pgExporterName := printf "%s-postgres-exporter" (include "mcp-stack.fullname" .) -}}
+{{- $redisExporterName := printf "%s-redis-exporter" (include "mcp-stack.fullname" .) -}}
+{{- $pgbouncerExporterName := printf "%s-pgbouncer-exporter" (include "mcp-stack.fullname" .) -}}
+{{- $nginxExporterName := printf "%s-nginx-exporter" (include "mcp-stack.fullname" .) -}}
+{{- $cadvisorName := printf "%s-cadvisor" (include "mcp-stack.fullname" .) -}}
+{{- $gatewayName := printf "%s-mcpgateway" (include "mcp-stack.fullname" .) -}}
+{{- $gatewayPort := .Values.mcpContextForge.service.port -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-prometheus-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $prometheusName }}
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+
+    scrape_configs:
+      - job_name: prometheus
+        static_configs:
+          - targets: ["localhost:9090"]
+
+      - job_name: postgresql
+        static_configs:
+          - targets: ["{{ $pgExporterName }}:{{ .Values.monitoring.postgresExporter.service.port }}"]
+
+      - job_name: redis
+        static_configs:
+          - targets: ["{{ $redisExporterName }}:{{ .Values.monitoring.redisExporter.service.port }}"]
+
+      - job_name: pgbouncer
+        static_configs:
+          - targets: ["{{ $pgbouncerExporterName }}:{{ .Values.monitoring.pgbouncerExporter.service.port }}"]
+
+      - job_name: nginx
+        static_configs:
+          - targets: ["{{ $nginxExporterName }}:{{ .Values.monitoring.nginxExporter.service.port }}"]
+
+      - job_name: cadvisor
+        static_configs:
+          - targets: ["{{ $cadvisorName }}:{{ .Values.monitoring.cadvisor.service.port }}"]
+
+      - job_name: mcpgateway
+        metrics_path: /metrics/prometheus
+        static_configs:
+          - targets: ["{{ $gatewayName }}:{{ $gatewayPort }}"]
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-loki-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $lokiName }}
+data:
+  loki-config.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory: /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    query_range:
+      results_cache:
+        cache:
+          embedded_cache:
+            enabled: true
+            max_size_mb: 100
+
+    schema_config:
+      configs:
+        - from: 2020-10-24
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    limits_config:
+      retention_period: 168h
+      ingestion_rate_mb: 16
+      ingestion_burst_size_mb: 32
+
+    compactor:
+      working_directory: /loki/compactor
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      delete_request_store: filesystem
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-tempo-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $tempoName }}
+data:
+  tempo.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3200
+
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: 0.0.0.0:4317
+            http:
+              endpoint: 0.0.0.0:4318
+
+    ingester:
+      trace_idle_period: 10s
+      max_block_duration: 5m
+
+    compactor:
+      compaction:
+        block_retention: 24h
+
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+
+    search_enabled: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-promtail-config
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    positions:
+      filename: /tmp/positions.yaml
+
+    clients:
+      - url: http://{{ $lokiName }}:{{ .Values.monitoring.loki.service.port }}/loki/api/v1/push
+
+    scrape_configs:
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_node_name]
+            target_label: node
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
+          - source_labels: [__meta_kubernetes_pod_name]
+            target_label: pod
+          - source_labels: [__meta_kubernetes_pod_container_name]
+            target_label: container
+          - source_labels: [__meta_kubernetes_pod_label_app]
+            target_label: app
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-grafana-datasources
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+data:
+  datasources.yaml: |
+    apiVersion: 1
+
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://{{ $prometheusName }}:{{ .Values.monitoring.prometheus.service.port }}
+        isDefault: true
+        editable: true
+
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://{{ $lokiName }}:{{ .Values.monitoring.loki.service.port }}
+        editable: true
+
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://{{ $tempoName }}:{{ .Values.monitoring.tempo.service.queryPort }}
+        editable: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-grafana-dashboards
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: MCP Gateway Dashboards
+        orgId: 1
+        folder: MCP Gateway
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /etc/grafana/provisioning/dashboards
+{{- end }}

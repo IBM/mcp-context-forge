@@ -1,0 +1,68 @@
+{{- if and .Values.benchmark.enabled .Values.benchmark.server.enabled }}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+{{- $startPort := int .Values.benchmark.server.service.startPort -}}
+{{- $serverCount := int .Values.benchmark.server.service.serverCount -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-benchmark-server
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-benchmark-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-benchmark-server
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-benchmark-server
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: benchmark-server
+          image: "{{ .Values.benchmark.server.image.repository }}:{{ .Values.benchmark.server.image.tag }}"
+          imagePullPolicy: {{ .Values.benchmark.server.image.pullPolicy }}
+          args:
+            - "-transport={{ .Values.benchmark.server.transport }}"
+            - "-server-count={{ .Values.benchmark.server.service.serverCount }}"
+            - "-start-port={{ .Values.benchmark.server.service.startPort }}"
+            - "-tools={{ .Values.benchmark.server.tools }}"
+            - "-resources={{ .Values.benchmark.server.resources }}"
+            - "-prompts={{ .Values.benchmark.server.prompts }}"
+          ports:
+            {{- range $i, $_ := until $serverCount }}
+            - name: p{{ add $startPort $i }}
+              containerPort: {{ add $startPort $i }}
+            {{- end }}
+          resources:
+{{- toYaml .Values.benchmark.server.resourcesLimits | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-benchmark-server
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-benchmark-server
+spec:
+  type: {{ .Values.benchmark.server.service.type }}
+  selector:
+    app: {{ $fullName }}-benchmark-server
+  ports:
+    {{- range $i, $_ := until $serverCount }}
+    - name: p{{ add $startPort $i }}
+      port: {{ add $startPort $i }}
+      targetPort: {{ add $startPort $i }}
+      protocol: TCP
+    {{- end }}
+{{- end }}

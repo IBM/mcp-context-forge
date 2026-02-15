@@ -1,0 +1,66 @@
+{{- if .Values.inspector.enabled }}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-inspector
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-inspector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-inspector
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-inspector
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: mcp-inspector
+          image: "{{ .Values.inspector.image.repository }}:{{ .Values.inspector.image.tag }}"
+          imagePullPolicy: {{ .Values.inspector.image.pullPolicy }}
+          ports:
+            - name: ui
+              containerPort: {{ .Values.inspector.service.uiPort }}
+            - name: api
+              containerPort: {{ .Values.inspector.service.apiPort }}
+          env:
+            {{- range $key, $val := .Values.inspector.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          resources:
+{{- toYaml .Values.inspector.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-inspector
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-inspector
+spec:
+  type: {{ .Values.inspector.service.type }}
+  selector:
+    app: {{ $fullName }}-inspector
+  ports:
+    - name: ui
+      port: {{ .Values.inspector.service.uiPort }}
+      targetPort: {{ .Values.inspector.service.uiPort }}
+      protocol: TCP
+    - name: api
+      port: {{ .Values.inspector.service.apiPort }}
+      targetPort: {{ .Values.inspector.service.apiPort }}
+      protocol: TCP
+{{- end }}
