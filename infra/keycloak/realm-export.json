@@ -1,0 +1,181 @@
+{
+  "realm": "mcp-gateway",
+  "enabled": true,
+  "displayName": "MCP Gateway Development Realm",
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "verifyEmail": false,
+  "resetPasswordAllowed": true,
+  "sslRequired": "none",
+  "roles": {
+    "realm": [
+      {
+        "name": "gateway-admin",
+        "description": "Maps to platform_admin in MCP Gateway"
+      },
+      {
+        "name": "gateway-developer",
+        "description": "Maps to developer in MCP Gateway"
+      },
+      {
+        "name": "gateway-viewer",
+        "description": "Maps to viewer in MCP Gateway"
+      }
+    ]
+  },
+  "groups": [
+    {
+      "name": "Administrators",
+      "realmRoles": [
+        "gateway-admin"
+      ]
+    },
+    {
+      "name": "Developers",
+      "realmRoles": [
+        "gateway-developer"
+      ]
+    },
+    {
+      "name": "Viewers",
+      "realmRoles": [
+        "gateway-viewer"
+      ]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "mcp-gateway",
+      "name": "MCP Gateway",
+      "description": "Preconfigured docker-compose client for local SSO testing",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "keycloak-dev-secret",
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://localhost:8080/auth/sso/callback/keycloak"
+      ],
+      "webOrigins": [
+        "http://localhost:8080"
+      ],
+      "rootUrl": "http://localhost:8080",
+      "baseUrl": "http://localhost:8080",
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/*"
+      },
+      "defaultClientScopes": [
+        "web-origins",
+        "acr",
+        "roles",
+        "profile",
+        "email"
+      ],
+      "optionalClientScopes": [
+        "address",
+        "phone",
+        "offline_access",
+        "microprofile-jwt"
+      ],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "admin@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "email": "admin@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "gateway-admin"
+      ],
+      "groups": [
+        "/Administrators"
+      ]
+    },
+    {
+      "username": "developer@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "User",
+      "email": "developer@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "gateway-developer"
+      ],
+      "groups": [
+        "/Developers"
+      ]
+    },
+    {
+      "username": "viewer@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Viewer",
+      "lastName": "User",
+      "email": "viewer@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "gateway-viewer"
+      ],
+      "groups": [
+        "/Viewers"
+      ]
+    },
+    {
+      "username": "newuser@example.com",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "New",
+      "lastName": "User",
+      "email": "newuser@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "changeme",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

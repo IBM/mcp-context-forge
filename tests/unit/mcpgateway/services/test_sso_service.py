@@ -31,6 +31,7 @@ def mock_db():
     db.execute.return_value = MagicMock()
     db.add = MagicMock()
     db.commit = MagicMock()
+    db.rollback = MagicMock()
     db.refresh = MagicMock()
     db.delete = MagicMock()
     return db
@@ -251,6 +252,26 @@ class TestOAuthCallback:
         result = await sso_service.handle_oauth_callback("github", "code", "test-state")
         assert result is not None
         assert result["email"] == "user@example.com"
+
+    @pytest.mark.asyncio
+    async def test_handle_oauth_callback_with_tokens_success(self, sso_service, mock_db):
+        auth_session = _make_auth_session()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = auth_session
+
+        async def _exchange(p, sess, c):
+            return {"access_token": "tok", "id_token": "id_tok"}
+
+        async def _user_info(p, access, token_data=None):
+            return {"email": "user@example.com", "provider": "github"}
+
+        sso_service._exchange_code_for_tokens = _exchange
+        sso_service._get_user_info = _user_info
+
+        result = await sso_service.handle_oauth_callback_with_tokens("github", "code", "test-state")
+        assert result is not None
+        user_info, token_data = result
+        assert user_info["email"] == "user@example.com"
+        assert token_data["id_token"] == "id_tok"
 
     @pytest.mark.asyncio
     async def test_handle_oauth_callback_no_session(self, sso_service, mock_db):
@@ -548,6 +569,52 @@ class TestGetUserInfo:
         assert "admin" in result["groups"]
         assert "app:edit" in result["groups"]
 
+    @pytest.mark.asyncio
+    async def test_get_user_info_keycloak_falls_back_to_id_token_when_userinfo_fails(self, sso_service):
+        """Keycloak should use id_token claims when userinfo endpoint returns 401."""
+        import base64
+        import orjson
+
+        fail_response = MagicMock()
+        fail_response.status_code = 401
+        fail_response.text = ""
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=fail_response)
+
+        provider = _make_provider(
+            id="keycloak",
+            name="keycloak",
+            provider_type="oidc",
+            provider_metadata={"map_realm_roles": True, "map_client_roles": False, "base_url": "http://keycloak:8080", "public_base_url": "http://localhost:8180"},
+        )
+
+        payload = orjson.dumps(
+            {
+                "sub": "kc-123",
+                "email": "user@kc.com",
+                "name": "KC User",
+                "preferred_username": "kcuser",
+                "realm_access": {"roles": ["admin"]},
+                "groups": ["/team"],
+            }
+        )
+        payload_b64 = base64.urlsafe_b64encode(payload).decode().rstrip("=")
+        fake_id_token = f"eyJhbGciOiJSUzI1NiJ9.{payload_b64}.sig"
+        token_data = {"access_token": "at", "id_token": fake_id_token}
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client, \
+             patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_get_client.return_value = mock_client
+            mock_settings.sso_github_admin_orgs = []
+            result = await sso_service._get_user_info(provider, "at", token_data)
+
+        assert result is not None
+        assert result["provider"] == "keycloak"
+        assert result["email"] == "user@kc.com"
+        assert "admin" in result["groups"]
+        assert "/team" in result["groups"]
+
 
 # ---------------------------------------------------------------------------
 # Normalization tests
@@ -784,6 +851,207 @@ class TestMapGroupsToRoles:
         assert len(result) == 1
         assert result[0]["role_name"] == "viewer"
 
+    @pytest.mark.asyncio
+    async def test_provider_metadata_default_role_fallback(self, sso_service):
+        mock_role = SimpleNamespace(name="viewer", scope="global", id="r-viewer")
+        provider = _make_provider(
+            id="keycloak",
+            provider_metadata={"default_role": "viewer"},
+        )
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+            role_svc_instance = AsyncMock()
+            role_svc_instance.get_role_by_name = AsyncMock(return_value=mock_role)
+            MockRoleService.return_value = role_svc_instance
+            result = await sso_service._map_groups_to_roles("user@test.com", ["unmatched-group"], provider)
+
+        assert len(result) == 1
+        assert result[0]["role_name"] == "viewer"
+        assert result[0]["scope"] == "global"
+        assert result[0]["scope_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_role_mapping_resolves_team_scope_to_personal_team(self, sso_service):
+        mock_role = SimpleNamespace(name="developer", scope="team", id="r-dev")
+        provider = _make_provider(
+            id="keycloak",
+            provider_metadata={
+                "role_mappings": {"gateway-developer": "developer"},
+                "resolve_team_scope_to_personal_team": True,
+            },
+        )
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
+             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+
+            role_svc_instance = AsyncMock()
+            role_svc_instance.get_role_by_name = AsyncMock(return_value=mock_role)
+            MockRoleService.return_value = role_svc_instance
+
+            personal_team_service = AsyncMock()
+            personal_team_service.get_personal_team = AsyncMock(return_value=SimpleNamespace(id="team-123"))
+            MockPersonalTeamService.return_value = personal_team_service
+
+            result = await sso_service._map_groups_to_roles("user@test.com", ["gateway-developer"], provider)
+
+        assert len(result) == 1
+        assert result[0]["role_name"] == "developer"
+        assert result[0]["scope"] == "team"
+        assert result[0]["scope_id"] == "team-123"
+
+    @pytest.mark.asyncio
+    async def test_role_mapping_reuses_cached_personal_team_resolution(self, sso_service):
+        """Personal team lookup should be cached across multiple team-scoped mappings."""
+        provider = _make_provider(
+            id="keycloak",
+            provider_metadata={
+                "role_mappings": {"grp-a": "developer", "grp-b": "viewer"},
+                "resolve_team_scope_to_personal_team": True,
+            },
+        )
+        role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
+        role_view = SimpleNamespace(name="viewer", scope="team", id="r-view")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
+             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+
+            role_svc_instance = AsyncMock()
+
+            async def _get_role_by_name(role_name, scope="team"):
+                if scope != "team":
+                    return None
+                if role_name == "developer":
+                    return role_dev
+                if role_name == "viewer":
+                    return role_view
+                return None
+
+            role_svc_instance.get_role_by_name = AsyncMock(side_effect=_get_role_by_name)
+            MockRoleService.return_value = role_svc_instance
+
+            personal_team_service = AsyncMock()
+            personal_team_service.get_personal_team = AsyncMock(return_value=SimpleNamespace(id="team-abc"))
+            MockPersonalTeamService.return_value = personal_team_service
+
+            result = await sso_service._map_groups_to_roles("user@test.com", ["grp-a", "grp-b"], provider)
+
+        assert len(result) == 2
+        assert {entry["role_name"] for entry in result} == {"developer", "viewer"}
+        assert all(entry["scope"] == "team" for entry in result)
+        assert all(entry["scope_id"] == "team-abc" for entry in result)
+        assert personal_team_service.get_personal_team.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_role_mapping_skips_team_scope_when_personal_team_missing(self, sso_service):
+        """Team-scoped mapping is skipped when personal team cannot be resolved."""
+        provider = _make_provider(
+            id="keycloak",
+            provider_metadata={
+                "role_mappings": {"grp-a": "developer"},
+                "resolve_team_scope_to_personal_team": True,
+            },
+        )
+        role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
+             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+
+            role_svc_instance = AsyncMock()
+            role_svc_instance.get_role_by_name = AsyncMock(return_value=role_dev)
+            MockRoleService.return_value = role_svc_instance
+
+            personal_team_service = AsyncMock()
+            personal_team_service.get_personal_team = AsyncMock(return_value=None)
+            MockPersonalTeamService.return_value = personal_team_service
+
+            result = await sso_service._map_groups_to_roles("user@test.com", ["grp-a"], provider)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_role_mapping_handles_personal_team_resolution_exception(self, sso_service):
+        """Team-scoped mapping is skipped if personal team resolution raises."""
+        provider = _make_provider(
+            id="keycloak",
+            provider_metadata={
+                "role_mappings": {"grp-a": "developer"},
+                "resolve_team_scope_to_personal_team": True,
+            },
+        )
+        role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
+             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+
+            role_svc_instance = AsyncMock()
+            role_svc_instance.get_role_by_name = AsyncMock(return_value=role_dev)
+            MockRoleService.return_value = role_svc_instance
+
+            personal_team_service = AsyncMock()
+            personal_team_service.get_personal_team = AsyncMock(side_effect=RuntimeError("boom"))
+            MockPersonalTeamService.return_value = personal_team_service
+
+            result = await sso_service._map_groups_to_roles("user@test.com", ["grp-a"], provider)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_default_team_role_skipped_when_personal_team_missing(self, sso_service):
+        """Team-scoped default role should not be assigned without a personal team."""
+        provider = _make_provider(
+            id="keycloak",
+            provider_metadata={
+                "default_role": "developer",
+                "resolve_team_scope_to_personal_team": True,
+            },
+        )
+        role_dev = SimpleNamespace(name="developer", scope="team", id="r-dev")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.role_service.RoleService") as MockRoleService, \
+             patch("mcpgateway.services.personal_team_service.PersonalTeamService") as MockPersonalTeamService:
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_default_role = None
+            mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
+
+            role_svc_instance = AsyncMock()
+            role_svc_instance.get_role_by_name = AsyncMock(return_value=role_dev)
+            MockRoleService.return_value = role_svc_instance
+
+            personal_team_service = AsyncMock()
+            personal_team_service.get_personal_team = AsyncMock(return_value=None)
+            MockPersonalTeamService.return_value = personal_team_service
+
+            result = await sso_service._map_groups_to_roles("user@test.com", ["unmatched-group"], provider)
+
+        assert result == []
+
 
 # ---------------------------------------------------------------------------
 # authenticate_or_create_user tests
@@ -820,6 +1088,136 @@ class TestAuthenticateOrCreateUser:
         assert result == "jwt-token"
         assert existing_user.full_name == "New Name"
         assert existing_user.auth_provider == "github"
+
+    @pytest.mark.asyncio
+    async def test_existing_user_mixed_case_idp_email_uses_canonical_claims(self, sso_service, mock_db):
+        existing_user = SimpleNamespace(
+            email="user@test.com", full_name="User Name", auth_provider="github",
+            email_verified=True, last_login=None, is_admin=False, admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "User@Test.com",
+                    "full_name": "User Name",
+                    "provider": "github",
+                }
+            )
+
+        assert result == "jwt-token"
+        sso_service.auth_service.get_user_by_email.assert_awaited_once_with("user@test.com")
+        token_payload = mock_jwt.await_args.args[0]
+        assert token_payload["sub"] == "user@test.com"
+        assert token_payload["email"] == "user@test.com"
+        assert token_payload["user"]["email"] == "user@test.com"
+
+    @pytest.mark.asyncio
+    async def test_existing_user_avoids_post_commit_attribute_reads(self, sso_service, mock_db):
+        """Regression: callback path must not read ORM attributes after commit."""
+
+        class _GuardedUser:
+            def __init__(self):
+                self.email = "user@test.com"
+                self._full_name = "Old Name"
+                self._auth_provider = "github"
+                self._is_admin = False
+                self.admin_origin = None
+                self.email_verified = False
+                self.last_login = None
+                self.raise_on_read = False
+
+            @property
+            def full_name(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-commit full_name read")
+                return self._full_name
+
+            @full_name.setter
+            def full_name(self, value):
+                self._full_name = value
+
+            @property
+            def auth_provider(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-commit auth_provider read")
+                return self._auth_provider
+
+            @auth_provider.setter
+            def auth_provider(self, value):
+                self._auth_provider = value
+
+            @property
+            def is_admin(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-commit is_admin read")
+                return self._is_admin
+
+            @is_admin.setter
+            def is_admin(self, value):
+                self._is_admin = value
+
+        class _GuardedProvider:
+            def __init__(self):
+                self._id = "github"
+                self._provider_metadata = {"sync_roles": True, "role_mappings": {}}
+                self.raise_on_read = False
+
+            @property
+            def id(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-commit provider.id read")
+                return self._id
+
+            @property
+            def provider_metadata(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-commit provider.provider_metadata read")
+                return self._provider_metadata
+
+        existing_user = _GuardedUser()
+        provider = _GuardedProvider()
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: provider
+        sso_service._map_groups_to_roles = AsyncMock(return_value=[])
+        sso_service._sync_user_roles = AsyncMock()
+
+        def _commit_side_effect():
+            existing_user.raise_on_read = True
+            provider.raise_on_read = True
+
+        mock_db.commit.side_effect = _commit_side_effect
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "Updated Name",
+                    "provider": "github",
+                    "groups": ["dev"],
+                }
+            )
+
+        assert result == "jwt-token"
+        assert existing_user._full_name == "Updated Name"
+        sso_service._map_groups_to_roles.assert_called_once()
+        sso_service._sync_user_roles.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_existing_user_admin_promotion(self, sso_service, mock_db):
@@ -892,6 +1290,106 @@ class TestAuthenticateOrCreateUser:
             })
 
         assert result == "new-jwt"
+
+    @pytest.mark.asyncio
+    async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
+        """New user flow should apply role assignments when mapping returns results."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service.create_user = AsyncMock(
+            return_value=SimpleNamespace(
+                email="new@test.com",
+                full_name="New User",
+                auth_provider="github",
+                is_admin=False,
+                admin_origin=None,
+            )
+        )
+        sso_service.get_provider = lambda _id: _make_provider(provider_metadata={"sync_roles": True, "role_mappings": {}})
+        sso_service._map_groups_to_roles = AsyncMock(return_value=[{"role_name": "developer", "scope": "team", "scope_id": None}])
+        sso_service._sync_user_roles = AsyncMock()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "new-jwt"
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "groups": ["dev"],
+                }
+            )
+
+        assert result == "new-jwt"
+        sso_service._map_groups_to_roles.assert_called_once()
+        sso_service._sync_user_roles.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_new_user_avoids_post_create_provider_reads(self, sso_service, mock_db):
+        """Regression: new-user path must not touch provider ORM fields after create_user."""
+
+        class _GuardedProvider:
+            def __init__(self):
+                self.auto_create_users = True
+                self.trusted_domains = None
+                self._id = "github"
+                self._provider_metadata = {"sync_roles": True, "role_mappings": {}}
+                self.raise_on_read = False
+
+            @property
+            def id(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-create provider.id read")
+                return self._id
+
+            @property
+            def provider_metadata(self):
+                if self.raise_on_read:
+                    raise RuntimeError("post-create provider.provider_metadata read")
+                return self._provider_metadata
+
+        provider = _GuardedProvider()
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.get_provider = lambda _id: provider
+        sso_service._map_groups_to_roles = AsyncMock(return_value=[])
+        sso_service._sync_user_roles = AsyncMock()
+
+        async def _create_user(**_kwargs):
+            provider.raise_on_read = True
+            return SimpleNamespace(
+                email="new@test.com",
+                full_name="New User",
+                auth_provider="github",
+                is_admin=False,
+                admin_origin=None,
+            )
+
+        sso_service.auth_service.create_user = AsyncMock(side_effect=_create_user)
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, \
+             patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "new-jwt"
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "new@test.com",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "groups": ["dev"],
+                }
+            )
+
+        assert result == "new-jwt"
+        sso_service._map_groups_to_roles.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_new_user_no_auto_create(self, sso_service, mock_db):
@@ -1149,6 +1647,29 @@ class TestSyncUserRoles:
                 [{"role_name": "dev", "scope": "team"}],
                 _make_provider(),
             )
+
+        sso_service.db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_assignment_exception_handles_rollback_failure(self, sso_service):
+        """Rollback errors after assignment failure are swallowed and logged."""
+        sso_service.db.rollback.side_effect = RuntimeError("rollback failed")
+
+        with patch("mcpgateway.services.role_service.RoleService") as MockRoleService:
+            role_svc = AsyncMock()
+            role_svc.list_user_roles = AsyncMock(return_value=[])
+            role_svc.get_role_by_name = AsyncMock(return_value=SimpleNamespace(name="dev", id="r1", scope="team"))
+            role_svc.get_user_role_assignment = AsyncMock(return_value=None)
+            role_svc.assign_role_to_user = AsyncMock(side_effect=RuntimeError("db error"))
+            MockRoleService.return_value = role_svc
+
+            await sso_service._sync_user_roles(
+                "user@test.com",
+                [{"role_name": "dev", "scope": "team"}],
+                _make_provider(),
+            )
+
+        sso_service.db.rollback.assert_called()
 
 
 # ---------------------------------------------------------------------------

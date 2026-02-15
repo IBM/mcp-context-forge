@@ -298,6 +298,8 @@ debug_login_page.png
 docs/pstats.png
 docs/docs/coverage/
 docs/docs/images/coverage.svg
+docs/docs/design/images/code2flow.dot
+docs/docs/test/
 mcp.prof
 mcp.pstats
 coverage_re
