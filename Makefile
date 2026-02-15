@@ -4131,7 +4131,7 @@ dist: clean uv               ## Build wheel + sdist into ./dist (optionally incl
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust plugins..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -4147,7 +4147,7 @@ wheel: uv                    ## Build wheel only (Python + optionally Rust)
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust wheels..."; \
 		$(MAKE) rust-build || { echo "⚠️  Rust build failed, continuing without Rust plugins"; exit 0; }; \
-		echo '🦀 Rust wheels written to ./plugins_rust/target/wheels/'; \
+		echo '🦀 Rust wheels built successfully'; \
 	else \
 		echo "⏭️  Rust builds disabled (ENABLE_RUST_BUILD=0)"; \
 	fi
@@ -7508,19 +7508,38 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 
 rust-build: rust-check-maturin          ## Build Rust plugins (release)
 	@echo "🦀 Building Rust plugins (release mode)..."
-	@cd plugins_rust && maturin build --release
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			echo "🦀 Building $$(basename $$plugin_dir)..."; \
+			cd "$$plugin_dir" && maturin build --release && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-dev:                               ## Build and install Rust plugins (development mode)
 	@echo "🦀 Building and installing Rust plugins (development mode)..."
-	@cd plugins_rust && maturin develop --release
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			echo "🦀 Installing $$(basename $$plugin_dir)..."; \
+			cd "$$plugin_dir" && maturin develop --release && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-test:                              ## Run Rust plugin tests
 	@echo "🦀 Running Rust plugin tests..."
-	@cd plugins_rust && cargo test --release
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			echo "🦀 Testing $$(basename $$plugin_dir)..."; \
+			cd "$$plugin_dir" && cargo test --release && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-test-integration:                  ## Run Rust integration tests
 	@echo "🦀 Running Rust integration tests..."
-	@cd plugins_rust && cargo test --test '*' --release
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && cargo test --test '*' --release && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-test-all: rust-test                ## Run all Rust and Python tests
 	@echo "🧪 Running Python tests for Rust plugins..."
@@ -7528,27 +7547,38 @@ rust-test-all: rust-test                ## Run all Rust and Python tests
 
 rust-bench:                             ## Run Rust benchmarks
 	@echo "🦀 Running Rust benchmarks..."
-	@cd plugins_rust && cargo bench
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			echo "🦀 Benchmarking $$(basename $$plugin_dir)..."; \
+			cd "$$plugin_dir" && cargo bench && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-bench-compare:                     ## Compare Rust vs Python performance
 	@echo "📊 Comparing Rust vs Python performance..."
-	@cd plugins_rust/benchmarks && python3 compare_pii_filter.py
+	@cd plugins_rust/pii_filter/benchmarks && python3 compare_pii_filter.py
 
 rust-check:                             ## Run all Rust checks (format, lint, test)
 	@echo "🦀 Running Rust checks..."
-	@cd plugins_rust && cargo fmt --check
-	@cd plugins_rust && cargo clippy --lib -- -D warnings -A deprecated
-	@cd plugins_rust && cargo test --lib --release
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			echo "🦀 Checking $$(basename $$plugin_dir)..."; \
+			cd "$$plugin_dir" && cargo fmt --check && cargo clippy --lib -- -D warnings -A deprecated && cargo test --lib --release && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-clean:                             ## Clean Rust build artifacts
 	@echo "🧹 Cleaning Rust build artifacts..."
-	@cd plugins_rust && cargo clean
-	@rm -rf plugins_rust/target/
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && cargo clean && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-verify:                            ## Verify Rust plugin installation
 	@echo "🔍 Verifying Rust plugin installation..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		python3 -c 'from plugins_rust import PIIDetectorRust; print(\"✅ Rust PII filter available\")' || \
+		python3 -c 'from pii_filter_rust import PIIDetectorRust; print(\"✅ Rust PII filter available\")' || \
 		echo '❌ Rust plugins not installed'"
 
 rust-check-maturin:                     ## Check/install maturin
@@ -7579,33 +7609,61 @@ rust-install-targets:                   ## Install all Rust cross-compilation ta
 
 rust-build-x86_64: rust-check-maturin   ## Build for Linux x86_64
 	@echo "🦀 Building for x86_64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target x86_64-unknown-linux-gnu
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target x86_64-unknown-linux-gnu && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-build-aarch64: rust-check-maturin  ## Build for Linux arm64/aarch64
 	@echo "🦀 Building for aarch64-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target aarch64-unknown-linux-gnu
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target aarch64-unknown-linux-gnu && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-build-armv7: rust-check-maturin    ## Build for Linux armv7 (32-bit ARM)
 	@echo "🦀 Building for armv7-unknown-linux-gnueabihf..."
-	@cd plugins_rust && maturin build --release --target armv7-unknown-linux-gnueabihf
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target armv7-unknown-linux-gnueabihf && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-build-s390x: rust-check-maturin    ## Build for Linux s390x (IBM mainframe)
 	@echo "🦀 Building for s390x-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target s390x-unknown-linux-gnu
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target s390x-unknown-linux-gnu && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-build-ppc64le: rust-check-maturin  ## Build for Linux ppc64le (IBM POWER)
 	@echo "🦀 Building for powerpc64le-unknown-linux-gnu..."
-	@cd plugins_rust && maturin build --release --target powerpc64le-unknown-linux-gnu
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target powerpc64le-unknown-linux-gnu && cd $(CURDIR); \
+		fi; \
+	done
 
 rust-build-all-linux: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le  ## Build for all Linux architectures
 	@echo "✅ Built for all Linux architectures"
 
 rust-build-all-platforms: rust-build-all-linux  ## Build for all platforms (Linux, macOS, Windows)
 	@echo "🦀 Building for macOS..."
-	@cd plugins_rust && maturin build --release --target x86_64-apple-darwin || echo "⚠️  macOS x86_64 build skipped"
-	@cd plugins_rust && maturin build --release --target aarch64-apple-darwin || echo "⚠️  macOS ARM64 build skipped"
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target x86_64-apple-darwin && cd $(CURDIR) || echo "⚠️  macOS x86_64 build skipped"; \
+			cd "$$plugin_dir" && maturin build --release --target aarch64-apple-darwin && cd $(CURDIR) || echo "⚠️  macOS ARM64 build skipped"; \
+		fi; \
+	done
 	@echo "🦀 Building for Windows..."
-	@cd plugins_rust && maturin build --release --target x86_64-pc-windows-msvc || echo "⚠️  Windows build skipped"
+	@for plugin_dir in plugins_rust/*/; do \
+		if [ -f "$$plugin_dir/Cargo.toml" ]; then \
+			cd "$$plugin_dir" && maturin build --release --target x86_64-pc-windows-msvc && cd $(CURDIR) || echo "⚠️  Windows build skipped"; \
+		fi; \
+	done
 	@echo "✅ Built for all platforms"
 
 rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + build all Linux (convenience)
