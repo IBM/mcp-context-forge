@@ -509,3 +509,81 @@ async def test_plugin_manager_async_concurrency():
 
     # Clean up
     PluginManager.reset()
+
+
+@pytest.mark.asyncio
+async def test_manager_plugin_dirs_added_to_sys_path():
+    """Test that plugin_dirs from config are added to sys.path during initialization.
+
+    Verifies that:
+    1. Directories listed in plugin_dirs are added to sys.path
+    2. Plugins in those directories can be imported and loaded
+    3. sys.path is cleaned up after shutdown
+    """
+    import os
+    import sys
+    import tempfile
+
+    PluginManager.reset()
+
+    # Create a temporary directory structure with a minimal plugin
+    with tempfile.TemporaryDirectory() as tmpdir:
+        # Create plugin package: <tmpdir>/my_ext_plugin/my_ext_plugin.py
+        plugin_pkg = os.path.join(tmpdir, "my_ext_plugin")
+        os.makedirs(plugin_pkg)
+
+        # Write __init__.py
+        with open(os.path.join(plugin_pkg, "__init__.py"), "w") as f:
+            f.write("")
+
+        # Write minimal plugin module
+        with open(os.path.join(plugin_pkg, "my_ext_plugin.py"), "w") as f:
+            f.write(
+                "from mcpgateway.plugins.framework.base import Plugin\n"
+                "from mcpgateway.plugins.framework.models import PluginContext, PluginResult\n"
+                "\n"
+                "class MyExtPlugin(Plugin):\n"
+                "    async def prompt_pre_fetch(self, payload, context):\n"
+                "        return PluginResult(modified_payload=payload)\n"
+            )
+
+        # Write a temp config YAML that uses plugin_dirs to find the plugin
+        config_path = os.path.join(tmpdir, "config.yaml")
+        with open(config_path, "w") as f:
+            f.write(
+                f"plugin_dirs:\n"
+                f'  - "{tmpdir}"\n'
+                f"\n"
+                f"plugin_settings:\n"
+                f"  plugin_timeout: 30\n"
+                f"  fail_on_plugin_error: false\n"
+                f"  enable_plugin_api: false\n"
+                f"\n"
+                f"plugins:\n"
+                f'  - name: "MyExtPlugin"\n'
+                f'    kind: "my_ext_plugin.my_ext_plugin.MyExtPlugin"\n'
+                f'    hooks: ["prompt_pre_fetch"]\n'
+                f'    mode: "enforce"\n'
+                f"    priority: 100\n"
+            )
+
+        resolved_tmpdir = os.path.abspath(tmpdir)
+
+        # Verify the dir is NOT in sys.path before init
+        assert resolved_tmpdir not in sys.path
+
+        manager = PluginManager(config_path)
+        await manager.initialize()
+
+        # Verify plugin loaded successfully
+        assert manager.initialized
+        assert manager.plugin_count == 1
+
+        # Verify the dir WAS added to sys.path
+        assert resolved_tmpdir in sys.path
+
+        # Shutdown and verify cleanup
+        await manager.shutdown()
+        assert resolved_tmpdir not in sys.path
+
+    PluginManager.reset()
