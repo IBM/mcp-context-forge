@@ -1091,6 +1091,14 @@ class SSOService:
         personal_team_checked = False
 
         async def _resolve_team_scope_id_if_needed(role_scope: str) -> Optional[str]:
+            """Resolve team scope to personal-team id when provider mapping requires it.
+
+            Args:
+                role_scope: Role scope value from mapping metadata.
+
+            Returns:
+                Optional[str]: Personal team id when resolution succeeds, else None.
+            """
             nonlocal personal_team_id, personal_team_checked
 
             if role_scope != "team" or not resolve_team_scope_to_personal_team:

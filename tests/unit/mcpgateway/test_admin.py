@@ -11,7 +11,7 @@ Enhanced with additional test cases for better coverage.
 """
 
 # Standard
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, mock_open, patch
@@ -15356,3 +15356,273 @@ class TestAdminTokensPartialSearch:
             user={"email": "user@example.com", "db": mock_db},
         )
         assert isinstance(response, HTMLResponse)
+
+    @pytest.mark.asyncio
+    async def test_admin_forgot_password_page_and_handler_branches(self, mock_db):
+        """Cover forgot-password page and handler branches."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": "/root"}
+        request.app = MagicMock()
+        request.app.state = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse(content="<html></html>")
+        request.form = AsyncMock(return_value=FakeForm({}))
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.app_root_path = "/root"
+            mock_settings.email_auth_enabled = False
+            response = await admin_mod.admin_forgot_password_page(request)
+            assert isinstance(response, RedirectResponse)
+            assert response.headers["location"].endswith("/root/admin/login")
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.app_root_path = "/root"
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            mock_settings.mcpgateway_ui_airgapped = False
+            response = await admin_mod.admin_forgot_password_page(request)
+            assert isinstance(response, HTMLResponse)
+            template_call = request.app.state.templates.TemplateResponse.call_args
+            assert template_call[0][1] == "forgot-password.html"
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = False
+            response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
+            assert response.headers["location"].endswith("/root/admin/login")
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = False
+            response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
+            assert "password_reset_disabled" in response.headers["location"]
+
+        request.form = AsyncMock(return_value=FakeForm({"email": ""}))
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
+            assert "missing_email" in response.headers["location"]
+
+        request.form = AsyncMock(return_value=FakeForm({"email": "user@example.com"}))
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.request_password_reset = AsyncMock(return_value=SimpleNamespace(rate_limited=True))
+                response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
+                assert "rate_limited" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.request_password_reset = AsyncMock(return_value=SimpleNamespace(rate_limited=False))
+                response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
+                assert "notice=reset_email_sent" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.request_password_reset = AsyncMock(side_effect=RuntimeError("boom"))
+                response = await admin_mod.admin_forgot_password_handler(request, db=mock_db)
+                assert "server_error" in response.headers["location"]
+
+    @pytest.mark.asyncio
+    async def test_admin_reset_password_page_and_handler_branches(self, mock_db):
+        """Cover reset-password page and handler branches."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+        from mcpgateway.services.email_auth_service import AuthenticationError, PasswordValidationError
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": "/root"}
+        request.app = MagicMock()
+        request.app.state = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse(content="<html></html>")
+        request.form = AsyncMock(return_value=FakeForm({}))
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.app_root_path = "/root"
+            mock_settings.email_auth_enabled = False
+            response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
+            assert response.headers["location"].endswith("/root/admin/login")
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.app_root_path = "/root"
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = False
+            response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
+            assert "password_reset_disabled" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.app_root_path = "/root"
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            mock_settings.password_min_length = 8
+            mock_settings.mcpgateway_ui_airgapped = False
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.validate_password_reset_token = AsyncMock(return_value=MagicMock())
+                response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
+                assert isinstance(response, HTMLResponse)
+                template_call = request.app.state.templates.TemplateResponse.call_args
+                assert template_call[0][1] == "reset-password.html"
+                assert template_call[0][2]["token_valid"] is True
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.app_root_path = "/root"
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            mock_settings.password_min_length = 8
+            mock_settings.mcpgateway_ui_airgapped = False
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.validate_password_reset_token = AsyncMock(side_effect=AuthenticationError("expired"))
+                response = await admin_mod.admin_reset_password_page("token123", request, db=mock_db)
+                assert isinstance(response, HTMLResponse)
+                template_call = request.app.state.templates.TemplateResponse.call_args
+                assert template_call[0][2]["token_valid"] is False
+                assert "expired" in template_call[0][2]["token_error"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = False
+            response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+            assert response.headers["location"].endswith("/root/admin/login")
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = False
+            response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+            assert "password_reset_disabled" in response.headers["location"]
+
+        request.form = AsyncMock(return_value=FakeForm({"password": "", "confirm_password": ""}))
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+            assert "missing_fields" in response.headers["location"]
+
+        request.form = AsyncMock(return_value=FakeForm({"password": "abc", "confirm_password": "xyz"}))
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+            assert "password_mismatch" in response.headers["location"]
+
+        request.form = AsyncMock(return_value=FakeForm({"password": "NewPassword123!", "confirm_password": "NewPassword123!"}))
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.reset_password_with_token = AsyncMock(return_value=True)
+                response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+                assert "notice=password_reset_success" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.reset_password_with_token = AsyncMock(side_effect=PasswordValidationError("weak password"))
+                response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+                assert "weak%20password" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.reset_password_with_token = AsyncMock(side_effect=AuthenticationError("expired token"))
+                response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+                assert "reset_link_expired" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.reset_password_with_token = AsyncMock(side_effect=AuthenticationError("already used"))
+                response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+                assert "reset_link_used" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.reset_password_with_token = AsyncMock(side_effect=AuthenticationError("invalid"))
+                response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+                assert "reset_link_invalid" in response.headers["location"]
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            mock_settings.password_reset_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.reset_password_with_token = AsyncMock(side_effect=RuntimeError("boom"))
+                response = await admin_mod.admin_reset_password_handler("token123", request, db=mock_db)
+                assert "server_error" in response.headers["location"]
+
+    def test_render_user_card_html_locked_user_shows_locked_badge_and_unlock_action(self):
+        """Locked users render lock badge and unlock action."""
+        locked_user = SimpleNamespace(
+            email="locked@test.com",
+            full_name="Locked User",
+            auth_provider="local",
+            created_at=datetime(2025, 1, 1),
+            is_admin=False,
+            is_active=True,
+            password_change_required=False,
+            failed_login_attempts=5,
+            locked_until=datetime.now(timezone.utc).replace(microsecond=0) + timedelta(minutes=5),
+        )
+        html_output = _render_user_card_html(locked_user, "other@test.com", admin_count=2, root_path="")
+        assert "Locked" in html_output
+        assert "Unlock" in html_output
+
+    @pytest.mark.asyncio
+    async def test_admin_unlock_user_branches(self, mock_db, allow_permission):
+        """Cover admin unlock route branches."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": "/root"}
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = False
+            response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+            assert response.status_code == 403
+
+        unlocked_user = SimpleNamespace(
+            email="user@example.com",
+            full_name="User",
+            auth_provider="local",
+            created_at=datetime(2025, 1, 1),
+            is_admin=False,
+            is_active=True,
+            password_change_required=False,
+            failed_login_attempts=0,
+            locked_until=None,
+        )
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service = mock_service_cls.return_value
+                mock_service.unlock_user_account = AsyncMock(return_value=unlocked_user)
+                mock_service.count_active_admin_users = AsyncMock(return_value=2)
+                response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+                assert response.status_code == 200
+                assert "user@example.com" in response.body.decode()
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=ValueError("missing user"))
+                response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+                assert response.status_code == 404
+
+        with patch("mcpgateway.admin.settings") as mock_settings:
+            mock_settings.email_auth_enabled = True
+            with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
+                mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=RuntimeError("boom"))
+                response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+                assert response.status_code == 400

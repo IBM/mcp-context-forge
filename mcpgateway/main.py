@@ -1441,6 +1441,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Exempts login-related paths and static assets:
     - /admin/login - login page
     - /admin/logout - logout action
+    - /admin/forgot-password - self-service password reset request page
+    - /admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -1451,8 +1453,14 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Paths under /admin that don't require admin privileges
-    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
+    # Public paths under /admin that do not require prior authentication.
+    EXEMPT_PATHS = [
+        "/admin/login",
+        "/admin/logout",
+        "/admin/forgot-password",
+        "/admin/reset-password",
+        "/admin/static",
+    ]
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
