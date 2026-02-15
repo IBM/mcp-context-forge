@@ -63,7 +63,6 @@ import (
     "os"
     "strings"
     "sync"
-    "sync/atomic"
     "time"
 
     "github.com/mark3labs/mcp-go/mcp"
@@ -301,9 +300,9 @@ var stats = &invocationStats{}
 func (s *invocationStats) record(dur time.Duration, isError bool) {
     s.mu.Lock()
     defer s.mu.Unlock()
-    atomic.AddInt64(&s.totalCalls, 1)
+    s.totalCalls++
     if isError {
-        atomic.AddInt64(&s.totalErrors, 1)
+        s.totalErrors++
     }
     s.latencies = append(s.latencies, dur.Seconds())
     // Keep only last 10000 entries

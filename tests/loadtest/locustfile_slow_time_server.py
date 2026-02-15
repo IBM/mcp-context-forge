@@ -38,11 +38,9 @@ Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 """
 
-import json
 import logging
 import os
 import random
-import uuid
 
 from locust import HttpUser, between, events, tag, task
 from locust.runners import MasterRunner, WorkerRunner

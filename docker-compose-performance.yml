@@ -1452,15 +1452,15 @@ services:
     ports:
       - "8889:8081"    # Map host port 8889 to container port 8081
     environment:
-      DEFAULT_LATENCY: "${SLOW_TIME_DEFAULT_LATENCY:-5s}"
+      DEFAULT_LATENCY: "${SLOW_TIME_LATENCY:-5s}"
       FAILURE_RATE: "${SLOW_TIME_FAILURE_RATE:-0.1}"
     command: ["-transport=dual", "-port=8081", "-listen=0.0.0.0", "-log-level=info"]
     healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8081/health"]
-      interval: 30s
-      timeout: 5s
+      test: ["CMD", "/slow-time-server", "-health", "-port=8081"]
+      interval: 10s
+      timeout: 3s
       retries: 3
-      start_period: 10s
+      start_period: 5s
     deploy:
       resources:
         limits:

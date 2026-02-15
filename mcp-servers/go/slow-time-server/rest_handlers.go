@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -293,22 +292,3 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// generateTestTimeoutPrompt generates the test_timeout prompt text.
-func generateTestTimeoutPrompt(args map[string]string) string {
-	delayStr := args["delay_seconds"]
-	if delayStr == "" {
-		delayStr = "30"
-	}
-	timeoutStr := args["timeout_seconds"]
-	if timeoutStr == "" {
-		timeoutStr = "10"
-	}
-
-	var sb strings.Builder
-	sb.WriteString("Test timeout behaviour by invoking the slow-time-server tools:\n\n")
-	sb.WriteString(fmt.Sprintf("1. Call get_slow_time with delay_seconds=%s\n", delayStr))
-	sb.WriteString(fmt.Sprintf("2. The gateway timeout should be configured to %s seconds\n", timeoutStr))
-	sb.WriteString("3. Observe whether the gateway returns a ToolTimeoutError\n")
-	sb.WriteString("4. Check the error message includes the timeout value\n")
-	return sb.String()
-}
