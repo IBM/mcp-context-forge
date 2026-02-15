@@ -12,7 +12,6 @@ from fastapi.testclient import TestClient
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.main import app
 
 LATEST_MCP_PROTOCOL_VERSION = "2025-11-25"
 
@@ -61,6 +60,8 @@ def compliance_client(
     # In-process mode: disable auth requirements for deterministic local checks.
     previous_auth_required = settings.auth_required
     previous_client_auth_enabled = settings.mcp_client_auth_enabled
+    from mcpgateway.main import app  # noqa: E402  # lazy import to avoid bootstrap_db side effects
+
     settings.auth_required = False
     settings.mcp_client_auth_enabled = False
     try:
