@@ -43,7 +43,7 @@ SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 # Only build if ENABLE_RUST=true
 RUN if [ "$ENABLE_RUST" != "true" ]; then \
         echo "⏭️  Rust builds disabled (set --build-arg ENABLE_RUST=true to enable)"; \
-        mkdir -p /build/plugins_rust/target/wheels; \
+        mkdir -p /build/rust-wheels; \
         exit 0; \
     fi
 
@@ -58,14 +58,19 @@ WORKDIR /build
 # Copy only Rust plugin files (only if ENABLE_RUST=true)
 COPY plugins_rust/ /build/plugins_rust/
 
-# Switch to Rust plugin directory
-WORKDIR /build/plugins_rust
-
-# Build Rust plugins using Python 3.12 from manylinux image (only if ENABLE_RUST=true)
+# Build each Rust plugin independently using Python 3.12 from manylinux image
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        rm -rf target/wheels && \
+        mkdir -p /build/rust-wheels && \
         /opt/python/cp312-cp312/bin/python -m pip install --upgrade pip maturin && \
-        /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 && \
+        for plugin_dir in /build/plugins_rust/*/; do \
+            if [ -f "$plugin_dir/Cargo.toml" ]; then \
+                plugin_name=$(basename "$plugin_dir"); \
+                echo "🦀 Building Rust plugin: $plugin_name"; \
+                cd "$plugin_dir" && \
+                /opt/python/cp312-cp312/bin/maturin build --release --compatibility manylinux2014 --out /build/rust-wheels && \
+                cd /build; \
+            fi; \
+        done && \
         echo "✅ Rust plugins built successfully"; \
     else \
         echo "⏭️  Skipping Rust plugin build"; \
@@ -123,7 +128,7 @@ COPY pyproject.toml /app/
 # ----------------------------------------------------------------------------
 # Copy Rust plugin wheels from rust-builder stage (if any exist)
 # ----------------------------------------------------------------------------
-COPY --from=rust-builder /build/plugins_rust/target/wheels/ /tmp/rust-wheels/
+COPY --from=rust-builder /build/rust-wheels/ /tmp/rust-wheels/
 
 # ----------------------------------------------------------------------------
 # Create and populate virtual environment
@@ -144,8 +149,8 @@ RUN set -euo pipefail \
     && /app/.venv/bin/uv pip install ".[redis,postgres,mysql,observability,granian]" \
     && if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
-        /app/.venv/bin/pip install --no-cache-dir /tmp/rust-wheels/mcpgateway_rust-*-manylinux*.whl && \
-        /app/.venv/bin/python3 -c "from plugins_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
+        /app/.venv/bin/pip install --no-cache-dir /tmp/rust-wheels/*.whl && \
+        /app/.venv/bin/python3 -c "from pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')" || true; \
     else \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi \

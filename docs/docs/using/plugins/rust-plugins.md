@@ -1,7 +1,7 @@
 # Rust Plugins - High-Performance Native Extensions
 
 !!! success "Production Ready"
-    Rust plugins provide **5-100x performance improvements** for computationally intensive operations while maintaining 100% API compatibility with Python plugins.
+    Rust plugins provide **5-10x performance improvements** for computationally intensive operations while maintaining 100% API compatibility with Python plugins.
 
 ## Overview
 
@@ -9,7 +9,7 @@ MCP Gateway supports high-performance Rust implementations of plugins through Py
 
 ### Key Benefits
 
-- **🚀 5-100x Performance**: Native compilation, zero-copy operations, parallel processing
+- **🚀 5-10x Performance**: Native compilation, zero-copy operations, parallel processing
 - **🔄 Seamless Integration**: Automatic fallback to Python when Rust unavailable
 - **📦 Zero Breaking Changes**: Identical API to Python plugins
 - **⚙️ Auto-Detection**: Automatically uses Rust when available
@@ -44,7 +44,7 @@ plugins_rust/
 │              │                        │                 │
 │      ┌───────┴──────┐        ┌───────┴────────┐       │
 │      │ Rust Wrapper │        │ Python Fallback│       │
-│      │ (5-100x fast)│        │ (Pure Python)  │       │
+│      │ (5-10x fast)│        │ (Pure Python)  │       │
 │      └───────┬──────┘        └────────────────┘       │
 └──────────────┼────────────────────────────────────────┘
                │
@@ -76,9 +76,8 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 cd plugins_rust/[plugin_name]
 make install
 
-# Or build all plugins
-cd plugins_rust
-make install-all
+# Or build all plugins from project root
+make rust-dev
 ```
 
 ### Option 2: Use Python Fallback
@@ -174,7 +173,7 @@ The gateway logs which implementation is being used:
 
 ```
 # With Rust available
-INFO - ✓ Plugin: Using Rust implementation (5-100x faster)
+INFO - ✓ Plugin: Using Rust implementation (5-10x faster)
 
 # Without Rust
 WARNING - Plugin: Using Python implementation
@@ -192,8 +191,8 @@ WARNING - 💡 Build Rust plugins for better performance
 ### Build Steps
 
 ```bash
-# Navigate to Rust plugins directory
-cd plugins_rust
+# Navigate to a specific Rust plugin directory
+cd plugins_rust/pii_filter
 
 # Build in development mode (with debug symbols)
 maturin develop
@@ -203,22 +202,20 @@ maturin develop --release
 
 # Build wheel package
 maturin build --release
-
-# The wheel will be in plugins_rust/dist/
-# Install it: pip install dist/mcpgateway_rust-*.whl
 ```
 
 ### Using Make
 
 ```bash
-# From project root
+# From project root (builds all plugins)
 make rust-dev              # Build and install (development mode)
 make rust-build            # Build release wheel
 make rust-test             # Run Rust unit tests
 make rust-verify           # Verify installation
 
-# From plugins_rust/
-make dev                   # Build and install
+# From individual plugin directory
+cd plugins_rust/pii_filter
+make develop               # Build and install
 make test                  # Run tests
 make bench                 # Run benchmarks
 make bench-compare         # Compare Rust vs Python performance
@@ -229,15 +226,15 @@ make bench-compare         # Compare Rust vs Python performance
 ### Built-in Benchmarks
 
 ```bash
-# Run Rust benchmarks (Criterion)
-cd plugins_rust
+# Run Rust benchmarks (Criterion) for a specific plugin
+cd plugins_rust/pii_filter
 make bench
 
 # Run Python vs Rust comparison
 make bench-compare
 
-# Or from project root
-make rust-bench-compare
+# Or from project root (runs all plugin benchmarks)
+make rust-bench
 ```
 
 ### Sample Benchmark Output
@@ -277,8 +274,8 @@ Average Speedup: 7.8x
 ### Running Tests
 
 ```bash
-# Rust unit tests
-cd plugins_rust
+# Rust unit tests (from a specific plugin directory)
+cd plugins_rust/pii_filter
 cargo test
 
 # Python integration tests
@@ -309,13 +306,10 @@ The Rust plugin system includes comprehensive testing:
 **Solutions**:
 ```bash
 # 1. Check if Rust extension is installed
-python -c "from plugins_rust import PIIDetectorRust; print('OK')"
+python -c "from pii_filter_rust import PIIDetectorRust; print('OK')"
 
-# 2. Install with Rust support
-pip install mcpgateway[rust]
-
-# 3. Or build from source
-cd plugins_rust
+# 2. Build from source
+cd plugins_rust/pii_filter
 maturin develop --release
 ```
 
@@ -326,10 +320,10 @@ maturin develop --release
 **Solutions**:
 ```bash
 # 1. Verify installation
-pip list | grep mcpgateway-rust
+pip list | grep mcpgateway-pii-filter
 
 # 2. Rebuild
-cd plugins_rust
+cd plugins_rust/pii_filter
 maturin develop --release
 
 # 3. Check Python version (requires 3.11+)
@@ -503,12 +497,9 @@ strip = true               # Strip symbols for smaller binary
 ### Audit and Compliance
 
 ```bash
-# Run security audit
-cd plugins_rust
+# Run security audit (from a specific plugin directory)
+cd plugins_rust/pii_filter
 cargo audit
-
-# Check dependencies for vulnerabilities
-cargo deny check
 ```
 
 ## Future Rust Plugins
