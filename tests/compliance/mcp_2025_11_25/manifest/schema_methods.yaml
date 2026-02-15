@@ -1,0 +1,34 @@
+protocol_version: "2025-11-25"
+source: "mcp.types (installed SDK schema projection)"
+methods:
+  - completion/complete
+  - elicitation/create
+  - initialize
+  - logging/setLevel
+  - notifications/cancelled
+  - notifications/elicitation/complete
+  - notifications/initialized
+  - notifications/message
+  - notifications/progress
+  - notifications/prompts/list_changed
+  - notifications/resources/list_changed
+  - notifications/resources/updated
+  - notifications/roots/list_changed
+  - notifications/tasks/status
+  - notifications/tools/list_changed
+  - ping
+  - prompts/get
+  - prompts/list
+  - resources/list
+  - resources/read
+  - resources/subscribe
+  - resources/templates/list
+  - resources/unsubscribe
+  - roots/list
+  - sampling/createMessage
+  - tasks/cancel
+  - tasks/get
+  - tasks/list
+  - tasks/result
+  - tools/call
+  - tools/list
