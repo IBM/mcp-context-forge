@@ -11,6 +11,7 @@ This assumes environment variables are loaded by the Makefile.
 # Standard
 import os
 import re
+from pathlib import Path
 from typing import Dict, Generator, Optional
 import uuid
 
@@ -44,6 +45,9 @@ API_TOKEN = os.getenv("MCP_AUTH", "")
 DISABLE_JWT_FALLBACK = os.getenv("PLAYWRIGHT_DISABLE_JWT_FALLBACK", "").lower() in ("1", "true", "yes")
 PLAYWRIGHT_VIDEO_SIZE = os.getenv("PLAYWRIGHT_VIDEO_SIZE", "1920x1080")
 PLAYWRIGHT_VIEWPORT_SIZE = os.getenv("PLAYWRIGHT_VIEWPORT_SIZE", PLAYWRIGHT_VIDEO_SIZE)
+
+# Storage state file for reusing authentication
+STORAGE_STATE_FILE = Path(__file__).parent / ".auth" / "admin_state.json"
 
 # Email login credentials (admin user)
 ADMIN_EMAIL = os.getenv("PLATFORM_ADMIN_EMAIL", "admin@example.com")
@@ -209,6 +213,71 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
         pass  # Continue — JS may be loaded via alternative path
 
 
+def _ensure_page_ready(page: Page, base_url: str, request) -> None:
+    """Helper to ensure page is ready with authentication.
+    
+    This centralizes the common pattern used by all page fixtures:
+    - If test has @pytest.mark.no_auth: perform fresh login
+    - Otherwise: navigate to admin and wait for it to load (auth state already loaded)
+    
+    Args:
+        page: The Playwright page instance
+        base_url: The base URL for the application
+        request: The pytest request object to check for markers
+    """
+    if request.node.get_closest_marker("no_auth"):
+        # Test needs fresh login without saved auth state
+        _ensure_admin_logged_in(page, base_url)
+    else:
+        # Auth state is already loaded from storage_state, just navigate
+        page.goto("/admin")
+        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+
+
+def pytest_configure(config):
+    """Pytest hook to perform global authentication setup before tests run."""
+    # Create .auth directory if it doesn't exist
+    STORAGE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+@pytest.fixture(scope="session")
+def authenticated_state(playwright: Playwright, base_url: str) -> Path:
+    """Create and save authenticated browser state for reuse across tests.
+    
+    This fixture runs once per test session and performs a single login,
+    saving the authentication state to a file that can be reused by all tests.
+    """
+    # If storage state already exists and is recent, reuse it
+    if STORAGE_STATE_FILE.exists():
+        # Check if file is less than 1 hour old
+        import time
+        file_age = time.time() - STORAGE_STATE_FILE.stat().st_mtime
+        if file_age < 3600:  # 1 hour
+            return STORAGE_STATE_FILE
+    
+    # Create a new browser context for authentication
+    browser = playwright.chromium.launch()
+    context = browser.new_context(
+        base_url=base_url,
+        viewport=VIEWPORT_SIZE,
+        ignore_https_errors=True
+    )
+    page = context.new_page()
+    
+    try:
+        # Perform login
+        _ensure_admin_logged_in(page, base_url)
+        
+        # Save the authenticated state
+        context.storage_state(path=str(STORAGE_STATE_FILE))
+        
+    finally:
+        context.close()
+        browser.close()
+    
+    return STORAGE_STATE_FILE
+
+
 @pytest.fixture(scope="session")
 def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
     """Create API request context with optional bearer token."""
@@ -234,15 +303,23 @@ def api_request_context(playwright: Playwright) -> Generator[APIRequestContext, 
     request_context.dispose()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture
 def browser_context_args(
     pytestconfig,
     playwright: Playwright,
     device: Optional[str],
     base_url: Optional[str],
     _pw_artifacts_folder,
+    authenticated_state: Path,
+    request,
 ) -> Dict:
-    """Customize Playwright browser context for artifacts + video quality."""
+    """Customize Playwright browser context for artifacts + video quality + auth state.
+    
+    This fixture integrates with pytest-playwright's built-in context fixture to ensure
+    proper artifact collection (screenshots on failure, video recording, traces).
+    
+    Tests can use @pytest.mark.no_auth to get a fresh context without saved auth state.
+    """
     context_args: Dict = {}
     if device:
         context_args.update(playwright.devices[device])
@@ -258,14 +335,24 @@ def browser_context_args(
 
     if VIEWPORT_SIZE and not device:
         context_args["viewport"] = VIEWPORT_SIZE
+    
+    # Always set ignore_https_errors for local development
+    context_args["ignore_https_errors"] = True
+    
+    # Use saved authentication state by default, unless test is marked with no_auth
+    # Tests marked with @pytest.mark.no_auth (like authentication tests) will get
+    # a fresh context without saved authentication state
+    if not request.node.get_closest_marker("no_auth"):
+        context_args["storage_state"] = str(authenticated_state)
 
     return context_args
 
 
-@pytest.fixture
-def context(new_context) -> BrowserContext:
-    """Create a browser context using pytest-playwright hooks for artifacts."""
-    return new_context(ignore_https_errors=True)
+# Note: We don't override the 'context' fixture here because pytest-playwright's
+# built-in context fixture handles artifact collection (screenshots, videos, traces).
+# Instead, we customize context creation through browser_context_args fixture above.
+# For tests that need fresh auth (no storage_state), we handle this in browser_context_args
+# by checking for the no_auth marker.
 
 
 # Fixture if you need the default page fixture name
@@ -276,86 +363,90 @@ def authenticated_page(page: Page) -> Page:
 
 
 @pytest.fixture
-def admin_page(page: Page, base_url: str) -> AdminPage:
-    """Provide a logged-in AdminPage instance for UI tests."""
-    _ensure_admin_logged_in(page, base_url)
+def admin_page(page: Page, base_url: str, request) -> AdminPage:
+    """Provide a logged-in AdminPage instance for UI tests.
+    
+    Uses saved authentication state by default. Tests marked with @pytest.mark.no_auth
+    will perform a fresh login.
+    """
+    _ensure_page_ready(page, base_url, request)
     return AdminPage(page, base_url)
 
 
 @pytest.fixture
-def team_page(page: Page, base_url: str) -> TeamPage:
+def team_page(page: Page, base_url: str, request) -> TeamPage:
     """Provide a logged-in TeamPage instance for team tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return TeamPage(page)
 
 
 @pytest.fixture
-def tokens_page(page: Page, base_url: str) -> TokensPage:
+def tokens_page(page: Page, base_url: str, request) -> TokensPage:
     """Provide a logged-in TokensPage instance for token tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return TokensPage(page)
 
 
 @pytest.fixture
-def metrics_page(page: Page, base_url: str) -> MetricsPage:
+def metrics_page(page: Page, base_url: str, request) -> MetricsPage:
     """Provide a logged-in MetricsPage instance for metrics tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return MetricsPage(page)
 
 
 @pytest.fixture
-def tools_page(page: Page, base_url: str) -> ToolsPage:
+def tools_page(page: Page, base_url: str, request) -> ToolsPage:
     """Provide a logged-in ToolsPage instance for tool tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return ToolsPage(page)
 
 
 @pytest.fixture
-def resources_page(page: Page, base_url: str) -> ResourcesPage:
+def resources_page(page: Page, base_url: str, request) -> ResourcesPage:
     """Provide a logged-in ResourcesPage instance for resource tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return ResourcesPage(page)
 
 
 @pytest.fixture
-def prompts_page(page: Page, base_url: str) -> PromptsPage:
+def prompts_page(page: Page, base_url: str, request) -> PromptsPage:
     """Provide a logged-in PromptsPage instance for prompt tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return PromptsPage(page)
 
 
 @pytest.fixture
-def agents_page(page: Page, base_url: str) -> AgentsPage:
+def agents_page(page: Page, base_url: str, request) -> AgentsPage:
     """Provide a logged-in AgentsPage instance for A2A agent tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return AgentsPage(page)
 
 
 @pytest.fixture
-def gateways_page(page: Page, base_url: str) -> GatewaysPage:
+def gateways_page(page: Page, base_url: str, request) -> GatewaysPage:
     """Provide a logged-in GatewaysPage instance for gateway tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return GatewaysPage(page)
 
 
 @pytest.fixture
-def servers_page(page: Page, base_url: str) -> ServersPage:
+def servers_page(page: Page, base_url: str, request) -> ServersPage:
     """Provide a logged-in ServersPage instance for virtual server tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return ServersPage(page)
 
 
 @pytest.fixture
-def version_page(page: Page, base_url: str) -> VersionPage:
+def version_page(page: Page, base_url: str, request) -> VersionPage:
     """Provide a logged-in VersionPage instance for version info tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return VersionPage(page)
 
 
 @pytest.fixture
-def mcp_registry_page(page: Page, base_url: str) -> MCPRegistryPage:
+def mcp_registry_page(page: Page, base_url: str, request) -> MCPRegistryPage:
     """Provide a logged-in MCPRegistryPage instance for MCP Registry tests."""
-    _ensure_admin_logged_in(page, base_url)
+    _ensure_page_ready(page, base_url, request)
     return MCPRegistryPage(page)
 
 

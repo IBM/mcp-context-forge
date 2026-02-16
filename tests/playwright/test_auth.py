@@ -23,10 +23,14 @@ from .pages.login_page import LoginPage
 
 
 @pytest.mark.auth
+@pytest.mark.no_auth
 class TestAuthentication:
     """Authentication tests for MCP Gateway Admin UI.
 
     Tests email/password authentication flow for the admin interface.
+    
+    Note: These tests use @pytest.mark.no_auth to ensure they perform fresh logins
+    without using saved authentication state, as they need to test the login flow itself.
 
     Examples:
         pytest tests/playwright/test_auth.py
