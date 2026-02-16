@@ -4235,7 +4235,7 @@ async def admin_search_teams(
     current_user = await auth_service.get_user_by_email(user_email)
 
     if not current_user:
-        return _build_search_response(entity_key="teams", entity_type="teams", items=[], query=search_query, tags="", tag_groups=[])
+        return []
 
     # Use list_teams logic
     # For admin: search globally
@@ -4270,7 +4270,7 @@ async def admin_search_teams(
         teams = filtered[:limit]
 
     serialized_teams = [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "visibility": t.visibility, "is_active": t.is_active} for t in teams]
-    return _build_search_response(entity_key="teams", entity_type="teams", items=serialized_teams, query=search_query, tags="", tag_groups=[])
+    return serialized_teams
 
 
 @admin_router.get("/teams/partial")
@@ -10008,7 +10008,10 @@ async def admin_unified_search(
             db=db,
             user=user,
         )
-        grouped_results["teams"] = typing_cast(list[dict[str, Any]], teams_result.get("teams", teams_result.get("items", [])))
+        if isinstance(teams_result, list):
+            grouped_results["teams"] = typing_cast(list[dict[str, Any]], teams_result)
+        else:
+            grouped_results["teams"] = typing_cast(list[dict[str, Any]], teams_result.get("teams", teams_result.get("items", [])))
 
     if "users" in selected_entity_types and search_query:
         users_result = await _safe_entity_search(

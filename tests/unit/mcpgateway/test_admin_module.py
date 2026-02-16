@@ -1287,17 +1287,15 @@ async def test_admin_search_teams_admin_and_user(monkeypatch):
 
     auth_service._user = SimpleNamespace(is_admin=True)
     result = await admin.admin_search_teams(q="alp", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@example.com"})
-    assert result["teams"] == [
+    assert result == [
         {"id": "t-1", "name": "Alpha", "slug": "alpha", "description": "desc", "visibility": "public", "is_active": True}
     ]
-    assert result["count"] == 1
 
     auth_service._user = SimpleNamespace(is_admin=False)
     result = await admin.admin_search_teams(q="be", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@example.com"})
-    assert result["teams"] == [
+    assert result == [
         {"id": "t-2", "name": "Beta", "slug": "beta", "description": "desc", "visibility": "public", "is_active": True}
     ]
-    assert result["count"] == 1
 
 
 @pytest.mark.asyncio
@@ -1313,8 +1311,7 @@ async def test_admin_search_teams_user_not_found(monkeypatch):
     _allow_permissions(monkeypatch)
 
     result = await admin.admin_search_teams(db=mock_db, user={"email": "missing@example.com"})
-    assert result["teams"] == []
-    assert result["count"] == 0
+    assert result == []
 
 
 @pytest.mark.asyncio

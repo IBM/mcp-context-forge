@@ -8680,6 +8680,29 @@ async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, all
 
 
 @pytest.mark.asyncio
+async def test_admin_unified_search_accepts_legacy_team_search_list_shape(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value=[{"id": "team-1", "name": "Team 1"}]))
+
+    result = await admin_unified_search(
+        q="core",
+        tags=None,
+        entity_types="teams,tools",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["teams", "tools"]
+    assert result["results"]["teams"][0]["id"] == "team-1"
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+    assert result["count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_admin_unified_search_entity_types_parses_a2a_alias(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [{"id": "agent-1", "name": "Agent 1"}], "count": 1}))
@@ -13136,8 +13159,8 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="Alpha", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@test.com"})
-        assert result["count"] == 1
-        assert result["teams"][0]["name"] == "Alpha"
+        assert len(result) == 1
+        assert result[0]["name"] == "Alpha"
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_non_admin_filters(self, monkeypatch, allow_permission, mock_db):
@@ -13155,8 +13178,7 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="zzz", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
-        assert [t["id"] for t in result["teams"]] == ["t3"]
-        assert result["count"] == 1
+        assert [t["id"] for t in result] == ["t3"]
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_non_admin_matches_description(self, monkeypatch, allow_permission, mock_db):
@@ -13171,8 +13193,8 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         result = await admin_search_teams(q="engineering", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
-        assert result["count"] == 1
-        assert result["teams"][0]["id"] == "t1"
+        assert len(result) == 1
+        assert result[0]["id"] == "t1"
 
     @pytest.mark.asyncio
     async def test_admin_search_teams_no_user(self, monkeypatch, allow_permission, mock_db):
@@ -13182,8 +13204,7 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
         result = await admin_search_teams(q="test", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "ghost@test.com"})
-        assert result["teams"] == []
-        assert result["count"] == 0
+        assert result == []
 
 
 # ============================================================================ #
