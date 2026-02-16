@@ -7286,7 +7286,7 @@ async def admin_delete_user(
 
 
 @admin_router.post("/users/{user_email}/unlock")
-@require_permission("admin.user_management", allow_admin_bypass=False)
+@require_permission_v2("admin.user_management", allow_admin_bypass=False)
 async def admin_unlock_user(
     user_email: str,
     _request: Request,
@@ -9410,7 +9410,7 @@ async def admin_search_prompts(
 
 
 @admin_router.get("/tokens/partial", response_class=HTMLResponse)
-@require_permission("tokens.read", allow_admin_bypass=False)
+@require_permission_v2("tokens.read", allow_admin_bypass=False)
 async def admin_tokens_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
@@ -9578,7 +9578,7 @@ async def admin_tokens_partial_html(
 
 
 @admin_router.get("/tokens/search", response_class=JSONResponse)
-@require_permission("tokens.read", allow_admin_bypass=False)
+@require_permission_v2("tokens.read", allow_admin_bypass=False)
 async def admin_search_tokens(
     q: str = Query("", description="Search query"),
     include_inactive: bool = False,
@@ -10038,7 +10038,7 @@ async def admin_search_a2a_agents(
 
 
 @admin_router.get("/search", response_class=JSONResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
+@require_permission_v2("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
     q: str = Query("", description="Search query"),
     tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),

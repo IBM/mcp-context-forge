@@ -847,7 +847,7 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
 
 @email_auth_router.post("/admin/users/{user_email}/unlock", response_model=SuccessResponse)
-@require_permission("admin.user_management")
+@require_permission_v2("admin.user_management")
 async def unlock_user(user_email: str, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
     """Unlock a user account by clearing lockout state and failed login counter.
 

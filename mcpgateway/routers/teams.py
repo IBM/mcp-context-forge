@@ -515,7 +515,7 @@ async def list_team_members(
 
 
 @teams_router.post("/{team_id}/members", response_model=TeamMemberResponse, status_code=status.HTTP_201_CREATED)
-@require_permission("teams.manage_members")
+@require_permission_v2("teams.manage_members")
 async def add_team_member(team_id: str, request: TeamMemberAddRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamMemberResponse:
     """Add a new member to a team.
 
