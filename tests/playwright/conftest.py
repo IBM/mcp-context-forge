@@ -147,7 +147,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     login_page = LoginPage(page, base_url)
 
     # Go directly to admin
-    page.goto("/admin")
+    page.goto("/admin", wait_until="domcontentloaded")
 
     # Handle password change requirement
     if login_page.is_on_change_password_page():
@@ -184,7 +184,7 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
             if DISABLE_JWT_FALLBACK:
                 raise AssertionError("Admin login failed; set PLATFORM_ADMIN_PASSWORD or allow JWT fallback.")
             _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/")
+            page.goto("/admin/", wait_until="domcontentloaded")
             _wait_for_admin_transition(page)
 
     # Verify we're on the admin page
@@ -194,6 +194,14 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     try:
         page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
     except PlaywrightTimeoutError:
+        if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+            # Recovery path for intermittent auth redirects during shell load.
+            _set_admin_jwt_cookie(page, admin_email)
+            page.goto("/admin/", wait_until="domcontentloaded")
+            _wait_for_admin_transition(page)
+            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
+            return
+
         content = page.content()
         if "Internal Server Error" in content:
             raise AssertionError("Admin page failed to load: Internal Server Error (500)")

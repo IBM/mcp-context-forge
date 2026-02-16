@@ -281,6 +281,8 @@
   </head>
 
   <body class="bg-gray-100 dark:bg-gray-900">
+    {% set hidden_sections = ui_hidden_sections | default([]) %}
+    {% set hidden_header_items = ui_hidden_header_items | default([]) %}
     <div class="flex h-screen overflow-hidden" x-data="{ sidebarOpen: true, sidebarCollapsed: false }">
 
       <!-- Mobile sidebar backdrop -->
@@ -342,6 +344,7 @@
         <nav class="flex-1 overflow-y-auto py-4 sidebar-scroll">
           <!-- Overview Section -->
           <div class="space-y-1 px-2 mb-4">
+            {% if 'overview' not in hidden_sections %}
             <a href="#overview" id="tab-overview" data-testid="overview-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors active"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -349,6 +352,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Overview</span>
             </a>
+            {% endif %}
           </div>
 
           <!-- MCP Section -->
@@ -356,6 +360,7 @@
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">MCP</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'gateways' not in hidden_sections %}
             <a href="#gateways" id="tab-gateways" data-testid="gateways-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -363,6 +368,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🖥️</span>
               <span x-show="!sidebarCollapsed">MCP Servers</span>
             </a>
+            {% endif %}
+            {% if 'servers' not in hidden_sections %}
             <a href="#catalog" id="tab-catalog" data-testid="servers-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -370,6 +377,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔗</span>
               <span x-show="!sidebarCollapsed">Virtual Servers</span>
             </a>
+            {% endif %}
+            {% if 'tools' not in hidden_sections %}
             <a href="#tools" id="tab-tools" data-testid="tools-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -386,6 +395,8 @@
               <span x-show="!sidebarCollapsed">ToolOps</span>
             </a>
             {% endif %}
+            {% endif %}
+            {% if 'prompts' not in hidden_sections %}
             <a href="#prompts" id="tab-prompts"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -393,6 +404,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">💬</span>
               <span x-show="!sidebarCollapsed">Prompts</span>
             </a>
+            {% endif %}
+            {% if 'resources' not in hidden_sections %}
             <a href="#resources" id="tab-resources"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -400,6 +413,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📁</span>
               <span x-show="!sidebarCollapsed">Resources</span>
             </a>
+            {% endif %}
+            {% if 'roots' not in hidden_sections %}
             <a href="#roots" id="tab-roots"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -407,6 +422,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🌳</span>
               <span x-show="!sidebarCollapsed">Roots</span>
             </a>
+            {% endif %}
+            {% if 'mcp-registry' not in hidden_sections %}
             <a href="#mcp-registry" id="tab-mcp-registry" data-testid="mcp-registry-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -414,10 +431,11 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📦</span>
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
+            {% endif %}
           </div>
 
           <!-- Agents Section -->
-          {% if a2a_enabled or grpc_enabled %}
+          {% if ('agents' not in hidden_sections) and (a2a_enabled or grpc_enabled) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Agents</span>
           </div>
@@ -444,11 +462,12 @@
           {% endif %}
 
           <!-- LLM Section -->
-          {% if llmchat_enabled %}
+          {% if llmchat_enabled or 'settings' not in hidden_sections %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">LLM</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if llmchat_enabled %}
             <a href="#llm-chat" id="tab-llm-chat" data-testid="llm-chat-tab"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -456,6 +475,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👨‍💻</span>
               <span x-show="!sidebarCollapsed">LLM Chat</span>
             </a>
+            {% endif %}
+            {% if 'settings' not in hidden_sections %}
             <a href="#llm-settings" id="tab-llm-settings"
               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -463,15 +484,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">⚙️</span>
               <span x-show="!sidebarCollapsed">LLM Settings</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and ('metrics' not in hidden_sections or performance_enabled or observability_enabled) %}
           <!-- Monitoring Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Monitoring</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'metrics' not in hidden_sections %}
             <a href="#metrics" id="tab-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -479,6 +502,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📊</span>
               <span x-show="!sidebarCollapsed">Metrics</span>
             </a>
+            {% endif %}
             {% if performance_enabled %}
             <a href="#performance" id="tab-performance" data-testid="performance-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
@@ -500,12 +524,13 @@
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Extensions</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'plugins' not in hidden_sections %}
             <a href="#plugins" id="tab-plugins" data-testid="plugins-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -513,15 +538,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧩</span>
               <span x-show="!sidebarCollapsed">Plugins</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
           <!-- Organization Section -->
-          {% if email_auth_enabled %}
+          {% if email_auth_enabled and ('teams' not in hidden_sections or ('users' not in hidden_sections and is_admin) or 'tokens' not in hidden_sections) %}
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Organization</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'teams' not in hidden_sections %}
             <a href="#teams" id="tab-teams" data-testid="teams-tab"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -529,7 +556,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">👥</span>
               <span x-show="!sidebarCollapsed">Teams</span>
             </a>
-            {% if is_admin %}
+            {% endif %}
+            {% if is_admin and 'users' not in hidden_sections %}
             <a href="#users" id="tab-users"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -538,6 +566,7 @@
               <span x-show="!sidebarCollapsed">Users</span>
             </a>
             {% endif %}
+            {% if 'tokens' not in hidden_sections %}
             <a href="#tokens" id="tab-tokens"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -545,15 +574,17 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🎫</span>
               <span x-show="!sidebarCollapsed">API Tokens</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
 
-          {% if is_admin %}
+          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
           </div>
           <div class="space-y-1 px-2">
+            {% if 'export-import' not in hidden_sections %}
             <a href="#export-import" id="tab-export-import"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -561,6 +592,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📤</span>
               <span x-show="!sidebarCollapsed">Export/Import</span>
             </a>
+            {% endif %}
+            {% if 'logs' not in hidden_sections %}
             <a href="#logs" id="tab-logs"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -568,6 +601,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
             </a>
+            {% endif %}
+            {% if 'version-info' not in hidden_sections %}
             <a href="#version-info" id="tab-version-info"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -575,6 +610,8 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">ℹ️</span>
               <span x-show="!sidebarCollapsed">Version Info</span>
             </a>
+            {% endif %}
+            {% if 'maintenance' not in hidden_sections %}
             <a href="#maintenance" id="tab-maintenance"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -582,6 +619,7 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🔧</span>
               <span x-show="!sidebarCollapsed">Maintenance</span>
             </a>
+            {% endif %}
           </div>
           {% endif %}
         </nav>
@@ -590,6 +628,7 @@
         <div class="flex-shrink-0 border-t border-gray-200 dark:border-gray-700 p-4">
           <div class="flex items-center" :class="{ 'justify-center': sidebarCollapsed, 'justify-between': !sidebarCollapsed }">
             <!-- Dark mode toggle -->
+            {% if 'theme_toggle' not in hidden_header_items %}
             <button
               @click="darkMode = !darkMode"
               class="p-2 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
@@ -597,6 +636,7 @@
             >
               <span x-text="darkMode ? '☀️' : '🌙'" class="text-lg"></span>
             </button>
+            {% endif %}
             <!-- Links (hidden when collapsed) -->
             <div x-show="!sidebarCollapsed" class="flex items-center space-x-2">
               <a href="https://ibm.github.io/mcp-context-forge/" target="_blank"
@@ -651,7 +691,7 @@
               </button>
 
               <!-- Team Selector with Search and Infinite Scroll -->
-              {% if email_auth_enabled %}
+              {% if email_auth_enabled and 'team_selector' not in hidden_header_items %}
               <div
                 class="relative inline-block text-left"
                 x-data="{
@@ -751,14 +791,17 @@
               {% endif %}
 
               <!-- User Email -->
+              {% if 'user_identity' not in hidden_header_items %}
               <div class="text-sm text-gray-600 dark:text-gray-400 flex items-center hidden sm:flex">
                 <svg class="w-4 h-4 mr-2" fill="currentColor" viewBox="0 0 20 20">
                   <path d="M10 9a3 3 0 100-6 3 3 0 000 6zm-7 9a7 7 0 1114 0H3z" />
                 </svg>
                 {{ current_user }}
               </div>
+              {% endif %}
 
               <!-- Logout -->
+              {% if 'logout' not in hidden_header_items %}
               <form method="post" action="{{ root_path }}/admin/logout" class="inline">
                 <button
                   type="submit"
@@ -768,6 +811,7 @@
                   Logout
                 </button>
               </form>
+              {% endif %}
             </div>
           </div>
         </header>
@@ -803,7 +847,7 @@
         <!-- Tab Panels Container -->
         <main class="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-900 p-4 lg:p-6">
 
-      {% if is_admin %}
+      {% if is_admin and 'logs' not in hidden_sections %}
       <!-- Logs Panel -->
       <div id="logs-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1024,7 +1068,7 @@
       </div>
       {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'export-import' not in hidden_sections %}
       <!-- Export/Import Panel -->
       <div id="export-import-panel" class="tab-panel hidden">
           <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
@@ -1454,14 +1498,19 @@
             </div>
           </div>
       </div>
+      {% endif %}
+
+      {% if is_admin and 'version-info' not in hidden_sections %}
       <!-- Version Info Panel -->
       <div id="version-info-panel" class="tab-panel hidden"></div>
+      {% endif %}
 
+      {% if is_admin and 'maintenance' not in hidden_sections %}
       <!-- Maintenance Panel (admin only) -->
       <div id="maintenance-panel" class="tab-panel hidden"></div>
       {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'plugins' not in hidden_sections %}
       <!-- Plugins Panel -->
       <div id="plugins-panel" class="tab-panel hidden"></div>
       {% endif %}
@@ -1795,7 +1844,9 @@
             </div>
           </div>
         </div>
+        {% endif %}
 
+        {% if 'settings' not in hidden_sections %}
         <!-- LLM Settings Panel -->
       <div id="llm-settings-panel" class="tab-panel hidden">
         <div class="container mx-auto">
@@ -2099,6 +2150,7 @@
       </div>
       {% endif %}
 
+      {% if 'mcp-registry' not in hidden_sections %}
       <!-- MCP Registry Panel -->
       <div id="mcp-registry-panel" class="tab-panel hidden">
         <div class="container mx-auto">
@@ -2176,9 +2228,17 @@
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if 'servers' not in hidden_sections %}
       <!-- Catalog Panel (Virtual Servers) -->
       <div id="catalog-panel" class="tab-panel hidden">
+        {% if not catalog_enabled %}
+        <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 mb-6 dark:bg-yellow-800 dark:border-yellow-400 dark:text-yellow-200">
+          <p class="font-bold">Catalog is currently disabled</p>
+          <p class="text-sm">Set <code>MCPGATEWAY_CATALOG_ENABLED=true</code> to enable catalog-backed server operations.</p>
+        </div>
+        {% endif %}
         <div class="flex justify-between items-center mb-4">
           <div class="flex items-center space-x-10">
             <h2 class="text-2xl font-bold dark:text-gray-200">Virtual MCP Servers</h2>
@@ -3125,6 +3185,8 @@
 
 
 
+      {% endif %}
+      {% if 'tools' not in hidden_sections %}
       <!-- Tools Panel -->
       <div id="tools-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -3915,7 +3977,7 @@
         </div>
       </div>
       {% if toolops_enabled %}
-      <div id="tool-ops-panel" class="tab-panel">
+      <div id="tool-ops-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <div>
             <h2 class="text-2xl font-bold dark:text-gray-200">Tool Operations</h2>
@@ -4159,6 +4221,8 @@
         </div>
       </div>
 
+      {% endif %}
+      {% if 'resources' not in hidden_sections %}
       <!-- Resources Panel -->
       <div id="resources-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4398,6 +4462,8 @@
         </div>
       </div>
 
+      {% endif %}
+      {% if 'prompts' not in hidden_sections %}
       <!-- Prompts Panel -->
       <div id="prompts-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -4663,7 +4729,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% endif %}
       <!-- Overview Panel -->
+      {% if 'overview' not in hidden_sections %}
       <div id="overview-panel" class="tab-panel"
            hx-get="{{ root_path }}/admin/overview/partial"
            hx-trigger="load"
@@ -4678,7 +4746,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </div>
         </div>
       </div>
+      {% endif %}
 
+      {% if 'gateways' not in hidden_sections %}
       <!-- Gateways Panel -->
       <div id="gateways-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
@@ -5810,8 +5880,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
         </div>
       </div>
 
+      {% endif %}
       <!-- Teams Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and 'teams' not in hidden_sections %}
       <div id="teams-panel" class="tab-panel hidden">
           <!-- Header with Create Team Button -->
           <div class="flex justify-between items-center mb-8">
@@ -5918,7 +5989,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- User Management Panel -->
-      {% if email_auth_enabled and is_admin %}
+      {% if email_auth_enabled and is_admin and 'users' not in hidden_sections %}
       <div id="users-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">User Management</h2>
@@ -6160,7 +6231,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- API Tokens Panel -->
-      {% if email_auth_enabled %}
+      {% if email_auth_enabled and 'tokens' not in hidden_sections %}
       <div id="tokens-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -6491,7 +6562,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- A2A Agents Panel -->
-      {% if a2a_enabled %}
+      {% if a2a_enabled and 'agents' not in hidden_sections %}
        <div id="a2a-agents-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -7438,7 +7509,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       {% endif %}
 
       <!-- gRPC Services Panel -->
-      {% if grpc_enabled %}
+      {% if grpc_enabled and 'agents' not in hidden_sections %}
       <div id="grpc-services-panel" class="tab-panel hidden">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-2xl font-bold dark:text-gray-200">
@@ -7718,6 +7789,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
       </div>
       {% endif %}
 
+      {% if 'roots' not in hidden_sections %}
       <!-- Roots Panel -->
       <div id="roots-panel" class="tab-panel hidden">
         <!-- List of roots ------------------------------------------------------->
@@ -7881,8 +7953,9 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           </form>
         </div>
       </div>
+      {% endif %}
 
-      {% if is_admin %}
+      {% if is_admin and 'metrics' not in hidden_sections %}
       <!-- Metrics Panel -->
       <div id="metrics-panel" class="tab-panel hidden">
         <!-- System Metrics Section (isolated from JavaScript clearing) -->
@@ -11754,6 +11827,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT = {{ mcpgateway_ui_tool_test_timeout | tojson }};
       window.CURRENT_USER = {{ current_user | tojson }};
       window.IS_ADMIN = {{ is_admin | tojson }};
+      window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
+      window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
+      window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
 
       // Display flash messages from URL parameters
       (function() {

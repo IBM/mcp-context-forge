@@ -34,6 +34,7 @@ nav:
   - sso-generic-oidc-tutorial.md
   - rbac.md
   - teams.md
+  - admin-ui-customization.md
   - ui-customization.md
   - upgrade.md
   - well-known-uris.md

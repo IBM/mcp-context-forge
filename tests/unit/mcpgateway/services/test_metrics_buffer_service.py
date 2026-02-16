@@ -651,6 +651,9 @@ class TestMetricsSetup:
         monkeypatch.setattr(metrics_module.settings, "METRICS_EXCLUDED_HANDLERS", "")
         monkeypatch.setattr(metrics_module, "Gauge", DummyGauge)
         monkeypatch.setattr(metrics_module, "Instrumentator", DummyInstrumentator)
+        # Force fresh collector creation regardless of global REGISTRY state from
+        # previously imported modules/tests (e.g., mcpgateway.main startup).
+        monkeypatch.setattr(metrics_module, "_get_registry_collector", lambda _name: None)
 
         metrics_module.setup_metrics(app)
 

@@ -1310,6 +1310,28 @@
       "title": "Mcpgateway Ui Airgapped",
       "type": "boolean"
     },
+    "mcpgateway_ui_embedded": {
+      "default": false,
+      "description": "Enable embedded UI mode (hides select header controls by default)",
+      "title": "Mcpgateway Ui Embedded",
+      "type": "boolean"
+    },
+    "mcpgateway_ui_hide_sections": {
+      "description": "CSV/JSON list of UI sections to hide. Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Ui Hide Sections",
+      "type": "array"
+    },
+    "mcpgateway_ui_hide_header_items": {
+      "description": "CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Ui Hide Header Items",
+      "type": "array"
+    },
     "mcpgateway_bulk_import_enabled": {
       "default": true,
       "title": "Mcpgateway Bulk Import Enabled",
