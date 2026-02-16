@@ -469,9 +469,9 @@ def test_admin_update_partial(ctx: TestContext):
     test("Name-only update with PUT returns 200", resp.status == 200, f"status={resp.status}")
     if resp.status == 200:
         test("Name updated", resp.body.get("full_name") == "Updated Name2")
-        test("is_admin preserved (False)", resp.body.get("is_admin") is True)
-        test("is_active preserved (True)", resp.body.get("is_active") is False)
-        test("pcr preserved (False)", resp.body.get("password_change_required") is True)
+        test("is_admin preserved (True)", resp.body.get("is_admin") is True)
+        test("is_active preserved (False)", resp.body.get("is_active") is False)
+        test("pcr preserved (True)", resp.body.get("password_change_required") is True)
     #---------->
 
     # Update non-existent user
