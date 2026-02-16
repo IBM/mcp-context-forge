@@ -1315,6 +1315,20 @@ async def test_admin_search_teams_user_not_found(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_user_team_ids_returns_cached_ids_without_service_lookup(monkeypatch):
+    class _NoCallTeamService:
+        def __init__(self, _db):
+            raise AssertionError("TeamManagementService should not be constructed when cache is present")
+
+    monkeypatch.setattr(admin, "TeamManagementService", _NoCallTeamService)
+    cached_team_ids = ["team-1", "team-2"]
+
+    result = await admin._get_user_team_ids(user={"email": "user@example.com", "_cached_team_ids": cached_team_ids}, db=MagicMock())
+
+    assert result == cached_team_ids
+
+
+@pytest.mark.asyncio
 async def test_admin_list_servers_returns_paginated(monkeypatch):
     mock_db = MagicMock()
 
