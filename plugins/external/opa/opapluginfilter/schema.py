@@ -42,7 +42,7 @@ class BaseOPAInputKeys(BaseModel):
     headers: Optional[dict[str, str]] = None
     payload: dict[str, Any]
     context: Optional[dict[str, Any]] = None
-    mode: str = None
+    mode: Optional[str] = None
 
 
 class OPAInput(BaseModel):

@@ -15,6 +15,7 @@ Examples:
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import math
@@ -34,6 +35,9 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+# Strong references to background tasks to prevent GC before completion
+_background_tasks: set[asyncio.Task] = set()
 
 
 class TokenScope:
@@ -837,13 +841,12 @@ class TokenCatalogService:
 
         # Invalidate auth cache for revoked token
         try:
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            task = asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache for revoked token: {cache_error}")
 
@@ -880,13 +883,12 @@ class TokenCatalogService:
         self.db.commit()
 
         try:
-            # Standard
-            import asyncio  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-            asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            task = asyncio.create_task(auth_cache.invalidate_revocation(token.jti))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
         except Exception as cache_error:
             logger.debug(f"Failed to invalidate auth cache: {cache_error}")
 

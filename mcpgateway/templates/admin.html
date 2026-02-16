@@ -2376,9 +2376,7 @@
             {% set hx_indicator = '#servers-loading' %}
             {% set table_name = 'servers' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
 
@@ -2570,8 +2568,8 @@
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if server.team %}
-                    <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ server.team|e|replace(' ', '<br />')|safe }}
+                    <span class="text-sm text-gray-900 dark:text-gray-100" style="display: block; white-space: normal; word-spacing: 9999px;">
+                      {{ server.team }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -3326,9 +3324,7 @@
             {% set hx_indicator = '#tools-loading' %}
             {% set table_name = 'tools' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
@@ -4869,9 +4865,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             {% set hx_indicator = '#gateways-loading' %}
             {% set table_name = 'gateways' %}
             {% set query_params = {'include_inactive': include_inactive} %}
-            {% autoescape false %}
             {% include 'pagination_controls.html' %}
-            {% endautoescape %}
           </div>
         </div>
         <div class="bg-white shadow rounded-lg p-6 mb-8 dark:bg-gray-800" style="display: none;">
@@ -5040,8 +5034,8 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   </td>
                   <td class="px-2 py-4 whitespace-nowrap">
                     {% if gateway.team %}
-                    <span class="text-sm text-gray-900 dark:text-gray-100">
-                      {{ gateway.team|e|replace(' ', '<br />')|safe }}
+                    <span class="text-sm text-gray-900 dark:text-gray-100" style="display: block; white-space: normal; word-spacing: 9999px;">
+                      {{ gateway.team }}
                     </span>
                     {% else %}
                     <span class="text-gray-500 dark:text-gray-300 text-xs"
@@ -6552,9 +6546,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {% set query_params = {'include_inactive': include_inactive} %}
               {% if selected_team_id %}{% set _ = query_params.update({'team_id': selected_team_id}) %}{% endif %}
               {% if q %}{% set _ = query_params.update({'q': q}) %}{% endif %}
-              {% autoescape false %}
               {% include 'pagination_controls.html' %}
-              {% endautoescape %}
             </div>
           </div>
         </div>
@@ -6696,9 +6688,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               {% set hx_indicator = '#agents-loading' %}
               {% set table_name = 'agents' %}
               {% set query_params = {'include_inactive': include_inactive} %}
-              {% autoescape false %}
               {% include 'pagination_controls.html' %}
-              {% endautoescape %}
             </div>
           </div>
         </div>
