@@ -90,6 +90,8 @@
       // URL state takes precedence over checkbox state for shareability
       function buildTableUrl(tableName, baseUrl, additionalParams = {}) {
         const params = getPaginationParams(tableName);
+        const urlParams = new URLSearchParams(window.location.search);
+        const prefix = tableName + '_';
         const url = new URL(baseUrl, window.location.origin);
         url.searchParams.set('page', params.page);
         url.searchParams.set('per_page', params.perPage);
@@ -107,6 +109,16 @@
         // If include_inactive wasn't in additionalParams but is in URL, still use it
         if (!additionalParams.hasOwnProperty('include_inactive') && params.includeInactive !== null) {
           url.searchParams.set('include_inactive', params.includeInactive);
+        }
+
+        // Preserve namespaced search state for shareable URLs
+        const namespacedQuery = urlParams.get(prefix + 'q');
+        const namespacedTags = urlParams.get(prefix + 'tags');
+        if (namespacedQuery) {
+          url.searchParams.set('q', namespacedQuery);
+        }
+        if (namespacedTags) {
+          url.searchParams.set('tags', namespacedTags);
         }
 
         return url.pathname + url.search;
@@ -627,6 +639,17 @@
 
             <!-- Right side: team selector, user, logout -->
             <div class="flex items-center space-x-4">
+              <button
+                type="button"
+                id="global-search-trigger"
+                onclick="openGlobalSearchModal()"
+                class="inline-flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-md hover:border-gray-400 dark:hover:border-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                title="Search across tools, prompts, resources, servers, gateways, and agents (Ctrl/Cmd+K)"
+              >
+                <span>Search</span>
+                <span class="hidden sm:inline text-xs text-gray-500 dark:text-gray-400">Ctrl/Cmd+K</span>
+              </button>
+
               <!-- Team Selector with Search and Infinite Scroll -->
               {% if email_auth_enabled %}
               <div
@@ -752,6 +775,29 @@
         <!-- Global notification container for flash messages -->
         <div id="global-notification" class="px-4 mt-4" style="display: none;">
           <!-- Notification content will be inserted here -->
+        </div>
+
+        <!-- Global Search Modal -->
+        <div id="global-search-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+          <div class="absolute inset-0 bg-black/40" onclick="closeGlobalSearchModal()"></div>
+          <div class="relative max-w-3xl mx-auto mt-24 px-4">
+            <div class="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl overflow-hidden">
+              <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                <input
+                  type="text"
+                  id="global-search-input"
+                  placeholder="Search across servers, gateways, tools, resources, prompts, and agents..."
+                  class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autocomplete="off"
+                />
+              </div>
+              <div id="global-search-results" class="max-h-[28rem] overflow-y-auto">
+                <div class="p-4 text-sm text-gray-500 dark:text-gray-400">
+                  Start typing to search all entities.
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Tab Panels Container -->
@@ -2150,7 +2196,7 @@
               x-init="syncCheckboxFromUrl('servers', 'show-inactive-servers')"
               @change="updateInactiveUrlState('servers', $el.checked)"
               hx-get="{{ root_path }}/admin/servers/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-servers').checked, per_page: document.querySelector('#servers-pagination-controls select')?.value || 50, q: document.getElementById('catalog-search-input')?.value || '', tags: document.getElementById('catalog-tag-filter')?.value || ''}"
               hx-target="#servers-table"
               hx-swap="outerHTML"
               hx-indicator="#servers-loading"
@@ -2176,7 +2222,7 @@
                   type="text"
                   id="catalog-search-input"
                   data-testid="search-input"
-                  placeholder="Search servers via tags..."
+                  placeholder="Search servers..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                   oninput="filterServerTable(this.value)"
                 />
@@ -3118,7 +3164,7 @@
               x-init="syncCheckboxFromUrl('tools', 'show-inactive-tools')"
               @change="updateInactiveUrlState('tools', $el.checked)"
               hx-get="{{ root_path }}/admin/tools/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-tools').checked, per_page: document.querySelector('#tools-pagination-controls select')?.value || 50, q: document.getElementById('tools-search-input')?.value || '', tags: document.getElementById('tools-tag-filter')?.value || ''}"
               hx-target="#tools-table"
               hx-swap="outerHTML"
               hx-indicator="#tools-loading"
@@ -3141,7 +3187,7 @@
                 <input
                   type="text"
                   id="tools-search-input"
-                  placeholder="Search tools via tags..."
+                  placeholder="Search tools..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4131,7 +4177,7 @@
               x-init="syncCheckboxFromUrl('resources', 'show-inactive-resources')"
               @change="updateInactiveUrlState('resources', $el.checked)"
               hx-get="{{ root_path }}/admin/resources/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-resources').checked, per_page: document.querySelector('#resources-pagination-controls select')?.value || 50, q: document.getElementById('resources-search-input')?.value || '', tags: document.getElementById('resources-tag-filter')?.value || ''}"
               hx-target="#resources-table"
               hx-swap="outerHTML"
               hx-indicator="#resources-loading"
@@ -4154,7 +4200,7 @@
                 <input
                   type="text"
                   id="resources-search-input"
-                  placeholder="Search resources via tags..."
+                  placeholder="Search resources..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4370,7 +4416,7 @@
               x-init="syncCheckboxFromUrl('prompts', 'show-inactive-prompts')"
               @change="updateInactiveUrlState('prompts', $el.checked)"
               hx-get="{{ root_path }}/admin/prompts/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-prompts').checked, per_page: document.querySelector('#prompts-pagination-controls select')?.value || 50, q: document.getElementById('prompts-search-input')?.value || '', tags: document.getElementById('prompts-tag-filter')?.value || ''}"
               hx-target="#prompts-table"
               hx-swap="outerHTML"
               hx-indicator="#prompts-loading"
@@ -4393,7 +4439,7 @@
                 <input
                   type="text"
                   id="prompts-search-input"
-                  placeholder="Search prompts via tags..."
+                  placeholder="Search prompts..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -4652,7 +4698,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="syncCheckboxFromUrl('gateways', 'show-inactive-gateways')"
               @change="updateInactiveUrlState('gateways', $el.checked)"
               hx-get="{{ root_path }}/admin/gateways/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-gateways').checked, per_page: document.querySelector('#gateways-pagination-controls select')?.value || 50, q: document.getElementById('gateways-search-input')?.value || '', tags: document.getElementById('gateways-tag-filter')?.value || ''}"
               hx-target="#gateways-table"
               hx-swap="outerHTML"
               hx-indicator="#gateways-loading"
@@ -4675,7 +4721,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   id="gateways-search-input"
-                  placeholder="Search MCP servers..."
+                  placeholder="Search gateways..."
                   class="w-64 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -6464,7 +6510,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               x-init="syncCheckboxFromUrl('agents', 'show-inactive-a2a-agents')"
               @change="updateInactiveUrlState('agents', $el.checked)"
               hx-get="{{ root_path }}/admin/a2a/partial?page=1{% if selected_team_id %}&team_id={{ selected_team_id }}{% endif %}"
-              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50}"
+              hx-vals="js:{include_inactive: document.getElementById('show-inactive-a2a-agents').checked, per_page: document.querySelector('#agents-pagination-controls select')?.value || 50, q: document.getElementById('a2a-agents-search-input')?.value || '', tags: document.getElementById('a2a-agents-tag-filter')?.value || ''}"
               hx-target="#agents-table"
               hx-swap="outerHTML"
               hx-indicator="#agents-loading"
@@ -6487,7 +6533,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                 <input
                   type="text"
                   id="a2a-agents-search-input"
-                  placeholder="Search agents via tags..."
+                  placeholder="Search agents..."
                   class="w-80 px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-300 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
                 />
               </div>
@@ -11741,15 +11787,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         }
       })();
 
-      // Tag filtering functionality moved to admin.js
-      function clearTagFilter(entityType) {
-        const input = document.getElementById(entityType + '-tag-filter');
-        input.value = '';
-        // Use the corrected filterEntitiesByTags function from admin.js
-        if (typeof filterEntitiesByTags === 'function') {
-          filterEntitiesByTags(entityType, '');
-        }
-      }
+      // Tag filtering functionality is implemented in admin.js.
 
 
       // Team context switching functions
