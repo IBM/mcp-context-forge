@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Shared CDN resource definitions for SRI hash generation and verification.
 

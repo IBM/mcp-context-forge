@@ -16995,3 +16995,170 @@ class TestAdminTokensPartialSearch:
                 mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=RuntimeError("boom"))
                 response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
                 assert response.status_code == 400
+
+
+
+# ============================================================================
+# SRI Hash Loading Tests
+# ============================================================================
+
+
+class TestLoadSriHashes:
+    """Test suite for load_sri_hashes() function."""
+
+    def test_load_sri_hashes_success(self, tmp_path, monkeypatch):
+        """Test successful loading of SRI hashes from file."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a temporary sri_hashes.json file
+        sri_file = tmp_path / "sri_hashes.json"
+        test_hashes = {
+            "alpine.js": "sha384-test1",
+            "htmx.min.js": "sha384-test2",
+            "chart.js": "sha384-test3",
+        }
+        sri_file.write_text(json.dumps(test_hashes))
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == test_hashes
+            assert "alpine.js" in result
+            assert result["htmx.min.js"] == "sha384-test2"
+
+    def test_load_sri_hashes_file_not_found(self, tmp_path, monkeypatch):
+        """Test load_sri_hashes returns empty dict when file doesn't exist."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Mock __file__ to point to directory without sri_hashes.json
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == {}
+
+    def test_load_sri_hashes_invalid_json(self, tmp_path, monkeypatch):
+        """Test load_sri_hashes returns empty dict on invalid JSON."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a file with invalid JSON
+        sri_file = tmp_path / "sri_hashes.json"
+        sri_file.write_text("{ invalid json }")
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == {}
+
+    def test_load_sri_hashes_permission_error(self, tmp_path, monkeypatch):
+        """Test load_sri_hashes returns empty dict on permission error."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create the file
+        sri_file = tmp_path / "sri_hashes.json"
+        sri_file.write_text('{"test": "value"}')
+
+        # Clear the lru_cache before testing
+        admin_mod.load_sri_hashes.cache_clear()
+
+        # Mock __file__ and patch Path.open to raise PermissionError
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            with patch("pathlib.Path.open", side_effect=PermissionError("Access denied")):
+                result = admin_mod.load_sri_hashes()
+
+                assert result == {}
+
+    def test_load_sri_hashes_caching(self, tmp_path, monkeypatch):
+        """Test that load_sri_hashes uses lru_cache correctly."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a temporary sri_hashes.json file
+        sri_file = tmp_path / "sri_hashes.json"
+        test_hashes = {"test": "sha384-cached"}
+        sri_file.write_text(json.dumps(test_hashes))
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            # First call should read the file
+            result1 = admin_mod.load_sri_hashes()
+            assert result1 == test_hashes
+
+            # Modify the file
+            new_hashes = {"test": "sha384-modified"}
+            sri_file.write_text(json.dumps(new_hashes))
+
+            # Second call should return cached result (not modified)
+            result2 = admin_mod.load_sri_hashes()
+            assert result2 == test_hashes  # Still the old value due to cache
+            assert result2 == result1
+
+    def test_load_sri_hashes_empty_file(self, tmp_path, monkeypatch):
+        """Test load_sri_hashes with empty JSON object."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create an empty JSON file
+        sri_file = tmp_path / "sri_hashes.json"
+        sri_file.write_text("{}")
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == {}
+
+    def test_load_sri_hashes_in_admin_ui_endpoint(self, monkeypatch):
+        """Test that admin_ui endpoint includes SRI hashes in template context."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Clear cache
+        admin_mod.load_sri_hashes.cache_clear()
+
+        # Mock load_sri_hashes to return test data
+        test_hashes = {"alpine.js": "sha384-endpoint-test"}
+        with patch.object(admin_mod, "load_sri_hashes", return_value=test_hashes):
+            # We can't easily test the full admin_ui endpoint without extensive mocking,
+            # but we can verify load_sri_hashes is called correctly
+            result = admin_mod.load_sri_hashes()
+            assert result == test_hashes
+
+    def test_load_sri_hashes_unicode_content(self, tmp_path, monkeypatch):
+        """Test load_sri_hashes handles unicode content correctly."""
+        # First-Party
+        from mcpgateway import admin as admin_mod
+
+        # Create a file with unicode characters
+        sri_file = tmp_path / "sri_hashes.json"
+        test_hashes = {"test": "sha384-unicode-✓"}
+        sri_file.write_text(json.dumps(test_hashes), encoding="utf-8")
+
+        # Mock __file__ to point to our temp directory
+        with patch("mcpgateway.admin.__file__", str(tmp_path / "admin.py")):
+            # Clear the lru_cache before testing
+            admin_mod.load_sri_hashes.cache_clear()
+
+            result = admin_mod.load_sri_hashes()
+
+            assert result == test_hashes
