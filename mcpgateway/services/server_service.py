@@ -822,15 +822,8 @@ class ServerService:
                 if team_id not in team_ids:
                     return ([], None)
                 access_conditions = [
-                    # removing the "public" option for the line belong along with adding the 
-                    # 'or_(DbServer.visibility == "public")' allows you to show
-                    # servers from THAT team with visibility.in_(["team"]) + ALL public servers 
-                    # from ANY team
-
-                    # and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
-                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team"])),
+                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
                     and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
-                    or_(DbServer.visibility == "public")
                 ]
                 query = query.where(or_(*access_conditions))
             else:

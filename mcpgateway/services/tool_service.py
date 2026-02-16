@@ -1826,8 +1826,7 @@ class ToolService:
                 if team_id not in team_ids:
                     return ([], None)
                 access_conditions = [
-                    and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team"])),
-                    or_(DbTool.visibility == "public")
+                    and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
                 ]
                 # Only include owner access for non-public-only tokens
                 if not is_public_only_token and user_email:

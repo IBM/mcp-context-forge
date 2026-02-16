@@ -1587,9 +1587,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 if team_id not in team_ids:
                     return ([], None)
                 access_conditions = [
-                    and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team"])),
+                    and_(DbGateway.team_id == team_id, DbGateway.visibility.in_(["team", "public"])),
                     and_(DbGateway.team_id == team_id, DbGateway.owner_email == user_email),
-                    or_(DbGateway.visibility == "public")
                 ]
                 query = query.where(or_(*access_conditions))
             else:
