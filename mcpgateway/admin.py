@@ -65,7 +65,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings
+from mcpgateway.config import UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES, settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
@@ -186,30 +186,6 @@ except ImportError:
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
 
-UI_HIDABLE_SECTIONS: frozenset[str] = frozenset(
-    {
-        "servers",
-        "gateways",
-        "tools",
-        "prompts",
-        "resources",
-        "teams",
-        "users",
-        "agents",
-        "tokens",
-        "settings",
-    }
-)
-UI_HIDABLE_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector", "user_identity", "theme_toggle"})
-UI_HIDE_SECTION_ALIASES: Dict[str, str] = {
-    "catalog": "servers",
-    "virtual_servers": "servers",
-    "a2a-agents": "agents",
-    "a2a": "agents",
-    "grpc-services": "agents",
-    "api_tokens": "tokens",
-    "llm-settings": "settings",
-}
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "servers": ("catalog",),
     "gateways": ("gateways",),
@@ -224,6 +200,7 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
 }
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
+UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
 
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
@@ -3403,6 +3380,7 @@ async def admin_ui(
             response.set_cookie(
                 key=UI_HIDE_SECTIONS_COOKIE_NAME,
                 value=ui_visibility_config.get("cookie_value", ""),
+                max_age=UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
                 path=ui_cookie_path,
                 httponly=True,
                 secure=use_secure,

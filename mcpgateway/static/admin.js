@@ -7529,7 +7529,7 @@ function normalizeTabName(tabName) {
     if (!tabName || typeof tabName !== "string") {
         return "";
     }
-    return tabName.replace(/^#/, "").trim().toLowerCase();
+    return tabName.replace(/^#/, "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
 }
 
 function getUiHiddenSections() {
@@ -17844,8 +17844,12 @@ function renderGlobalSearchResults(payload) {
     }
 
     const groups = Array.isArray(payload?.groups) ? payload.groups : [];
+    const hiddenSections = getUiHiddenSections();
     const visibleGroups = groups.filter(
-        (group) => Array.isArray(group.items) && group.items.length > 0,
+        (group) =>
+            Array.isArray(group.items) &&
+            group.items.length > 0 &&
+            !hiddenSections.has(group.entity_type),
     );
 
     if (visibleGroups.length === 0) {
