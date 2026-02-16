@@ -190,22 +190,37 @@ def _ensure_admin_logged_in(page: Page, base_url: str) -> None:
     # Verify we're on the admin page
     expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
 
-    # Wait for the application shell to load
-    try:
-        page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
-    except PlaywrightTimeoutError:
-        if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
-            # Recovery path for intermittent auth redirects during shell load.
-            _set_admin_jwt_cookie(page, admin_email)
-            page.goto("/admin/", wait_until="domcontentloaded")
-            _wait_for_admin_transition(page)
-            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=30000)
-            return
+    # Wait for the application shell to load (retry once on transient stalls)
+    shell_ready = False
+    last_shell_error: Optional[Exception] = None
+    for attempt in range(2):
+        try:
+            page.wait_for_selector('[data-testid="servers-tab"]', state="visible", timeout=60000)
+            shell_ready = True
+            break
+        except PlaywrightTimeoutError as exc:
+            last_shell_error = exc
+            content = page.content()
+            if "Internal Server Error" in content:
+                raise AssertionError("Admin page failed to load: Internal Server Error (500)") from exc
+            if attempt == 0:
+                # One recovery attempt: force-refresh admin shell and re-auth if needed.
+                if "/admin/login" in page.url and not DISABLE_JWT_FALLBACK:
+                    _set_admin_jwt_cookie(page, admin_email)
+                page.goto("/admin/", wait_until="domcontentloaded")
+                _wait_for_admin_transition(page)
+                if login_page.is_on_login_page() or login_page.is_login_form_available():
+                    current_password = ADMIN_ACTIVE_PASSWORD[0] or settings.platform_admin_password.get_secret_value()
+                    status = _submit_login_and_wait(page, login_page, admin_email, current_password)
+                    if status is not None and status >= 400:
+                        raise AssertionError(f"Login failed with status {status}") from exc
+                    _wait_for_admin_transition(page)
+                continue
+            break
 
-        content = page.content()
-        if "Internal Server Error" in content:
-            raise AssertionError("Admin page failed to load: Internal Server Error (500)")
-        raise
+    if not shell_ready:
+        assert last_shell_error is not None
+        raise last_shell_error
 
     # Wait for JS initialization (showTab + HTMX) before any tab clicks
     try:

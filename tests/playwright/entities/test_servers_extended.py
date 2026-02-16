@@ -10,10 +10,10 @@ visibility settings, OAuth configuration, and advanced features.
 """
 
 # Standard
-import re
 import uuid
 
 # Third-Party
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
@@ -21,6 +21,37 @@ import pytest
 # Local
 from ..pages.admin_utils import cleanup_server, find_server
 from ..pages.servers_page import ServersPage
+
+
+def _reload_with_retry(page, attempts: int = 3) -> None:
+    """Reload with retries for transient navigation-abort races.
+
+    The admin JS submit handlers trigger `window.location.href` redirects.
+    If a test calls `page.reload()` during that in-flight navigation,
+    Chromium can raise `ERR_ABORTED` / frame-detached errors.
+    """
+    last_error: Exception | None = None
+    for attempt in range(attempts):
+        try:
+            page.reload(wait_until="domcontentloaded")
+            return
+        except PlaywrightError as exc:
+            last_error = exc
+            message = str(exc)
+            is_nav_race = "ERR_ABORTED" in message or "frame was detached" in message
+            if not is_nav_race or attempt == attempts - 1:
+                raise
+            page.wait_for_timeout(300)
+    if last_error:
+        raise last_error
+
+
+def _stabilize_after_server_create(servers_page: ServersPage) -> None:
+    """Stabilize the UI after create-server submit + redirect."""
+    servers_page.page.wait_for_load_state("domcontentloaded")
+    _reload_with_retry(servers_page.page)
+    servers_page.navigate_to_servers_tab()
+    servers_page.wait_for_servers_table_loaded()
 
 
 class TestServersExtended:
@@ -439,12 +470,7 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for view button test")
 
-        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
-        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
-        servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _stabilize_after_server_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -486,12 +512,7 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for edit button test")
 
-        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
-        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
-        servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _stabilize_after_server_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -538,12 +559,7 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for export button test")
 
-        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
-        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
-        servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _stabilize_after_server_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -579,12 +595,7 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for deactivate button test")
 
-        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
-        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
-        servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _stabilize_after_server_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
@@ -626,12 +637,7 @@ class TestServersExtended:
         with servers_page.page.expect_response(lambda response: "/admin/servers" in response.url and response.request.method == "POST"):
             servers_page.create_server(name=server_name, icon="https://example.com/icon.png", description="Server for UI delete button test")
 
-        # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
-        servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
-        servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
-        servers_page.navigate_to_servers_tab()
-        servers_page.wait_for_servers_table_loaded()
+        _stabilize_after_server_create(servers_page)
 
         # Set pagination to show 100 items per page to ensure server is visible
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
