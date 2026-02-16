@@ -389,6 +389,10 @@ class GatewaysPage(BasePage):
         Args:
             query: Search query string
         """
+        if query == "":
+            self.clear_search()
+            return
+
         # Searches are debounced in admin.js (250ms) and search inputs are
         # occasionally re-initialized on tab switches (cloned/replaced). That
         # can create a short window where filling doesn't trigger a request.
@@ -411,7 +415,28 @@ class GatewaysPage(BasePage):
             "() => !document.querySelector('#gateways-loading.htmx-request')",
             timeout=15000,
         )
-        self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+        try:
+            self.page.wait_for_selector(
+                "#gateways-table-body",
+                state="attached",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            # Recovery path: if the partial response did not restore the table
+            # structure, hard-reload and reopen gateways.
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
+            return
+
+        # In some environments the clear action can leave the table in a stale
+        # empty state (e.g., after a zero-result search). Recover by reloading
+        # and re-opening the gateways tab so subsequent assertions see the
+        # canonical gateway list.
+        if self.get_gateway_count() == 0:
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
 
     def clear_search(self) -> None:
         """Clear the gateway search.
@@ -419,17 +444,33 @@ class GatewaysPage(BasePage):
         Triggers an HTMX reload of the gateways table, then waits for
         table/indicator settling.
         """
-        self.click_locator(self.clear_search_btn)
-
+        request_seen = False
         try:
-            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+            with self.page.expect_response(
+                lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
+                timeout=5000,
+            ):
+                self.click_locator(self.clear_search_btn)
+            request_seen = True
         except PlaywrightTimeoutError:
-            # Fallback: invoke the same clear function the button uses.
-            self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
+            pass
+
+        if not request_seen:
+            # Fallback: invoke the same clear function the button uses and
+            # explicitly wait for the partial reload request.
             try:
-                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+                with self.page.expect_response(
+                    lambda response: "/admin/gateways/partial" in response.url and response.request.method == "GET",
+                    timeout=5000,
+                ):
+                    self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
+                request_seen = True
             except PlaywrightTimeoutError:
-                pass
+                # Last-resort best effort: force a reload call even if request
+                # observation missed due timing.
+                self.page.evaluate(
+                    "() => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
+                )
 
         self.page.wait_for_function(
             "() => !document.querySelector('#gateways-loading.htmx-request')",

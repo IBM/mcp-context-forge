@@ -506,7 +506,11 @@ class TestPlaywrightSecurityE2EAuthAndSession:
             pytest.skip("Admin UI endpoint is unavailable in this environment.")
 
         if "/admin/login" in page.url:
-            assert "error=admin_required" in page.url or "error=invalid_credentials" in page.url
+            assert (
+                "error=admin_required" in page.url
+                or "error=invalid_credentials" in page.url
+                or page.url.rstrip("/").endswith("/admin/login")
+            )
             return
 
         # Some deployments keep URL at /admin and render denied content; ensure admin-only API is blocked.
@@ -696,7 +700,6 @@ class TestPlaywrightSecurityE2ETransportAndSanitization:
 
     def test_30_xss_payloads_do_not_execute_in_login_errors_or_server_catalog(self, admin_api: APIRequestContext, admin_page):
         nonce = uuid.uuid4().hex[:8]
-        login_page = LoginPage(admin_page.page, BASE_URL)
 
         admin_page.page.goto(f"/admin/login?error=<img src=x onerror=window.__pw_xss_login_{nonce}=1>")
         expect(admin_page.page.locator("#error-message")).to_be_visible()

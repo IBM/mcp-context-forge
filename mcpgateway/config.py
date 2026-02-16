@@ -117,6 +117,41 @@ _normalize_env_list_vars()
 # Default content type for outgoing requests to Forge
 FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 
+# UI embedding / visibility controls
+UI_HIDABLE_SECTIONS = frozenset(
+    {
+        "overview",
+        "servers",
+        "gateways",
+        "tools",
+        "prompts",
+        "resources",
+        "roots",
+        "mcp-registry",
+        "metrics",
+        "plugins",
+        "export-import",
+        "logs",
+        "version-info",
+        "maintenance",
+        "teams",
+        "users",
+        "agents",
+        "tokens",
+        "settings",
+    }
+)
+UI_HIDABLE_HEADER_ITEMS = frozenset({"logout", "team_selector", "user_identity", "theme_toggle"})
+UI_HIDE_SECTION_ALIASES = {
+    "catalog": "servers",
+    "virtual_servers": "servers",
+    "a2a-agents": "agents",
+    "a2a": "agents",
+    "grpc-services": "agents",
+    "api_tokens": "tokens",
+    "llm-settings": "settings",
+}
+
 
 class Settings(BaseSettings):
     """
@@ -288,7 +323,7 @@ class Settings(BaseSettings):
     sso_entra_client_secret: Optional[SecretStr] = Field(default=None, description="Microsoft Entra ID client secret")
     sso_entra_tenant_id: Optional[str] = Field(default=None, description="Microsoft Entra ID tenant ID")
     sso_entra_groups_claim: str = Field(default="groups", description="JWT claim for EntraID groups (groups/roles)")
-    sso_entra_admin_groups: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
+    sso_entra_admin_groups: Annotated[list[str], NoDecode] = Field(default_factory=list, description="EntraID groups granting platform_admin role (CSV/JSON)")
     sso_entra_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map EntraID groups to Context Forge roles (JSON: {group_id: role_name})")
     sso_entra_default_role: Optional[str] = Field(default=None, description="Default role for EntraID users without group mapping (None = no role assigned)")
     sso_entra_sync_roles_on_login: bool = Field(default=True, description="Synchronize role assignments on each login")
@@ -306,13 +341,13 @@ class Settings(BaseSettings):
 
     # SSO Settings
     sso_auto_create_users: bool = Field(default=True, description="Automatically create users from SSO providers")
-    sso_trusted_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
+    sso_trusted_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Trusted email domains (CSV or JSON list)")
     sso_preserve_admin_auth: bool = Field(default=True, description="Preserve local admin authentication when SSO is enabled")
 
     # SSO Admin Assignment Settings
-    sso_auto_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
-    sso_github_admin_orgs: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
-    sso_google_admin_domains: Annotated[list[str], NoDecode()] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
+    sso_auto_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Admin domains (CSV or JSON list)")
+    sso_github_admin_orgs: Annotated[list[str], NoDecode] = Field(default_factory=list, description="GitHub orgs granting admin (CSV/JSON)")
+    sso_google_admin_domains: Annotated[list[str], NoDecode] = Field(default_factory=list, description="Google admin domains (CSV/JSON)")
     sso_require_admin_approval: bool = Field(default=False, description="Require admin approval for new SSO registrations")
 
     # MCP Client Authentication
@@ -522,6 +557,19 @@ class Settings(BaseSettings):
     mcpgateway_ui_enabled: bool = False
     mcpgateway_admin_api_enabled: bool = False
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
+    mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
+    mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description=(
+            "CSV/JSON list of UI sections to hide. "
+            "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
+            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
+        ),
+    )
+    mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="CSV/JSON list of header items to hide. Valid values: logout, team_selector, user_identity, theme_toggle",
+    )
     mcpgateway_bulk_import_enabled: bool = True
     mcpgateway_bulk_import_max_tools: int = 200
     mcpgateway_bulk_import_rate_limit: int = 10
@@ -1750,6 +1798,8 @@ Disallow: /
         "sso_github_admin_orgs",
         "sso_google_admin_domains",
         "insecure_queryparam_auth_allowed_hosts",
+        "mcpgateway_ui_hide_sections",
+        "mcpgateway_ui_hide_header_items",
         mode="before",
     )
     @classmethod
@@ -1785,6 +1835,61 @@ Disallow: /
             # CSV fallback
             return [item.strip() for item in s.split(",") if item.strip()]
         raise ValueError("Invalid type for list field")
+
+    @field_validator("mcpgateway_ui_hide_sections", mode="after")
+    @classmethod
+    def _validate_ui_hide_sections(cls, value: list[str]) -> list[str]:
+        """Normalize and filter hidable UI sections.
+
+        Args:
+            value: Candidate section identifiers from environment/config.
+
+        Returns:
+            list[str]: Normalized unique section identifiers.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            candidate = UI_HIDE_SECTION_ALIASES.get(candidate, candidate)
+            if candidate not in UI_HIDABLE_SECTIONS:
+                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_SECTIONS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized
+
+    @field_validator("mcpgateway_ui_hide_header_items", mode="after")
+    @classmethod
+    def _validate_ui_hide_header_items(cls, value: list[str]) -> list[str]:
+        """Normalize and filter hidable header items.
+
+        Args:
+            value: Candidate header identifiers from environment/config.
+
+        Returns:
+            list[str]: Normalized unique header identifiers.
+        """
+        normalized: list[str] = []
+        seen: set[str] = set()
+
+        for item in value:
+            candidate = str(item).strip().lower()
+            if not candidate:
+                continue
+            if candidate not in UI_HIDABLE_HEADER_ITEMS:
+                logger.warning("Ignoring invalid MCPGATEWAY_UI_HIDE_HEADER_ITEMS item: %s", item)
+                continue
+            if candidate not in seen:
+                seen.add(candidate)
+                normalized.append(candidate)
+
+        return normalized
 
     @property
     def api_key(self) -> str:

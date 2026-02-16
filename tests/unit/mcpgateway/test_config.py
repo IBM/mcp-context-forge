@@ -784,6 +784,88 @@ def test_parse_list_from_env_invalid_type():
         Settings(sso_entra_admin_groups=123, _env_file=None)
 
 
+def test_ui_hide_sections_csv_aliases_and_invalid_values():
+    """UI section hide list should normalize aliases and ignore invalid values."""
+    s = Settings(
+        mcpgateway_ui_hide_sections="prompts,CATALOG,a2a,invalid,prompts",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections == ["prompts", "servers", "agents"]
+
+
+def test_ui_hide_sections_json_array_input():
+    """UI section hide list should accept JSON array input."""
+    s = Settings(
+        mcpgateway_ui_hide_sections='["tools", "resources"]',
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections == ["tools", "resources"]
+
+
+def test_ui_hide_sections_empty_tokens_stripped():
+    """Empty tokens from double commas should be ignored."""
+    s = Settings(
+        mcpgateway_ui_hide_sections="tools,,prompts,",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections == ["tools", "prompts"]
+
+
+def test_ui_hide_sections_accepts_extended_sections():
+    """Extended admin tabs should be accepted as valid hideable sections."""
+    s = Settings(
+        mcpgateway_ui_hide_sections="overview,roots,mcp-registry,metrics,plugins,export-import,logs,version-info,maintenance",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_sections == [
+        "overview",
+        "roots",
+        "mcp-registry",
+        "metrics",
+        "plugins",
+        "export-import",
+        "logs",
+        "version-info",
+        "maintenance",
+    ]
+
+
+def test_ui_hide_sections_empty_default():
+    """Default value should be empty list."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ui_hide_sections == []
+
+
+def test_ui_hide_header_items_json_normalization():
+    """UI header hide list should normalize case and deduplicate values."""
+    s = Settings(
+        mcpgateway_ui_hide_header_items='["logout", "THEME_TOGGLE", "logout", "invalid"]',
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_header_items == ["logout", "theme_toggle"]
+
+
+def test_ui_hide_header_items_csv_input():
+    """UI header hide list should accept CSV input."""
+    s = Settings(
+        mcpgateway_ui_hide_header_items="logout,team_selector",
+        _env_file=None,
+    )
+    assert s.mcpgateway_ui_hide_header_items == ["logout", "team_selector"]
+
+
+def test_ui_hide_header_items_empty_default():
+    """Default value should be empty list."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ui_hide_header_items == []
+
+
+def test_ui_embedded_default_false():
+    """Embedded mode should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_ui_embedded is False
+
+
 # --------------------------------------------------------------------------- #
 #                    validate_database (non-sqlite)                            #
 # --------------------------------------------------------------------------- #

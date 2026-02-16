@@ -29,6 +29,9 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
+    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
+    UI_HIDE_SECTIONS_COOKIE_NAME,
+    _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
     _escape_like,
     _generate_unified_teams_view,
@@ -228,6 +231,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_top_error_endpoints,
     get_top_slow_endpoints,
     get_top_volume_endpoints,
+    get_ui_visibility_config,
     get_user_agent,
     get_user_email,
     get_user_id,
@@ -243,7 +247,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     update_global_passthrough_headers,
     update_observability_query,
 )
-from mcpgateway.config import settings
+from mcpgateway.config import UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES, settings
 from mcpgateway.schemas import (
     GatewayTestRequest,
     GlobalConfigRead,
@@ -2809,6 +2813,222 @@ class TestAdminGatewayTestRoute:
                 assert result.body["details"] == response_text
 
 
+class TestNormalizeUiHideValues:
+    """Test _normalize_ui_hide_values edge cases."""
+
+    def test_none_input_returns_empty_set(self):
+        assert _normalize_ui_hide_values(None, UI_HIDABLE_SECTIONS) == set()
+
+    def test_empty_string_returns_empty_set(self):
+        assert _normalize_ui_hide_values("", UI_HIDABLE_SECTIONS) == set()
+
+    def test_non_iterable_returns_empty_set(self):
+        assert _normalize_ui_hide_values(42, UI_HIDABLE_SECTIONS) == set()
+        assert _normalize_ui_hide_values(3.14, UI_HIDABLE_SECTIONS) == set()
+        assert _normalize_ui_hide_values(True, UI_HIDABLE_SECTIONS) == set()
+
+    def test_csv_string_parses_correctly(self):
+        result = _normalize_ui_hide_values("tools,prompts", UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_list_input_parses_correctly(self):
+        result = _normalize_ui_hide_values(["tools", "prompts"], UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_tuple_input_parses_correctly(self):
+        result = _normalize_ui_hide_values(("tools", "prompts"), UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_set_input_parses_correctly(self):
+        result = _normalize_ui_hide_values({"tools", "prompts"}, UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_empty_tokens_from_double_commas_skipped(self):
+        result = _normalize_ui_hide_values("tools,,prompts,", UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_alias_resolution(self):
+        result = _normalize_ui_hide_values(
+            "catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
+        )
+        assert result == {"servers", "agents", "tokens"}
+
+    def test_no_aliases_when_none(self):
+        result = _normalize_ui_hide_values("logout,team_selector", UI_HIDABLE_HEADER_ITEMS)
+        assert result == {"logout", "team_selector"}
+
+    def test_case_insensitive(self):
+        result = _normalize_ui_hide_values("TOOLS,Prompts", UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_invalid_values_dropped(self):
+        result = _normalize_ui_hide_values("tools,invalid,evil", UI_HIDABLE_SECTIONS)
+        assert result == {"tools"}
+
+    def test_mixed_valid_invalid_with_aliases(self):
+        result = _normalize_ui_hide_values(
+            "CATALOG,invalid,tools,nonexistent",
+            UI_HIDABLE_SECTIONS,
+            UI_HIDE_SECTION_ALIASES,
+        )
+        assert result == {"servers", "tools"}
+
+    def test_whitespace_handling(self):
+        result = _normalize_ui_hide_values(" tools , prompts ", UI_HIDABLE_SECTIONS)
+        assert result == {"tools", "prompts"}
+
+    def test_list_with_non_string_items(self):
+        result = _normalize_ui_hide_values([123, None, "tools"], UI_HIDABLE_SECTIONS)
+        assert result == {"tools"}
+
+
+class TestUIVisibilityConfig:
+    """Test UI visibility config parsing and merge behavior."""
+
+    def test_get_ui_visibility_config_query_merge_and_embedded_defaults(
+        self,
+        monkeypatch,
+    ):
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "prompts,tools,invalid"}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
+
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False
+        )
+        monkeypatch.setattr(
+            settings,
+            "mcpgateway_ui_hide_header_items",
+            ["user_identity"],
+            raising=False,
+        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", True, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == ["prompts", "teams", "tools"]
+        assert config["hidden_header_items"] == [
+            "logout",
+            "team_selector",
+            "user_identity",
+        ]
+        assert config["hidden_tabs"] == ["prompts", "teams", "tool-ops", "tools"]
+        assert config["cookie_action"] == "set"
+        assert config["cookie_value"] == "prompts,tools"
+
+    def test_get_ui_visibility_config_uses_cookie_when_query_missing(
+        self,
+        monkeypatch,
+    ):
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,catalog"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_embedded", False, raising=False
+        )
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == ["resources", "servers"]
+        assert config["hidden_header_items"] == []
+        assert config["hidden_tabs"] == ["catalog", "resources"]
+        assert config["cookie_action"] is None
+        assert config["cookie_value"] is None
+
+    def test_get_ui_visibility_config_empty_query_clears_cookie(self, monkeypatch):
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": ""}
+        request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_embedded", False, raising=False
+        )
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == []
+        assert config["cookie_action"] == "delete"
+        assert config["cookie_value"] is None
+
+    def test_get_ui_visibility_config_all_empty_baseline(self, monkeypatch):
+        """All empty env/query/cookie produces fully empty config."""
+        request = MagicMock(spec=Request)
+        request.query_params = {}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == []
+        assert config["hidden_header_items"] == []
+        assert config["hidden_tabs"] == []
+        assert config["cookie_action"] is None
+        assert config["cookie_value"] is None
+
+    def test_get_ui_visibility_config_section_with_tab_mapping(self, monkeypatch):
+        """Hiding 'users' section produces 'users' in hidden_tabs via UI_SECTION_TO_TABS."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "users"}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == ["users"]
+        assert config["hidden_tabs"] == ["users"]
+        assert config["cookie_action"] == "set"
+
+    def test_get_ui_visibility_config_extended_sections_map_to_tabs(
+        self,
+        monkeypatch,
+    ):
+        """Extended hideable sections should map directly to their tab IDs."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "overview,mcp-registry,logs,version-info"}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == [
+            "logs",
+            "mcp-registry",
+            "overview",
+            "version-info",
+        ]
+        assert config["hidden_tabs"] == [
+            "logs",
+            "mcp-registry",
+            "overview",
+            "version-info",
+        ]
+        assert config["cookie_action"] == "set"
+
+
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""
 
@@ -2934,6 +3154,417 @@ class TestAdminUIRoute:
 
         # Verify template was called (cookies are now set during login, not on admin page access)
         mock_request.app.state.templates.TemplateResponse.assert_called_once()
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_skips_hidden_sections_data_loading(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Hidden sections should not trigger list/service loads."""
+        hidden_sections = "servers,gateways,tools,prompts,resources,teams,users,agents,tokens"
+        mock_request.query_params = {"ui_hide": hidden_sections}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = []
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = []
+        mock_prompts.return_value = []
+        mock_gateways.return_value = []
+
+        monkeypatch.setattr(settings, "email_auth_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings,
+            "mcpgateway_ui_hide_header_items",
+            ["team_selector"],
+            raising=False,
+        )
+        monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True, raising=False)
+
+        team_service_ctor = MagicMock()
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
+
+        a2a_service_mock = MagicMock()
+        a2a_service_mock.list_agents_for_user = AsyncMock(return_value=[])
+        monkeypatch.setattr("mcpgateway.admin.a2a_service", a2a_service_mock)
+
+        grpc_service_mgr_mock = MagicMock()
+        grpc_service_mgr_mock.list_services = AsyncMock(return_value=[])
+        monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
+        monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", grpc_service_mgr_mock)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert mock_roots.await_count == 1
+        assert mock_servers.await_count == 0
+        assert mock_tools.await_count == 0
+        assert mock_resources.await_count == 0
+        assert mock_prompts.await_count == 0
+        assert mock_gateways.await_count == 0
+        assert a2a_service_mock.list_agents_for_user.await_count == 0
+        assert grpc_service_mgr_mock.list_services.await_count == 0
+        assert team_service_ctor.call_count == 0
+
+        context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
+        assert set(context["ui_hidden_sections"]) >= {
+            "servers",
+            "gateways",
+            "tools",
+            "prompts",
+            "resources",
+            "teams",
+            "users",
+            "agents",
+            "tokens",
+        }
+        assert context["tools"] == []
+        assert context["servers"] == []
+        assert context["resources"] == []
+        assert context["prompts"] == []
+        assert context["gateways"] == []
+
+        cookie_headers = response.headers.getlist("set-cookie")
+        assert any(UI_HIDE_SECTIONS_COOKIE_NAME in header for header in cookie_headers)
+        # Verify cookie max_age is set
+        assert any("Max-Age=" in header for header in cookie_headers if UI_HIDE_SECTIONS_COOKIE_NAME in header)
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_cookie_delete_on_empty_query(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Empty ui_hide query should delete the cookie."""
+        mock_request.query_params = {"ui_hide": ""}
+        mock_request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "tools"}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        cookie_headers = response.headers.getlist("set-cookie")
+        hide_cookie_headers = [h for h in cookie_headers if UI_HIDE_SECTIONS_COOKIE_NAME in h]
+        assert len(hide_cookie_headers) > 0
+        assert any("Max-Age=0" in h or "max-age=0" in h for h in hide_cookie_headers)
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_no_cookie_when_no_query(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """No ui_hide query should not set or delete cookie."""
+        mock_request.query_params = {}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        cookie_headers = response.headers.getlist("set-cookie")
+        hide_cookie_headers = [h for h in cookie_headers if UI_HIDE_SECTIONS_COOKIE_NAME in h]
+        assert len(hide_cookie_headers) == 0
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_partial_hide_loads_visible_sections(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Hiding only some sections should still load the visible ones."""
+        mock_request.query_params = {"ui_hide": "tools,prompts"}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert mock_tools.await_count == 0
+        assert mock_prompts.await_count == 0
+        assert mock_servers.await_count == 1
+        assert mock_resources.await_count == 1
+        assert mock_gateways.await_count == 1
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_team_loaded_when_tokens_visible(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Teams should load when tokens section is visible, even if teams section hidden."""
+        mock_request.query_params = {"ui_hide": "teams,users"}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings,
+            "mcpgateway_ui_hide_header_items",
+            ["team_selector"],
+            raising=False,
+        )
+
+        team_service_mock = MagicMock()
+        team_service_mock.get_teams_for_user = MagicMock(return_value=[])
+        team_service_ctor = MagicMock(return_value=team_service_mock)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert team_service_ctor.call_count == 1
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_team_loaded_when_data_sections_visible_even_if_org_hidden(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Team role context should still load for visible data sections with mutation controls."""
+        mock_request.query_params = {"ui_hide": "teams,tokens,users"}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings,
+            "mcpgateway_ui_hide_header_items",
+            ["team_selector"],
+            raising=False,
+        )
+
+        team_service_mock = MagicMock()
+        team_service_mock.get_teams_for_user = MagicMock(return_value=[])
+        team_service_ctor = MagicMock(return_value=team_service_mock)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert team_service_ctor.call_count == 1
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_team_loaded_when_team_id_provided(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Teams should load when team_id is provided, even if all org sections hidden."""
+        mock_request.query_params = {"ui_hide": "teams,users,tokens"}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings,
+            "mcpgateway_ui_hide_header_items",
+            ["team_selector"],
+            raising=False,
+        )
+
+        team_service_mock = MagicMock()
+        team_service_mock.get_teams_for_user = MagicMock(return_value=[])
+        team_service_ctor = MagicMock(return_value=team_service_mock)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id="some-team-id",
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert team_service_ctor.call_count == 1
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
     @patch.object(ToolService, "list_tools", new_callable=AsyncMock)

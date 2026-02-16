@@ -7528,6 +7528,53 @@ const ADMIN_ONLY_TABS = new Set([
     "maintenance",
 ]);
 
+function normalizeTabName(tabName) {
+    if (!tabName || typeof tabName !== "string") {
+        return "";
+    }
+    return tabName
+        .replace(/^#/, "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "");
+}
+
+function getUiHiddenSections() {
+    const rawHiddenSections = Array.isArray(window.UI_HIDDEN_SECTIONS)
+        ? window.UI_HIDDEN_SECTIONS
+        : [];
+    const hiddenSections = new Set();
+    rawHiddenSections.forEach((section) => {
+        const normalizedSection = normalizeTabName(String(section));
+        if (normalizedSection) {
+            hiddenSections.add(normalizedSection);
+        }
+    });
+    return hiddenSections;
+}
+
+function getUiHiddenTabs() {
+    const rawHiddenTabs = Array.isArray(window.UI_HIDDEN_TABS)
+        ? window.UI_HIDDEN_TABS
+        : [];
+    const hiddenTabs = new Set();
+    rawHiddenTabs.forEach((tab) => {
+        const normalizedTab = normalizeTabName(String(tab));
+        if (normalizedTab) {
+            hiddenTabs.add(normalizedTab);
+        }
+    });
+    return hiddenTabs;
+}
+
+function isTabHidden(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return false;
+    }
+    return getUiHiddenTabs().has(normalizedTab);
+}
+
 function isAdminUser() {
     return Boolean(window.IS_ADMIN);
 }
@@ -7536,8 +7583,96 @@ function isAdminOnlyTab(tabName) {
     return ADMIN_ONLY_TABS.has(tabName);
 }
 
+function getVisibleSidebarTabs() {
+    const sidebarLinks = document.querySelectorAll('.sidebar-link[href^="#"]');
+    const visibleTabs = [];
+
+    sidebarLinks.forEach((link) => {
+        const href = link.getAttribute("href") || "";
+        const normalizedTab = normalizeTabName(href);
+        if (!normalizedTab) {
+            return;
+        }
+        visibleTabs.push(normalizedTab);
+    });
+
+    return Array.from(new Set(visibleTabs));
+}
+
+function isTabAvailable(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return false;
+    }
+
+    const panelExists = Boolean(safeGetElement(`${normalizedTab}-panel`, true));
+    const navExists = Boolean(
+        document.querySelector(`.sidebar-link[href="#${normalizedTab}"]`),
+    );
+
+    return panelExists && navExists;
+}
+
 function getDefaultTabName() {
-    return safeGetElement("overview-panel", true) ? "overview" : "gateways";
+    const visibleTabs = getVisibleSidebarTabs().filter((tabName) => {
+        if (isTabHidden(tabName)) {
+            return false;
+        }
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            return false;
+        }
+        return isTabAvailable(tabName);
+    });
+
+    if (visibleTabs.includes("overview")) {
+        return "overview";
+    }
+    if (visibleTabs.includes("gateways")) {
+        return "gateways";
+    }
+    if (visibleTabs.length > 0) {
+        return visibleTabs[0];
+    }
+
+    // Backwards-compatible fallback for minimal DOM states (unit tests, etc).
+    // Previously, the presence of overview-panel alone controlled the default.
+    if (!isTabHidden("overview") && safeGetElement("overview-panel", true)) {
+        return "overview";
+    }
+    return "gateways";
+}
+
+function resolveTabForNavigation(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return getDefaultTabName();
+    }
+    if (isTabHidden(normalizedTab)) {
+        return getDefaultTabName();
+    }
+    if (!isAdminUser() && isAdminOnlyTab(normalizedTab)) {
+        return getDefaultTabName();
+    }
+    if (!isTabAvailable(normalizedTab)) {
+        return getDefaultTabName();
+    }
+    return normalizedTab;
+}
+
+function updateHashForTab(tabName) {
+    const normalizedTab = normalizeTabName(tabName);
+    if (!normalizedTab) {
+        return;
+    }
+
+    const desiredHash = `#${normalizedTab}`;
+    if (window.location.hash === desiredHash) {
+        return;
+    }
+
+    const url = new URL(window.location.href);
+    url.hash = desiredHash;
+    safeReplaceState({}, "", url.toString());
 }
 
 let tabSwitchTimeout = null;
@@ -7610,14 +7745,54 @@ function cleanUpUrlParamsForTab(targetTabName) {
 
 function showTab(tabName) {
     try {
-        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
-            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+        tabName = normalizeTabName(tabName);
+        if (!tabName) {
+            console.warn("showTab called without a valid tab name");
+            return;
+        }
+
+        if (isTabHidden(tabName)) {
             const fallbackTab = getDefaultTabName();
-            if (tabName !== fallbackTab) {
+            console.warn(
+                `Blocked navigation to hidden tab "${tabName}", redirecting to "${fallbackTab}"`,
+            );
+            if (fallbackTab && fallbackTab !== tabName) {
+                updateHashForTab(fallbackTab);
                 showTab(fallbackTab);
             }
             return;
         }
+
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            console.warn(`Blocked non-admin access to tab: ${tabName}`);
+            const fallbackTab = getDefaultTabName();
+            if (fallbackTab && tabName !== fallbackTab) {
+                updateHashForTab(fallbackTab);
+                showTab(fallbackTab);
+            }
+            return;
+        }
+
+        // Idempotency: a single click can trigger multiple navigation paths
+        // (inline onclick, hashchange, and JS click bindings). If the requested
+        // tab is already visible, do nothing to avoid duplicate loads/HTMX calls.
+        const existingPanel = safeGetElement(`${tabName}-panel`, true);
+        if (existingPanel && !existingPanel.classList.contains("hidden")) {
+            const visiblePanels = document.querySelectorAll(
+                ".tab-panel:not(.hidden)",
+            );
+            const existingNav = document.querySelector(
+                `.sidebar-link[href="#${tabName}"]`,
+            );
+            if (existingNav) {
+                existingNav.classList.add("active");
+            }
+            // If multiple panels are visible, continue to force a clean state.
+            if (visiblePanels.length <= 1) {
+                return;
+            }
+        }
+
         console.log(`Switching to tab: ${tabName}`);
 
         // Clear any pending tab switch
@@ -7664,6 +7839,11 @@ function showTab(tabName) {
             panel.classList.remove("hidden");
         } else {
             console.error(`Panel ${tabName}-panel not found`);
+            const fallbackTab = getDefaultTabName();
+            if (fallbackTab && fallbackTab !== tabName) {
+                updateHashForTab(fallbackTab);
+                showTab(fallbackTab);
+            }
             return;
         }
 
@@ -11400,6 +11580,9 @@ async function testTool(toolId) {
 }
 
 async function loadTools() {
+    if (getUiHiddenSections().has("tools")) {
+        return;
+    }
     const toolBody = document.getElementById("toolBody");
     console.log("Loading tools...");
     try {
@@ -16422,41 +16605,31 @@ function initializeEventListeners() {
 }
 
 function setupTabNavigation() {
-    const tabs = [
-        "catalog",
-        "tools",
-        "resources",
-        "prompts",
-        "gateways",
-        "a2a-agents",
-        "roots",
-        "metrics",
-        "plugins",
-        "logs",
-        "export-import",
-        "version-info",
-    ];
-
-    const visibleTabs = isAdminUser()
-        ? tabs
-        : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
-
-    visibleTabs.forEach((tabName) => {
-        // Suppress warnings for optional tabs that might not be enabled
-        const optionalTabs = [
-            "roots",
-            "metrics",
-            "logs",
-            "export-import",
-            "version-info",
-            "plugins",
-        ];
-        const suppressWarning = optionalTabs.includes(tabName);
-
-        const tabElement = safeGetElement(`tab-${tabName}`, suppressWarning);
-        if (tabElement) {
-            tabElement.addEventListener("click", () => showTab(tabName));
+    const availableTabs = getVisibleSidebarTabs().filter((tabName) => {
+        if (isTabHidden(tabName)) {
+            return false;
         }
+        if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+            return false;
+        }
+        return isTabAvailable(tabName);
+    });
+
+    availableTabs.forEach((tabName) => {
+        const tabElement = safeGetElement(`tab-${tabName}`, true);
+        if (!tabElement) {
+            return;
+        }
+        // The sidebar anchors already have inline onclick handlers in admin.html.
+        // Avoid adding a second click handler that would call showTab twice.
+        if (tabElement.hasAttribute("onclick")) {
+            return;
+        }
+        if (tabElement.dataset.tabBound === "true") {
+            return;
+        }
+        tabElement.dataset.tabBound = "true";
+        tabElement.addEventListener("click", () => showTab(tabName));
     });
 }
 
@@ -17554,6 +17727,38 @@ function clearSearch(entityType) {
             if (tagInput) {
                 tagInput.value = "";
             }
+            // Keep rows visible even if HTMX reload is delayed/missed.
+            if (
+                entityType === "catalog" &&
+                typeof filterServerTable === "function"
+            ) {
+                filterServerTable("");
+            } else if (
+                entityType === "tools" &&
+                typeof filterToolsTable === "function"
+            ) {
+                filterToolsTable("");
+            } else if (
+                entityType === "resources" &&
+                typeof filterResourcesTable === "function"
+            ) {
+                filterResourcesTable("");
+            } else if (
+                entityType === "prompts" &&
+                typeof filterPromptsTable === "function"
+            ) {
+                filterPromptsTable("");
+            } else if (
+                entityType === "gateways" &&
+                typeof filterGatewaysTable === "function"
+            ) {
+                filterGatewaysTable("");
+            } else if (
+                entityType === "a2a-agents" &&
+                typeof filterA2AAgentsTable === "function"
+            ) {
+                filterA2AAgentsTable("");
+            }
             loadSearchablePanel(entityType);
             return;
         }
@@ -17684,8 +17889,12 @@ function renderGlobalSearchResults(payload) {
     }
 
     const groups = Array.isArray(payload?.groups) ? payload.groups : [];
+    const hiddenSections = getUiHiddenSections();
     const visibleGroups = groups.filter(
-        (group) => Array.isArray(group.items) && group.items.length > 0,
+        (group) =>
+            Array.isArray(group.items) &&
+            group.items.length > 0 &&
+            !hiddenSections.has(group.entity_type),
     );
 
     if (visibleGroups.length === 0) {
@@ -17754,6 +17963,28 @@ async function runGlobalSearch(query) {
     const params = new URLSearchParams();
     params.set("q", normalizedQuery);
     params.set("limit_per_type", "8");
+    const searchableEntityTypes = [
+        "servers",
+        "gateways",
+        "tools",
+        "resources",
+        "prompts",
+        "agents",
+        "teams",
+        "users",
+    ];
+    const visibleEntityTypes = searchableEntityTypes.filter((entityType) => {
+        if (entityType === "users" && !isAdminUser()) {
+            return false;
+        }
+        return !getUiHiddenSections().has(entityType);
+    });
+    if (visibleEntityTypes.length === 0) {
+        renderGlobalSearchMessage("No searchable sections are visible.");
+        return;
+    }
+    params.set("entity_types", visibleEntityTypes.join(","));
+
     const currentTeamId = getCurrentTeamId();
     if (currentTeamId) {
         params.set("team_id", currentTeamId);
@@ -18146,18 +18377,45 @@ function setupIntegrationTypeHandlers() {
     }
 }
 
+let tabHashChangeListenerRegistered = false;
+
 function initializeTabState() {
     console.log("Initializing tab state...");
 
-    const hash = window.location.hash;
-    if (hash) {
-        showTab(hash.slice(1));
+    const initialHashTab = normalizeTabName(window.location.hash);
+    const initialRequestedTab = initialHashTab || getDefaultTabName();
+    const initialTab = resolveTabForNavigation(initialRequestedTab);
+
+    if (initialTab) {
+        if (initialHashTab && initialHashTab !== initialTab) {
+            updateHashForTab(initialTab);
+        }
+        showTab(initialTab);
     } else {
-        showTab("gateways");
+        console.warn("No available tabs found during initialization");
+    }
+
+    if (!tabHashChangeListenerRegistered) {
+        window.addEventListener("hashchange", () => {
+            const hashTab = normalizeTabName(window.location.hash);
+            const requestedTab = hashTab || getDefaultTabName();
+            const resolvedTab = resolveTabForNavigation(requestedTab);
+
+            if (!resolvedTab) {
+                return;
+            }
+
+            if (hashTab && hashTab !== resolvedTab) {
+                updateHashForTab(resolvedTab);
+            }
+
+            showTab(resolvedTab);
+        });
+        tabHashChangeListenerRegistered = true;
     }
 
     // Pre-load version info if that's the initial tab
-    if (isAdminUser() && window.location.hash === "#version-info") {
+    if (isAdminUser() && initialTab === "version-info") {
         setTimeout(() => {
             const panel = safeGetElement("version-info-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -18184,7 +18442,7 @@ function initializeTabState() {
     }
 
     // Pre-load maintenance panel if that's the initial tab
-    if (isAdminUser() && window.location.hash === "#maintenance") {
+    if (isAdminUser() && initialTab === "maintenance") {
         setTimeout(() => {
             const panel = safeGetElement("maintenance-panel");
             if (panel && panel.innerHTML.trim() === "") {
@@ -23579,11 +23837,22 @@ function resetImportSelection() {
         "gateways",
         "catalog",
     ];
+    const SECTION_HIDE_KEY_OVERRIDES = {
+        catalog: "servers",
+    };
+
+    function isSectionHidden(sectionName) {
+        const hideKey = SECTION_HIDE_KEY_OVERRIDES[sectionName] || sectionName;
+        return getUiHiddenSections().has(hideKey);
+    }
 
     // Save initial markup on first full load so we can restore exactly if needed
     document.addEventListener("DOMContentLoaded", () => {
         window.__initialSectionMarkup = window.__initialSectionMarkup || {};
         SECTION_NAMES.forEach((s) => {
+            if (isSectionHidden(s)) {
+                return;
+            }
             const el = document.getElementById(`${s}-section`);
             if (el && !(s in window.__initialSectionMarkup)) {
                 // store the exact innerHTML produced by the server initially
@@ -23763,7 +24032,7 @@ function resetImportSelection() {
             "prompts",
             "servers",
             "gateways",
-        ];
+        ].filter((sectionName) => !isSectionHidden(sectionName));
 
         sections.forEach((section) => {
             const header = document.querySelector(
@@ -23815,7 +24084,7 @@ function resetImportSelection() {
             "prompts",
             "servers",
             "gateways",
-        ];
+        ].filter((sectionName) => !isSectionHidden(sectionName));
 
         // ensure there is a ROOT_PATH set
         if (!window.ROOT_PATH) {

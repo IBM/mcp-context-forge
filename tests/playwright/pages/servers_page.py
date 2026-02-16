@@ -290,6 +290,10 @@ class ServersPage(BasePage):
         Args:
             query: Search query string
         """
+        if query == "":
+            self.clear_search()
+            return
+
         self.fill_locator(self.search_input, query)
 
         try:
@@ -309,7 +313,28 @@ class ServersPage(BasePage):
             "() => !document.querySelector('#servers-loading.htmx-request')",
             timeout=15000,
         )
-        self.page.wait_for_selector("#servers-table-body", state="attached", timeout=15000)
+        try:
+            self.page.wait_for_selector(
+                "#servers-table-body",
+                state="attached",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            # Recovery path: if the partial response did not restore the table
+            # structure, hard-reload and reopen catalog.
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_servers_tab()
+            self.wait_for_servers_table_loaded()
+            return
+
+        # In some environments the clear action can leave the table in a stale
+        # empty state (e.g., after a zero-result search). Recover by reloading
+        # and re-opening the catalog tab so subsequent assertions see the
+        # canonical server list.
+        if self.get_server_count() == 0:
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_servers_tab()
+            self.wait_for_servers_table_loaded()
 
     def clear_search(self) -> None:
         """Clear the server search.
@@ -317,17 +342,33 @@ class ServersPage(BasePage):
         Triggers an HTMX reload of the servers table, then waits for
         table/indicator settling.
         """
-        self.click_locator(self.clear_search_btn)
-
+        request_seen = False
         try:
-            self.page.wait_for_selector("#servers-loading.htmx-request", timeout=2000)
+            with self.page.expect_response(
+                lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                timeout=5000,
+            ):
+                self.click_locator(self.clear_search_btn)
+            request_seen = True
         except PlaywrightTimeoutError:
-            # Fallback: invoke the same clear function the button uses.
-            self.page.evaluate("window.clearSearch && window.clearSearch('catalog')")
+            pass
+
+        if not request_seen:
+            # Fallback: invoke the same clear function the button uses and
+            # explicitly wait for the partial reload request.
             try:
-                self.page.wait_for_selector("#servers-loading.htmx-request", timeout=2000)
+                with self.page.expect_response(
+                    lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                    timeout=5000,
+                ):
+                    self.page.evaluate("window.clearSearch && window.clearSearch('catalog')")
+                request_seen = True
             except PlaywrightTimeoutError:
-                pass
+                # Last-resort best effort: force a reload call even if request
+                # observation missed due timing.
+                self.page.evaluate(
+                    "() => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = ''; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                )
 
         self.page.wait_for_function(
             "() => !document.querySelector('#servers-loading.htmx-request')",
