@@ -2876,6 +2876,10 @@ class Tool(Base):
     gateway: Mapped["Gateway"] = relationship("Gateway", primaryjoin="Tool.gateway_id == Gateway.id", foreign_keys=[gateway_id], back_populates="tools")
     # federated_with = relationship("Gateway", secondary=tool_gateway_table, back_populates="federated_tools")
 
+    # Federation relationship with a gRPC service
+    grpc_service_id: Mapped[Optional[str]] = mapped_column(ForeignKey("grpc_services.id", ondelete="CASCADE"), nullable=True)
+    grpc_service: Mapped[Optional["GrpcService"]] = relationship("GrpcService", back_populates="tools")
+
     # Many-to-many relationship with Servers
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_tool_association, back_populates="tools")
 
@@ -4779,6 +4783,9 @@ class GrpcService(Base):
     team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True)
     owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="public")
+
+    # Relationship with tools discovered from this gRPC service
+    tools: Mapped[List["Tool"]] = relationship("Tool", back_populates="grpc_service", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         """Return a string representation of the GrpcService instance.
