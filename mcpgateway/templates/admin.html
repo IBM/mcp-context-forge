@@ -3132,6 +3132,11 @@
                     placeholder="team:<team_id> or user:<email> (optional)"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                   />
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('server-skills-scope', 'skills_scope_team')">Insert team scope</button>
+                    <span class="mx-1">or</span>
+                    <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('server-skills-scope', 'skills_scope_user')">insert user scope</button>
+                  </p>
                 </div>
                 <div class="flex items-center">
                   <input
@@ -3153,6 +3158,9 @@
                     placeholder='{"include_tags":["prod"],"exclude_servers":["admin-tools"]}'
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                   ></textarea>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('server-mount-rules', 'mount_rules')">Insert editable JSON template</button>
+                  </p>
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-sandbox-policy">Sandbox Policy (JSON)</label>
@@ -3163,6 +3171,9 @@
                     placeholder='{"runtime":"deno","limits":{"max_execution_time_ms":30000,"max_memory_mb":256},"permissions":{"network":{"allow_tool_calls":true,"allow_raw_http":false}}}'
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                   ></textarea>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('server-sandbox-policy', 'sandbox_policy')">Insert editable JSON template</button>
+                  </p>
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-tokenization">Tokenization Policy (JSON)</label>
@@ -3173,6 +3184,9 @@
                     placeholder='{"enabled":true,"types":["email","phone","ssn","credit_card","name"],"strategy":"bidirectional"}'
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                   ></textarea>
+                  <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('server-tokenization', 'tokenization_policy')">Insert editable JSON template</button>
+                  </p>
                 </div>
               </div>
             </div>
@@ -11118,6 +11132,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             placeholder="team:<team_id> or user:<email> (optional)"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                           />
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('edit-server-skills-scope', 'skills_scope_team')">Insert team scope</button>
+                            <span class="mx-1">or</span>
+                            <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('edit-server-skills-scope', 'skills_scope_user')">insert user scope</button>
+                          </p>
                         </div>
                         <div class="flex items-center">
                           <input
@@ -11138,6 +11157,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             rows="4"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                           ></textarea>
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('edit-server-mount-rules', 'mount_rules')">Insert editable JSON template</button>
+                          </p>
                         </div>
                         <div>
                           <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-sandbox-policy">Sandbox Policy (JSON)</label>
@@ -11147,6 +11169,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             rows="6"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                           ></textarea>
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('edit-server-sandbox-policy', 'sandbox_policy')">Insert editable JSON template</button>
+                          </p>
                         </div>
                         <div>
                           <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-tokenization">Tokenization Policy (JSON)</label>
@@ -11156,6 +11181,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             rows="4"
                             class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                           ></textarea>
+                          <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            <button type="button" class="underline text-indigo-600 dark:text-indigo-400" onclick="applyCodeExecutionFieldTemplate('edit-server-tokenization', 'tokenization_policy')">Insert editable JSON template</button>
+                          </p>
                         </div>
                       </div>
                     </div>

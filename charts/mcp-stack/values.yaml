@@ -282,6 +282,39 @@ mcpContextForge:
     MCPGATEWAY_BULK_IMPORT_MAX_TOOLS: "200" # maximum tools per bulk import
     MCPGATEWAY_BULK_IMPORT_RATE_LIMIT: "10" # requests per minute for bulk import
 
+    # ─ Code Execution (MCP Code Mode) ─
+    CODE_EXECUTION_ENABLED: "true" # enable code_execution virtual servers and meta-tools
+    CODE_EXECUTION_SHELL_EXEC_ENABLED: "true" # expose shell_exec meta-tool
+    CODE_EXECUTION_FS_BROWSE_ENABLED: "true" # expose fs_browse meta-tool
+    CODE_EXECUTION_REPLAY_ENABLED: "true" # enable replay of previous runs
+    CODE_EXECUTION_RUST_ACCELERATION_ENABLED: "true" # enable optional Rust acceleration when available
+    CODE_EXECUTION_PYTHON_INPROCESS_FALLBACK_ENABLED: "true" # allow Python in-process fallback when isolated runtime unavailable
+    CODE_EXECUTION_BASE_DIR: "/tmp/mcpgateway_code_execution" # base directory for ephemeral sandbox sessions
+    CODE_EXECUTION_SESSION_TTL_SECONDS: "900" # default sandbox session TTL in seconds
+    CODE_EXECUTION_DEFAULT_RUNTIME: "deno" # default runtime when sandbox policy omits runtime (deno|python)
+    CODE_EXECUTION_DEFAULT_MAX_EXECUTION_TIME_MS: "30000" # default max execution time in milliseconds
+    CODE_EXECUTION_DEFAULT_MAX_MEMORY_MB: "256" # default sandbox memory limit in MB
+    CODE_EXECUTION_DEFAULT_MAX_CPU_PERCENT: "50" # default CPU soft limit percentage
+    CODE_EXECUTION_DEFAULT_MAX_NETWORK_CONNECTIONS: "0" # default max raw network connections
+    CODE_EXECUTION_DEFAULT_MAX_FILE_SIZE_MB: "10" # default per-file write limit in MB
+    CODE_EXECUTION_DEFAULT_MAX_TOTAL_DISK_MB: "100" # default total writable disk limit in MB
+    CODE_EXECUTION_DEFAULT_MAX_RUNS_PER_MINUTE: "20" # default run rate limit per user+server
+    CODE_EXECUTION_DEFAULT_ALLOW_TOOL_CALLS: "true" # default permission for mounted tool calls from sandbox
+    CODE_EXECUTION_DEFAULT_ALLOW_RAW_HTTP: "false" # default permission for arbitrary raw HTTP from sandbox
+    CODE_EXECUTION_DEFAULT_FILESYSTEM_READ_PATHS: '["/tools/**","/skills/**","/scratch/**","/results/**"]' # default FS read allowlist globs (JSON array)
+    CODE_EXECUTION_DEFAULT_FILESYSTEM_WRITE_PATHS: '["/scratch/**","/results/**"]' # default FS write allowlist globs (JSON array)
+    CODE_EXECUTION_DEFAULT_FILESYSTEM_DENY_PATHS: '["/etc/**","/proc/**","/sys/**"]' # default FS deny globs (JSON array)
+    CODE_EXECUTION_DEFAULT_TOOL_ALLOW_PATTERNS: "[]" # default mounted-tool allow patterns (JSON array)
+    CODE_EXECUTION_DEFAULT_TOOL_DENY_PATTERNS: "[]" # default mounted-tool deny patterns (JSON array)
+    CODE_EXECUTION_DEFAULT_TOKENIZATION_ENABLED: "false" # default tokenization policy enabled flag
+    CODE_EXECUTION_DEFAULT_TOKENIZATION_TYPES: '["email","phone","ssn","credit_card","name"]' # default tokenization types (JSON array)
+    CODE_EXECUTION_DEFAULT_TOKENIZATION_STRATEGY: "bidirectional" # default tokenization strategy
+    CODE_EXECUTION_FS_BROWSE_DEFAULT_MAX_ENTRIES: "200" # default fs_browse max_entries
+    CODE_EXECUTION_FS_BROWSE_MAX_ENTRIES: "1000" # hard cap for fs_browse max_entries
+    CODE_EXECUTION_MAX_PERSISTED_OUTPUT_CHARS: "200000" # maximum output/error characters persisted per run
+    CODE_EXECUTION_PYTHON_DANGEROUS_PATTERNS: '["(?i)\\\\beval\\\\s*\\\\(","(?i)\\\\bexec\\\\s*\\\\(","(?i)__import__\\\\s*\\\\(","(?i)\\\\bos\\\\.system\\\\s*\\\\(","(?i)\\\\bsubprocess\\\\.","(?i)\\\\bopen\\\\s*\\\\(\\\\s*[\\\"\\x27]/(etc|proc|sys)"]' # blocked python regex patterns (JSON array)
+    CODE_EXECUTION_TYPESCRIPT_DANGEROUS_PATTERNS: '["(?i)\\\\beval\\\\s*\\\\(","(?i)\\\\bDeno\\\\.run\\\\b","(?i)\\\\bDeno\\\\.Command\\\\b","(?i)\\\\bfetch\\\\s*\\\\(","(?i)from\\\\s+[\\\"\\x27]https?://","(?i)import\\\\s*\\\\(\\\\s*[\\\"\\x27]https?://"]' # blocked typescript regex patterns (JSON array)
+
     # ─ A2A (Agent-to-Agent) Features ─
     MCPGATEWAY_A2A_ENABLED: "true"      # enable A2A agent features
     MCPGATEWAY_A2A_MAX_AGENTS: "100"    # maximum number of A2A agents allowed

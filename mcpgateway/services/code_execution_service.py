@@ -98,6 +98,20 @@ _TS_DANGEROUS_PATTERNS = (
     r"(?i)import\s*\(\s*['\"]https?://",
 )
 
+_DEFAULT_FS_READ = ("/tools/**", "/skills/**", "/scratch/**", "/results/**")
+_DEFAULT_FS_WRITE = ("/scratch/**", "/results/**")
+_DEFAULT_FS_DENY = ("/etc/**", "/proc/**", "/sys/**")
+_DEFAULT_TOKENIZATION_TYPES = ("email", "phone", "ssn", "credit_card", "name")
+
+
+def _coerce_string_list(value: Any, fallback: Sequence[str]) -> List[str]:
+    """Normalize a setting/environment value into a list of non-empty strings."""
+    if not isinstance(value, list):
+        return list(fallback)
+    cleaned = [str(item).strip() for item in value if str(item).strip()]
+    return cleaned
+
+
 # Safe subset only. No eval/exec/open/import.
 _SAFE_BUILTINS: Dict[str, Any] = {
     "abs": abs,
@@ -913,6 +927,66 @@ class CodeExecutionService:
         self._base_dir = Path(getattr(settings, "code_execution_base_dir", "/tmp/mcpgateway_code_execution"))
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._default_ttl = int(getattr(settings, "code_execution_session_ttl_seconds", 900))
+        self._shell_exec_enabled = bool(getattr(settings, "code_execution_shell_exec_enabled", True))
+        self._fs_browse_enabled = bool(getattr(settings, "code_execution_fs_browse_enabled", True))
+        self._replay_enabled = bool(getattr(settings, "code_execution_replay_enabled", True))
+        self._rust_acceleration_enabled = bool(getattr(settings, "code_execution_rust_acceleration_enabled", True))
+        self._python_inprocess_fallback_enabled = bool(getattr(settings, "code_execution_python_inprocess_fallback_enabled", True))
+
+        default_runtime = str(getattr(settings, "code_execution_default_runtime", "deno") or "deno").strip().lower()
+        self._default_runtime = default_runtime if default_runtime in {"deno", "python"} else "deno"
+        self._default_allow_tool_calls = bool(getattr(settings, "code_execution_default_allow_tool_calls", True))
+        self._default_allow_raw_http = bool(getattr(settings, "code_execution_default_allow_raw_http", False))
+
+        fs_read_default = _coerce_string_list(getattr(settings, "code_execution_default_filesystem_read_paths", None), _DEFAULT_FS_READ)
+        fs_write_default = _coerce_string_list(getattr(settings, "code_execution_default_filesystem_write_paths", None), _DEFAULT_FS_WRITE)
+        fs_deny_default = _coerce_string_list(getattr(settings, "code_execution_default_filesystem_deny_paths", None), _DEFAULT_FS_DENY)
+        tool_allow_default = _coerce_string_list(getattr(settings, "code_execution_default_tool_allow_patterns", None), ())
+        tool_deny_default = _coerce_string_list(getattr(settings, "code_execution_default_tool_deny_patterns", None), ())
+
+        self._sandbox_limit_defaults: Dict[str, int] = {
+            "max_execution_time_ms": int(getattr(settings, "code_execution_default_max_execution_time_ms", 30000)),
+            "max_memory_mb": int(getattr(settings, "code_execution_default_max_memory_mb", 256)),
+            "max_cpu_percent": int(getattr(settings, "code_execution_default_max_cpu_percent", 50)),
+            "max_network_connections": int(getattr(settings, "code_execution_default_max_network_connections", 0)),
+            "max_file_size_mb": int(getattr(settings, "code_execution_default_max_file_size_mb", 10)),
+            "max_total_disk_mb": int(getattr(settings, "code_execution_default_max_total_disk_mb", 100)),
+            "max_runs_per_minute": int(getattr(settings, "code_execution_default_max_runs_per_minute", 20)),
+            "session_ttl_seconds": self._default_ttl,
+        }
+        self._sandbox_permissions_defaults: Dict[str, Dict[str, Any]] = {
+            "filesystem": {
+                "read": fs_read_default,
+                "write": fs_write_default,
+                "deny": fs_deny_default,
+            },
+            "tools": {
+                "allow": tool_allow_default,
+                "deny": tool_deny_default,
+            },
+            "network": {
+                "allow_tool_calls": self._default_allow_tool_calls,
+                "allow_raw_http": self._default_allow_raw_http,
+            },
+        }
+
+        self._tokenization_defaults: Dict[str, Any] = {
+            "enabled": bool(getattr(settings, "code_execution_default_tokenization_enabled", False)),
+            "types": _coerce_string_list(getattr(settings, "code_execution_default_tokenization_types", None), _DEFAULT_TOKENIZATION_TYPES),
+            "strategy": str(getattr(settings, "code_execution_default_tokenization_strategy", "bidirectional") or "bidirectional"),
+        }
+
+        python_patterns = _coerce_string_list(getattr(settings, "code_execution_python_dangerous_patterns", None), _PYTHON_DANGEROUS_PATTERNS)
+        typescript_patterns = _coerce_string_list(getattr(settings, "code_execution_typescript_dangerous_patterns", None), _TS_DANGEROUS_PATTERNS)
+        self._python_dangerous_patterns = tuple(python_patterns)
+        self._typescript_dangerous_patterns = tuple(typescript_patterns)
+
+        self._fs_browse_max_entries = max(1, int(getattr(settings, "code_execution_fs_browse_max_entries", 1000)))
+        self._fs_browse_default_max_entries = max(
+            1,
+            min(int(getattr(settings, "code_execution_fs_browse_default_max_entries", 200)), self._fs_browse_max_entries),
+        )
+        self._max_persisted_output_chars = max(1000, int(getattr(settings, "code_execution_max_persisted_output_chars", 200000)))
         self._deno_runtime = DenoRuntime()
         self._python_runtime = PythonSandboxRuntime()
 
@@ -925,6 +999,10 @@ class CodeExecutionService:
         if not getattr(settings, "code_execution_enabled", True):
             return False
         return bool(server and getattr(server, "server_type", "standard") == CODE_EXECUTION_SERVER_TYPE)
+
+    def _is_rust_acceleration_available(self) -> bool:
+        """Return True when Rust accelerators are both enabled and importable."""
+        return bool(self._rust_acceleration_enabled and _RUST_CODE_EXEC_AVAILABLE)
 
     def build_meta_tools(self, server_id: str, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
         """Build synthetic tool payloads for shell_exec/fs_browse."""
@@ -989,7 +1067,11 @@ class CodeExecutionService:
                 "properties": {
                     "code": {"type": "string"},
                     "language": {"type": "string", "enum": ["typescript", "python"]},
-                    "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 300000},
+                    "timeout_ms": {
+                        "type": "integer",
+                        "minimum": 100,
+                        "maximum": int(self._sandbox_limit_defaults.get("max_execution_time_ms", 30000)),
+                    },
                     "stream": {"type": "boolean"},
                 },
                 "required": ["code"],
@@ -1008,11 +1090,21 @@ class CodeExecutionService:
                 "properties": {
                     "path": {"type": "string", "default": "/tools"},
                     "include_hidden": {"type": "boolean", "default": False},
-                    "max_entries": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200},
+                    "max_entries": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": self._fs_browse_max_entries,
+                        "default": self._fs_browse_default_max_entries,
+                    },
                 },
             },
         }
-        return [shell_tool, browse_tool]
+        tools: List[Dict[str, Any]] = []
+        if self._shell_exec_enabled:
+            tools.append(shell_tool)
+        if self._fs_browse_enabled:
+            tools.append(browse_tool)
+        return tools
 
     async def fs_browse(
         self,
@@ -1020,11 +1112,25 @@ class CodeExecutionService:
         server: DbServer,
         path: str,
         include_hidden: bool,
-        max_entries: int,
+        max_entries: Any,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
     ) -> Dict[str, Any]:
         """Browse virtual filesystem for a code execution server."""
+        if not self._fs_browse_enabled:
+            raise CodeExecutionError("fs_browse meta-tool is disabled by configuration")
+
+        if max_entries is None:
+            max_entries_value = self._fs_browse_default_max_entries
+        elif isinstance(max_entries, bool):
+            max_entries_value = self._fs_browse_default_max_entries
+        else:
+            try:
+                max_entries_value = int(max_entries)
+            except (TypeError, ValueError):
+                max_entries_value = self._fs_browse_default_max_entries
+        max_entries_value = max(1, min(max_entries_value, self._fs_browse_max_entries))
+
         language = getattr(server, "stub_language", None) or "python"
         session = await self._get_or_create_session(db=db, server=server, user_email=user_email or "anonymous", language=language, token_teams=token_teams)
         virtual_path = path or "/tools"
@@ -1061,13 +1167,13 @@ class CodeExecutionService:
                         "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
                     }
                 )
-                if len(entries) >= max_entries:
+                if len(entries) >= max_entries_value:
                     break
 
         return {
             "path": virtual_path,
             "entries": entries,
-            "truncated": len(entries) >= max_entries,
+            "truncated": len(entries) >= max_entries_value,
         }
 
     async def shell_exec(  # pylint: disable=too-many-arguments,too-many-locals
@@ -1085,12 +1191,15 @@ class CodeExecutionService:
     ) -> Dict[str, Any]:
         """Execute sandboxed code for code_execution virtual servers."""
         del stream
+        if not self._shell_exec_enabled:
+            raise CodeExecutionError("shell_exec meta-tool is disabled by configuration")
         if not code or not code.strip():
             raise CodeExecutionError("code is required")
 
         policy = self._server_sandbox_policy(server)
-        effective_timeout = timeout_ms or int(policy.get("max_execution_time_ms", 30000))
-        effective_timeout = max(100, min(effective_timeout, int(policy.get("max_execution_time_ms", 30000))))
+        max_execution_time_ms = int(policy.get("max_execution_time_ms", self._sandbox_limit_defaults["max_execution_time_ms"]))
+        effective_timeout = timeout_ms or max_execution_time_ms
+        effective_timeout = max(100, min(effective_timeout, max_execution_time_ms))
         stub_language = (getattr(server, "stub_language", None) or ("typescript" if policy.get("runtime") == "deno" else "python")).lower()
         requested_language = (language or "").strip().lower() if language is not None else None
         is_shell = requested_language is None and self._looks_like_shell_command(code)
@@ -1171,7 +1280,7 @@ class CodeExecutionService:
 
                     if not await runtime.health_check():
                         # Backward-compatible fallback for hosts that cannot run isolated python subprocess.
-                        if execution_language == "python":
+                        if execution_language == "python" and self._python_inprocess_fallback_enabled:
                             py_result = await self._execute_python_inprocess(
                                 code=code,
                                 session=session,
@@ -1184,6 +1293,8 @@ class CodeExecutionService:
                             output = py_result.get("output", "")
                             error = py_result.get("error", "")
                             run.status = "completed" if not error else "failed"
+                        elif execution_language == "python":
+                            raise CodeExecutionError("Python runtime is not available on this host")
                         else:
                             raise CodeExecutionError("Deno runtime is not available on this host")
                     else:
@@ -1244,8 +1355,8 @@ class CodeExecutionService:
         tokenized_output = output if not session.tokenization.enabled else str(session.tokenization.tokenize_obj(output))
         tokenized_error = error if not session.tokenization.enabled else str(session.tokenization.tokenize_obj(error))
 
-        run.output = tokenized_output[:200000]
-        run.error = tokenized_error[:200000] if tokenized_error else None
+        run.output = tokenized_output[: self._max_persisted_output_chars]
+        run.error = tokenized_error[: self._max_persisted_output_chars] if tokenized_error else None
         run.metrics = metrics
         run.tool_calls_made = [tc.to_dict() for tc in session.tool_calls]
         run.security_events = security_events
@@ -1300,6 +1411,9 @@ class CodeExecutionService:
         invoke_tool: ToolInvokeCallback,
     ) -> Dict[str, Any]:
         """Replay a previous code execution run with debug metadata."""
+        if not self._replay_enabled:
+            raise CodeExecutionError("Replay is disabled by configuration")
+
         run = db.get(CodeExecutionRun, run_id)
         if not run:
             raise CodeExecutionError(f"Run not found: {run_id}")
@@ -1315,7 +1429,7 @@ class CodeExecutionService:
             server=server,
             code=run.code_body,
             language=run.language,
-            timeout_ms=int((run.metrics or {}).get("wall_time_ms", 30000)),
+            timeout_ms=int((run.metrics or {}).get("wall_time_ms", self._sandbox_limit_defaults["max_execution_time_ms"])),
             user_email=user_email,
             token_teams=token_teams,
             request_headers=request_headers,
@@ -1597,7 +1711,7 @@ class CodeExecutionService:
             "tools": catalog_tools,
         }
         catalog_payload = json.dumps(catalog, indent=2)
-        if _RUST_CODE_EXEC_AVAILABLE and rust_catalog_builder is not None:
+        if self._is_rust_acceleration_available() and rust_catalog_builder is not None:
             with contextlib.suppress(Exception):
                 catalog_payload = rust_catalog_builder(catalog_payload)
         (session.tools_dir / "_catalog.json").write_text(catalog_payload, encoding="utf-8")
@@ -1783,26 +1897,21 @@ class CodeExecutionService:
             if key in raw:
                 limits[key] = raw.get(key)
 
-        runtime = raw.get("runtime") or limits.get("runtime") or "deno"
+        runtime = raw.get("runtime") or limits.get("runtime") or self._default_runtime
         runtime_requirements = raw.get("runtime_requirements") if isinstance(raw.get("runtime_requirements"), dict) else {}
         if not isinstance(runtime, str):
-            runtime = "deno"
-        runtime = runtime.strip().lower() or "deno"
+            runtime = self._default_runtime
+        runtime = runtime.strip().lower() or self._default_runtime
         if runtime not in {"deno", "python"}:
             preferred_language = str(runtime_requirements.get("language") or "").strip().lower()
-            runtime = "python" if preferred_language == "python" else "deno"
-        allow_raw_http = bool(raw.get("allow_raw_http", False))
+            if preferred_language in {"deno", "python"}:
+                runtime = preferred_language
+            else:
+                runtime = self._default_runtime
+        allow_raw_http = bool(raw.get("allow_raw_http", self._default_allow_raw_http))
 
-        limit_defaults: Dict[str, Any] = {
-            "max_execution_time_ms": 30000,
-            "max_memory_mb": 256,
-            "max_cpu_percent": 50,
-            "max_network_connections": 0,
-            "max_file_size_mb": 10,
-            "max_total_disk_mb": 100,
-            "max_runs_per_minute": 20,
-            "session_ttl_seconds": self._default_ttl,
-        }
+        limit_defaults: Dict[str, Any] = dict(self._sandbox_limit_defaults)
+        limit_defaults["session_ttl_seconds"] = self._default_ttl
         for k, v in limit_defaults.items():
             candidate = limits.get(k)
             if candidate is None:
@@ -1817,13 +1926,10 @@ class CodeExecutionService:
             except (TypeError, ValueError):
                 limits[k] = v
 
-        fs_default = {
-            "read": ["/tools/**", "/skills/**", "/scratch/**", "/results/**"],
-            "write": ["/scratch/**", "/results/**"],
-            "deny": ["/etc/**", "/proc/**", "/sys/**"],
-        }
-        tools_default = {"allow": [], "deny": []}
-        network_default = {"allow_tool_calls": True, "allow_raw_http": allow_raw_http}
+        fs_default = dict(self._sandbox_permissions_defaults.get("filesystem", {}))
+        tools_default = dict(self._sandbox_permissions_defaults.get("tools", {}))
+        network_default = dict(self._sandbox_permissions_defaults.get("network", {}))
+        network_default["allow_raw_http"] = allow_raw_http
 
         fs_perm = permissions.get("filesystem") if isinstance(permissions.get("filesystem"), dict) else {}
         tool_perm = permissions.get("tools") if isinstance(permissions.get("tools"), dict) else {}
@@ -1855,12 +1961,13 @@ class CodeExecutionService:
             raw = raw.model_dump()
         if not isinstance(raw, dict):
             raw = {}
-        defaults = {"enabled": False, "types": ["email", "phone", "ssn", "credit_card", "name"], "strategy": "bidirectional"}
+        defaults = dict(self._tokenization_defaults)
         defaults.update(raw)
+        defaults["types"] = _coerce_string_list(defaults.get("types"), _DEFAULT_TOKENIZATION_TYPES)
         return defaults
 
     def _validate_code_safety(self, code: str, language: str, allow_raw_http: bool, user_email: Optional[str], request_headers: Optional[Dict[str, str]]) -> None:
-        patterns = _PYTHON_DANGEROUS_PATTERNS if language == "python" else _TS_DANGEROUS_PATTERNS
+        patterns = self._python_dangerous_patterns if language == "python" else self._typescript_dangerous_patterns
         if allow_raw_http:
             patterns = tuple(p for p in patterns if "fetch" not in p and "curl" not in p and "wget" not in p)
 
@@ -1885,7 +1992,7 @@ class CodeExecutionService:
         if session_window is not None:
             while session_window and now - session_window[0] > 60:
                 session_window.popleft()
-        limit = int(policy.get("max_runs_per_minute", 20))
+        limit = int(policy.get("max_runs_per_minute", self._sandbox_limit_defaults["max_runs_per_minute"]))
         if len(user_window) >= limit:
             raise CodeExecutionRateLimitError(f"Rate limit exceeded: max {limit} runs/minute")
         if session_window is not None and len(session_window) >= limit:
@@ -2227,7 +2334,7 @@ class CodeExecutionService:
             and list_files
             and include_glob is None
             and len(search_paths) == 1
-            and _RUST_CODE_EXEC_AVAILABLE
+            and self._is_rust_acceleration_available()
             and rust_fs_search is not None
         ):
             virtual_root = self._normalize_shell_path(search_paths[0])
@@ -2336,9 +2443,10 @@ class CodeExecutionService:
         """Enforce filesystem allow/deny rules for an operation on a virtual path."""
         perms = policy.get("permissions") or {}
         fs = perms.get("filesystem") or {}
-        deny = fs.get("deny") or ["/etc/**", "/proc/**", "/sys/**"]
-        read_allow = fs.get("read") or ["/tools/**", "/skills/**", "/scratch/**", "/results/**"]
-        write_allow = fs.get("write") or ["/scratch/**", "/results/**"]
+        filesystem_defaults = self._sandbox_permissions_defaults.get("filesystem", {})
+        deny = fs.get("deny") or filesystem_defaults.get("deny") or list(_DEFAULT_FS_DENY)
+        read_allow = fs.get("read") or filesystem_defaults.get("read") or list(_DEFAULT_FS_READ)
+        write_allow = fs.get("write") or filesystem_defaults.get("write") or list(_DEFAULT_FS_WRITE)
 
         normalized = "/" + virtual_path.strip().lstrip("/")
 
@@ -2353,7 +2461,7 @@ class CodeExecutionService:
         """Enforce tool allow/deny policy for __toolcall__ bridges."""
         perms = policy.get("permissions") or {}
         network = perms.get("network") or {}
-        if network.get("allow_tool_calls", True) is False:
+        if network.get("allow_tool_calls", self._default_allow_tool_calls) is False:
             raise CodeExecutionSecurityError("EACCES: tool calls are disabled by policy")
 
         tools_policy = perms.get("tools") or {}
@@ -2466,7 +2574,7 @@ class CodeExecutionService:
 
     def _generate_typescript_stub(self, tool: DbTool, server_slug: str) -> str:
         function_name = self._python_identifier(self._tool_file_name(tool))
-        if _RUST_CODE_EXEC_AVAILABLE and rust_json_schema_to_stubs is not None:
+        if self._is_rust_acceleration_available() and rust_json_schema_to_stubs is not None:
             with contextlib.suppress(Exception):
                 schema_json = json.dumps(tool.input_schema or {"type": "object"})
                 payload = rust_json_schema_to_stubs(schema_json, server_slug, function_name, tool.description or "")
@@ -2493,7 +2601,7 @@ class CodeExecutionService:
 
     def _generate_python_stub(self, tool: DbTool, server_slug: str) -> str:
         function_name = self._python_identifier(self._tool_file_name(tool))
-        if _RUST_CODE_EXEC_AVAILABLE and rust_json_schema_to_stubs is not None:
+        if self._is_rust_acceleration_available() and rust_json_schema_to_stubs is not None:
             with contextlib.suppress(Exception):
                 schema_json = json.dumps(tool.input_schema or {"type": "object"})
                 payload = rust_json_schema_to_stubs(schema_json, server_slug, function_name, tool.description or "")
@@ -2604,8 +2712,8 @@ class CodeExecutionService:
         return bool(re.match(r"^[A-Za-z0-9_./-]+\s?.*$", stripped))
 
     def _enforce_disk_limits(self, session: CodeExecutionSession, policy: Dict[str, Any]) -> None:
-        max_file_bytes = int(policy.get("max_file_size_mb", 10)) * 1024 * 1024
-        max_total_bytes = int(policy.get("max_total_disk_mb", 100)) * 1024 * 1024
+        max_file_bytes = int(policy.get("max_file_size_mb", self._sandbox_limit_defaults["max_file_size_mb"])) * 1024 * 1024
+        max_total_bytes = int(policy.get("max_total_disk_mb", self._sandbox_limit_defaults["max_total_disk_mb"])) * 1024 * 1024
         total_bytes = 0
         for root in (session.scratch_dir, session.results_dir):
             for path in root.rglob("*"):

@@ -293,6 +293,60 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 - `MCPGATEWAY_A2A_ENABLED=false`: Completely disables A2A features (API endpoints return 404, admin tab hidden)
 - `MCPGATEWAY_A2A_METRICS_ENABLED=false`: Disables metrics collection while keeping functionality
 
+### Code Execution (MCP Code Mode)
+
+Use these settings to feature-flag and tune `code_execution` virtual servers, meta-tools (`shell_exec`, `fs_browse`), sandbox defaults, and policy limits.
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `CODE_EXECUTION_ENABLED` | Master switch for `code_execution` server type and meta-tools | `true` | bool |
+| `CODE_EXECUTION_SHELL_EXEC_ENABLED` | Enable `shell_exec` meta-tool | `true` | bool |
+| `CODE_EXECUTION_FS_BROWSE_ENABLED` | Enable `fs_browse` meta-tool | `true` | bool |
+| `CODE_EXECUTION_REPLAY_ENABLED` | Enable replay of previous runs | `true` | bool |
+| `CODE_EXECUTION_RUST_ACCELERATION_ENABLED` | Enable optional Rust accelerators when available | `true` | bool |
+| `CODE_EXECUTION_PYTHON_INPROCESS_FALLBACK_ENABLED` | Allow Python in-process fallback when isolated runtime unavailable | `true` | bool |
+| `CODE_EXECUTION_BASE_DIR` | Base directory for ephemeral code execution sessions | `/tmp/mcpgateway_code_execution` | path |
+| `CODE_EXECUTION_SESSION_TTL_SECONDS` | Session TTL for sandbox state | `900` | int (60-86400) |
+| `CODE_EXECUTION_MAX_PERSISTED_OUTPUT_CHARS` | Max output/error chars persisted per run | `200000` | int (1000-2000000) |
+
+#### Default Sandbox Policy
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `CODE_EXECUTION_DEFAULT_RUNTIME` | Default runtime when server sandbox policy omits runtime | `deno` | `deno`, `python` |
+| `CODE_EXECUTION_DEFAULT_MAX_EXECUTION_TIME_MS` | Default execution timeout | `30000` | int (100-300000) |
+| `CODE_EXECUTION_DEFAULT_MAX_MEMORY_MB` | Default memory ceiling | `256` | int (16-4096) |
+| `CODE_EXECUTION_DEFAULT_MAX_CPU_PERCENT` | Default CPU soft limit | `50` | int (1-100) |
+| `CODE_EXECUTION_DEFAULT_MAX_NETWORK_CONNECTIONS` | Default raw network connection limit | `0` | int (0-64) |
+| `CODE_EXECUTION_DEFAULT_MAX_FILE_SIZE_MB` | Default writable file size limit | `10` | int (1-1024) |
+| `CODE_EXECUTION_DEFAULT_MAX_TOTAL_DISK_MB` | Default total writable disk limit | `100` | int (10-8192) |
+| `CODE_EXECUTION_DEFAULT_MAX_RUNS_PER_MINUTE` | Default run rate limit per user+server | `20` | int (1-1000) |
+| `CODE_EXECUTION_DEFAULT_ALLOW_TOOL_CALLS` | Default permission for mounted tool calls | `true` | bool |
+| `CODE_EXECUTION_DEFAULT_ALLOW_RAW_HTTP` | Default permission for arbitrary outbound HTTP | `false` | bool |
+| `CODE_EXECUTION_FS_BROWSE_DEFAULT_MAX_ENTRIES` | Default `max_entries` for `fs_browse` | `200` | int (1-5000) |
+| `CODE_EXECUTION_FS_BROWSE_MAX_ENTRIES` | Hard max `max_entries` accepted by `fs_browse` | `1000` | int (1-10000) |
+
+#### JSON Array Policy Inputs
+
+These settings must be valid JSON arrays in env form:
+
+- `CODE_EXECUTION_DEFAULT_FILESYSTEM_READ_PATHS`
+- `CODE_EXECUTION_DEFAULT_FILESYSTEM_WRITE_PATHS`
+- `CODE_EXECUTION_DEFAULT_FILESYSTEM_DENY_PATHS`
+- `CODE_EXECUTION_DEFAULT_TOOL_ALLOW_PATTERNS`
+- `CODE_EXECUTION_DEFAULT_TOOL_DENY_PATTERNS`
+- `CODE_EXECUTION_DEFAULT_TOKENIZATION_TYPES`
+- `CODE_EXECUTION_PYTHON_DANGEROUS_PATTERNS`
+- `CODE_EXECUTION_TYPESCRIPT_DANGEROUS_PATTERNS`
+
+#### Default Tokenization Policy
+
+| Setting | Description | Default | Options |
+| --- | --- | --- | --- |
+| `CODE_EXECUTION_DEFAULT_TOKENIZATION_ENABLED` | Enable tokenization by default for runs | `false` | bool |
+| `CODE_EXECUTION_DEFAULT_TOKENIZATION_TYPES` | Default tokenized types | `["email","phone","ssn","credit_card","name"]` | JSON array |
+| `CODE_EXECUTION_DEFAULT_TOKENIZATION_STRATEGY` | Tokenization strategy | `bidirectional` | `bidirectional` |
+
 ### Direct Proxy Mode
 
 | Setting                              | Description                                    | Default | Options |

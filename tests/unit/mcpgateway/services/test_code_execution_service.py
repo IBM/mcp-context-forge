@@ -6,13 +6,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
+from unittest.mock import AsyncMock
 
 # Third-Party
 import orjson
 import pytest
 
 # First-Party
-from mcpgateway.services.code_execution_service import CodeExecutionSecurityError, CodeExecutionService, CodeExecutionSession
+from mcpgateway.services.code_execution_service import CodeExecutionError, CodeExecutionSecurityError, CodeExecutionService, CodeExecutionSession
 
 
 def _make_session(tmp_path: Path, language: str = "python") -> CodeExecutionSession:
@@ -54,6 +55,112 @@ def _policy() -> Dict[str, Any]:
             "network": {"allow_tool_calls": True, "allow_raw_http": False},
         },
     }
+
+
+def test_build_meta_tools_respects_feature_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_shell_exec_enabled", False, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_default_max_entries", 25, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_max_entries", 40, raising=False)
+
+    svc = CodeExecutionService()
+    tools = svc.build_meta_tools("server-1")
+
+    assert [tool["name"] for tool in tools] == ["fs_browse"]
+    max_entries_schema = tools[0]["input_schema"]["properties"]["max_entries"]
+    assert max_entries_schema["default"] == 25
+    assert max_entries_schema["maximum"] == 40
+
+
+def test_server_policy_defaults_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_runtime", "python", raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_max_execution_time_ms", 15000, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_max_runs_per_minute", 9, raising=False)
+    monkeypatch.setattr(
+        "mcpgateway.services.code_execution_service.settings.code_execution_default_filesystem_read_paths",
+        ["/tools/**", "/custom/**"],
+        raising=False,
+    )
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_allow_tool_calls", False, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_allow_raw_http", True, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_tokenization_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_tokenization_types", ["email"], raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_default_tokenization_strategy", "bidirectional", raising=False)
+
+    svc = CodeExecutionService()
+    server = SimpleNamespace(sandbox_policy=None, tokenization=None)
+
+    policy = svc._server_sandbox_policy(server)
+    tokenization = svc._server_tokenization_policy(server)
+
+    assert policy["runtime"] == "python"
+    assert policy["max_execution_time_ms"] == 15000
+    assert policy["max_runs_per_minute"] == 9
+    assert policy["permissions"]["filesystem"]["read"] == ["/tools/**", "/custom/**"]
+    assert policy["permissions"]["network"]["allow_tool_calls"] is False
+    assert policy["permissions"]["network"]["allow_raw_http"] is True
+    assert tokenization["enabled"] is True
+    assert tokenization["types"] == ["email"]
+    assert tokenization["strategy"] == "bidirectional"
+
+
+def test_validate_code_safety_uses_configured_patterns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_python_dangerous_patterns", [r"dangerous_py\("], raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_typescript_dangerous_patterns", [r"dangerous_ts\("], raising=False)
+
+    svc = CodeExecutionService()
+    svc._emit_security_event = lambda **_: None  # type: ignore[method-assign]
+
+    with pytest.raises(CodeExecutionSecurityError):
+        svc._validate_code_safety(code="dangerous_py()", language="python", allow_raw_http=False, user_email=None, request_headers=None)
+
+    with pytest.raises(CodeExecutionSecurityError):
+        svc._validate_code_safety(code="dangerous_ts()", language="typescript", allow_raw_http=False, user_email=None, request_headers=None)
+
+
+@pytest.mark.asyncio
+async def test_fs_browse_clamps_max_entries(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_default_max_entries", 2, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_max_entries", 3, raising=False)
+
+    svc = CodeExecutionService()
+    session = _make_session(tmp_path)
+    for index in range(6):
+        (session.tools_dir / f"file-{index}.txt").write_text("x\n", encoding="utf-8")
+
+    async def _fake_get_or_create_session(**_kwargs: Any) -> CodeExecutionSession:
+        return session
+
+    svc._get_or_create_session = _fake_get_or_create_session  # type: ignore[method-assign]
+    result = await svc.fs_browse(
+        db=SimpleNamespace(),
+        server=SimpleNamespace(stub_language="python"),
+        path="/tools",
+        include_hidden=False,
+        max_entries=999,
+        user_email="user@example.com",
+        token_teams=None,
+    )
+
+    assert len(result["entries"]) == 3
+    assert result["truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_replay_disabled_by_feature_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_replay_enabled", False, raising=False)
+    svc = CodeExecutionService()
+
+    with pytest.raises(CodeExecutionError, match="Replay is disabled"):
+        await svc.replay_run(
+            db=SimpleNamespace(),
+            run_id="run-1",
+            user_email="user@example.com",
+            token_teams=None,
+            request_headers=None,
+            invoke_tool=AsyncMock(),
+        )
 
 
 def test_internal_shell_subset_supports_ls_cat_grep_and_jq(tmp_path: Path) -> None:

@@ -2732,7 +2732,7 @@ class ToolService:
                     server=server,
                     path=str(arguments.get("path") or "/tools"),
                     include_hidden=bool(arguments.get("include_hidden", False)),
-                    max_entries=int(arguments.get("max_entries", 200)),
+                    max_entries=arguments.get("max_entries"),
                     user_email=user_email,
                     token_teams=token_teams,
                 )
