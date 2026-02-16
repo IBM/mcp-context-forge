@@ -17724,6 +17724,35 @@ function clearSearch(entityType) {
             if (tagInput) {
                 tagInput.value = "";
             }
+            // Keep rows visible even if HTMX reload is delayed/missed.
+            if (entityType === "catalog" && typeof filterServerTable === "function") {
+                filterServerTable("");
+            } else if (
+                entityType === "tools" &&
+                typeof filterToolsTable === "function"
+            ) {
+                filterToolsTable("");
+            } else if (
+                entityType === "resources" &&
+                typeof filterResourcesTable === "function"
+            ) {
+                filterResourcesTable("");
+            } else if (
+                entityType === "prompts" &&
+                typeof filterPromptsTable === "function"
+            ) {
+                filterPromptsTable("");
+            } else if (
+                entityType === "gateways" &&
+                typeof filterGatewaysTable === "function"
+            ) {
+                filterGatewaysTable("");
+            } else if (
+                entityType === "a2a-agents" &&
+                typeof filterA2AAgentsTable === "function"
+            ) {
+                filterA2AAgentsTable("");
+            }
             loadSearchablePanel(entityType);
             return;
         }
