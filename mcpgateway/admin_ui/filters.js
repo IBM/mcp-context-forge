@@ -1,4 +1,4 @@
-import { safeGetElement } from "./utils";
+import { safeGetElement } from "./utils.js";
 
 // ===================================================================
 // SEARCH & FILTERING FUNCTIONS

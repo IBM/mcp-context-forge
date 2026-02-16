@@ -5,21 +5,21 @@ import { loadRecentImports } from "./fileTransfer.js";
 import { initializeExportImport } from "./initialization.js";
 import { initializeLLMChat } from "./llmChat.js";
 import { searchStructuredLogs } from "./logging.js";
-import { loadAggregatedMetrics } from "./metrics";
-import { populatePluginFilters } from "./plugins";
+import { loadAggregatedMetrics } from "./metrics.js";
+import { populatePluginFilters } from "./plugins.js";
 import { escapeHtml, safeReplaceState, safeSetInnerHTML } from "./security.js";
 import {
   loadTokensList,
   setupCreateTokenForm,
   updateTeamScopingWarning,
-} from "./tokens";
-import { initializePermissionsPanel } from "./users";
+} from "./tokens.js";
+import { initializePermissionsPanel } from "./users.js";
 import {
   fetchWithTimeout,
   isAdminUser,
   safeGetElement,
   showErrorMessage,
-} from "./utils";
+} from "./utils.js";
 
 // ===================================================================
 export const ADMIN_ONLY_TABS = new Set([

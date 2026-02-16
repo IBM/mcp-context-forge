@@ -61,26 +61,26 @@
             Personal workspace - no actions available
         </span>
         {% elif team.relationship == 'owner' %}
-        <button data-team-id="{{ team.id }}" onclick="Admin.manageTeamMembersSafe(this)"
+        <button data-team-id="{{ team.id }}" onclick="manageTeamMembersSafe(this)"
             class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
             Manage Members
         </button>
-        <button data-team-id="{{ team.id }}" onclick="Admin.editTeamSafe(this)"
+        <button data-team-id="{{ team.id }}" onclick="editTeamSafe(this)"
             class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
             Edit Settings
         </button>
         {% if team.visibility == 'public' %}
-        <button data-team-id="{{ team.id }}" onclick="Admin.viewJoinRequestsSafe(this)"
+        <button data-team-id="{{ team.id }}" onclick="viewJoinRequestsSafe(this)"
             class="px-3 py-1 text-sm font-medium text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 border border-purple-300 dark:border-purple-600 hover:border-purple-500 dark:hover:border-purple-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500">
             Join Requests
         </button>
         {% endif %}
-        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="Admin.deleteTeamSafe(this)"
+        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="deleteTeamSafe(this)"
             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
             Delete Team
         </button>
         {% elif team.relationship == 'member' %}
-        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="Admin.leaveTeamSafe(this)"
+        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="leaveTeamSafe(this)"
             class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 border border-orange-300 dark:border-orange-600 hover:border-orange-500 dark:hover:border-orange-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500">
             Leave Team
         </button>
@@ -89,27 +89,27 @@
         <span class="px-3 py-1 text-sm font-medium text-yellow-600 dark:text-yellow-400 bg-yellow-100 dark:bg-yellow-900 rounded-md border border-yellow-300 dark:border-yellow-600">
             ⏳ Requested to Join
         </span>
-        <button onclick="Admin.cancelJoinRequest('{{ team.id }}', '{{ team.pending_request.id }}')"
+        <button onclick="cancelJoinRequest('{{ team.id }}', '{{ team.pending_request.id }}')"
             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
             Cancel Request
         </button>
         {% else %}
-        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="Admin.requestToJoinTeamSafe(this)"
+        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="requestToJoinTeamSafe(this)"
             class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500">
             Request to Join
         </button>
         {% endif %}
         {% else %}
         <!-- Fallback actions for admin view without relationship -->
-        <button data-team-id="{{ team.id }}" onclick="Admin.manageTeamMembersSafe(this)"
+        <button data-team-id="{{ team.id }}" onclick="manageTeamMembersSafe(this)"
             class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
             Manage Members
         </button>
-        <button data-team-id="{{ team.id }}" onclick="Admin.editTeamSafe(this)"
+        <button data-team-id="{{ team.id }}" onclick="editTeamSafe(this)"
             class="px-3 py-1 text-sm font-medium text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 border border-green-300 dark:border-green-600 hover:border-green-500 dark:hover:border-green-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
             Edit Settings
         </button>
-        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="Admin.deleteTeamSafe(this)"
+        <button data-team-id="{{ team.id }}" data-team-name="{{ team.name|escape }}" onclick="deleteTeamSafe(this)"
             class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500">
             Delete Team
         </button>

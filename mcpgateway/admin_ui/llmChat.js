@@ -1,10 +1,10 @@
 // ==================== LLM CHAT FUNCTIONALITY ====================
 
 import { getSelectedGatewayIds } from "./gateway.js";
-import { initPromptSelect } from "./prompts";
-import { initResourceSelect } from "./resources";
+import { initPromptSelect } from "./prompts.js";
+import { initResourceSelect } from "./resources.js";
 import { escapeHtml, escapeHtmlChat, logRestrictedContext } from "./security.js";
-import { initToolSelect } from "./tools";
+import { initToolSelect } from "./tools.js";
 import {
   fetchWithTimeout,
   getCookie,
@@ -12,7 +12,7 @@ import {
   safeGetElement,
   showErrorMessage,
   showNotification,
-} from "./utils";
+} from "./utils.js";
 
 // State management for LLM chat
 const llmChatState = {

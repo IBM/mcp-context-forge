@@ -97,7 +97,13 @@ def upgrade() -> None:
         return
 
     role_id = row[0]
-    current_permissions = _load_permissions(row[1])
+    # Handle both pre-deserialized (list/dict) and JSON string formats
+    if isinstance(row[1], (list, dict)):
+        current_permissions = row[1] if isinstance(row[1], list) else []
+    elif row[1]:
+        current_permissions = json.loads(row[1])
+    else:
+        current_permissions = []
 
     # Merge new permissions (idempotent)
     updated = False
@@ -160,7 +166,13 @@ def downgrade() -> None:
         return
 
     role_id = row[0]
-    current_permissions = _load_permissions(row[1])
+    # Handle both pre-deserialized (list/dict) and JSON string formats
+    if isinstance(row[1], (list, dict)):
+        current_permissions = row[1] if isinstance(row[1], list) else []
+    elif row[1]:
+        current_permissions = json.loads(row[1])
+    else:
+        current_permissions = []
 
     # Remove the token permissions
     updated_permissions = [p for p in current_permissions if p not in NEW_PERMISSIONS]

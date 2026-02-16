@@ -1,7 +1,7 @@
-import { showCopyableModal } from "./modals";
+import { showCopyableModal } from "./modals.js";
 import { escapeHtml, parseErrorResponse } from "./security.js";
-import { fetchWithAuth, getAuthToken } from "./tokens";
-import { safeGetElement, showToast } from "./utils";
+import { fetchWithAuth, getAuthToken } from "./tokens.js";
+import { safeGetElement, showToast } from "./utils.js";
 
 // ===================================================================
 // LLM SETTINGS FUNCTIONS

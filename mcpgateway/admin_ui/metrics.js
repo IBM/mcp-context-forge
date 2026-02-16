@@ -1,5 +1,5 @@
 import { escapeHtml } from "./security.js";
-import { fetchWithTimeout, handleFetchError, safeGetElement } from "./utils";
+import { fetchWithTimeout, handleFetchError, safeGetElement } from "./utils.js";
 
 // ===================================================================
 // ENHANCED METRICS LOADING with Retry Logic and Request Deduplication

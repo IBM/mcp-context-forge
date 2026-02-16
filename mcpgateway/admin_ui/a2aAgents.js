@@ -1,6 +1,6 @@
-import { closeModal, openModal } from "./modals";
+import { closeModal, openModal } from "./modals.js";
 import { escapeHtml, validateInputName, validateUrl } from "./security.js";
-import { getAuthToken } from "./tokens";
+import { getAuthToken } from "./tokens.js";
 import {
   decodeHtml,
   fetchWithTimeout,
@@ -9,7 +9,7 @@ import {
   safeGetElement,
   safeSetValue,
   showErrorMessage,
-} from "./utils";
+} from "./utils.js";
 
 // ===================================================================
 // A2A AGENT TEST MODAL FUNCTIONALITY
