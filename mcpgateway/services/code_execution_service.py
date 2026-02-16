@@ -31,6 +31,7 @@ import shlex
 import shutil
 import statistics
 import sys
+import tempfile
 import time
 from typing import Any, Awaitable, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CHECKING
 import uuid
@@ -105,6 +106,8 @@ _DEFAULT_FS_READ = ("/tools/**", "/skills/**", "/scratch/**", "/results/**")
 _DEFAULT_FS_WRITE = ("/scratch/**", "/results/**")
 _DEFAULT_FS_DENY = ("/etc/**", "/proc/**", "/sys/**")
 _DEFAULT_TOKENIZATION_TYPES = ("email", "phone", "ssn", "credit_card", "name")
+_DEFAULT_CODE_EXECUTION_BASE_DIR = str(Path(tempfile.gettempdir()) / "mcpgateway_code_execution")
+_PIPE_SEPARATOR = "|"
 
 
 def _coerce_string_list(value: Any, fallback: Sequence[str]) -> List[str]:
@@ -924,7 +927,8 @@ class CodeExecutionService:
         self._rate_windows: Dict[Tuple[str, str], deque[float]] = defaultdict(deque)
         self._session_rate_windows: Dict[str, deque[float]] = defaultdict(deque)
         self._lock = asyncio.Lock()
-        self._base_dir = Path(getattr(settings, "code_execution_base_dir", "/tmp/mcpgateway_code_execution"))
+        configured_base_dir = str(getattr(settings, "code_execution_base_dir", "") or "").strip()
+        self._base_dir = Path(configured_base_dir or _DEFAULT_CODE_EXECUTION_BASE_DIR)
         self._base_dir.mkdir(parents=True, exist_ok=True)
         self._default_ttl = int(getattr(settings, "code_execution_session_ttl_seconds", 900))
         self._shell_exec_enabled = bool(getattr(settings, "code_execution_shell_exec_enabled", True))
@@ -2051,7 +2055,7 @@ class CodeExecutionService:
             wrapped += f"    {line}\n"
 
         try:
-            exec(wrapped, globals_dict)  # noqa: S102,DUO105 - executed with restricted builtins and explicit sandbox controls
+            exec(wrapped, globals_dict)  # noqa: S102,DUO105  # nosec B102 - restricted builtins and explicit sandbox controls are enforced above
             user_fn = globals_dict["__user_main__"]
             with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
                 result = await asyncio.wait_for(user_fn(), timeout=timeout_ms / 1000)
@@ -2189,7 +2193,7 @@ class CodeExecutionService:
         pipeline: List[List[str]] = []
         current: List[str] = []
         for token in tokens:
-            if token == "|":
+            if token == _PIPE_SEPARATOR:
                 if current:
                     pipeline.append(current)
                 current = []
@@ -2683,7 +2687,9 @@ class CodeExecutionService:
                 continue
             try:
                 content = file_path.read_text(encoding="utf-8")
-            except Exception:
+            except (OSError, UnicodeDecodeError):
+                content = ""
+            if not content:
                 continue
             rel = file_path.relative_to(tools_dir)
             index_lines.append(f"{rel}:{content.replace(os.linesep, ' ')}")

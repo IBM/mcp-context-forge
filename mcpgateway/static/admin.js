@@ -273,8 +273,42 @@ function toggleServerCodeExecutionSection(mode = "create") {
     if (!typeField || !section) {
         return;
     }
-    const isCodeExecution = typeField.value === "code_execution";
+    const typeValue = String(typeField.value || "").trim().toLowerCase();
+    const isCodeExecution = typeValue === "code_execution";
     section.classList.toggle("hidden", !isCodeExecution);
+}
+
+function syncServerCodeExecutionSections() {
+    toggleServerCodeExecutionSection("create");
+    toggleServerCodeExecutionSection("edit");
+}
+
+function bindServerTypeToggle(mode = "create") {
+    const isEdit = mode === "edit";
+    const typeField = safeGetElement(
+        isEdit ? "edit-server-type" : "server-type",
+        true,
+    );
+    if (!typeField) {
+        return;
+    }
+
+    if (typeField.dataset.codeExecutionToggleBound === "true") {
+        // Keep state in sync even if listener was previously attached.
+        toggleServerCodeExecutionSection(mode);
+        return;
+    }
+
+    typeField.dataset.codeExecutionToggleBound = "true";
+    const sync = () => {
+        // Run immediately and on next frame in case other handlers mutate the DOM.
+        toggleServerCodeExecutionSection(mode);
+        window.requestAnimationFrame(() => toggleServerCodeExecutionSection(mode));
+    };
+
+    typeField.addEventListener("change", sync);
+    typeField.addEventListener("input", sync);
+    sync();
 }
 
 const CODE_EXECUTION_FIELD_TEMPLATES = Object.freeze({
@@ -333,6 +367,246 @@ function applyCodeExecutionFieldTemplate(fieldId, templateKey) {
 
 window.applyCodeExecutionFieldTemplate = applyCodeExecutionFieldTemplate;
 
+function parseOptionalPreviewJsonObject(formData, fieldName, label) {
+    const rawValue = formData.get(fieldName);
+    if (rawValue === null || rawValue === undefined) {
+        return null;
+    }
+    const text = String(rawValue).trim();
+    if (!text) {
+        return null;
+    }
+    let parsed = null;
+    try {
+        parsed = JSON.parse(text);
+    } catch (error) {
+        throw new Error(`${label} must be valid JSON.`);
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error(`${label} must be a JSON object.`);
+    }
+    return parsed;
+}
+
+function collectAssociationIds(
+    formData,
+    containerId,
+    checkboxName,
+    selectAllFieldName,
+    allIdsFieldName,
+    dataAttributeName,
+    windowFallbackKey,
+) {
+    if (String(formData.get(selectAllFieldName) || "").toLowerCase() === "true") {
+        const rawIds = String(formData.get(allIdsFieldName) || "[]");
+        try {
+            const parsed = JSON.parse(rawIds);
+            if (Array.isArray(parsed)) {
+                return Array.from(
+                    new Set(
+                        parsed
+                            .map((value) => String(value || "").trim())
+                            .filter(Boolean),
+                    ),
+                );
+            }
+        } catch {
+            // Fall through to regular checkbox/data-attribute extraction.
+        }
+    }
+
+    const selectedIds = new Set(
+        formData
+            .getAll(checkboxName)
+            .map((value) => String(value || "").trim())
+            .filter(Boolean),
+    );
+
+    const container = safeGetElement(containerId, true);
+    if (container) {
+        const rawDataAttribute = container.getAttribute(dataAttributeName);
+        if (rawDataAttribute) {
+            try {
+                const parsed = JSON.parse(rawDataAttribute);
+                if (Array.isArray(parsed)) {
+                    parsed.forEach((value) => {
+                        const normalizedValue = String(value || "").trim();
+                        if (normalizedValue) {
+                            selectedIds.add(normalizedValue);
+                        }
+                    });
+                }
+            } catch {
+                // Ignore invalid persisted data in preview mode.
+            }
+        }
+    }
+
+    const fallbackValues = window[windowFallbackKey];
+    if (Array.isArray(fallbackValues)) {
+        fallbackValues.forEach((value) => {
+            const normalizedValue = String(value || "").trim();
+            if (normalizedValue) {
+                selectedIds.add(normalizedValue);
+            }
+        });
+    }
+
+    return Array.from(selectedIds);
+}
+
+function collectCreateServerPreviewPayload() {
+    const form = safeGetElement("add-server-form");
+    if (!form) {
+        throw new Error("Add Server form not found.");
+    }
+    const formData = new FormData(form);
+
+    const tagsRaw = String(formData.get("tags") || "");
+    const tags = tagsRaw
+        .split(",")
+        .map((tag) => tag.trim())
+        .filter(Boolean);
+
+    const serverType = String(
+        formData.get("server_type") || formData.get("type") || "standard",
+    )
+        .trim()
+        .toLowerCase();
+    const normalizedServerType =
+        serverType === "code_execution" ? "code_execution" : "standard";
+
+    const oauthEnabled = formData.get("oauth_enabled") === "on";
+    const authorizationServer = String(
+        formData.get("oauth_authorization_server") || "",
+    ).trim();
+    const oauthScopes = String(formData.get("oauth_scopes") || "")
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean);
+    const oauthTokenEndpoint = String(
+        formData.get("oauth_token_endpoint") || "",
+    ).trim();
+    let oauthConfig = null;
+    if (oauthEnabled && authorizationServer) {
+        oauthConfig = {
+            authorization_servers: [authorizationServer],
+        };
+        if (oauthScopes.length > 0) {
+            oauthConfig.scopes_supported = oauthScopes;
+        }
+        if (oauthTokenEndpoint) {
+            oauthConfig.token_endpoint = oauthTokenEndpoint;
+        }
+    }
+
+    const payload = {
+        id: String(formData.get("id") || "").trim() || null,
+        name: String(formData.get("name") || "").trim(),
+        description: String(formData.get("description") || "").trim() || null,
+        icon: String(formData.get("icon") || "").trim() || null,
+        tags,
+        visibility: String(formData.get("visibility") || "private")
+            .trim()
+            .toLowerCase(),
+        server_type: normalizedServerType,
+        associated_tools: collectAssociationIds(
+            formData,
+            "associatedTools",
+            "associatedTools",
+            "selectAllTools",
+            "allToolIds",
+            "data-selected-tools",
+            "_selectedAssociatedTools",
+        ),
+        associated_resources: collectAssociationIds(
+            formData,
+            "associatedResources",
+            "associatedResources",
+            "selectAllResources",
+            "allResourceIds",
+            "data-selected-resources",
+            "_selectedAssociatedResources",
+        ),
+        associated_prompts: collectAssociationIds(
+            formData,
+            "associatedPrompts",
+            "associatedPrompts",
+            "selectAllPrompts",
+            "allPromptIds",
+            "data-selected-prompts",
+            "_selectedAssociatedPrompts",
+        ),
+        oauth_enabled: oauthEnabled,
+        oauth_config: oauthConfig,
+    };
+
+    if (normalizedServerType === "code_execution") {
+        const stubLanguageRaw = String(formData.get("stub_language") || "")
+            .trim()
+            .toLowerCase();
+        payload.stub_language =
+            stubLanguageRaw === "typescript" || stubLanguageRaw === "python"
+                ? stubLanguageRaw
+                : null;
+        payload.skills_scope =
+            String(formData.get("skills_scope") || "").trim() || null;
+        payload.skills_require_approval =
+            formData.get("skills_require_approval") === "on";
+        payload.mount_rules = parseOptionalPreviewJsonObject(
+            formData,
+            "mount_rules",
+            "Mount Rules",
+        );
+        payload.sandbox_policy = parseOptionalPreviewJsonObject(
+            formData,
+            "sandbox_policy",
+            "Sandbox Policy",
+        );
+        payload.tokenization = parseOptionalPreviewJsonObject(
+            formData,
+            "tokenization",
+            "Tokenization Policy",
+        );
+    } else {
+        payload.stub_language = null;
+        payload.skills_scope = null;
+        payload.skills_require_approval = false;
+        payload.mount_rules = null;
+        payload.sandbox_policy = null;
+        payload.tokenization = null;
+    }
+
+    return payload;
+}
+
+function previewCreateVirtualServer() {
+    const previewContainer = safeGetElement("server-preview-container");
+    const previewJson = safeGetElement("server-preview-json");
+    const previewError = safeGetElement("server-preview-error");
+    if (!previewContainer || !previewJson || !previewError) {
+        return;
+    }
+
+    try {
+        const payload = collectCreateServerPreviewPayload();
+        previewError.classList.add("hidden");
+        previewError.textContent = "";
+        previewJson.textContent = JSON.stringify(payload, null, 2);
+        previewContainer.classList.remove("hidden");
+    } catch (error) {
+        previewJson.textContent = "";
+        previewError.textContent =
+            error instanceof Error
+                ? error.message
+                : "Unable to generate virtual server preview.";
+        previewError.classList.remove("hidden");
+        previewContainer.classList.remove("hidden");
+    }
+}
+
+window.previewCreateVirtualServer = previewCreateVirtualServer;
+
 // Attach event listener after DOM is loaded or when modal opens
 document.addEventListener("DOMContentLoaded", function () {
     const TypeField = document.getElementById("edit-tool-type");
@@ -345,21 +619,13 @@ document.addEventListener("DOMContentLoaded", function () {
     // Initialize default visibility based on URL team_id
     updateDefaultVisibility();
 
-    const createServerTypeField = safeGetElement("server-type", true);
-    if (createServerTypeField) {
-        createServerTypeField.addEventListener("change", function () {
-            toggleServerCodeExecutionSection("create");
-        });
-        toggleServerCodeExecutionSection("create");
-    }
+    bindServerTypeToggle("create");
+    bindServerTypeToggle("edit");
+    syncServerCodeExecutionSections();
 
-    const editServerTypeField = safeGetElement("edit-server-type", true);
-    if (editServerTypeField) {
-        editServerTypeField.addEventListener("change", function () {
-            toggleServerCodeExecutionSection("edit");
-        });
-        toggleServerCodeExecutionSection("edit");
-    }
+    document.body.addEventListener("htmx:afterSwap", function () {
+        syncServerCodeExecutionSections();
+    });
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
@@ -9597,6 +9863,11 @@ function initToolSelect(
             } else {
                 warnBox.textContent = "";
             }
+
+            // Keep the server type conditional section stable during selector refreshes.
+            if (selectId === "associatedTools") {
+                toggleServerCodeExecutionSection("create");
+            }
         } catch (error) {
             console.error("Error updating tool select:", error);
         }
@@ -11317,6 +11588,7 @@ function reloadAssociatedItems() {
                         selectBtn,
                         clearBtn,
                     );
+                    syncServerCodeExecutionSections();
                 })
                 .catch((err) => {
                     console.error(
