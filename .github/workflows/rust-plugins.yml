@@ -19,32 +19,14 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Discover all Rust plugins
-  discover-plugins:
-    name: Discover Rust Plugins
-    runs-on: ubuntu-latest
-    outputs:
-      plugins: ${{ steps.find-plugins.outputs.plugins }}
-    steps:
-      - uses: actions/checkout@v4
-      - name: Find all Rust plugin directories
-        id: find-plugins
-        run: |
-          plugins=$(find plugins_rust -mindepth 1 -maxdepth 1 -type d -exec test -f {}/Cargo.toml \; -print | sed 's|plugins_rust/||' | jq -R -s -c 'split("\n")[:-1]')
-          echo "plugins=$plugins" >> $GITHUB_OUTPUT
-          echo "Found plugins: $plugins"
-
-  # Rust unit tests and linting
+  # Rust unit tests and linting (all plugins in one job per OS)
   rust-tests:
-    name: Rust Tests (${{ matrix.plugin }}, ${{ matrix.os }})
+    name: Rust Tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: discover-plugins
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
-        rust: [stable]
 
     steps:
       - uses: actions/checkout@v4
@@ -70,32 +52,20 @@ jobs:
       - name: Cache Cargo build
         uses: actions/cache@v4
         with:
-          path: plugins_rust/${{ matrix.plugin }}/target
-          key: ${{ runner.os }}-${{ matrix.plugin }}-cargo-build-${{ hashFiles(format('plugins_rust/{0}/Cargo.lock', matrix.plugin)) }}
+          path: plugins_rust/*/target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Check formatting
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: cargo fmt -- --check
+      - name: Run all checks for plugins
+        run: make rust-check
 
-      - name: Run Clippy
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: cargo clippy -- -D warnings
-
-      - name: Run Rust tests
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: cargo test -- --nocapture
-
-
-  # Build wheels for multiple platforms (native builds)
+  # Build wheels for multiple platforms (all plugins in one job per OS)
   build-wheels:
-    name: Build wheels (${{ matrix.plugin }}, ${{ matrix.os }})
+    name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    needs: discover-plugins
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -111,26 +81,19 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build wheels
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: maturin build --release --out dist
+      - name: Build wheels for all plugins
+        run: make rust-build-wheels
 
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.plugin }}-${{ matrix.os }}
-          path: plugins_rust/${{ matrix.plugin }}/dist/*.whl
+          name: wheels-${{ matrix.os }}
+          path: plugins_rust/*/dist/*.whl
 
-
-  # Security audit
+  # Security audit (all plugins in one job)
   security-audit:
-    name: Security Audit (${{ matrix.plugin }})
+    name: Security Audit
     runs-on: ubuntu-latest
-    needs: discover-plugins
-    strategy:
-      fail-fast: false
-      matrix:
-        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -141,19 +104,45 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
 
-      - name: Run security audit
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: cargo audit
+      - name: Run security audit on all plugins
+        run: make rust-audit
 
-  # Coverage report
-  coverage:
-    name: Code Coverage (${{ matrix.plugin }})
+  # Benchmark tests (verify benchmarks compile and run)
+  benchmark-tests:
+    name: Benchmark Tests
     runs-on: ubuntu-latest
-    needs: discover-plugins
-    strategy:
-      fail-fast: false
-      matrix:
-        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        run: rustup default stable
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: plugins_rust/*/target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Run benchmarks for all plugins
+        run: make rust-bench
+
+  # Coverage report (all plugins in one job)
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -184,35 +173,20 @@ jobs:
           uv pip install pytest pytest-cov pydantic
           cargo install cargo-tarpaulin
 
-      - name: Build Rust extension
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: maturin develop --release
-
-      - name: Run coverage
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: |
-          if [ -f Makefile ] && grep -q "coverage:" Makefile; then
-            uv run make coverage
-          else
-            cargo tarpaulin --out Xml --output-dir coverage
-          fi
+      - name: Run coverage for all plugins
+        run: make rust-coverage
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         with:
-          files: ./plugins_rust/${{ matrix.plugin }}/coverage/cobertura.xml
-          flags: rust-${{ matrix.plugin }}
-          name: rust-${{ matrix.plugin }}-coverage
+          files: ./plugins_rust/*/coverage/cobertura.xml
+          flags: rust-plugins
+          name: rust-plugins-coverage
 
-  # Build documentation
+  # Build documentation (all plugins in one job)
   documentation:
-    name: Build Documentation (${{ matrix.plugin }})
+    name: Build Documentation
     runs-on: ubuntu-latest
-    needs: discover-plugins
-    strategy:
-      fail-fast: false
-      matrix:
-        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -220,26 +194,25 @@ jobs:
       - name: Install Rust stable
         run: rustup default stable
 
-      - name: Build Rust docs
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: cargo doc --no-deps
+      - name: Build Rust docs for all plugins
+        run: make rust-doc
 
       - name: Upload documentation
         uses: actions/upload-artifact@v4
         with:
-          name: rust-docs-${{ matrix.plugin }}
-          path: plugins_rust/${{ matrix.plugin }}/target/doc
+          name: rust-docs
+          path: plugins_rust/*/target/doc
 
-  # Release build (only on tags)
+  # Release build (only on tags, all plugins per OS)
   release:
-    name: Release Build (${{ matrix.plugin }}, ${{ matrix.os }})
+    name: Release Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [discover-plugins, rust-tests]
+    needs: rust-tests
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
 
     steps:
       - uses: actions/checkout@v4
@@ -255,19 +228,17 @@ jobs:
       - name: Install maturin
         run: pip install maturin
 
-      - name: Build release wheels
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: maturin build --release --out dist
+      - name: Build and publish release wheels
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          make rust-release
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            make rust-release-publish
+          fi
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: release-wheels-${{ matrix.plugin }}-${{ matrix.os }}
-          path: plugins_rust/${{ matrix.plugin }}/dist/*.whl
-
-      - name: Publish to PyPI (if tag)
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        working-directory: plugins_rust/${{ matrix.plugin }}
-        run: maturin publish --username __token__ --password $MATURIN_PYPI_TOKEN
+          name: release-wheels-${{ matrix.os }}
+          path: plugins_rust/*/dist/*.whl

