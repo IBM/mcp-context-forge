@@ -2300,6 +2300,8 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
         server_type = str(form.get("server_type") or form.get("type") or "standard").strip().lower()
         if server_type not in {"standard", "code_execution"}:
             raise ValueError("server_type must be 'standard' or 'code_execution'")
+        if server_type == "code_execution" and not settings.code_execution_enabled:
+            raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
         stub_language_raw = str(form.get("stub_language") or "").strip().lower()
         stub_language = stub_language_raw if stub_language_raw in {"typescript", "python"} else None
         skills_scope_raw = str(form.get("skills_scope") or "").strip()
@@ -2522,6 +2524,8 @@ async def admin_edit_server(
             if server_type_raw not in {"standard", "code_execution"}:
                 raise ValueError("server_type must be 'standard' or 'code_execution'")
             server_type = server_type_raw
+            if server_type == "code_execution" and not settings.code_execution_enabled:
+                raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
 
         stub_language_raw = str(form.get("stub_language") or "").strip().lower()
         stub_language: Optional[str] = stub_language_raw if stub_language_raw in {"typescript", "python"} else None

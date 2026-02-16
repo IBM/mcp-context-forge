@@ -277,6 +277,62 @@ function toggleServerCodeExecutionSection(mode = "create") {
     section.classList.toggle("hidden", !isCodeExecution);
 }
 
+const CODE_EXECUTION_FIELD_TEMPLATES = Object.freeze({
+    skills_scope_team: "team:team-id",
+    skills_scope_user: "user:user@example.com",
+    mount_rules: JSON.stringify(
+        {
+            include_tags: ["prod"],
+            exclude_servers: ["admin-tools"],
+        },
+        null,
+        2,
+    ),
+    sandbox_policy: JSON.stringify(
+        {
+            runtime: "deno",
+            limits: {
+                max_execution_time_ms: 30000,
+                max_memory_mb: 256,
+                max_runs_per_minute: 20,
+            },
+            permissions: {
+                network: {
+                    allow_tool_calls: true,
+                    allow_raw_http: false,
+                },
+            },
+        },
+        null,
+        2,
+    ),
+    tokenization_policy: JSON.stringify(
+        {
+            enabled: true,
+            types: ["email", "phone", "ssn", "credit_card", "name"],
+            strategy: "bidirectional",
+        },
+        null,
+        2,
+    ),
+});
+
+function applyCodeExecutionFieldTemplate(fieldId, templateKey) {
+    const target = safeGetElement(fieldId, true);
+    const templateValue = CODE_EXECUTION_FIELD_TEMPLATES[templateKey];
+    if (!target || typeof templateValue !== "string") {
+        return;
+    }
+    target.value = templateValue;
+    target.focus();
+    if (typeof target.setSelectionRange === "function") {
+        const end = target.value.length;
+        target.setSelectionRange(end, end);
+    }
+}
+
+window.applyCodeExecutionFieldTemplate = applyCodeExecutionFieldTemplate;
+
 // Attach event listener after DOM is loaded or when modal opens
 document.addEventListener("DOMContentLoaded", function () {
     const TypeField = document.getElementById("edit-tool-type");

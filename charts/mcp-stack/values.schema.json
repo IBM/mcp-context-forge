@@ -650,6 +650,172 @@
               "description": "Enable admin API endpoints",
               "default": "true"
             },
+            "CODE_EXECUTION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable code_execution virtual servers and related meta-tools",
+              "default": "true"
+            },
+            "CODE_EXECUTION_SHELL_EXEC_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable shell_exec meta-tool for code_execution servers",
+              "default": "true"
+            },
+            "CODE_EXECUTION_FS_BROWSE_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable fs_browse meta-tool for code_execution servers",
+              "default": "true"
+            },
+            "CODE_EXECUTION_REPLAY_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable replay endpoint for previous code execution runs",
+              "default": "true"
+            },
+            "CODE_EXECUTION_RUST_ACCELERATION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable optional Rust acceleration helpers when plugins_rust is installed",
+              "default": "true"
+            },
+            "CODE_EXECUTION_PYTHON_INPROCESS_FALLBACK_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Allow Python in-process fallback when isolated Python runtime is unavailable",
+              "default": "true"
+            },
+            "CODE_EXECUTION_BASE_DIR": {
+              "type": "string",
+              "description": "Base directory for ephemeral code execution sandbox sessions",
+              "default": "/tmp/mcpgateway_code_execution"
+            },
+            "CODE_EXECUTION_SESSION_TTL_SECONDS": {
+              "type": "string",
+              "description": "Default sandbox session TTL in seconds",
+              "default": "900"
+            },
+            "CODE_EXECUTION_DEFAULT_RUNTIME": {
+              "type": "string",
+              "enum": ["deno", "python"],
+              "description": "Default runtime for code execution servers when sandbox policy omits runtime",
+              "default": "deno"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_EXECUTION_TIME_MS": {
+              "type": "string",
+              "description": "Default maximum code execution time in milliseconds",
+              "default": "30000"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_MEMORY_MB": {
+              "type": "string",
+              "description": "Default sandbox memory limit in MB",
+              "default": "256"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_CPU_PERCENT": {
+              "type": "string",
+              "description": "Default sandbox CPU soft limit percentage",
+              "default": "50"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_NETWORK_CONNECTIONS": {
+              "type": "string",
+              "description": "Default maximum raw network connections allowed from sandbox",
+              "default": "0"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_FILE_SIZE_MB": {
+              "type": "string",
+              "description": "Default per-file writable size limit in MB",
+              "default": "10"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_TOTAL_DISK_MB": {
+              "type": "string",
+              "description": "Default total writable disk limit in MB for sandbox session",
+              "default": "100"
+            },
+            "CODE_EXECUTION_DEFAULT_MAX_RUNS_PER_MINUTE": {
+              "type": "string",
+              "description": "Default run rate limit per user and code execution server",
+              "default": "20"
+            },
+            "CODE_EXECUTION_DEFAULT_ALLOW_TOOL_CALLS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Default permission for mounted tool calls from sandboxed code",
+              "default": "true"
+            },
+            "CODE_EXECUTION_DEFAULT_ALLOW_RAW_HTTP": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Default permission for arbitrary raw HTTP from sandboxed code",
+              "default": "false"
+            },
+            "CODE_EXECUTION_DEFAULT_FILESYSTEM_READ_PATHS": {
+              "type": "string",
+              "description": "JSON array of default filesystem read allowlist globs",
+              "default": "[\"/tools/**\",\"/skills/**\",\"/scratch/**\",\"/results/**\"]"
+            },
+            "CODE_EXECUTION_DEFAULT_FILESYSTEM_WRITE_PATHS": {
+              "type": "string",
+              "description": "JSON array of default filesystem write allowlist globs",
+              "default": "[\"/scratch/**\",\"/results/**\"]"
+            },
+            "CODE_EXECUTION_DEFAULT_FILESYSTEM_DENY_PATHS": {
+              "type": "string",
+              "description": "JSON array of default filesystem deny globs",
+              "default": "[\"/etc/**\",\"/proc/**\",\"/sys/**\"]"
+            },
+            "CODE_EXECUTION_DEFAULT_TOOL_ALLOW_PATTERNS": {
+              "type": "string",
+              "description": "JSON array of default mounted-tool allow patterns",
+              "default": "[]"
+            },
+            "CODE_EXECUTION_DEFAULT_TOOL_DENY_PATTERNS": {
+              "type": "string",
+              "description": "JSON array of default mounted-tool deny patterns",
+              "default": "[]"
+            },
+            "CODE_EXECUTION_DEFAULT_TOKENIZATION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Default tokenization enablement for code execution runs",
+              "default": "false"
+            },
+            "CODE_EXECUTION_DEFAULT_TOKENIZATION_TYPES": {
+              "type": "string",
+              "description": "JSON array of default tokenization types for code execution runs",
+              "default": "[\"email\",\"phone\",\"ssn\",\"credit_card\",\"name\"]"
+            },
+            "CODE_EXECUTION_DEFAULT_TOKENIZATION_STRATEGY": {
+              "type": "string",
+              "enum": ["bidirectional"],
+              "description": "Default tokenization strategy for code execution runs",
+              "default": "bidirectional"
+            },
+            "CODE_EXECUTION_FS_BROWSE_DEFAULT_MAX_ENTRIES": {
+              "type": "string",
+              "description": "Default max_entries value for fs_browse meta-tool",
+              "default": "200"
+            },
+            "CODE_EXECUTION_FS_BROWSE_MAX_ENTRIES": {
+              "type": "string",
+              "description": "Hard maximum max_entries accepted by fs_browse meta-tool",
+              "default": "1000"
+            },
+            "CODE_EXECUTION_MAX_PERSISTED_OUTPUT_CHARS": {
+              "type": "string",
+              "description": "Maximum characters persisted for output/error in run history",
+              "default": "200000"
+            },
+            "CODE_EXECUTION_PYTHON_DANGEROUS_PATTERNS": {
+              "type": "string",
+              "description": "JSON array of regex patterns blocked for python code",
+              "default": "[\"(?i)\\\\beval\\\\s*\\\\(\",\"(?i)\\\\bexec\\\\s*\\\\(\",\"(?i)__import__\\\\s*\\\\(\",\"(?i)\\\\bos\\\\.system\\\\s*\\\\(\",\"(?i)\\\\bsubprocess\\\\.\",\"(?i)\\\\bopen\\\\s*\\\\(\\\\s*['\\\"']/(etc|proc|sys)\"]"
+            },
+            "CODE_EXECUTION_TYPESCRIPT_DANGEROUS_PATTERNS": {
+              "type": "string",
+              "description": "JSON array of regex patterns blocked for typescript code",
+              "default": "[\"(?i)\\\\beval\\\\s*\\\\(\",\"(?i)\\\\bDeno\\\\.run\\\\b\",\"(?i)\\\\bDeno\\\\.Command\\\\b\",\"(?i)\\\\bfetch\\\\s*\\\\(\",\"(?i)from\\\\s+['\\\"']https?://\",\"(?i)import\\\\s*\\\\(\\\\s*['\\\"']https?://\"]"
+            },
             "ENVIRONMENT": {
               "type": "string",
               "enum": ["development", "production"],

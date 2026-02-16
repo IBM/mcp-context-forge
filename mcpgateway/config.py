@@ -592,6 +592,80 @@ class Settings(BaseSettings):
     code_execution_enabled: bool = Field(default=True, description="Enable code_execution virtual servers and shell_exec/fs_browse meta-tools")
     code_execution_base_dir: str = Field(default="/tmp/mcpgateway_code_execution", description="Base directory for ephemeral code execution sessions")
     code_execution_session_ttl_seconds: int = Field(default=900, ge=60, le=86400, description="TTL for sandbox sessions (seconds)")
+    code_execution_shell_exec_enabled: bool = Field(default=True, description="Enable shell_exec meta-tool for code_execution servers")
+    code_execution_fs_browse_enabled: bool = Field(default=True, description="Enable fs_browse meta-tool for code_execution servers")
+    code_execution_replay_enabled: bool = Field(default=True, description="Enable replay API for previous code execution runs")
+    code_execution_rust_acceleration_enabled: bool = Field(
+        default=True,
+        description="Enable optional Rust acceleration helpers for code execution catalog/search/stub generation when plugins_rust is available",
+    )
+    code_execution_python_inprocess_fallback_enabled: bool = Field(
+        default=True,
+        description="Allow in-process Python fallback execution when isolated Python runtime is unavailable",
+    )
+    code_execution_default_runtime: Literal["deno", "python"] = Field(default="deno", description="Default sandbox runtime for code_execution servers")
+    code_execution_default_max_execution_time_ms: int = Field(default=30000, ge=100, le=300000, description="Default maximum execution time in milliseconds")
+    code_execution_default_max_memory_mb: int = Field(default=256, ge=16, le=4096, description="Default sandbox memory limit in MB")
+    code_execution_default_max_cpu_percent: int = Field(default=50, ge=1, le=100, description="Default sandbox CPU soft limit percentage")
+    code_execution_default_max_network_connections: int = Field(default=0, ge=0, le=64, description="Default maximum raw network connections allowed from sandbox")
+    code_execution_default_max_file_size_mb: int = Field(default=10, ge=1, le=1024, description="Default maximum writable file size in MB")
+    code_execution_default_max_total_disk_mb: int = Field(default=100, ge=10, le=8192, description="Default maximum total writable disk usage in MB for a sandbox session")
+    code_execution_default_max_runs_per_minute: int = Field(default=20, ge=1, le=1000, description="Default per-user per-server run rate limit")
+    code_execution_default_allow_tool_calls: bool = Field(default=True, description="Default permission for mounted tool calls from sandboxed code")
+    code_execution_default_allow_raw_http: bool = Field(default=False, description="Default permission for arbitrary raw HTTP from sandboxed code")
+    code_execution_default_filesystem_read_paths: List[str] = Field(
+        default_factory=lambda: ["/tools/**", "/skills/**", "/scratch/**", "/results/**"],
+        description="Default filesystem read allowlist globs for sandbox policy",
+    )
+    code_execution_default_filesystem_write_paths: List[str] = Field(
+        default_factory=lambda: ["/scratch/**", "/results/**"],
+        description="Default filesystem write allowlist globs for sandbox policy",
+    )
+    code_execution_default_filesystem_deny_paths: List[str] = Field(
+        default_factory=lambda: ["/etc/**", "/proc/**", "/sys/**"],
+        description="Default filesystem deny globs for sandbox policy",
+    )
+    code_execution_default_tool_allow_patterns: List[str] = Field(default_factory=list, description="Default mounted tool allow patterns for sandbox policy")
+    code_execution_default_tool_deny_patterns: List[str] = Field(default_factory=list, description="Default mounted tool deny patterns for sandbox policy")
+    code_execution_default_tokenization_enabled: bool = Field(default=False, description="Default tokenization enablement for code execution runs")
+    code_execution_default_tokenization_types: List[str] = Field(
+        default_factory=lambda: ["email", "phone", "ssn", "credit_card", "name"],
+        description="Default tokenization PII types for code execution runs",
+    )
+    code_execution_default_tokenization_strategy: Literal["bidirectional"] = Field(
+        default="bidirectional",
+        description="Default tokenization strategy for code execution runs",
+    )
+    code_execution_fs_browse_default_max_entries: int = Field(default=200, ge=1, le=5000, description="Default max_entries value for fs_browse meta-tool")
+    code_execution_fs_browse_max_entries: int = Field(default=1000, ge=1, le=10000, description="Hard maximum max_entries accepted by fs_browse")
+    code_execution_max_persisted_output_chars: int = Field(
+        default=200000,
+        ge=1000,
+        le=2000000,
+        description="Maximum number of characters persisted for output/error in CodeExecutionRun records",
+    )
+    code_execution_python_dangerous_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"(?i)\beval\s*\(",
+            r"(?i)\bexec\s*\(",
+            r"(?i)__import__\s*\(",
+            r"(?i)\bos\.system\s*\(",
+            r"(?i)\bsubprocess\.",
+            r"(?i)\bopen\s*\(\s*['\"]/(etc|proc|sys)",
+        ],
+        description="Regex patterns blocked for python code in code execution mode",
+    )
+    code_execution_typescript_dangerous_patterns: List[str] = Field(
+        default_factory=lambda: [
+            r"(?i)\beval\s*\(",
+            r"(?i)\bDeno\.run\b",
+            r"(?i)\bDeno\.Command\b",
+            r"(?i)\bfetch\s*\(",
+            r"(?i)from\s+['\"]https?://",
+            r"(?i)import\s*\(\s*['\"]https?://",
+        ],
+        description="Regex patterns blocked for typescript code in code execution mode",
+    )
 
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")

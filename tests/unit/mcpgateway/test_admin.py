@@ -659,6 +659,22 @@ class TestAdminServerRoutes:
         assert server_create.skills_scope == "team:team-1"
         assert server_create.skills_require_approval is True
 
+    async def test_admin_add_server_code_execution_disabled_returns_400(self, mock_request, mock_db, monkeypatch):
+        """Creating code_execution server should fail when feature flag is disabled."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", False, raising=False)
+        form_data = FakeForm(
+            {
+                "name": "CodeExecDisabled",
+                "server_type": "code_execution",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        assert b"code_execution servers are disabled" in result.body
+
     async def test_admin_add_server_invalid_code_execution_json_returns_400(self, mock_request, mock_db):
         """Invalid JSON payload in code_execution fields should fail validation."""
         form_data = FakeForm(
@@ -717,6 +733,38 @@ class TestAdminServerRoutes:
         assert server_update.tokenization.enabled is True
         assert server_update.skills_scope == "team:team-1"
         assert server_update.skills_require_approval is True
+
+    async def test_admin_edit_server_code_execution_disabled_returns_400(self, mock_request, mock_db, monkeypatch):
+        """Editing to code_execution should fail when feature flag is disabled."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", False, raising=False)
+
+        server_id = str(uuid4())
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "CodeExecDisabledEdit",
+                "server_type": "code_execution",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value=None)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "u@example.com",
+                "modified_from_ip": None,
+                "modified_via": "ui",
+                "modified_user_agent": None,
+            },
+        )
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+        assert b"code_execution servers are disabled" in result.body
 
     async def test_admin_add_server_missing_required_field_returns_422(self, mock_request, mock_db):
         """Cover the KeyError handler in admin_add_server."""

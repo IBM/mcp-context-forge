@@ -521,6 +521,10 @@ class ServerService:
         """
         try:
             logger.info(f"Registering server: {server_in.name}")
+            server_type_value = getattr(server_in, "server_type", "standard") or "standard"
+            if server_type_value == "code_execution" and not settings.code_execution_enabled:
+                raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
+
             # # Create the new server record.
             db_server = DbServer(
                 name=server_in.name,
@@ -538,7 +542,7 @@ class ServerService:
                 oauth_enabled=getattr(server_in, "oauth_enabled", False) or False,
                 oauth_config=getattr(server_in, "oauth_config", None),
                 # Code execution configuration
-                server_type=getattr(server_in, "server_type", "standard") or "standard",
+                server_type=server_type_value,
                 stub_language=getattr(server_in, "stub_language", None),
                 mount_rules=getattr(server_in, "mount_rules", None).model_dump() if getattr(server_in, "mount_rules", None) is not None and hasattr(getattr(server_in, "mount_rules"), "model_dump") else getattr(server_in, "mount_rules", None),
                 sandbox_policy=getattr(server_in, "sandbox_policy", None).model_dump()
@@ -1343,6 +1347,10 @@ class ServerService:
                     server.oauth_config = server_update.oauth_config
 
             # Update code execution server settings
+            requested_server_type = server_update.server_type or getattr(server, "server_type", "standard") or "standard"
+            if requested_server_type == "code_execution" and not settings.code_execution_enabled:
+                raise ValueError("code_execution servers are disabled (set CODE_EXECUTION_ENABLED=true to enable)")
+
             if server_update.server_type is not None:
                 server.server_type = server_update.server_type
                 if server.server_type != "code_execution":

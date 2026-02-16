@@ -63,7 +63,7 @@
       "type": "string"
     },
     "protocol_version": {
-      "default": "2025-06-18",
+      "default": "2025-11-25",
       "title": "Protocol Version",
       "type": "string"
     },
@@ -1361,6 +1361,235 @@
       "default": true,
       "title": "Mcpgateway A2A Metrics Enabled",
       "type": "boolean"
+    },
+    "code_execution_enabled": {
+      "default": true,
+      "description": "Enable code_execution virtual servers and shell_exec/fs_browse meta-tools",
+      "title": "Code Execution Enabled",
+      "type": "boolean"
+    },
+    "code_execution_base_dir": {
+      "default": "/tmp/mcpgateway_code_execution",
+      "description": "Base directory for ephemeral code execution sessions",
+      "title": "Code Execution Base Dir",
+      "type": "string"
+    },
+    "code_execution_session_ttl_seconds": {
+      "default": 900,
+      "description": "TTL for sandbox sessions (seconds)",
+      "maximum": 86400,
+      "minimum": 60,
+      "title": "Code Execution Session Ttl Seconds",
+      "type": "integer"
+    },
+    "code_execution_shell_exec_enabled": {
+      "default": true,
+      "description": "Enable shell_exec meta-tool for code_execution servers",
+      "title": "Code Execution Shell Exec Enabled",
+      "type": "boolean"
+    },
+    "code_execution_fs_browse_enabled": {
+      "default": true,
+      "description": "Enable fs_browse meta-tool for code_execution servers",
+      "title": "Code Execution Fs Browse Enabled",
+      "type": "boolean"
+    },
+    "code_execution_replay_enabled": {
+      "default": true,
+      "description": "Enable replay API for previous code execution runs",
+      "title": "Code Execution Replay Enabled",
+      "type": "boolean"
+    },
+    "code_execution_rust_acceleration_enabled": {
+      "default": true,
+      "description": "Enable optional Rust acceleration helpers for code execution catalog/search/stub generation when plugins_rust is available",
+      "title": "Code Execution Rust Acceleration Enabled",
+      "type": "boolean"
+    },
+    "code_execution_python_inprocess_fallback_enabled": {
+      "default": true,
+      "description": "Allow in-process Python fallback execution when isolated Python runtime is unavailable",
+      "title": "Code Execution Python Inprocess Fallback Enabled",
+      "type": "boolean"
+    },
+    "code_execution_default_runtime": {
+      "default": "deno",
+      "description": "Default sandbox runtime for code_execution servers",
+      "enum": [
+        "deno",
+        "python"
+      ],
+      "title": "Code Execution Default Runtime",
+      "type": "string"
+    },
+    "code_execution_default_max_execution_time_ms": {
+      "default": 30000,
+      "description": "Default maximum execution time in milliseconds",
+      "maximum": 300000,
+      "minimum": 100,
+      "title": "Code Execution Default Max Execution Time Ms",
+      "type": "integer"
+    },
+    "code_execution_default_max_memory_mb": {
+      "default": 256,
+      "description": "Default sandbox memory limit in MB",
+      "maximum": 4096,
+      "minimum": 16,
+      "title": "Code Execution Default Max Memory Mb",
+      "type": "integer"
+    },
+    "code_execution_default_max_cpu_percent": {
+      "default": 50,
+      "description": "Default sandbox CPU soft limit percentage",
+      "maximum": 100,
+      "minimum": 1,
+      "title": "Code Execution Default Max Cpu Percent",
+      "type": "integer"
+    },
+    "code_execution_default_max_network_connections": {
+      "default": 0,
+      "description": "Default maximum raw network connections allowed from sandbox",
+      "maximum": 64,
+      "minimum": 0,
+      "title": "Code Execution Default Max Network Connections",
+      "type": "integer"
+    },
+    "code_execution_default_max_file_size_mb": {
+      "default": 10,
+      "description": "Default maximum writable file size in MB",
+      "maximum": 1024,
+      "minimum": 1,
+      "title": "Code Execution Default Max File Size Mb",
+      "type": "integer"
+    },
+    "code_execution_default_max_total_disk_mb": {
+      "default": 100,
+      "description": "Default maximum total writable disk usage in MB for a sandbox session",
+      "maximum": 8192,
+      "minimum": 10,
+      "title": "Code Execution Default Max Total Disk Mb",
+      "type": "integer"
+    },
+    "code_execution_default_max_runs_per_minute": {
+      "default": 20,
+      "description": "Default per-user per-server run rate limit",
+      "maximum": 1000,
+      "minimum": 1,
+      "title": "Code Execution Default Max Runs Per Minute",
+      "type": "integer"
+    },
+    "code_execution_default_allow_tool_calls": {
+      "default": true,
+      "description": "Default permission for mounted tool calls from sandboxed code",
+      "title": "Code Execution Default Allow Tool Calls",
+      "type": "boolean"
+    },
+    "code_execution_default_allow_raw_http": {
+      "default": false,
+      "description": "Default permission for arbitrary raw HTTP from sandboxed code",
+      "title": "Code Execution Default Allow Raw Http",
+      "type": "boolean"
+    },
+    "code_execution_default_filesystem_read_paths": {
+      "description": "Default filesystem read allowlist globs for sandbox policy",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Default Filesystem Read Paths",
+      "type": "array"
+    },
+    "code_execution_default_filesystem_write_paths": {
+      "description": "Default filesystem write allowlist globs for sandbox policy",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Default Filesystem Write Paths",
+      "type": "array"
+    },
+    "code_execution_default_filesystem_deny_paths": {
+      "description": "Default filesystem deny globs for sandbox policy",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Default Filesystem Deny Paths",
+      "type": "array"
+    },
+    "code_execution_default_tool_allow_patterns": {
+      "description": "Default mounted tool allow patterns for sandbox policy",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Default Tool Allow Patterns",
+      "type": "array"
+    },
+    "code_execution_default_tool_deny_patterns": {
+      "description": "Default mounted tool deny patterns for sandbox policy",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Default Tool Deny Patterns",
+      "type": "array"
+    },
+    "code_execution_default_tokenization_enabled": {
+      "default": false,
+      "description": "Default tokenization enablement for code execution runs",
+      "title": "Code Execution Default Tokenization Enabled",
+      "type": "boolean"
+    },
+    "code_execution_default_tokenization_types": {
+      "description": "Default tokenization PII types for code execution runs",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Default Tokenization Types",
+      "type": "array"
+    },
+    "code_execution_default_tokenization_strategy": {
+      "const": "bidirectional",
+      "default": "bidirectional",
+      "description": "Default tokenization strategy for code execution runs",
+      "title": "Code Execution Default Tokenization Strategy",
+      "type": "string"
+    },
+    "code_execution_fs_browse_default_max_entries": {
+      "default": 200,
+      "description": "Default max_entries value for fs_browse meta-tool",
+      "maximum": 5000,
+      "minimum": 1,
+      "title": "Code Execution Fs Browse Default Max Entries",
+      "type": "integer"
+    },
+    "code_execution_fs_browse_max_entries": {
+      "default": 1000,
+      "description": "Hard maximum max_entries accepted by fs_browse",
+      "maximum": 10000,
+      "minimum": 1,
+      "title": "Code Execution Fs Browse Max Entries",
+      "type": "integer"
+    },
+    "code_execution_max_persisted_output_chars": {
+      "default": 200000,
+      "description": "Maximum number of characters persisted for output/error in CodeExecutionRun records",
+      "maximum": 2000000,
+      "minimum": 1000,
+      "title": "Code Execution Max Persisted Output Chars",
+      "type": "integer"
+    },
+    "code_execution_python_dangerous_patterns": {
+      "description": "Regex patterns blocked for python code in code execution mode",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Python Dangerous Patterns",
+      "type": "array"
+    },
+    "code_execution_typescript_dangerous_patterns": {
+      "description": "Regex patterns blocked for typescript code in code execution mode",
+      "items": {
+        "type": "string"
+      },
+      "title": "Code Execution Typescript Dangerous Patterns",
+      "type": "array"
     },
     "mcpgateway_grpc_enabled": {
       "default": false,
@@ -2732,14 +2961,14 @@
     },
     "allowed_mime_types": {
       "default": [
-        "image/gif",
-        "text/plain",
         "image/jpeg",
+        "image/gif",
         "image/png",
-        "text/markdown",
-        "text/html",
+        "application/xml",
         "application/json",
-        "application/xml"
+        "text/plain",
+        "text/markdown",
+        "text/html"
       ],
       "items": {
         "type": "string"
