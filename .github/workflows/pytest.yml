@@ -40,6 +40,10 @@ permissions:
   checks: write
   actions: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft

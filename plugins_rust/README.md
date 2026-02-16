@@ -26,9 +26,7 @@ plugins_rust/
     └── src/
 ```
 
-## 📦 Quick Start
-
-### Build from Source
+## 📦 Installation
 
 ```bash
 # Install Rust toolchain

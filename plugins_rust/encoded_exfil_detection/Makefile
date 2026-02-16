@@ -16,6 +16,7 @@
 .DEFAULT_GOAL := help
 
 # Project metadata
+PACKAGE_NAME := encoded_exfil_detection
 DIST_DIR := target
 
 # Colors for output

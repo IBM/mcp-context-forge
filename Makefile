@@ -7911,8 +7911,8 @@ rust-dev: rust-ensure-deps              ## Build and install Rust plugins (devel
 rust-test: rust-ensure-deps             ## Run Rust plugin tests
 	@$(MAKE) -C plugins_rust test
 
-rust-python-test: rust-install          ## Run Python tests for Rust plugins (installs plugins first)
-	@$(MAKE) -C plugins_rust test-python
+rust-test-integration: rust-ensure-deps ## Run Rust integration tests
+	@$(MAKE) -C plugins_rust test-integration
 
 rust-test-all: rust-test rust-python-test  ## Run all Rust and Python tests
 
@@ -7921,9 +7921,6 @@ rust-bench: rust-ensure-deps            ## Run Rust benchmarks
 
 rust-bench-compare: rust-ensure-deps    ## Compare Rust vs Python performance
 	@$(MAKE) -C plugins_rust bench-compare
-
-rust-compare: rust-ensure-deps          ## Run compare_performance.py only (skip Rust benchmarks)
-	@$(MAKE) -C plugins_rust compare
 
 rust-check: rust-ensure-deps            ## Run all Rust checks (format, lint, test)
 	@$(MAKE) -C plugins_rust check
@@ -7946,21 +7943,11 @@ rust-release: rust-ensure-deps          ## Build release wheels for all Rust plu
 rust-release-publish: rust-ensure-deps  ## Publish release wheels to PyPI
 	@$(MAKE) -C plugins_rust release-publish
 
-rust-uninstall-plugins: rust-ensure-deps ## Uninstall all Rust plugins from Python environment
-	@$(MAKE) -C plugins_rust uninstall
-
-rust-clean: rust-ensure-deps            ## Clean Rust build artifacts and uninstall plugins
-	@$(MAKE) -C plugins_rust uninstall
+rust-clean: rust-ensure-deps            ## Clean Rust build artifacts
 	@$(MAKE) -C plugins_rust clean
 
 rust-verify: rust-ensure-deps           ## Verify Rust plugin installation
 	@$(MAKE) -C plugins_rust verify
-
-rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
-	@$(MAKE) -C plugins_rust verify-stubs
-
-rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
-	@$(MAKE) -C plugins_rust clean-stubs
 
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"
