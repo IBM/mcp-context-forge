@@ -32,6 +32,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _adjust_pagination_for_conversion_failures,
     _escape_like,
     _generate_unified_teams_view,
+    _get_user_team_ids,
     _get_latency_heatmap_postgresql,
     _get_latency_heatmap_python,
     _get_latency_percentiles_postgresql,
@@ -8553,6 +8554,54 @@ def test_escape_like_escapes_wildcards():
     assert _escape_like("a\\b") == "a\\\\b"
     assert _escape_like("%_\\") == "\\%\\_\\\\"
     assert _escape_like("") == ""
+
+
+@pytest.mark.asyncio
+async def test_get_user_team_ids_prefers_token_teams_strings(monkeypatch, mock_db):
+    mock_team_service = MagicMock()
+    mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team")])
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
+
+    result = await _get_user_team_ids({"email": "user@example.com", "token_teams": ["team-1", "team-2"]}, mock_db)
+
+    assert result == ["team-1", "team-2"]
+    mock_team_service.get_user_teams.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_user_team_ids_normalizes_dict_token_teams(monkeypatch, mock_db):
+    mock_team_service = MagicMock()
+    mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team")])
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
+
+    result = await _get_user_team_ids({"email": "user@example.com", "token_teams": [{"id": "team-1"}, {"id": "team-2"}, {"name": "missing-id"}]}, mock_db)
+
+    assert result == ["team-1", "team-2"]
+    mock_team_service.get_user_teams.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_user_team_ids_empty_token_teams_returns_empty(monkeypatch, mock_db):
+    mock_team_service = MagicMock()
+    mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team")])
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
+
+    result = await _get_user_team_ids({"email": "user@example.com", "token_teams": []}, mock_db)
+
+    assert result == []
+    mock_team_service.get_user_teams.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_user_team_ids_admin_bypass_falls_back_to_db(monkeypatch, mock_db):
+    mock_team_service = MagicMock()
+    mock_team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="db-team-1"), SimpleNamespace(id="db-team-2")])
+    monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda _db: mock_team_service)
+
+    result = await _get_user_team_ids({"email": "user@example.com", "token_teams": None}, mock_db)
+
+    assert result == ["db-team-1", "db-team-2"]
+    mock_team_service.get_user_teams.assert_called_once_with("user@example.com")
 
 
 def test_parse_tag_filter_groups_respects_max_groups():

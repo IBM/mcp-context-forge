@@ -17743,7 +17743,7 @@ async function runGlobalSearch(query) {
     const requestId = ++globalSearchRequestId;
 
     if (!normalizedQuery) {
-        renderGlobalSearchMessage("Start typing to search all admin entities.");
+        renderGlobalSearchMessage("Start typing to search all entities.");
         return;
     }
 
@@ -17794,7 +17794,7 @@ function openGlobalSearchModal() {
     if (input.value.trim()) {
         runGlobalSearch(input.value);
     } else {
-        renderGlobalSearchMessage("Start typing to search all admin entities.");
+        renderGlobalSearchMessage("Start typing to search all entities.");
     }
 }
 

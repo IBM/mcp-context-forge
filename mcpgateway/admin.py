@@ -898,6 +898,10 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     ``_cached_team_ids`` key so the expensive lookup is executed only once
     per request instead of once per entity type.
 
+    If the auth context includes explicit ``token_teams`` (API tokens), the
+    returned IDs are derived from that token scope so search endpoints cannot
+    return entities outside the token's team restrictions.
+
     Args:
         user (dict): Authenticated user context.
         db (Session): Database session.
@@ -908,6 +912,20 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     cached = user.get("_cached_team_ids")
     if cached is not None:
         return cached
+
+    if "token_teams" in user:
+        token_teams = user.get("token_teams")
+        if token_teams is not None:
+            team_ids: list[str] = []
+            for team in token_teams:
+                if isinstance(team, dict):
+                    team_id = team.get("id")
+                    if isinstance(team_id, str) and team_id:
+                        team_ids.append(team_id)
+                elif isinstance(team, str) and team:
+                    team_ids.append(team)
+            return team_ids
+
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
