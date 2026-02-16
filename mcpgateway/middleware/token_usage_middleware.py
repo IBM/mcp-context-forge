@@ -174,6 +174,5 @@ class TokenUsageMiddleware:
                     blocked=False,
                     block_reason=None,
                 )
-                db.commit()
         except Exception as e:
             logger.debug(f"Failed to log token usage: {e}")

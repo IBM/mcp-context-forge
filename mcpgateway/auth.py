@@ -572,6 +572,8 @@ def _update_api_token_last_used_sync(jti: str) -> None:
     # Fallback: In-memory cache (simple dict with threading.Lock for thread-safety)
     # Note: This is per-process and won't work in multi-worker deployments
     # but provides basic rate-limiting when Redis is unavailable
+    max_cache_size = 1024  # Prevent unbounded growth
+
     if not hasattr(_update_api_token_last_used_sync, "_cache"):
         _update_api_token_last_used_sync._cache = {}  # type: ignore[attr-defined]  # pylint: disable=protected-access
         _update_api_token_last_used_sync._cache_lock = threading.Lock()  # type: ignore[attr-defined]  # pylint: disable=protected-access
@@ -598,7 +600,13 @@ def _update_api_token_last_used_sync(jti: str) -> None:
             db.commit()
             # Update in-memory cache (with lock for thread-safety)
             with _update_api_token_last_used_sync._cache_lock:  # type: ignore[attr-defined]  # pylint: disable=protected-access
-                _update_api_token_last_used_sync._cache[jti] = time.time()  # type: ignore[attr-defined]  # pylint: disable=protected-access
+                cache = _update_api_token_last_used_sync._cache  # type: ignore[attr-defined]  # pylint: disable=protected-access
+                if len(cache) >= max_cache_size:
+                    # Evict oldest entries (by timestamp value)
+                    sorted_keys = sorted(cache, key=cache.get)  # type: ignore[arg-type]
+                    for k in sorted_keys[: len(cache) // 2]:
+                        del cache[k]
+                cache[jti] = time.time()
 
 
 def _is_api_token_jti_sync(jti: str) -> bool:
@@ -814,6 +822,7 @@ async def get_current_user(
             request.state.auth_method = "api_token"
             jti = payload.get("jti")
             if jti:
+                request.state.jti = jti
                 try:
                     await asyncio.to_thread(_update_api_token_last_used_sync, jti)
                 except Exception as e:
