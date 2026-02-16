@@ -11,7 +11,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
 import logging
-import os
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -30,7 +29,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class Subject:
     """Represents the entity requesting access (user, service, token)."""
-    
+
     email: str
     roles: List[str] = field(default_factory=list)
     teams: List[str] = field(default_factory=list)
@@ -42,9 +41,9 @@ class Subject:
 @dataclass
 class Resource:
     """Represents the thing being accessed."""
-    
+
     type: str  # renamed from resource_type
-    id: Optional[str] = None  # renamed from resource_id  
+    id: Optional[str] = None  # renamed from resource_id
     owner: Optional[str] = None
     team_id: Optional[str] = None
     visibility: Optional[str] = None
@@ -54,14 +53,15 @@ class Resource:
 @dataclass
 class Context:
     """Ambient request context."""
-    
+
     ip_address: Optional[str] = None
     user_agent: Optional[str] = None
     request_id: Optional[str] = None
     timestamp: Optional[datetime] = None
     attributes: Dict[str, Any] = field(default_factory=dict)
-    
+
     def __post_init__(self):
+        """Initialize default timestamp if not provided."""
         if self.timestamp is None:
             self.timestamp = datetime.now(timezone.utc)
 
@@ -163,6 +163,7 @@ class PolicyEngine:
             permission: What permission they need (e.g., "tools.read")
             resource: Optional resource being accessed
             context: Optional request context
+            allow_admin_bypass: If False, admins must have explicit permission (default: True)
 
         Returns:
             AccessDecision with allowed=True/False and reason
@@ -241,14 +242,14 @@ class PolicyEngine:
         - No decorator passes resource_type parameter
         - Resource is always None in check_access()
         - This method never executes
-        
+
         Phase 2 Activation Plan:
         When decorators pass resource_type (e.g., @require_permission_v2("tools.read", resource_type="tool")):
         1. Decorator will extract resource_id from function parameters (tool_id, server_id, etc.)
         2. Create Resource object with type and id
         3. This method will check owner/team/visibility rules
         4. Enable fine-grained per-resource permissions
-        
+
         Example future usage:
             @require_permission_v2("tools.read", resource_type="tool")
             async def get_tool(tool_id: str, ...):
@@ -328,7 +329,7 @@ class PolicyEngine:
             decision.resource_type,
             decision.resource_id,
             decision.allowed,
-            decision.reason
+            decision.reason,
         )
 
 
@@ -356,6 +357,7 @@ def require_permission_v2(permission: str, resource_type: Optional[str] = None, 
         async def list_servers(...):
             ...
     """
+
     def decorator(func):
         """Decorate function with permission enforcement.
 
@@ -419,12 +421,7 @@ def require_permission_v2(permission: str, resource_type: Optional[str] = None, 
             resource = Resource(type=resource_type or permission.split(".")[0], id=None) if resource_type else None  # Not known at decorator time
 
             # Check access (pass allow_admin_bypass to check_access)
-            decision = await policy_engine.check_access(
-                subject=subject, 
-                permission=permission, 
-                resource=resource,
-                allow_admin_bypass=allow_admin_bypass
-            )
+            decision = await policy_engine.check_access(subject=subject, permission=permission, resource=resource, allow_admin_bypass=allow_admin_bypass)
 
             if not decision.allowed:
                 raise HTTPException(status_code=403, detail=f"Access denied: {decision.reason}")
