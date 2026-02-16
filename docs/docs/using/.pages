@@ -2,6 +2,7 @@ nav:
   - index.md
   - mcpgateway-wrapper.md
   - mcpgateway-translate.md
+  - code-execution-virtual-server.md
   - reverse-proxy.md
   - multi-auth-headers.md
   - query-param-auth.md

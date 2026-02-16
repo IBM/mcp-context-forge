@@ -4,6 +4,7 @@ nav:
   - Performance Architecture: performance-architecture.md
   - Security Features: security-features.md
   - Plugin Framework: plugins.md
+  - Code Execution and Virtual Tool Filesystem: code-execution-virtual-tool-filesystem.md
   - Export-Import Architecture: export-import-architecture.md
   - Multitenancy: multitenancy.md
   - OAuth: oauth-design.md

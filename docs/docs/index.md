@@ -34,11 +34,18 @@ It currently supports:
 * **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
 * **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
+* **Secure Code Execution (MCP Code Mode)** with `code_execution` servers, policy-controlled sandboxing, and a virtual tool filesystem
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
 * Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
+
+Learn more:
+
+- [Architecture: Secure Code Execution and Virtual Tool Filesystem](architecture/code-execution-virtual-tool-filesystem.md)
+- [Using: Code Execution Virtual Servers](using/code-execution-virtual-server.md)
+- [Configuration: Code Execution (MCP Code Mode)](manage/configuration.md#code-execution-mcp-code-mode)
 
 ![MCP Gateway Architecture](images/mcpgateway.svg)
 

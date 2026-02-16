@@ -55,6 +55,47 @@ adding auth, caching, federation, and an HTMX-powered Admin UI.
 
 ---
 
+## 🧪 Secure Code Execution (MCP Code Mode)
+
+???+ success "Sandboxed execution with virtual filesystem"
+
+    * First-class `code_execution` server type
+    * Synthetic meta-tools: `shell_exec` and `fs_browse`
+    * Virtual paths for execution sessions: `/tools`, `/skills`, `/scratch`, `/results`
+    * Policy controls: runtime, CPU/memory/time/disk/network/rate limits
+    * Optional tokenization policy and skill approval workflow
+
+??? info "Policy examples"
+
+    - `mount_rules` controls which tools are mounted into `/tools`
+    - `sandbox_policy` controls runtime + guardrails
+    - `skills_scope` constrains reusable skill visibility (`team:<id>`, `user:<email>`)
+
+??? code "RPC example (`shell_exec`)"
+
+    ```bash
+    curl -s -X POST http://localhost:4444/rpc \
+      -H "Authorization: Bearer $TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "jsonrpc":"2.0",
+        "id":1,
+        "method":"tools/call",
+        "params":{
+          "server_id":"<SERVER_ID>",
+          "name":"shell_exec",
+          "arguments":{
+            "language":"python",
+            "code":"print(\"hello from sandbox\")"
+          }
+        }
+      }' | jq
+    ```
+
+See [Architecture](../architecture/code-execution-virtual-tool-filesystem.md), [Usage](../using/code-execution-virtual-server.md), and [Configuration](../manage/configuration.md#code-execution-mcp-code-mode).
+
+---
+
 ## 🛠 Tool & Server Registry
 
 ??? success "What you can register"

@@ -17,6 +17,7 @@ This section focuses on how to use MCP Gateway effectively as a developer, integ
 
 | Page | Description |
 |------|-------------|
+| [Code Execution Virtual Servers](code-execution-virtual-server.md) | Configure and use secure `code_execution` servers with `shell_exec` and `fs_browse` |
 | [Tool Annotations](tool-annotations.md) | Configure behavior hints for tools (safety, idempotency, etc.) |
 | [mcpgateway-wrapper](mcpgateway-wrapper.md) | Wrap CLI tools or subprocesses to expose them via SSE/stdio |
 | [Clients](clients/index.md) | Compatible UIs and developer tools |
