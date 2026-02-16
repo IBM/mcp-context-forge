@@ -1,0 +1,54 @@
+// {{ cookiecutter.project_name }} - Minimal Go MCP server (stdio)
+// SPDX-License-Identifier: {{ cookiecutter.license }}
+
+package main
+
+import (
+    "encoding/json"
+    "log"
+    "os"
+    "time"
+
+    "github.com/mark3labs/mcp-go/mcp"
+    "github.com/mark3labs/mcp-go/server"
+)
+
+const (
+    appName    = "{{ cookiecutter.bin_name }}"
+    appVersion = "{{ cookiecutter.version }}"
+)
+
+// handleGetSystemTime returns current time in RFC3339 with optional timezone
+func handleGetSystemTime(_ mcp.CallToolRequest) (mcp.ToolResult, error) {
+    now := time.Now().UTC().Format(time.RFC3339)
+    payload := map[string]string{"time": now, "timezone": "UTC"}
+    b, _ := json.Marshal(payload)
+    return mcp.StringResult(string(b)), nil
+}
+
+func main() {
+    logger := log.New(os.Stderr, "", log.LstdFlags)
+    logger.Printf("starting %s %s (stdio)", appName, appVersion)
+
+    // Create server and register a single tool
+    s := server.NewMCPServer(
+        appName,
+        appVersion,
+        server.WithToolCapabilities(false),
+        server.WithLogging(),
+        server.WithRecovery(),
+    )
+
+    // Simple time tool
+    getTime := mcp.NewTool("get_system_time",
+        mcp.WithDescription("Get current time in UTC (RFC3339)"),
+        mcp.WithTitleAnnotation("Get System Time"),
+        mcp.WithReadOnlyHintAnnotation(true),
+    )
+    s.AddTool(getTime, handleGetSystemTime)
+
+    // Serve over stdio (MCP)
+    if err := server.ServeStdio(s); err != nil {
+        logger.Fatalf("stdio server error: %v", err)
+    }
+}

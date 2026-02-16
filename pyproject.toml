@@ -256,9 +256,9 @@ profiling = [
     "py-spy>=0.4.1",
 ]
 
-# Plugin templating tools (optional) - copier pulls jinja2-ansible-filters which is GPL licensed
+# Plugin templating tools (optional)
 templating = [
-    "copier>=9.11.3",
+    "cookiecutter>=2.6.0",
 ]
 
 # Agent Lifecycle Toolkit(optional)
