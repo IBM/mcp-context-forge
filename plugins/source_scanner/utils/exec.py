@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./plugins/source_scanner/utils/exec.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Xinyi, Ayo
 
@@ -33,12 +33,14 @@ class ExecResult:
         stderr: str,
         timed_out: bool = False,
     ) -> None:
+        """Create an execution result container for a completed command."""
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
         self.timed_out = timed_out
 
     def __repr__(self) -> str:
+        """Return a summary string of the execution result."""
         return f"ExecResult(returncode={self.returncode}, " f"timed_out={self.timed_out}, " f"stdout_len={len(self.stdout)}, " f"stderr_len={len(self.stderr)})"
 
 

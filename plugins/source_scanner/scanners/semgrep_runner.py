@@ -3,7 +3,7 @@
 """Semgrep scanner runner for Source Scanner.
 
 Location: ./plugins/source_scanner/scanners/semgrep_runner.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Agnetha
 
@@ -13,48 +13,63 @@ Parses SARIF output into normalized Finding objects.
 
 # Standard
 import json
-import subprocess
+import logging
+import os
 from typing import Any, Literal
 
 # First-Party
+from plugins.source_scanner.errors import ScannerError, ScannerTimeoutError
 from plugins.source_scanner.types import Finding
+from plugins.source_scanner.utils.exec import run_command
+
+logger = logging.getLogger(__name__)
 
 
 class SemgrepRunner:
+    """Runs Semgrep scans and parses results into Finding objects."""
+
     def __init__(self, config: dict[str, Any]):
+        """Initialize the Semgrep runner from configuration values."""
         self.config = config
         self.enabled = config.get("enabled", True)
         self.rulesets = config.get("rulesets", ["p/security-audit"])
         self.extra_args = config.get("extra_args", [])
         self.timeout = config.get("timeout", 300)
 
-    def run(self, repo_url: str, temp_folder: str) -> list[Finding]:
-        try:
-            # Clone repository
-            _clone_repo(repo_url, temp_folder)
+    async def run(self, repo_url: str, timeout_s: int) -> list[Finding]:
+        """Run Semgrep against the checked-out repository.
 
-            # Build and run semgrep command
-            command = self.build_command(temp_folder)
-            result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout)
+        Args:
+            repo_url: Repository URL being scanned.
+            temp_folder: Path to the temporary workspace.
 
-            # Parse output even if semgrep finds issues (return code 1 is normal)
-            if result.returncode not in (0, 1):
-                raise Exception(f"Semgrep failed: {result.stderr}")
+        Returns:
+            List of findings produced by Semgrep.
+        """
+        # Build and run semgrep command
+        command = self.build_command(repo_url)
+        # result = subprocess.run(command, capture_output=True, text=True, timeout=self.timeout)
+        result = await run_command(command, cwd=None, env=os.environ.copy(), timeout_seconds=timeout_s)
+        # Check for timeout
+        if result.timed_out:
+            raise ScannerTimeoutError(f"Semgrep scan exceeded {timeout_s}s timeout")
 
-            data: dict[str, Any] = json.loads(result.stdout) if result.stdout else {}
-            findings = self.parse_sarif_output(data)
+        # Parse output even if semgrep finds issues (return code 1 is normal)
+        if result.returncode not in (0, 1):
+            raise ScannerError(f"Semgrep failed: {result.stderr}")
 
-            # Print message based on findings
-            if not findings:
-                print("No findings detected.")
-            else:
-                print(f"Found {len(findings)} issue(s):")
-                for f in findings:
-                    print(f"  [{f.severity}] {f.rule_id} at {f.file_path}:{f.line}")
+        data: dict[str, Any] = json.loads(result.stdout) if result.stdout else {}
+        findings = self.parse_sarif_output(data)
 
-            return findings
-        finally:
-            self.delete_temp_repo(temp_folder)
+        # Print message based on findings
+        if not findings:
+            logger.info("No findings detected.")
+        else:
+            logger.info(f"Found {len(findings)} issue(s):")
+            for f in findings:
+                logger.info(f"  [{f.severity}] {f.rule_id} at {f.file_path}:{f.line}")
+
+        return findings
 
     def build_command(self, repo_path: str) -> list[str]:
         """Build semgrep command with configured rulesets and arguments."""
@@ -92,11 +107,14 @@ class SemgrepRunner:
         results = sarif_data.get("results", [])
 
         for result in results:
+            # Extract message with multiple fallbacks to ensure it's never None
+            message = result.get("extra", {}).get("message") or result.get("message") or f"{result.get('check_id', 'unknown')} detected"
+
             finding = Finding(
                 scanner="semgrep",
                 severity=_map_severity(result.get("severity", "INFO")),
                 rule_id=result.get("check_id", "unknown"),
-                message=result.get("extra", {}).get("message", result.get("message", "")),
+                message=message,
                 file_path=result.get("path", None),
                 line=result.get("start", {}).get("line", None),
                 column=result.get("start", {}).get("col", None),
@@ -106,17 +124,6 @@ class SemgrepRunner:
             findings.append(finding)
 
         return findings
-
-    def delete_temp_repo(self, temp_folder: str) -> None:
-        try:
-            subprocess.run(["rm", "-rf", temp_folder], check=True)
-        except Exception as e:
-            print(f"Warning: Failed to delete temp folder {temp_folder}: {e}")
-
-
-def _clone_repo(repo_url: str, temp_folder: str) -> None:
-    """Clone repository to temporary folder."""
-    subprocess.run(["git", "clone", "--depth", "1", repo_url, temp_folder], check=True)
 
 
 Severity = Literal["ERROR", "WARNING", "INFO"]

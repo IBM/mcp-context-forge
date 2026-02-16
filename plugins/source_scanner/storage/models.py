@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./plugins/source_scanner/storage/models.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Arnav
 
@@ -48,6 +48,7 @@ class ScanRecord(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a concise string representation of the scan record."""
         commit_val = getattr(self, "commit_sha", None)
         commit_display: str | None = commit_val[:8] if commit_val else None
         return f"<ScanRecord(id={self.id}, repo={self.repo_url}, commit={commit_display})>"
@@ -80,4 +81,5 @@ class FindingRecord(Base):
     )
 
     def __repr__(self) -> str:
+        """Return a concise string representation of the finding."""
         return f"<FindingRecord(id={self.id}, scanner={self.scanner}, rule={self.rule_id}, severity={self.severity})>"
