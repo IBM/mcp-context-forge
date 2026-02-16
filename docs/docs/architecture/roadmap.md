@@ -297,7 +297,7 @@
     - ⏳ [**#1340**](https://github.com/IBM/mcp-context-forge/issues/1340) - Proposal: Split Monorepo into Separate Repositories in contextforge-org
     - ⏳ [**#1688**](https://github.com/IBM/mcp-context-forge/issues/1688) - Deprecate MySQL/MariaDB support - Focus on SQLite and PostgreSQL
     - ⏳ [**#2139**](https://github.com/IBM/mcp-context-forge/issues/2139) - Documentation rationalization and Diataxis framework adoption
-    - ⏳ [**#2361**](https://github.com/IBM/mcp-context-forge/issues/2361) - Replace copier with cookiecutter for template scaffolding
+    - ✅ [**#2361**](https://github.com/IBM/mcp-context-forge/issues/2361) - Replace copier with cookiecutter for template scaffolding
     - ⏳ [**#2383**](https://github.com/IBM/mcp-context-forge/issues/2383) - Evaluate and select additional CI/CD quality tools
 
 ???+ info "📚 Documentation - Remaining (1)"

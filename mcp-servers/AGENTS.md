@@ -34,7 +34,7 @@ mcp-servers/
 │   ├── synthetic_data_server/  # Test data generation
 │   ├── url_to_markdown_server/ # URL to markdown conversion
 │   └── xlsx_server/            # Excel/spreadsheet handling
-├── templates/                  # Copier scaffolding templates
+├── templates/                  # Cookiecutter scaffolding templates
 ├── scaffold-go-server.sh       # Go server scaffolding script
 └── scaffold-python-server.sh   # Python server scaffolding script
 ```
