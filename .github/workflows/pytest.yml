@@ -67,6 +67,45 @@ jobs:
           python-version: ${{ matrix.python }}
 
       # -----------------------------------------------------------
+      # 2.5  Setup Rust toolchain for Rust plugins
+      # -----------------------------------------------------------
+      - name: 🦀  Install Rust stable
+        run: rustup default stable
+
+      - name: 📦  Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: 📦  Cache Cargo index
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: 📦  Cache Cargo build
+        uses: actions/cache@v4
+        with:
+          path: plugins_rust/*/target
+          key: ${{ runner.os }}-cargo-build-${{ hashFiles('plugins_rust/*/Cargo.lock') }}
+
+      - name: 🔧  Install maturin
+        run: uv tool install maturin
+
+      - name: 🔨  Build Rust plugins
+        run: |
+          # Build all Rust plugins that have Cargo.toml
+          for plugin_dir in plugins_rust/*/; do
+            if [ -f "${plugin_dir}Cargo.toml" ]; then
+              echo "Building $(basename $plugin_dir)..."
+              cd "$plugin_dir"
+              maturin develop --release
+              cd ../..
+            fi
+          done
+
+      # -----------------------------------------------------------
       # 3️⃣  Run the tests with coverage (fail under 95% coverage)
       # -----------------------------------------------------------
       - name: 🧪  Run pytest
@@ -79,6 +118,8 @@ jobs:
             --cov-report=term \
             --cov-branch \
             --cov-fail-under=95
+        env:
+          REQUIRE_RUST_PLUGINS: "1"
 
       # -----------------------------------------------------------
       # 3.5  Diff-cover: enforce 95% coverage on changed lines (PRs only)

@@ -11,10 +11,10 @@ description = "Rust acceleration for encoded exfiltration detection plugin"
 
 [lib]
 name = "encoded_exfil_detection"
-crate-type = ["cdylib"]
+crate-type = ["rlib"]
 
 [dependencies]
-pyo3 = { version = "0.28", features = ["abi3-py311", "extension-module"] }
+pyo3 = { version = "0.28", features = ["abi3-py311"] }
 regex = "1.12"
 base64 = "0.22"
 

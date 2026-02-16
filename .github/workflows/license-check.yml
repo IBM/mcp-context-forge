@@ -31,7 +31,8 @@ jobs:
       - name: Install go-licenses
         run: go install github.com/google/go-licenses@latest
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust stable
+        run: rustup default stable
 
       - name: Install cargo-license
         run: cargo install cargo-license
