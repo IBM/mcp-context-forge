@@ -1,8 +1,8 @@
 import { getCatalogUrl } from "./configExport.js";
 import { initGatewaySelect } from "./gateway.js";
-import { openModal } from "./modals";
-import { initPromptSelect } from "./prompts";
-import { initResourceSelect } from "./resources";
+import { openModal } from "./modals.js";
+import { initPromptSelect } from "./prompts.js";
+import { initResourceSelect } from "./resources.js";
 import { validateInputName, validateUrl } from "./security.js";
 import {
   safeGetElement,
@@ -11,7 +11,7 @@ import {
   handleFetchError,
   showErrorMessage,
   decodeHtml,
-} from "./utils";
+} from "./utils.js";
 
 /**
  * SECURE: View Server function

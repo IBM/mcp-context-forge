@@ -1,7 +1,7 @@
 import { getSelectedGatewayIds } from "./gateway.js";
 import { openModal } from "./modals.js";
 import { validateInputName } from "./security.js";
-import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, parseUriTemplate, safeGetElement, showErrorMessage } from "./utils";
+import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, parseUriTemplate, safeGetElement, showErrorMessage } from "./utils.js";
 
 export const testResource = async function (resourceId) {
   try {

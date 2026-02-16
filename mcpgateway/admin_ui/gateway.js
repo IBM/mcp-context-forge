@@ -1,11 +1,11 @@
 import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
 import { MASKED_AUTH_VALUE } from "./constants.js";
-import { closeModal, openModal } from "./modals";
-import { initPromptSelect } from "./prompts";
-import { initResourceSelect } from "./resources";
+import { closeModal, openModal } from "./modals.js";
+import { initPromptSelect } from "./prompts.js";
+import { initResourceSelect } from "./resources.js";
 import { validateInputName, validateJson, validateUrl } from "./security.js";
-import { initToolSelect } from "./tools";
-import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+import { initToolSelect } from "./tools.js";
+import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils.js";
 
 
 /**

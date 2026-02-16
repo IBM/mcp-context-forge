@@ -1,7 +1,7 @@
 import { AppState } from "./appState.js";
 import { updateEditToolRequestTypes } from "./formFieldHandlers.js";
 import { getSelectedGatewayIds } from "./gateway.js";
-import { closeModal, openModal } from "./modals";
+import { closeModal, openModal } from "./modals.js";
 import { 
   escapeHtml, 
   safeSetInnerHTML, 
@@ -20,7 +20,7 @@ import {
   showErrorMessage, 
   showSuccessMessage,
   updateEditToolUrl, 
-} from "./utils";
+} from "./utils.js";
 
 // ===================================================================
 // ENHANCED TOOL VIEWING with Secure Display
