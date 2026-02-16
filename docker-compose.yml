@@ -54,6 +54,8 @@ volumes:                # Named volumes survive podman-compose down/up
   tempodata:
   locust_token:
   keycloakdata:
+  ldapdata:
+  ldapslapd:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -270,6 +272,24 @@ services:
       - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
       - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
+      # ═══════════════════════════════════════════════════════════════════════════
+      # LDAP Configuration (default OFF; enabled by docker-compose.ldap.yml)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - LDAP_ENABLED=${LDAP_ENABLED:-false}
+      - LDAP_URI=${LDAP_URI:-ldap://ldap:389}
+      - LDAP_BASE_DN=${LDAP_BASE_DN:-dc=example,dc=org}
+      - LDAP_BIND_DN=${LDAP_BIND_DN:-cn=admin,dc=example,dc=org}
+      - LDAP_BIND_PASSWORD=${LDAP_BIND_PASSWORD:-admin}
+      - LDAP_USER_SEARCH_BASE=${LDAP_USER_SEARCH_BASE:-ou=Users}
+      - LDAP_USER_SEARCH_FILTER=${LDAP_USER_SEARCH_FILTER:-(uid={username})}
+      - LDAP_GROUP_SEARCH_BASE=${LDAP_GROUP_SEARCH_BASE:-ou=Groups}
+      - LDAP_GROUP_SEARCH_FILTER=${LDAP_GROUP_SEARCH_FILTER:-(objectClass=groupOfNames)}
+      - LDAP_AUTO_CREATE_USERS=${LDAP_AUTO_CREATE_USERS:-true}
+      - LDAP_AUTO_CREATE_TEAMS=${LDAP_AUTO_CREATE_TEAMS:-true}
+      - LDAP_ROLE_MAPPINGS=${LDAP_ROLE_MAPPINGS:-{}}
+      - LDAP_DEFAULT_ROLE=${LDAP_DEFAULT_ROLE:-viewer}
+      - LDAP_SYNC_ENABLED=${LDAP_SYNC_ENABLED:-false}
+      - LDAP_SYNC_INTERVAL_MINUTES=${LDAP_SYNC_INTERVAL_MINUTES:-60}
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
@@ -658,6 +678,61 @@ services:
         reservations:
           cpus: '1'
           memory: 1G
+
+  # ──────────────────────────────────────────────────────────────────────
+  # OpenLDAP - Local LDAP server for LDAP auth development/testing
+  # LDAP: ldap://localhost:389, admin DN: cn=admin,dc=example,dc=org / admin
+  # Usage: docker compose -f docker-compose.yml -f docker-compose.ldap.yml --profile ldap up -d
+  # ──────────────────────────────────────────────────────────────────────
+  ldap:
+    image: osixia/openldap:1.5.0
+    container_name: ldap
+    restart: unless-stopped
+    profiles: ["ldap"]
+    networks: [mcpnet]
+    ports:
+      - "389:389"    # LDAP
+      - "636:636"    # LDAPS (self-signed)
+    environment:
+      LDAP_ORGANISATION: "Example Corp"
+      LDAP_DOMAIN: "example.org"
+      LDAP_ADMIN_PASSWORD: "admin"
+      LDAP_CONFIG_PASSWORD: "config"
+      LDAP_READONLY_USER: "false"
+      LDAP_TLS_VERIFY_CLIENT: "never"
+    volumes:
+      - ldapdata:/var/lib/ldap
+      - ldapslapd:/etc/ldap/slapd.d
+    healthcheck:
+      test: ["CMD", "ldapsearch", "-x", "-H", "ldap://localhost:389", "-b", "dc=example,dc=org", "-D", "cn=admin,dc=example,dc=org", "-w", "admin", "(objectClass=organization)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  phpldapadmin:
+    image: osixia/phpldapadmin:0.9.0
+    restart: unless-stopped
+    profiles: ["ldap"]
+    networks: [mcpnet]
+    ports:
+      - "8380:80"
+    environment:
+      PHPLDAPADMIN_LDAP_HOSTS: "ldap"
+      PHPLDAPADMIN_HTTPS: "false"
+    depends_on:
+      ldap:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
 
 ###############################################################################
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
