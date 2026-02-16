@@ -2221,6 +2221,30 @@ class A2AAgentMetric(Base):
     a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="metrics")
 
 
+class A2ATask(Base):
+    """Persisted A2A task state snapshots returned by upstream agents."""
+
+    __tablename__ = "a2a_tasks"
+    __table_args__ = (
+        UniqueConstraint("a2a_agent_id", "task_id", name="uq_a2a_tasks_agent_task"),
+        Index("ix_a2a_tasks_state_updated", "state", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    a2a_agent_id: Mapped[str] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="CASCADE"), nullable=False, index=True)
+    task_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    context_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    state: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
+    payload: Mapped[Dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    latest_message: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    a2a_agent: Mapped["A2AAgent"] = relationship("A2AAgent", back_populates="tasks")
+
+
 # ===================================
 # Metrics Hourly Rollup Tables
 # These tables store pre-aggregated hourly summaries for efficient historical queries.
@@ -4548,7 +4572,7 @@ class A2AAgent(Base):
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text)
     endpoint_url: Mapped[str] = mapped_column(String(767), nullable=False)
-    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="generic")  # e.g., "openai", "anthropic", "custom"
+    agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="a2a-jsonrpc")
     protocol_version: Mapped[str] = mapped_column(String(10), nullable=False, default="1.0")
     capabilities: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)
     # Configuration
@@ -4607,6 +4631,7 @@ class A2AAgent(Base):
     servers: Mapped[List["Server"]] = relationship("Server", secondary=server_a2a_association, back_populates="a2a_agents")
     tool: Mapped[Optional["Tool"]] = relationship("Tool", foreign_keys=[tool_id])
     metrics: Mapped[List["A2AAgentMetric"]] = relationship("A2AAgentMetric", back_populates="a2a_agent", cascade="all, delete-orphan")
+    tasks: Mapped[List["A2ATask"]] = relationship("A2ATask", back_populates="a2a_agent", cascade="all, delete-orphan")
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "slug", name="uq_team_owner_slug_a2a_agent"),
         Index("idx_a2a_agents_created_at_id", "created_at", "id"),

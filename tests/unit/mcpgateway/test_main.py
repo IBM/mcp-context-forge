@@ -1099,8 +1099,7 @@ class TestResourceEndpoints:
     def test_subscribe_resource_events(self, mock_subscribe, test_client, auth_headers):
         """Test subscribing to resource change events via SSE."""
         mock_subscribe.return_value = iter(["data: test\n\n"])
-        resource_id = MOCK_RESOURCE_READ["id"]
-        response = test_client.post(f"/resources/subscribe", headers=auth_headers)
+        response = test_client.post("/resources/subscribe", headers=auth_headers)
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/event-stream; charset=utf-8"
 
@@ -2429,6 +2428,46 @@ class TestA2AAgentEndpoints:
         response = test_client.delete("/a2a/agent-1", headers=auth_headers)
         assert response.status_code == 200
         mock_service.delete_agent.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_agent_card(self, mock_service, test_client, auth_headers):
+        """Test fetching an upstream Agent Card."""
+        mock_service.get_agent_card = AsyncMock(return_value={"name": "agent-1", "url": "https://agent.example.com"})
+        response = test_client.get("/a2a/agent-1/card", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["name"] == "agent-1"
+        mock_service.get_agent_card.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_set_a2a_task_push_notification_config(self, mock_service, test_client, auth_headers):
+        """Test creating/updating task push-notification config."""
+        mock_service.set_task_push_notification_config = AsyncMock(return_value={"name": "tasks/t1/pushNotificationConfigs/c1"})
+        response = test_client.post(
+            "/a2a/agent-1/tasks/t1/pushNotificationConfigs",
+            json={"configId": "c1", "config": {"pushNotificationConfig": {"id": "c1", "url": "https://webhook.example.com"}}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["name"] == "tasks/t1/pushNotificationConfigs/c1"
+        mock_service.set_task_push_notification_config.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_list_get_delete_a2a_task_push_notification_configs(self, mock_service, test_client, auth_headers):
+        """Test list/get/delete task push-notification config proxy routes."""
+        mock_service.list_task_push_notification_configs = AsyncMock(return_value={"configs": [{"name": "tasks/t1/pushNotificationConfigs/c1"}]})
+        mock_service.get_task_push_notification_config = AsyncMock(return_value={"name": "tasks/t1/pushNotificationConfigs/c1"})
+        mock_service.delete_task_push_notification_config = AsyncMock(return_value={})
+
+        list_response = test_client.get("/a2a/agent-1/tasks/t1/pushNotificationConfigs?page_size=10&page_token=start", headers=auth_headers)
+        get_response = test_client.get("/a2a/agent-1/tasks/t1/pushNotificationConfigs/c1", headers=auth_headers)
+        delete_response = test_client.delete("/a2a/agent-1/tasks/t1/pushNotificationConfigs/c1", headers=auth_headers)
+
+        assert list_response.status_code == 200
+        assert get_response.status_code == 200
+        assert delete_response.status_code == 200
+        mock_service.list_task_push_notification_configs.assert_called_once()
+        mock_service.get_task_push_notification_config.assert_called_once()
+        mock_service.delete_task_push_notification_config.assert_called_once()
 
     @patch("mcpgateway.main.a2a_service")
     def test_invoke_a2a_agent(self, mock_service, test_client, auth_headers):

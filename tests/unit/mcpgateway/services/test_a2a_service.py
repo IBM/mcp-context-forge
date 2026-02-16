@@ -1350,6 +1350,83 @@ class TestRegisterAgentEdgeCases:
         assert added_agent.auth_query_params is None
 
 
+class TestAgentCardDiscovery:
+    """Cover Agent Card discovery helpers and extended-card auth behavior."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_discover_agent_card_merges_extended_card(self, mock_get_client, service):
+        """When base card advertises authenticated extended card, merge its capabilities."""
+
+        def _response(status_code: int, payload: dict):
+            response = MagicMock()
+            response.status_code = status_code
+            response.json = MagicMock(return_value=payload)
+            return response
+
+        async def _fake_get(url: str, headers=None):  # noqa: ANN001
+            if url.endswith("/extendedAgentCard") or url.endswith("/v1/extendedAgentCard"):
+                return _response(
+                    200,
+                    {
+                        "name": "agent",
+                        "url": "https://agent.example.com",
+                        "capabilities": {"pushNotifications": True},
+                    },
+                )
+            if url.endswith("/.well-known/agent-card.json"):
+                return _response(
+                    200,
+                    {
+                        "name": "agent",
+                        "url": "https://agent.example.com",
+                        "supportsAuthenticatedExtendedCard": True,
+                        "capabilities": {"streaming": False},
+                    },
+                )
+            return _response(404, {})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_fake_get)
+        mock_get_client.return_value = mock_client
+
+        discovered = await service._discover_agent_card("https://agent.example.com/base/path", {"Authorization": "Bearer abc"})
+        assert discovered is not None
+        assert discovered["capabilities"]["streaming"] is False
+        assert discovered["capabilities"]["pushNotifications"] is True
+
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_discover_agent_card_falls_back_to_extended_card(self, mock_get_client, service):
+        """If only extended card exists and auth is present, discovery should still succeed."""
+
+        def _response(status_code: int, payload: dict):
+            response = MagicMock()
+            response.status_code = status_code
+            response.json = MagicMock(return_value=payload)
+            return response
+
+        async def _fake_get(url: str, headers=None):  # noqa: ANN001
+            if url.endswith("/extendedAgentCard") or url.endswith("/v1/extendedAgentCard"):
+                return _response(200, {"name": "agent", "url": "https://agent.example.com"})
+            return _response(404, {})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=_fake_get)
+        mock_get_client.return_value = mock_client
+
+        discovered = await service._discover_agent_card("https://agent.example.com/base/path", {"Authorization": "Bearer abc"})
+        assert discovered is not None
+        assert discovered["name"] == "agent"
+
+    def test_build_agent_card_candidates_include_extended(self, service):
+        """Extended discovery candidates include `/extendedAgentCard` variants."""
+        candidates = service._build_agent_card_candidates("https://agent.example.com/base/path", include_extended=True)
+        assert any(candidate.endswith("/extendedAgentCard") for candidate in candidates)
+
+
 class TestListAgentsAdvanced:
     """Cover list_agents branches: user_email DB lookup, page-based, cache write, validation skip."""
 
@@ -1796,7 +1873,7 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {"method": "message/send", "params": {}})
+        await service.invoke_agent(mock_db, "ag", {"method": "message/send", "params": {}})
         headers_used = mock_client.post.call_args.kwargs["headers"]
         assert headers_used.get("X-Key") == "val"
 
@@ -1826,7 +1903,7 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {"test": "data"}, interaction_type="query")
+        await service.invoke_agent(mock_db, "ag", {"test": "data"}, interaction_type="query")
         post_data = mock_client.post.call_args.kwargs["json"]
         assert "interaction_type" in post_data
         assert post_data["protocol_version"] == "2.0"
@@ -1982,7 +2059,7 @@ class TestInvokeAgentEdgeCases:
         mock_fresh_db.return_value.__exit__.return_value = None
         mock_metrics_fn.return_value = MagicMock()
 
-        result = await service.invoke_agent(mock_db, "ag", {})
+        await service.invoke_agent(mock_db, "ag", {})
         # Verify the URL was modified with query params
         call_url = mock_client.post.call_args[0][0]
         assert "api_key=secret123" in call_url
@@ -2101,6 +2178,663 @@ class TestInvokeAgentEdgeCases:
         headers_used = mock_client.post.call_args.kwargs["headers"]
         assert headers_used.get("X-Correlation-ID") == "corr-123"
 
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_trailing_slash_does_not_switch_transport(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """Trailing slash no longer switches transport; only agent_type controls it."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="custom",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        await service.invoke_agent(mock_db, "ag", {"test": "data"}, interaction_type="query")
+        post_data = mock_client.post.call_args.kwargs["json"]
+        assert "interaction_type" in post_data
+        assert "jsonrpc" not in post_data
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_rest_mapping_includes_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """REST transport maps A2A methods to /v1 endpoints and includes A2A-Version header."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
+        mock_client.request.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/base",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="a2a-rest",
+            protocol_version="0.3",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.invoke_agent(
+            mock_db,
+            "ag",
+            {
+                "method": "message/send",
+                "params": {"message": {"parts": [{"kind": "text", "text": "hi"}]}},
+            },
+        )
+        assert result["ok"] is True
+
+        call_args = mock_client.request.call_args
+        assert call_args.args[0] == "POST"
+        assert call_args.args[1].endswith("/base/v1/message:send")
+        headers_used = call_args.kwargs["headers"]
+        assert headers_used.get("A2A-Version") == "0.3"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_rest_passthrough_does_not_include_a2a_version_header(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """rest-passthrough sends raw JSON without A2A REST headers."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/passthrough",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="rest-passthrough",
+            protocol_version="0.3",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {"query": "hi"})
+        assert result["ok"] is True
+        headers_used = mock_client.post.call_args.kwargs["headers"]
+        assert "A2A-Version" not in headers_used
+
+    @patch("mcpgateway.services.oauth_manager.OAuthManager.get_access_token", new_callable=AsyncMock)
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_oauth_sets_bearer_header(
+        self, mock_get_client, mock_fresh_db, mock_metrics_fn, mock_get_access_token, service, mock_db, monkeypatch
+    ):
+        """OAuth auth_type uses OAuthManager to set Authorization header."""
+        mock_get_access_token.return_value = "oauth-token"
+
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"ok": True}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com",
+            auth_type="oauth",
+            auth_value=None,
+            auth_query_params=None,
+            oauth_config={"grant_type": "client_credentials", "token_url": "https://oauth.example.com/token", "client_id": "id", "client_secret": "secret"},
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.invoke_agent(mock_db, "ag", {})
+        assert result["ok"] is True
+        headers_used = mock_client.post.call_args.kwargs["headers"]
+        assert headers_used.get("Authorization") == "Bearer oauth-token"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_jsonrpc_alias_uses_uuid_and_normalizes_parts(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """generic/jsonrpc aliases route to JSON-RPC with UUID id and kind-based parts."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"result": {"ok": True}}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com/custom-no-slash",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="generic",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.invoke_agent(
+            mock_db,
+            "ag",
+            {
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "parts": [{"type": "text", "text": "hi"}],
+                    }
+                },
+            },
+        )
+        assert result == {"ok": True}
+
+        request_data = mock_client.post.call_args.kwargs["json"]
+        # Ensure string UUID id instead of static numeric id.
+        assert isinstance(request_data["id"], str)
+        uuid.UUID(request_data["id"])
+        assert request_data["params"]["message"]["parts"][0]["kind"] == "text"
+        assert "type" not in request_data["params"]["message"]["parts"][0]
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_jsonrpc_error_code_mapping(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """A2A JSON-RPC errors map canonical codes to descriptive failures."""
+        mock_client = AsyncMock()
+        mock_response = MagicMock(
+            status_code=200,
+            json=MagicMock(return_value={"jsonrpc": "2.0", "id": "req-1", "error": {"code": -32001, "message": "task not found"}}),
+        )
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="https://x.com",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="jsonrpc",
+            protocol_version="1.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        with pytest.raises(A2AAgentError, match=r"TaskNotFoundError \(-32001\)"):
+            await service.invoke_agent(mock_db, "ag", {"method": "tasks/get", "params": {"id": "missing"}})
+
+
+class TestInvokeAgentGrpcTransport:
+    """Cover gRPC transport path with mocked channel/stub (no real network)."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_invoke_agent_dispatches_to_grpc(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, mock_db, monkeypatch):
+        """invoke_agent routes a2a-grpc agent_type to _invoke_a2a_grpc and does not call HTTP."""
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock()
+        mock_client.request = AsyncMock()
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1",
+            name="ag",
+            enabled=True,
+            endpoint_url="grpc://localhost:50051",
+            auth_type=None,
+            auth_value=None,
+            auth_query_params=None,
+            visibility="public",
+            team_id=None,
+            owner_email=None,
+            agent_type="grpc",
+            protocol_version="0.3.0",
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *_a, **_kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        service._invoke_a2a_grpc = AsyncMock(return_value={"ok": True})
+
+        result = await service.invoke_agent(
+            mock_db,
+            "ag",
+            {"method": "message/send", "params": {"message": {"messageId": "m1", "role": "user", "parts": [{"kind": "text", "text": "hi"}]}}},
+        )
+
+        assert result == {"ok": True}
+        service._invoke_a2a_grpc.assert_awaited_once()
+        mock_client.post.assert_not_called()
+        mock_client.request.assert_not_called()
+
+    async def test_invoke_a2a_grpc_send_message_over_insecure_channel(self, service):
+        """_invoke_a2a_grpc SendMessage builds request and uses grpc.aio.insecure_channel for grpc:// endpoints."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.SendMessage = AsyncMock(
+            return_value=a2a_pb2.SendMessageResponse(
+                msg=a2a_pb2.Message(message_id="resp-1", role=a2a_pb2.ROLE_AGENT),
+            )
+        )
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel) as mock_insecure,
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "message/send", "params": {"message": {"messageId": "m1", "role": "user", "parts": [{"kind": "text", "text": "hi"}]}}},
+                interaction_type="message_send",
+                auth_headers={"Authorization": "Bearer token"},
+                correlation_id="corr-1",
+            )
+
+        assert result["message"]["messageId"] == "resp-1"
+        mock_insecure.assert_called_once_with("localhost:50051")
+        channel.close.assert_awaited_once()
+
+        call_args = stub.SendMessage.call_args
+        sent_request = call_args.args[0]
+        sent_metadata = call_args.kwargs["metadata"]
+        assert sent_request.request.message_id == "m1"
+        assert sent_request.request.content[0].text == "hi"
+        assert ("authorization", "Bearer token") in sent_metadata
+        assert ("x-correlation-id", "corr-1") in sent_metadata
+
+    async def test_invoke_a2a_grpc_send_streaming_message_collects_events(self, service):
+        """_invoke_a2a_grpc SendStreamingMessage returns an events list."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        async def stream():
+            yield a2a_pb2.StreamResponse(msg=a2a_pb2.Message(message_id="m1"))
+            yield a2a_pb2.StreamResponse(msg=a2a_pb2.Message(message_id="m2"))
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.SendStreamingMessage = MagicMock(return_value=stream())
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "message/stream", "params": {"message": {"messageId": "m1", "role": "user", "parts": [{"kind": "text", "text": "hi"}]}}},
+                interaction_type="message_stream",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert [event["message"]["messageId"] for event in result["events"]] == ["m1", "m2"]
+
+    async def test_invoke_a2a_grpc_task_subscription_collects_events(self, service):
+        """_invoke_a2a_grpc TaskSubscription returns an events list."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        async def stream():
+            yield a2a_pb2.StreamResponse(task=a2a_pb2.Task(id="t1"))
+            yield a2a_pb2.StreamResponse(task=a2a_pb2.Task(id="t1"))
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.TaskSubscription = MagicMock(return_value=stream())
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "tasks/subscribe", "params": {"id": "t1"}},
+                interaction_type="task_subscription",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert result["events"][0]["task"]["id"] == "t1"
+
+    async def test_invoke_a2a_grpc_get_and_cancel_task(self, service):
+        """_invoke_a2a_grpc supports GetTask and CancelTask."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.GetTask = AsyncMock(return_value=a2a_pb2.Task(id="t1"))
+        stub.CancelTask = AsyncMock(return_value=a2a_pb2.Task(id="t1"))
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result_get = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "tasks/get", "params": {"id": "t1", "history_length": 2}},
+                interaction_type="get_task",
+                auth_headers={},
+                correlation_id=None,
+            )
+            result_cancel = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "tasks/cancel", "params": {"id": "t1"}},
+                interaction_type="cancel_task",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert result_get["id"] == "t1"
+        assert result_cancel["id"] == "t1"
+
+        sent_get_request = stub.GetTask.call_args.args[0]
+        assert sent_get_request.name == "tasks/t1"
+        assert sent_get_request.history_length == 2
+
+        sent_cancel_request = stub.CancelTask.call_args.args[0]
+        assert sent_cancel_request.name == "tasks/t1"
+
+    async def test_invoke_a2a_grpc_get_agent_card(self, service):
+        """_invoke_a2a_grpc supports GetAgentCard."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.GetAgentCard = AsyncMock(return_value=a2a_pb2.AgentCard(name="demo-agent", url="https://agent.example.com", protocol_version="0.3"))
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "agent/getCard", "params": {}},
+                interaction_type="agent_card",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert result["name"] == "demo-agent"
+        stub.GetAgentCard.assert_awaited_once()
+
+    async def test_invoke_a2a_grpc_create_task_push_notification_config(self, service):
+        """_invoke_a2a_grpc supports CreateTaskPushNotificationConfig."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.CreateTaskPushNotificationConfig = AsyncMock(
+            return_value=a2a_pb2.TaskPushNotificationConfig(
+                name="tasks/t1/pushNotificationConfigs/cfg-1",
+                push_notification_config=a2a_pb2.PushNotificationConfig(id="cfg-1", url="https://webhook.example.com"),
+            )
+        )
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={
+                    "method": "tasks/pushNotificationConfig/set",
+                    "params": {
+                        "id": "t1",
+                        "configId": "cfg-1",
+                        "config": {
+                            "pushNotificationConfig": {
+                                "id": "cfg-1",
+                                "url": "https://webhook.example.com",
+                            }
+                        },
+                    },
+                },
+                interaction_type="tasks_push_notification_set",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert result["name"] == "tasks/t1/pushNotificationConfigs/cfg-1"
+        sent_request = stub.CreateTaskPushNotificationConfig.call_args.args[0]
+        assert sent_request.parent == "tasks/t1"
+        assert sent_request.config_id == "cfg-1"
+
+    async def test_invoke_a2a_grpc_get_list_delete_task_push_notification_config(self, service):
+        """_invoke_a2a_grpc supports Get/List/Delete task push-notification config operations."""
+        # Third-Party
+        from google.protobuf import empty_pb2
+
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.GetTaskPushNotificationConfig = AsyncMock(
+            return_value=a2a_pb2.TaskPushNotificationConfig(name="tasks/t1/pushNotificationConfigs/cfg-1")
+        )
+        stub.ListTaskPushNotificationConfig = AsyncMock(
+            return_value=a2a_pb2.ListTaskPushNotificationConfigResponse(
+                configs=[a2a_pb2.TaskPushNotificationConfig(name="tasks/t1/pushNotificationConfigs/cfg-1")],
+                next_page_token="next-token",
+            )
+        )
+        stub.DeleteTaskPushNotificationConfig = AsyncMock(return_value=empty_pb2.Empty())
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            got = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "tasks/pushNotificationConfig/get", "params": {"id": "t1", "configId": "cfg-1"}},
+                interaction_type="tasks_push_notification_get",
+                auth_headers={},
+                correlation_id=None,
+            )
+            listed = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "tasks/pushNotificationConfig/list", "params": {"id": "t1", "page_size": 10, "page_token": "start"}},
+                interaction_type="tasks_push_notification_list",
+                auth_headers={},
+                correlation_id=None,
+            )
+            deleted = await service._invoke_a2a_grpc(
+                endpoint_url="grpc://localhost:50051",
+                parameters={"method": "tasks/pushNotificationConfig/delete", "params": {"id": "t1", "configId": "cfg-1"}},
+                interaction_type="tasks_push_notification_delete",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert got["name"] == "tasks/t1/pushNotificationConfigs/cfg-1"
+        assert listed["configs"][0]["name"] == "tasks/t1/pushNotificationConfigs/cfg-1"
+        assert listed["nextPageToken"] == "next-token"
+        assert deleted == {}
+
+        sent_list_request = stub.ListTaskPushNotificationConfig.call_args.args[0]
+        assert sent_list_request.parent == "tasks/t1"
+        assert sent_list_request.page_size == 10
+        assert sent_list_request.page_token == "start"
+
+    async def test_invoke_a2a_grpc_uses_secure_channel_for_grpcs(self, service):
+        """grpcs:// endpoints use grpc.aio.secure_channel."""
+        # First-Party
+        from mcpgateway.plugins.framework.external.grpc.proto import a2a_pb2
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        stub = MagicMock()
+        stub.SendMessage = AsyncMock(return_value=a2a_pb2.SendMessageResponse(msg=a2a_pb2.Message(message_id="m1")))
+
+        with (
+            patch("grpc.ssl_channel_credentials", return_value=MagicMock()) as mock_creds,
+            patch("grpc.aio.secure_channel", return_value=channel) as mock_secure,
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            result = await service._invoke_a2a_grpc(
+                endpoint_url="grpcs://example.com:443",
+                parameters={"method": "message/send", "params": {"message": {"messageId": "m1", "role": "user", "parts": [{"kind": "text", "text": "hi"}]}}},
+                interaction_type="message_send",
+                auth_headers={},
+                correlation_id=None,
+            )
+
+        assert result["message"]["messageId"] == "m1"
+        mock_creds.assert_called_once()
+        mock_secure.assert_called_once()
+        assert mock_secure.call_args.args[0] == "example.com:443"
+
+    async def test_invoke_a2a_grpc_maps_rpc_errors(self, service):
+        """gRPC failures are mapped to A2AAgentError with status+details."""
+        # Third-Party
+        import grpc
+
+        channel = MagicMock()
+        channel.close = AsyncMock()
+
+        class FakeRpcError(grpc.RpcError):
+            def code(self):  # noqa: D401
+                return grpc.StatusCode.UNAVAILABLE
+
+            def details(self):  # noqa: D401
+                return "connection refused"
+
+        stub = MagicMock()
+        stub.SendMessage = AsyncMock(side_effect=FakeRpcError())
+
+        with (
+            patch("grpc.aio.insecure_channel", return_value=channel),
+            patch("mcpgateway.plugins.framework.external.grpc.proto.a2a_pb2_grpc.A2AServiceStub", return_value=stub),
+        ):
+            with pytest.raises(A2AAgentError, match=r"A2A gRPC SendMessage failed \(UNAVAILABLE\): connection refused"):
+                await service._invoke_a2a_grpc(
+                    endpoint_url="grpc://localhost:50051",
+                    parameters={"method": "message/send", "params": {"message": {"messageId": "m1", "role": "user", "parts": [{"kind": "text", "text": "hi"}]}}},
+                    interaction_type="message_send",
+                    auth_headers={},
+                    correlation_id=None,
+                )
+
+        channel.close.assert_awaited_once()
+
 
 class TestConvertAgentToRead:
     """Cover convert_agent_to_read branches: not found, team lookup, metrics."""
@@ -2141,7 +2875,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated):
-            result = service.convert_agent_to_read(agent, db=mock_db)
+            service.convert_agent_to_read(agent, db=mock_db)
         service._get_team_name.assert_called_once()
 
     def test_with_metrics(self, service):
@@ -2158,7 +2892,7 @@ class TestConvertAgentToRead:
         mock_validated = MagicMock()
         mock_validated.masked.return_value = mock_validated
         with patch.object(A2AAgentRead, "model_validate", return_value=mock_validated) as mock_mv:
-            result = service.convert_agent_to_read(agent, include_metrics=True)
+            service.convert_agent_to_read(agent, include_metrics=True)
 
             # Verify model_validate was called with metrics included
             call_data = mock_mv.call_args[0][0]

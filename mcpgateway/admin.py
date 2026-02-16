@@ -396,6 +396,95 @@ def _validated_team_id_param(team_id: Optional[str] = Query(None, description="F
         raise HTTPException(status_code=400, detail="Invalid team ID") from exc
 
 
+_A2A_AGENT_TYPE_DISPLAY_LABELS: Dict[str, str] = {
+    "a2a-jsonrpc": "A2A Protocol (JSON-RPC 2.0)",
+    "a2a-rest": "A2A Protocol (REST)",
+    "a2a-grpc": "A2A Protocol (gRPC)",
+    "rest-passthrough": "Simple REST (Passthrough)",
+    "custom": "ContextForge Custom Format",
+}
+
+_A2A_AGENT_TYPE_ALIASES: Dict[str, str] = {
+    # Canonical variants
+    "a2a_jsonrpc": "a2a-jsonrpc",
+    "a2a_rest": "a2a-rest",
+    "a2a_grpc": "a2a-grpc",
+    "rest_passthrough": "rest-passthrough",
+    # Legacy values
+    "a2a": "a2a-jsonrpc",
+    "generic": "a2a-jsonrpc",
+    "jsonrpc": "a2a-jsonrpc",
+    "rest": "a2a-rest",
+    "grpc": "a2a-grpc",
+    "passthrough": "rest-passthrough",
+    "openai": "rest-passthrough",
+    "anthropic": "rest-passthrough",
+}
+
+
+def _canonicalize_a2a_agent_type(agent_type: Optional[str]) -> Optional[str]:
+    """Resolve raw/legacy A2A agent types to canonical admin UI values."""
+    if not agent_type:
+        return None
+    normalized = str(agent_type).strip().lower()
+    if not normalized:
+        return None
+    if normalized in _A2A_AGENT_TYPE_DISPLAY_LABELS:
+        return normalized
+    return _A2A_AGENT_TYPE_ALIASES.get(normalized)
+
+
+def _normalize_a2a_agent_type(agent_type: Optional[str], fallback: str = "custom") -> str:
+    """Normalize A2A agent type values used in admin create/edit/test flows."""
+    canonical = _canonicalize_a2a_agent_type(agent_type)
+    if canonical:
+        return canonical
+    return fallback if fallback in _A2A_AGENT_TYPE_DISPLAY_LABELS else "custom"
+
+
+def _format_a2a_agent_type_label(agent_type: Optional[str]) -> str:
+    """Return user-facing labels for canonical and legacy A2A types."""
+    canonical = _canonicalize_a2a_agent_type(agent_type)
+    if canonical:
+        return _A2A_AGENT_TYPE_DISPLAY_LABELS[canonical]
+    raw = str(agent_type).strip() if agent_type is not None else ""
+    if raw:
+        return f"{_A2A_AGENT_TYPE_DISPLAY_LABELS['custom']} (Legacy: {raw})"
+    return _A2A_AGENT_TYPE_DISPLAY_LABELS["custom"]
+
+
+def _prepare_a2a_agent_for_admin_display(agent: Dict[str, Any]) -> Dict[str, Any]:
+    """Decorate A2A records with display-safe type labels for admin templates."""
+    prepared = dict(agent)
+    raw_type = prepared.get("agentType", prepared.get("agent_type"))
+    prepared["agentTypeRaw"] = raw_type
+    prepared["agentType"] = _format_a2a_agent_type_label(raw_type if isinstance(raw_type, str) else None)
+    return prepared
+
+
+def _build_admin_a2a_test_payload(agent_type: Optional[str], user_query: str, now_ts: Optional[int] = None) -> Dict[str, Any]:
+    """Build test payloads per normalized A2A transport/protocol type."""
+    normalized_type = _normalize_a2a_agent_type(agent_type, fallback="custom")
+    timestamp = int(now_ts if now_ts is not None else time.time())
+    message = {
+        "kind": "message",
+        "messageId": f"admin-test-{timestamp}",
+        "role": "user",
+        "parts": [{"kind": "text", "text": user_query}],
+    }
+
+    if normalized_type == "a2a-jsonrpc":
+        return {"method": "message/send", "params": {"message": message}}
+    if normalized_type == "a2a-rest":
+        return {"message": message}
+    if normalized_type == "a2a-grpc":
+        return {"request": {"message": message}}
+    if normalized_type == "rest-passthrough":
+        return {"query": user_query, "test": True, "timestamp": timestamp}
+
+    return {"query": user_query, "message": user_query, "test": True, "timestamp": timestamp}
+
+
 def get_client_ip(request: Request) -> str:
     """Extract client IP address from request.
 
@@ -3252,6 +3341,7 @@ async def admin_ui(
         )
         a2a_agents = [agent.model_dump(by_alias=True) for agent in a2a_agents_raw]
         a2a_agents = _to_dict_and_filter(a2a_agents) if isinstance(a2a_agents, (list, tuple)) else a2a_agents
+        a2a_agents = [_prepare_a2a_agent_for_admin_display(agent) for agent in a2a_agents]
 
     # Load gRPC services if enabled and available
     grpc_services = []
@@ -9816,6 +9906,7 @@ async def admin_a2a_partial_html(
             LOGGER.exception(f"Failed to convert a2a agent {getattr(a, 'id', 'unknown')} ({getattr(a, 'name', 'unknown')}): {e}")
     _adjust_pagination_for_conversion_failures(pagination, failed_count)
     data = jsonable_encoder(a2a_agents_pydantic)
+    data = [_prepare_a2a_agent_for_admin_display(agent) for agent in data]
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -14076,11 +14167,17 @@ async def admin_add_a2a_agent(
         elif oauth_config and auth_type_from_form:
             LOGGER.info(f"✅ OAuth config present with explicit auth_type='{auth_type_from_form}'")
 
+        raw_agent_type = str(form.get("agent_type", "")).strip()
+        normalized_agent_type = _normalize_a2a_agent_type(
+            raw_agent_type,
+            fallback="a2a-jsonrpc" if not raw_agent_type else "custom",
+        )
+
         agent_data = A2AAgentCreate(
             name=form["name"],
             description=form.get("description"),
             endpoint_url=form["endpoint_url"],
-            agent_type=form.get("agent_type", "generic"),
+            agent_type=normalized_agent_type,
             auth_type=auth_type_from_form,
             auth_username=str(form.get("auth_username", "")),
             auth_password=str(form.get("auth_password", "")),
@@ -14198,7 +14295,11 @@ async def admin_edit_a2a_agent(
         visibility = str(form.get("visibility", "private"))
 
         # Agent Type
-        agent_type = str(form.get("agent_type", "generic"))
+        raw_agent_type = str(form.get("agent_type", "")).strip()
+        agent_type = _normalize_a2a_agent_type(
+            raw_agent_type,
+            fallback="a2a-jsonrpc" if not raw_agent_type else "custom",
+        )
 
         # Capabilities
         raw_capabilities = form.get("capabilities")
@@ -14506,24 +14607,15 @@ async def admin_test_a2a_agent(
         except Exception:
             user_query = default_message
 
-        # Prepare test parameters based on agent type and endpoint
-        if agent.agent_type in ["generic", "jsonrpc"] or agent.endpoint_url.endswith("/"):
-            # JSONRPC format for agents that expect it
-            test_params = {
-                "method": "message/send",
-                # A2A v0.3.x: message.parts use "kind" (not "type").
-                "params": {
-                    "message": {
-                        "kind": "message",
-                        "messageId": f"admin-test-{int(time.time())}",
-                        "role": "user",
-                        "parts": [{"kind": "text", "text": user_query}],
-                    }
-                },
-            }
-        else:
-            # Generic test format
-            test_params = {"query": user_query, "message": user_query, "test": True, "timestamp": int(time.time())}
+        # Prepare test parameters based on normalized agent type only.
+        # Trailing slashes no longer influence transport/protocol selection.
+        raw_agent_type = getattr(agent, "agent_type", None)
+        raw_agent_type_str = str(raw_agent_type).strip() if raw_agent_type is not None else ""
+        normalized_agent_type = _normalize_a2a_agent_type(
+            raw_agent_type_str,
+            fallback="a2a-jsonrpc" if not raw_agent_type_str else "custom",
+        )
+        test_params = _build_admin_a2a_test_payload(normalized_agent_type, user_query)
 
         # Invoke the agent
         result = await a2a_service.invoke_agent(

@@ -3480,6 +3480,380 @@ async def delete_a2a_agent(
         raise HTTPException(status_code=400, detail=str(e))
 
 
+def _get_a2a_invoke_context(request: Request, user: Any) -> tuple[str, Optional[str], Optional[List[str]]]:
+    """Build invocation context for A2A call routes."""
+    user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
+
+    # Admin bypass only when token has no team restrictions.
+    if is_admin and token_teams is None:
+        token_teams = None
+    elif token_teams is None:
+        token_teams = []
+
+    if isinstance(user, dict):
+        user_id = str(user.get("id") or user.get("sub") or user_email)
+    else:
+        user_id = str(user)
+
+    return user_id, user_email, token_teams
+
+
+@a2a_router.post("/{agent_name}/message/send", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def send_a2a_message(
+    agent_name: str,
+    request: Request,
+    message_params: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Send an A2A message using the canonical `message/send` operation."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.send_message(
+            db=db,
+            agent_name=agent_name,
+            message_params=message_params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}/message/stream")
+@require_permission("a2a.invoke")
+async def stream_a2a_message(
+    agent_name: str,
+    request: Request,
+    message_params: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> StreamingResponse:
+    """Invoke A2A `message/stream` through the service transport layer."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        event_stream = await a2a_service.stream_message(
+            db=db,
+            agent_name=agent_name,
+            message_params=message_params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        return StreamingResponse(
+            event_stream,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.get("/{agent_name}/tasks", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def list_a2a_tasks(
+    agent_name: str,
+    request: Request,
+    state: Optional[str] = Query(None, description="Optional task state filter"),
+    session_id: Optional[str] = Query(None, description="Optional task session filter"),
+    limit: Optional[int] = Query(None, description="Optional maximum tasks"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List A2A tasks from the upstream agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    params: Dict[str, Any] = {}
+    if state is not None:
+        params["state"] = state
+    if session_id is not None:
+        params["sessionId"] = session_id
+    if limit is not None:
+        params["limit"] = limit
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.list_tasks(
+            db=db,
+            agent_name=agent_name,
+            params=params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.get("/{agent_name}/tasks/{task_id}", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def get_a2a_task(
+    agent_name: str,
+    task_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Retrieve a task from an upstream A2A agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.get_task(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}/tasks/{task_id}/cancel", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def cancel_a2a_task(
+    agent_name: str,
+    task_id: str,
+    request: Request,
+    params: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Cancel an upstream A2A task."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.cancel_task(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            params=params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}/tasks/{task_id}/subscribe")
+@require_permission("a2a.invoke")
+async def subscribe_a2a_task(
+    agent_name: str,
+    task_id: str,
+    request: Request,
+    params: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> StreamingResponse:
+    """Subscribe to an upstream A2A task stream."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        event_stream = await a2a_service.subscribe_task(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            params=params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+        return StreamingResponse(
+            event_stream,
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.post("/{agent_name}/tasks/{task_id}/pushNotificationConfigs", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def set_a2a_task_push_notification_config(
+    agent_name: str,
+    task_id: str,
+    request: Request,
+    params: Dict[str, Any] = Body(default_factory=dict),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Create/update a task push-notification config on the upstream A2A agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.set_task_push_notification_config(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            params=params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.get("/{agent_name}/tasks/{task_id}/pushNotificationConfigs", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def list_a2a_task_push_notification_configs(
+    agent_name: str,
+    task_id: str,
+    request: Request,
+    page_size: Optional[int] = Query(None, description="Optional page size for config listing"),
+    page_token: Optional[str] = Query(None, description="Optional page token for config listing"),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """List task push-notification configs from an upstream A2A agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    params: Dict[str, Any] = {}
+    if page_size is not None:
+        params["page_size"] = page_size
+    if page_token is not None:
+        params["page_token"] = page_token
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.list_task_push_notification_configs(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            params=params,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.get("/{agent_name}/tasks/{task_id}/pushNotificationConfigs/{config_id}", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def get_a2a_task_push_notification_config(
+    agent_name: str,
+    task_id: str,
+    config_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Get one task push-notification config from an upstream A2A agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.get_task_push_notification_config(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            config_id=config_id,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.delete("/{agent_name}/tasks/{task_id}/pushNotificationConfigs/{config_id}", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def delete_a2a_task_push_notification_config(
+    agent_name: str,
+    task_id: str,
+    config_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Delete one task push-notification config from an upstream A2A agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.delete_task_push_notification_config(
+            db=db,
+            agent_name=agent_name,
+            task_id=task_id,
+            config_id=config_id,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@a2a_router.get("/{agent_name}/card", response_model=Dict[str, Any])
+@require_permission("a2a.invoke")
+async def get_a2a_agent_card(
+    agent_name: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> Dict[str, Any]:
+    """Fetch upstream Agent Card for a registered A2A agent."""
+    if a2a_service is None:
+        raise HTTPException(status_code=503, detail="A2A service not available")
+
+    user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
+    try:
+        return await a2a_service.get_agent_card(
+            db=db,
+            agent_name=agent_name,
+            user_id=user_id,
+            user_email=user_email,
+            token_teams=token_teams,
+        )
+    except A2AAgentNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except A2AAgentError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @a2a_router.post("/{agent_name}/invoke", response_model=Dict[str, Any])
 @require_permission("a2a.invoke")
 async def invoke_a2a_agent(
@@ -3511,21 +3885,7 @@ async def invoke_a2a_agent(
         logger.debug(f"User {user} is invoking A2A agent '{agent_name}' with type '{interaction_type}'")
         if a2a_service is None:
             raise HTTPException(status_code=503, detail="A2A service not available")
-
-        # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = _get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
-
-        user_id = None
-        if isinstance(user, dict):
-            user_id = str(user.get("id") or user.get("sub") or user_email)
-        else:
-            user_id = str(user)
+        user_id, user_email, token_teams = _get_a2a_invoke_context(request, user)
 
         return await a2a_service.invoke_agent(
             db,

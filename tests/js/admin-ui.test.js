@@ -463,3 +463,70 @@ describe("copyToClipboard", () => {
         expect(() => f()("nonexistent")).not.toThrow();
     });
 });
+
+// ---------------------------------------------------------------------------
+// A2A Agent Protocol Helpers
+// ---------------------------------------------------------------------------
+describe("A2A protocol helpers", () => {
+    test("normalizes legacy A2A type values", () => {
+        expect(win.normalizeA2AAgentType("generic")).toBe("a2a-jsonrpc");
+        expect(win.normalizeA2AAgentType("openai")).toBe("rest-passthrough");
+        expect(win.normalizeA2AAgentType("a2a-rest")).toBe("a2a-rest");
+    });
+
+    test("formats A2A type labels for UI display", () => {
+        expect(win.formatA2AAgentTypeLabel("a2a-jsonrpc")).toBe(
+            "A2A Protocol (JSON-RPC 2.0)",
+        );
+        expect(win.formatA2AAgentTypeLabel("jsonrpc")).toBe(
+            "A2A Protocol (JSON-RPC 2.0)",
+        );
+        expect(win.formatA2AAgentTypeLabel("unknown-format")).toContain(
+            "Legacy: unknown-format",
+        );
+    });
+
+    test("builds JSON-RPC preview payload with parts.kind", () => {
+        const payload = win.buildA2AAdminTestPayload(
+            "a2a-jsonrpc",
+            "hello",
+            42,
+        );
+        expect(payload.jsonrpc).toBe("2.0");
+        expect(payload.method).toBe("message/send");
+        expect(payload.params.message.parts[0].kind).toBe("text");
+        expect(payload.params.message.messageId).toBe("admin-test-42");
+    });
+
+    test("builds custom preview payload with ContextForge wrapper", () => {
+        const payload = win.buildA2AAdminTestPayload("custom", "hello", 42);
+        expect(payload.interaction_type).toBeDefined();
+        expect(payload.parameters.query).toBe("hello");
+        expect(payload.parameters.message).toBe("hello");
+        expect(payload.jsonrpc).toBeUndefined();
+    });
+
+    test("toggles trailing slash warning visibility", () => {
+        const input = doc.createElement("input");
+        input.id = "a2a-endpoint";
+        const warning = doc.createElement("p");
+        warning.id = "a2a-warning";
+        warning.classList.add("hidden");
+        doc.body.appendChild(input);
+        doc.body.appendChild(warning);
+
+        input.value = "https://example.com/agent/";
+        win.updateA2AEndpointTrailingSlashWarning(
+            "a2a-endpoint",
+            "a2a-warning",
+        );
+        expect(warning.classList.contains("hidden")).toBe(false);
+
+        input.value = "https://example.com/agent";
+        win.updateA2AEndpointTrailingSlashWarning(
+            "a2a-endpoint",
+            "a2a-warning",
+        );
+        expect(warning.classList.contains("hidden")).toBe(true);
+    });
+});

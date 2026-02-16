@@ -6892,6 +6892,12 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   placeholder="https://api.example.com/agent"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p
+                  id="a2a-endpoint-slash-warning"
+                  class="hidden mt-1 text-xs text-amber-700 dark:text-amber-400"
+                >
+                  Trailing slash detected. Endpoint slash no longer controls transport; select protocol using Agent Type.
+                </p>
                 <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Endpoint URL is required.</p>
               </div>
 
@@ -6907,10 +6913,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   name="agent_type"
                   class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                 >
-                  <option value="generic">Generic</option>
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="custom">Custom</option>
+                  <option value="a2a-jsonrpc">A2A Protocol (JSON-RPC 2.0)</option>
+                  <option value="a2a-rest">A2A Protocol (REST)</option>
+                  <option value="a2a-grpc">A2A Protocol (gRPC)</option>
+                  <option value="rest-passthrough">Simple REST (Passthrough)</option>
+                  <option value="custom">ContextForge Custom Format</option>
                 </select>
               </div>
 
@@ -6933,6 +6940,31 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                   <option value="oauth">OAuth 2.0</option>
                   <option value="query_param">Query Parameter (INSECURE)</option>
                 </select>
+              </div>
+
+              <div class="sm:col-span-2">
+                <div class="flex items-center justify-between">
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                    Request Preview
+                  </label>
+                  <button
+                    type="button"
+                    id="a2a-preview-request-btn"
+                    class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                  >
+                    Preview Payload
+                  </button>
+                </div>
+                <div
+                  id="a2a-request-preview"
+                  class="hidden mt-2 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-3"
+                >
+                  <p id="a2a-request-preview-meta" class="text-xs text-gray-600 dark:text-gray-400 mb-2"></p>
+                  <pre
+                    id="a2a-request-preview-json"
+                    class="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-all"
+                  ></pre>
+                </div>
               </div>
 
               <div id="auth-basic-fields-a2a" style="display: none">
@@ -10318,6 +10350,12 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                 focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                         />
+                        <p
+                          id="a2a-endpoint-slash-warning-edit"
+                          class="hidden mt-1 text-xs text-amber-700 dark:text-amber-400"
+                        >
+                          Trailing slash detected. Endpoint slash no longer controls transport; select protocol using Agent Type.
+                        </p>
                         <p data-error-message-for="url" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Endpoint URL is required.</p>
                       </div>
 
@@ -10332,10 +10370,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm
                                 focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
                         >
-                          <option value="generic">Generic</option>
-                          <option value="openai">OpenAI</option>
-                          <option value="anthropic">Anthropic</option>
-                          <option value="custom">Custom</option>
+                          <option value="a2a-jsonrpc">A2A Protocol (JSON-RPC 2.0)</option>
+                          <option value="a2a-rest">A2A Protocol (REST)</option>
+                          <option value="a2a-grpc">A2A Protocol (gRPC)</option>
+                          <option value="rest-passthrough">Simple REST (Passthrough)</option>
+                          <option value="custom">ContextForge Custom Format</option>
                         </select>
                       </div>
 
@@ -10357,6 +10396,31 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <option value="oauth">OAuth 2.0</option>
                           <option value="query_param">Query Parameter (INSECURE)</option>
                         </select>
+                      </div>
+
+                      <div>
+                        <div class="flex items-center justify-between">
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-400">
+                            Request Preview
+                          </label>
+                          <button
+                            type="button"
+                            id="a2a-preview-request-btn-edit"
+                            class="inline-flex items-center px-3 py-1 border border-transparent text-sm leading-4 font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700"
+                          >
+                            Preview Payload
+                          </button>
+                        </div>
+                        <div
+                          id="a2a-request-preview-edit"
+                          class="hidden mt-2 rounded-md border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-3"
+                        >
+                          <p id="a2a-request-preview-meta-edit" class="text-xs text-gray-600 dark:text-gray-400 mb-2"></p>
+                          <pre
+                            id="a2a-request-preview-json-edit"
+                            class="text-xs text-gray-800 dark:text-gray-200 whitespace-pre-wrap break-all"
+                          ></pre>
+                        </div>
                       </div>
 
                       <!-- Basic Auth -->
@@ -12009,7 +12073,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             </td>
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.endpointUrl || item.endpoint || '')}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createTagsSpan(item.tags)}</td>
-            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(item.agentType || item.type || '')}</td>
+            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">${escapeHtml(typeof formatA2AAgentTypeLabel === 'function' ? formatA2AAgentTypeLabel(item.agentType || item.type || '') : (item.agentType || item.type || ''))}</td>
             <td class="px-6 py-4 whitespace-nowrap">${createStatusSpan(item.enabled || item.isActive || item.is_active)}</td>
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">${createActionButtons(sectionType, item)}</td>
           `;
