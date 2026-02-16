@@ -2,7 +2,7 @@
 """Policy Decision Logging Service - Extends audit_trail_service.py
 
 Location: mcpgateway/services/policy_decision_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Integrates with existing audit_trail_service.py and SQLAlchemy infrastructure.
@@ -144,7 +144,10 @@ class PolicyDecisionService:
             db.refresh(record)
 
             logger.info(
-                f"Policy decision logged: {decision} for {action} by {subject_id or 'unknown'}",
+                "Policy decision logged: %s for %s by %s",
+                decision,
+                action,
+                subject_id or "unknown",
                 extra={
                     "decision_id": str(record.id),
                     "decision": decision,
@@ -164,12 +167,12 @@ class PolicyDecisionService:
                 except RuntimeError:
                     logger.debug("No running event loop; SIEM queuing deferred")
                 except Exception as siem_err:
-                    logger.warning(f"Failed to queue policy decision to SIEM: {siem_err}")
+                    logger.warning("Failed to queue policy decision to SIEM: %s", siem_err)
 
             return record
 
         except Exception as e:
-            logger.error(f"Failed to log policy decision: {e}", exc_info=True)
+            logger.error("Failed to log policy decision: %s", e, exc_info=True)
             if close_db:
                 db.rollback()
             return PolicyDecision(
@@ -250,11 +253,11 @@ class PolicyDecisionService:
             }
 
             if sort_by not in allowed_sort_columns:
-                logger.warning(f"Invalid sort_by column '{sort_by}', using 'timestamp'")
+                logger.warning("Invalid sort_by column '%s', using 'timestamp'", sort_by)
                 sort_by = "timestamp"
 
             if sort_order not in ("asc", "desc"):
-                logger.warning(f"Invalid sort_order '{sort_order}', using 'desc'")
+                logger.warning("Invalid sort_order '%s', using 'desc'", sort_order)
                 sort_order = "desc"
 
             sort_column = getattr(PolicyDecision, sort_by)

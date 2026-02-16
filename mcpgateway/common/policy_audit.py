@@ -2,7 +2,7 @@
 """Policy Decision Audit Models - Extension to audit_trail_service.py
 
 Location: mcpgateway/common/policy_audit.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Extends the existing audit_trail system with policy decision logging.
@@ -11,11 +11,12 @@ Integrates with issue #2225 requirements while using existing infrastructure.
 
 # Standard
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 import uuid
 
 # Third-Party
-from sqlalchemy import Boolean, Column, Float, Index, Integer, JSON, String, Text, TIMESTAMP
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, JSON, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 
 # First-Party
 from mcpgateway.db import Base
@@ -30,60 +31,62 @@ class PolicyDecision(Base):
     __tablename__ = "policy_decisions"
 
     # Primary key (String UUID for SQLite/PostgreSQL portability)
-    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
 
-    # Timestamps
-    timestamp = Column(TIMESTAMP(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
+    # Timestamps (indexed via idx_policy_decision_timestamp in __table_args__)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
 
-    # Request correlation
-    request_id = Column(String(100), index=True)
-    gateway_node = Column(String(100))
+    # Request correlation (indexed via idx_policy_decision_request in __table_args__)
+    request_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    gateway_node: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
 
     # Subject (who is making the request)
-    subject_type = Column(String(50))
-    subject_id = Column(String(255), index=True)
-    subject_email = Column(String(255), index=True)
-    subject_roles = Column(JSON)
-    subject_teams = Column(JSON)
-    subject_clearance_level = Column(Integer)
-    subject_data = Column(JSON)
+    # subject_id is leading column of composite idx_policy_decision_subject
+    subject_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    subject_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    subject_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    subject_roles: Mapped[Optional[List]] = mapped_column(JSON, nullable=True)
+    subject_teams: Mapped[Optional[List]] = mapped_column(JSON, nullable=True)
+    subject_clearance_level: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    subject_data: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
 
-    # Action
-    action = Column(String(255), nullable=False, index=True)
+    # Action (leading column of composite idx_policy_decision_action_decision)
+    action: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Resource (what is being accessed)
-    resource_type = Column(String(100), index=True)
-    resource_id = Column(String(255), index=True)
-    resource_server = Column(String(255))
-    resource_classification = Column(Integer)
-    resource_data = Column(JSON)
+    # resource_type is leading column of composite idx_policy_decision_resource
+    resource_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
+    resource_server: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    resource_classification: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    resource_data: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
 
-    # Decision
-    decision = Column(String(20), nullable=False, index=True)
-    reason = Column(Text)
+    # Decision (trailing column of composite idx_policy_decision_action_decision)
+    decision: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Policy evaluation
-    matching_policies = Column(JSON)
-    policy_engines_used = Column(JSON)
+    matching_policies: Mapped[Optional[List]] = mapped_column(JSON, nullable=True)
+    policy_engines_used: Mapped[Optional[List]] = mapped_column(JSON, nullable=True)
 
     # Context
-    ip_address = Column(String(45))
-    user_agent = Column(Text)
-    mfa_verified = Column(Boolean)
-    geo_location = Column(JSON)
-    context_data = Column(JSON)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    mfa_verified: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    geo_location: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
+    context_data: Mapped[Optional[Dict]] = mapped_column(JSON, nullable=True)
 
     # Performance
-    duration_ms = Column(Float)
+    duration_ms: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Compliance & Security
-    severity = Column(String(20))
-    risk_score = Column(Integer)
-    anomaly_detected = Column(Boolean, default=False)
-    compliance_frameworks = Column(JSON)
+    severity: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    risk_score: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    anomaly_detected: Mapped[Optional[bool]] = mapped_column(Boolean, default=False, nullable=True)
+    compliance_frameworks: Mapped[Optional[List]] = mapped_column(JSON, nullable=True)
 
-    # Metadata (renamed from 'metadata' to avoid SQLAlchemy reserved attribute)
-    extra_metadata = Column("metadata", JSON)
+    # Metadata (column named 'metadata' in DB, attribute renamed to avoid SQLAlchemy reserved name)
+    extra_metadata: Mapped[Optional[Dict]] = mapped_column("metadata", JSON, nullable=True)
 
     # Indexes for common queries
     __table_args__ = (
