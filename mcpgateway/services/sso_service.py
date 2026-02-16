@@ -13,12 +13,12 @@ from __future__ import annotations
 
 # Standard
 import base64
+from dataclasses import dataclass
 from datetime import timedelta
 import hashlib
 import logging
 import secrets
 import string
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 
@@ -36,6 +36,14 @@ from mcpgateway.utils.create_jwt_token import create_jwt_token
 
 # Logger
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SSOProviderContext:
+    """Lightweight context for SSO provider info passed to helper methods."""
+
+    id: Optional[str]
+    provider_metadata: Dict[str, Any]
 
 
 class SSOService:
@@ -834,7 +842,7 @@ class SSOService:
             if provider:
                 provider_id = provider.id
                 provider_metadata = provider.provider_metadata or {}
-                provider_ctx = SimpleNamespace(id=provider_id, provider_metadata=provider_metadata)
+                provider_ctx = SSOProviderContext(id=provider_id, provider_metadata=provider_metadata)
 
             # Update user info from SSO
             if user_info.get("full_name") and user_info["full_name"] != current_full_name:
@@ -865,7 +873,6 @@ class SSOService:
                         # Track that admin was granted via SSO (only set on initial grant)
                         user.admin_origin = "sso"
                         current_is_admin = True
-                        current_admin_origin = "sso"
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif current_is_admin and current_admin_origin == "sso":
                     # User was SSO admin but no longer in admin groups - revoke access
@@ -873,7 +880,6 @@ class SSOService:
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
-                    current_admin_origin = None
 
             self.db.commit()
 
@@ -905,7 +911,7 @@ class SSOService:
 
             provider_id = provider.id
             provider_metadata = provider.provider_metadata or {}
-            provider_ctx = SimpleNamespace(id=provider_id, provider_metadata=provider_metadata)
+            provider_ctx = SSOProviderContext(id=provider_id, provider_metadata=provider_metadata)
 
             # Check trusted domains if configured
             if provider.trusted_domains:
@@ -1009,7 +1015,7 @@ class SSOService:
         token = await create_jwt_token(token_data)
         return token
 
-    def _should_user_be_admin(self, email: str, user_info: Dict[str, Any], provider: SSOProvider) -> bool:
+    def _should_user_be_admin(self, email: str, user_info: Dict[str, Any], provider: SSOProviderContext) -> bool:
         """Determine if SSO user should be granted admin privileges.
 
         Args:
@@ -1046,7 +1052,7 @@ class SSOService:
 
         return False
 
-    async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProvider) -> List[Dict[str, Any]]:
+    async def _map_groups_to_roles(self, user_email: str, user_groups: List[str], provider: SSOProviderContext) -> List[Dict[str, Any]]:
         """Map SSO groups to Context Forge RBAC roles.
 
         Args:
@@ -1189,7 +1195,7 @@ class SSOService:
 
         return role_assignments
 
-    async def _sync_user_roles(self, user_email: str, role_assignments: List[Dict[str, Any]], _provider: SSOProvider) -> None:
+    async def _sync_user_roles(self, user_email: str, role_assignments: List[Dict[str, Any]], _provider: SSOProviderContext) -> None:
         """Synchronize user's SSO-based role assignments.
 
         Args:
