@@ -2961,7 +2961,7 @@ linting-go-gosec:                    ## 🔒  Go security static analysis
 		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
 		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install github.com/securego/gosec/v2/cmd/gosec@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
+		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
 		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
 		while IFS= read -r d; do \
 			[ -n "$$d" ] || continue; \
@@ -2979,7 +2979,7 @@ linting-go-govulncheck:              ## 🔎  Go vulnerability checks
 		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
 		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
 		go install golang.org/x/vuln/cmd/govulncheck@latest >/dev/null; \
-		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
+		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
 		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
 		while IFS= read -r d; do \
 			[ -n "$$d" ] || continue; \
@@ -3758,7 +3758,10 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q tomlcheck 2>/dev/null || true"
-	@find . -type f -name '*.toml' -print0 \
+	@find . -type f -name '*.toml' \
+	  -not -path './plugin_templates/*' \
+	  -not -path './mcp-servers/templates/*' \
+	  -print0 \
 	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
 
 # =============================================================================
