@@ -1,7 +1,7 @@
 Go MCP Servers: Create, Build, and Run
 
 - Scope: Practical guide to author, build, and containerize Go MCP servers.
-- References: See 5 working examples under `mcp-servers/go/` (fast-time-server, calculator-server, system-monitor-server, benchmark-server, pandoc-server) and the Copier template in `mcp-servers/templates/go`.
+- References: See 5 working examples under `mcp-servers/go/` (fast-time-server, calculator-server, system-monitor-server, benchmark-server, pandoc-server) and the Cookiecutter template in `mcp-servers/templates/go`.
 
 **Project Layout**
 - Recommended structure for a new server `fast_time_lite`:
@@ -114,7 +114,7 @@ ENTRYPOINT ["/fast-time-lite"]
 - Quick JSON-RPC check (stdin → stdout):
   - `echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | ./dist/fast-time-lite`
 
-**Scaffold With Copier**
+**Scaffold With Cookiecutter**
 - Generate a new Go MCP server from the template:
   - `mcp-servers/scaffold-go-server.sh fast_time_lite` (defaults to `mcp-servers/go/fast_time_lite`)
   - Then: `cd mcp-servers/go/fast_time_lite && go mod tidy && make run`

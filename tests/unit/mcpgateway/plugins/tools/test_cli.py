@@ -41,8 +41,7 @@ def test_bootrap_command_help(runner: CliRunner):
 
 def test_bootstrap_command_dry_run(runner: CliRunner):
     """Boostrapping dry run."""
-    pytest.importorskip("copier")
-    raw = ["bootstrap", "--destination", "/tmp/myplugin", "--template_url", ".", "--defaults", "--dry_run"]
+    raw = ["bootstrap", "--destination", "/tmp/myplugin", "--template_url", ".", "--dry_run"]
     result = runner.invoke(cli.app, raw)
     assert result.exit_code == 0
 
@@ -89,12 +88,12 @@ def test_git_user_name_email_defaults_on_error(monkeypatch):
     assert cli.git_user_email() == cli.DEFAULT_AUTHOR_EMAIL
 
 
-def test_bootstrap_missing_copier_raises(monkeypatch):
+def test_bootstrap_missing_cookiecutter_raises(monkeypatch):
     real_import = builtins.__import__
 
     def _fake_import(name, *args, **kwargs):
-        if name == "copier":
-            raise ImportError("no copier")
+        if name == "cookiecutter.main":
+            raise ImportError("no cookiecutter")
         return real_import(name, *args, **kwargs)
 
     monkeypatch.setattr(builtins, "__import__", _fake_import)
@@ -104,37 +103,40 @@ def test_bootstrap_missing_copier_raises(monkeypatch):
 
 
 def test_bootstrap_skips_without_git(monkeypatch, tmp_path):
-    run_copy = MagicMock()
-    monkeypatch.setitem(sys.modules, "copier", SimpleNamespace(run_copy=run_copy))
+    cc_func = MagicMock()
+    monkeypatch.setitem(sys.modules, "cookiecutter", SimpleNamespace(main=SimpleNamespace(cookiecutter=cc_func)))
+    monkeypatch.setitem(sys.modules, "cookiecutter.main", SimpleNamespace(cookiecutter=cc_func))
     monkeypatch.setattr(cli, "command_exists", lambda _name: False)
 
-    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", dry_run=True)
-    run_copy.assert_not_called()
+    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git")
+    cc_func.assert_not_called()
 
 
-def test_bootstrap_calls_copier_when_git_available(monkeypatch, tmp_path):
-    run_copy = MagicMock()
-    monkeypatch.setitem(sys.modules, "copier", SimpleNamespace(run_copy=run_copy))
+def test_bootstrap_calls_cookiecutter_when_git_available(monkeypatch, tmp_path):
+    cc_func = MagicMock()
+    monkeypatch.setitem(sys.modules, "cookiecutter", SimpleNamespace(main=SimpleNamespace(cookiecutter=cc_func)))
+    monkeypatch.setitem(sys.modules, "cookiecutter.main", SimpleNamespace(cookiecutter=cc_func))
     monkeypatch.setattr(cli, "command_exists", lambda _name: True)
     monkeypatch.setattr(cli, "git_user_name", lambda: "Alice")
     monkeypatch.setattr(cli, "git_user_email", lambda: "alice@example.com")
 
-    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", defaults=True, dry_run=True)
-    run_copy.assert_called_once()
+    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", no_input=True)
+    cc_func.assert_called_once()
 
 
 def test_bootstrap_logs_copy_exception(monkeypatch, tmp_path):
-    run_copy = MagicMock(side_effect=RuntimeError("copy failed"))
-    monkeypatch.setitem(sys.modules, "copier", SimpleNamespace(run_copy=run_copy))
+    cc_func = MagicMock(side_effect=RuntimeError("copy failed"))
+    monkeypatch.setitem(sys.modules, "cookiecutter", SimpleNamespace(main=SimpleNamespace(cookiecutter=cc_func)))
+    monkeypatch.setitem(sys.modules, "cookiecutter.main", SimpleNamespace(cookiecutter=cc_func))
     monkeypatch.setattr(cli, "command_exists", lambda _name: True)
     monkeypatch.setattr(cli, "git_user_name", lambda: "Alice")
     monkeypatch.setattr(cli, "git_user_email", lambda: "alice@example.com")
     mock_logger = MagicMock()
     monkeypatch.setattr(cli, "logger", mock_logger)
 
-    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", defaults=True, dry_run=True)
+    cli.bootstrap(destination=tmp_path, template_url="https://example.com/repo.git", no_input=True)
 
-    run_copy.assert_called_once()
+    cc_func.assert_called_once()
     mock_logger.exception.assert_called_once()
 
 
