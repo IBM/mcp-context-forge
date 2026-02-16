@@ -13,6 +13,7 @@ retrieval, updates, activation toggling, and deletion.
 
 # Standard
 import asyncio
+import base64
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
@@ -32,13 +33,17 @@ except ImportError:
 
 # Third-Party
 from pydantic import ValidationError
-from sqlalchemy import and_, desc, select
+from sqlalchemy import and_, delete, desc, select
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import GrpcService as DbGrpcService
+from mcpgateway.db import Tool as DbTool
+from mcpgateway.db import ToolMetric, server_tool_association
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
+from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.pagination import unified_paginate
@@ -140,7 +145,7 @@ class GrpcService:
         db.commit()
         db.refresh(db_service)
 
-        logger.info(f"Registered gRPC service: {db_service.name} (target: {db_service.target})")
+        logger.info("Registered gRPC service: %s (target: %s)", db_service.name, db_service.target)
 
         # Perform initial reflection if enabled
         if db_service.reflection_enabled:
@@ -335,7 +340,7 @@ class GrpcService:
         db.commit()
         db.refresh(service)
 
-        logger.info(f"Updated gRPC service: {service.name}")
+        logger.info("Updated gRPC service: %s", service.name)
 
         return GrpcServiceRead.model_validate(service)
 
@@ -370,7 +375,7 @@ class GrpcService:
         db.refresh(service)
 
         action = "activated" if activate else "deactivated"
-        logger.info(f"gRPC service {service.name} {action}")
+        logger.info("gRPC service %s %s", service.name, action)
 
         return GrpcServiceRead.model_validate(service)
 
@@ -379,7 +384,11 @@ class GrpcService:
         db: Session,
         service_id: str,
     ) -> None:
-        """Delete a gRPC service.
+        """Delete a gRPC service and its associated tools.
+
+        Explicitly deletes child tool records (metrics, server associations, tools)
+        before deleting the service itself, following the same pattern as
+        gateway_service.delete_gateway() to avoid FK constraint violations.
 
         Args:
             db: Database session
@@ -393,10 +402,20 @@ class GrpcService:
         if not service:
             raise GrpcServiceNotFoundError(f"gRPC service with ID '{service_id}' not found")
 
+        # Explicitly delete tool children before deleting the service
+        # (mirrors gateway_service.delete_gateway pattern)
+        tool_ids = [t.id for t in service.tools]
+        if tool_ids:
+            for i in range(0, len(tool_ids), 500):
+                chunk = tool_ids[i : i + 500]
+                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+
         db.delete(service)
         db.commit()
 
-        logger.info(f"Deleted gRPC service: {service.name}")
+        logger.info("Deleted gRPC service: %s (removed %d tools)", service.name, len(tool_ids))
 
     async def reflect_service(
         self,
@@ -423,7 +442,7 @@ class GrpcService:
 
         try:
             await self._perform_reflection(db, service)
-            logger.info(f"Reflection completed for {service.name}: {service.service_count} services, {service.method_count} methods")
+            logger.info("Reflection completed for %s: %s services, %s methods", service.name, service.service_count, service.method_count)
         except Exception as e:
             logger.error(f"Reflection failed for {service.name}: {e}")
             service.reachable = False
@@ -458,6 +477,8 @@ class GrpcService:
         discovered = service.discovered_services or {}
 
         for service_name, service_desc in discovered.items():
+            if service_name.startswith("_"):
+                continue
             for method in service_desc.get("methods", []):
                 methods.append(
                     {
@@ -531,6 +552,7 @@ class GrpcService:
 
             # Get detailed information for each service
             discovered_services = {}
+            file_descriptor_bytes_set: set[bytes] = set()  # Deduplicate across services
             service_count = 0
             method_count = 0
 
@@ -545,6 +567,9 @@ class GrpcService:
                         if resp.HasField("file_descriptor_response"):
                             # Process file descriptors
                             for file_desc_proto_bytes in resp.file_descriptor_response.file_descriptor_proto:
+                                # Store raw bytes for later descriptor pool population
+                                file_descriptor_bytes_set.add(file_desc_proto_bytes)
+
                                 file_desc_proto = FileDescriptorProto()
                                 file_desc_proto.ParseFromString(file_desc_proto_bytes)
 
@@ -582,11 +607,18 @@ class GrpcService:
                     }
                     service_count += 1
 
+            # Store base64-encoded file descriptor protos so invoke_method can
+            # populate the descriptor pool without a reflection round-trip.
+            discovered_services["_file_descriptors"] = [base64.b64encode(b).decode("ascii") for b in file_descriptor_bytes_set]
+
             service.discovered_services = discovered_services
             service.service_count = service_count
             service.method_count = method_count
             service.last_reflection = datetime.now(timezone.utc)
             service.reachable = True
+
+            # Sync discovered methods as MCP tools
+            self._sync_tools_from_reflection(db, service)
 
             db.commit()
 
@@ -598,6 +630,104 @@ class GrpcService:
 
         finally:
             channel.close()
+
+    def _sync_tools_from_reflection(
+        self,
+        db: Session,
+        service: DbGrpcService,
+    ) -> None:
+        """Sync MCP tools from discovered gRPC methods.
+
+        Removes stale tools and creates/updates tools for each discovered method.
+        This follows the same pattern as gateway_service._update_or_create_tools().
+
+        Args:
+            db: Database session
+            service: GrpcService model instance with populated discovered_services
+        """
+        discovered = service.discovered_services or {}
+
+        # Build set of expected tool names from discovered methods
+        expected_tool_names: set[str] = set()
+        for svc_name, svc_desc in discovered.items():
+            if svc_name.startswith("_"):
+                continue
+            for method in svc_desc.get("methods", []):
+                expected_tool_names.add(f"{svc_name}.{method['name']}")
+
+        # Fetch existing tools for this gRPC service
+        existing_tools = db.execute(select(DbTool).where(DbTool.grpc_service_id == service.id)).scalars().all()
+        existing_tools_map = {tool.original_name: tool for tool in existing_tools}
+
+        # Remove stale tools (tools whose names are no longer in discovered methods)
+        stale_tool_ids = [tool.id for tool in existing_tools if tool.original_name not in expected_tool_names]
+        if stale_tool_ids:
+            for i in range(0, len(stale_tool_ids), 500):
+                chunk = stale_tool_ids[i : i + 500]
+                db.execute(delete(ToolMetric).where(ToolMetric.tool_id.in_(chunk)))
+                db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id.in_(chunk)))
+                db.execute(delete(DbTool).where(DbTool.id.in_(chunk)))
+            logger.info("Removed %d stale tools for gRPC service %s", len(stale_tool_ids), service.name)
+
+        # Create or update tools for each discovered method
+        tools_created = 0
+        tools_updated = 0
+        for svc_name, svc_desc in discovered.items():
+            if svc_name.startswith("_"):
+                continue
+            for method in svc_desc.get("methods", []):
+                tool_name = f"{svc_name}.{method['name']}"
+                description = f"gRPC method {tool_name}"
+                input_schema = {
+                    "type": "object",
+                    "properties": {},
+                    "x-grpc-input-type": method.get("input_type", ""),
+                    "x-grpc-output-type": method.get("output_type", ""),
+                    "x-grpc-client-streaming": method.get("client_streaming", False),
+                    "x-grpc-server-streaming": method.get("server_streaming", False),
+                }
+
+                existing_tool = existing_tools_map.get(tool_name)
+                if existing_tool:
+                    # Update if description or schema changed
+                    changed = False
+                    if existing_tool.original_description != description:
+                        if existing_tool.description == existing_tool.original_description:
+                            existing_tool.description = description
+                        existing_tool.original_description = description
+                        changed = True
+                    if existing_tool.input_schema != input_schema:
+                        existing_tool.input_schema = input_schema
+                        changed = True
+                    if existing_tool.url != service.target:
+                        existing_tool.url = service.target
+                        changed = True
+                    if changed:
+                        tools_updated += 1
+                else:
+                    db_tool = DbTool(
+                        original_name=tool_name,
+                        custom_name=tool_name,
+                        custom_name_slug=slugify(tool_name),
+                        display_name=generate_display_name(tool_name),
+                        url=service.target,
+                        original_description=description,
+                        description=description,
+                        integration_type="gRPC",
+                        input_schema=input_schema,
+                        created_by="system",
+                        created_via="grpc-reflection",
+                        federation_source=service.name,
+                        version=1,
+                        team_id=service.team_id,
+                        owner_email=service.owner_email,
+                        visibility="public",
+                        grpc_service_id=service.id,
+                    )
+                    db.add(db_tool)
+                    tools_created += 1
+
+        logger.info("Synced tools for gRPC service %s: %d created, %d updated", service.name, tools_created, tools_updated)
 
     async def invoke_method(
         self,
@@ -641,10 +771,16 @@ class GrpcService:
         service_name = ".".join(parts[:-1]) if len(parts) > 1 else parts[0]
         method = parts[-1]
 
-        # Create endpoint and invoke
+        # Check if we have stored file descriptors from reflection.
+        # If so, we can populate the descriptor pool without a reflection
+        # round-trip, which avoids per-call overhead.
+        discovered = service.discovered_services or {}
+        stored_descriptors = discovered.get("_file_descriptors", [])
+        has_stored_descriptors = bool(stored_descriptors)
+
         endpoint = GrpcEndpoint(
             target=service.target,
-            reflection_enabled=False,  # Assume already discovered
+            reflection_enabled=not has_stored_descriptors,
             tls_enabled=service.tls_enabled,
             tls_cert_path=service.tls_cert_path,
             tls_key_path=service.tls_key_path,
@@ -652,12 +788,15 @@ class GrpcService:
         )
 
         try:
-            # Start connection
+            # Start connection (reflection only if no stored descriptors)
             await endpoint.start()
 
-            # If we have stored service info, use it
-            if service.discovered_services:
-                endpoint._services = service.discovered_services  # pylint: disable=protected-access
+            if has_stored_descriptors:
+                # Populate descriptor pool from stored file descriptor bytes
+                raw_descriptors = [base64.b64decode(b) for b in stored_descriptors]
+                endpoint.load_file_descriptors(raw_descriptors)
+                # Set service info from stored discovery data
+                endpoint._services = {k: v for k, v in discovered.items() if k != "_file_descriptors"}  # pylint: disable=protected-access
 
             # Invoke method
             response = await endpoint.invoke(service_name, method, request_data)
