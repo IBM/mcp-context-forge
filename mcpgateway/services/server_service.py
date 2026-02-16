@@ -544,13 +544,21 @@ class ServerService:
                 # Code execution configuration
                 server_type=server_type_value,
                 stub_language=getattr(server_in, "stub_language", None),
-                mount_rules=getattr(server_in, "mount_rules", None).model_dump() if getattr(server_in, "mount_rules", None) is not None and hasattr(getattr(server_in, "mount_rules"), "model_dump") else getattr(server_in, "mount_rules", None),
-                sandbox_policy=getattr(server_in, "sandbox_policy", None).model_dump()
-                if getattr(server_in, "sandbox_policy", None) is not None and hasattr(getattr(server_in, "sandbox_policy"), "model_dump")
-                else getattr(server_in, "sandbox_policy", None),
-                tokenization=getattr(server_in, "tokenization", None).model_dump()
-                if getattr(server_in, "tokenization", None) is not None and hasattr(getattr(server_in, "tokenization"), "model_dump")
-                else getattr(server_in, "tokenization", None),
+                mount_rules=(
+                    getattr(server_in, "mount_rules", None).model_dump()
+                    if getattr(server_in, "mount_rules", None) is not None and hasattr(getattr(server_in, "mount_rules"), "model_dump")
+                    else getattr(server_in, "mount_rules", None)
+                ),
+                sandbox_policy=(
+                    getattr(server_in, "sandbox_policy", None).model_dump()
+                    if getattr(server_in, "sandbox_policy", None) is not None and hasattr(getattr(server_in, "sandbox_policy"), "model_dump")
+                    else getattr(server_in, "sandbox_policy", None)
+                ),
+                tokenization=(
+                    getattr(server_in, "tokenization", None).model_dump()
+                    if getattr(server_in, "tokenization", None) is not None and hasattr(getattr(server_in, "tokenization"), "model_dump")
+                    else getattr(server_in, "tokenization", None)
+                ),
                 skills_scope=getattr(server_in, "skills_scope", None),
                 skills_require_approval=bool(getattr(server_in, "skills_require_approval", False)),
                 # Metadata fields

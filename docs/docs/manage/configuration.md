@@ -299,7 +299,7 @@ Use these settings to feature-flag and tune `code_execution` virtual servers, me
 
 | Setting | Description | Default | Options |
 | --- | --- | --- | --- |
-| `CODE_EXECUTION_ENABLED` | Master switch for `code_execution` server type and meta-tools | `true` | bool |
+| `CODE_EXECUTION_ENABLED` | Master switch for `code_execution` server type and meta-tools | `false` | bool |
 | `CODE_EXECUTION_SHELL_EXEC_ENABLED` | Enable `shell_exec` meta-tool | `true` | bool |
 | `CODE_EXECUTION_FS_BROWSE_ENABLED` | Enable `fs_browse` meta-tool | `true` | bool |
 | `CODE_EXECUTION_REPLAY_ENABLED` | Enable replay of previous runs | `true` | bool |
