@@ -16,6 +16,7 @@ use pii_filter_rust::{
 fn create_test_config() -> PIIConfig {
     PIIConfig {
         detect_ssn: true,
+        detect_bsn: true,
         detect_credit_card: true,
         detect_email: true,
         detect_phone: true,

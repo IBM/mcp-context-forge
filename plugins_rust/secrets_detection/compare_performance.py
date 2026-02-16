@@ -15,16 +15,16 @@ Usage:
 """
 
 import argparse
-from pathlib import Path
 import statistics
 import sys
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 # Add plugins directory to path to import Python implementation
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "plugins" / "secrets_detection"))
 
-from secrets_detection import _scan_container, SecretsDetectionConfig
+from secrets_detection import SecretsDetectionConfig, _scan_container  # noqa: E402
 
 # Try to import Rust implementation
 try:
@@ -66,11 +66,7 @@ def generate_test_data(size_kb: int, with_secrets: bool) -> Dict[str, Any]:
 
     while current_size < target_size:
         for msg in base_messages:
-            conversation_entry = {
-                "role": "user" if len(messages) % 2 == 0 else "assistant",
-                "content": msg,
-                "timestamp": "2024-01-01T00:00:00Z"
-            }
+            conversation_entry = {"role": "user" if len(messages) % 2 == 0 else "assistant", "content": msg, "timestamp": "2024-01-01T00:00:00Z"}
             messages.append(conversation_entry)
             current_size += len(str(conversation_entry))
             if current_size >= target_size:
@@ -138,19 +134,20 @@ def run_scenario(name: str, data: Any, config: SecretsDetectionConfig, iteration
         speedup = py_mean / rust_mean if rust_mean > 0 else 0
         print(f"✓ ({rust_mean:.3f} ms/iter, {rust_count} secrets)")
 
-        print(f"\n📊 Results:")
+        print("\n📊 Results:")
         print(f"  Python:                {py_mean:.3f} ms ±{py_stdev:.3f} (median: {py_median:.3f})")
         print(f"  Rust:                  {rust_mean:.3f} ms ±{rust_stdev:.3f} (median: {rust_median:.3f}) - {speedup:.2f}x faster 🚀")
 
         if py_count != rust_count:
             print(f"\n  ⚠️  WARNING: Different counts! Python={py_count}, Rust={rust_count}")
     else:
-        print(f"\n📊 Results:")
+        print("\n📊 Results:")
         print(f"  Python: {py_mean:.3f} ms ±{py_stdev:.3f} (median: {py_median:.3f})")
-        print(f"  Rust: Not available")
+        print("  Rust: Not available")
 
 
 def main():
+    """Run performance comparison benchmarks for secrets detection."""
     parser = argparse.ArgumentParser(description="Native Python object performance comparison")
     parser.add_argument("--iterations", type=int, default=10000, help="Iterations per scenario")
     parser.add_argument("--warmup", type=int, default=100, help="Warmup iterations")

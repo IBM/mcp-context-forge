@@ -81,6 +81,15 @@ fn partial_mask(value: &str, pii_type: PIIType) -> String {
             }
         }
 
+        PIIType::Bsn => {
+            // Show last 4 digits: *****1234
+            if value.len() >= 4 {
+                format!("*****{}", &value[value.len() - 4..])
+            } else {
+                "[REDACTED]".to_string()
+            }
+        }
+
         PIIType::CreditCard => {
             // Show last 4 digits: ****-****-****-1234
             let digits_only: String = value.chars().filter(|c| c.is_ascii_digit()).collect();
