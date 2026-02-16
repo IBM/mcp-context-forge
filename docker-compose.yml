@@ -213,7 +213,7 @@ services:
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
       # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
       # - JWT_ALGORITHM=RS256
       # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
@@ -1231,7 +1231,7 @@ services:
       fast_time_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
     # This is a one-shot container that exits after registration
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
@@ -1615,7 +1615,7 @@ services:
       fast_test_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1715,7 +1715,7 @@ services:
       a2a_echo_agent:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1950,7 +1950,7 @@ services:
       benchmark_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=my-test-key
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key}
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
