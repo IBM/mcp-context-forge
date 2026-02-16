@@ -56,6 +56,7 @@ ContextForge MCP Gateway is a feature-rich gateway, proxy and MCP Registry that 
 | **[5-Minute Setup](https://github.com/IBM/mcp-context-forge/issues/2503)** | Get started fast — uvx, Docker, Compose, or local dev |
 | **[Getting Help](https://github.com/IBM/mcp-context-forge/issues/2504)** | Support options, FAQ, community channels |
 | **[Issue Guide](https://github.com/IBM/mcp-context-forge/issues/2502)** | How to file bugs, request features, contribute |
+| **[Code Execution Docs](https://ibm.github.io/mcp-context-forge/using/code-execution-virtual-server/)** | Secure `code_execution` servers, sandbox policy, and virtual tool filesystem |
 | **[Full Documentation](https://ibm.github.io/mcp-context-forge/)** | Complete guides, tutorials, API reference |
 
 ---
@@ -70,11 +71,18 @@ It currently supports:
 * **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
 * **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
+* **Secure Code Execution (MCP Code Mode)** with `code_execution` virtual servers, `shell_exec`/`fs_browse`, and policy-controlled sandboxing
 * Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
 * An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
 * Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
 * Scalable deployments via Docker or PyPI, Redis-backed caching, and multi-cluster federation
+
+Code Execution references:
+
+- Architecture: https://ibm.github.io/mcp-context-forge/architecture/code-execution-virtual-tool-filesystem/
+- Usage: https://ibm.github.io/mcp-context-forge/using/code-execution-virtual-server/
+- Configuration: https://ibm.github.io/mcp-context-forge/manage/configuration/#code-execution-mcp-code-mode
 
 ![MCP Gateway Architecture](https://ibm.github.io/mcp-context-forge/images/mcpgateway.svg)
 

@@ -108,6 +108,7 @@ For production deployments, always include JTI in issued tokens to enable proper
 
 - **SecurityValidator centralises sanitisation.** `mcpgateway/validators.py` enforces length limits, safe character sets, scheme allowlists, JSON depth (`MAX_JSON_DEPTH`), and detects dangerous HTML/JS patterns across every Pydantic schema.
 - **Schema-driven enforcement.** `mcpgateway/schemas.py` applies the validator to tool names, URLs, resource URIs, descriptions, prompts, and JSON payloads, trimming or rejecting unsafe values before they hit business logic.
+- **MCP Code Mode sandbox policies.** `code_execution` servers enforce virtual-filesystem and runtime guardrails (`mount_rules`, `sandbox_policy`, `tokenization`) with feature flags and default limits (`CODE_EXECUTION_*` settings).
 - **Guardrail plugins.** Content filters (PII, harmful content, markdown cleanup), output length guards, regex filters, and SQL sanitizers run as pre/post hooks to block malicious prompt/tool/resource usage.
 - **Rate limiting & quotas.** Admin routes use the `rate_limit` decorator to enforce per-IP quotas (`admin.py`), bulk import has configurable ceilings (`MCPGATEWAY_BULK_IMPORT_RATE_LIMIT`, `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS`), and runtime limits (`tool_rate_limit`, `tool_timeout`, `tool_concurrent_limit`) prevent resource exhaustion.
 - **Header and payload hygiene.** Passthrough headers strip control characters, clamp values to 4 KB, and refuse malformed names; request/response retries honour jitter and backoff to mitigate abuse.
@@ -156,7 +157,7 @@ The items below are active roadmap work or design explorations. Track status in 
 - 🚧 **Container runtime enforcement** — Integrations for Falco, AppArmor/SELinux profiles, seccomp, and CapDrop during container deployment.
 - 🚧 **Service mesh alignment** — Dedicated Istio/Linkerd blueprints for mTLS, traffic policies, and zero-trust networking.
 - 🚧 **Federated attestation** — Signing/verification workflow for MCP gateways and servers to establish trust before federation link-up.
-- 🚧 **Sandboxed execution** — gVisor, Firecracker, or WebAssembly sandboxes for untrusted MCP servers and plugins.
+- 🚧 **Hardened isolation backends for code mode** — gVisor, Firecracker, or WebAssembly runtimes as stronger isolation layers beyond the current policy-driven virtual filesystem sandbox.
 
 ### Monitoring & Governance
 
