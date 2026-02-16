@@ -100,6 +100,9 @@ async def client(app_with_temp_db):
     from mcpgateway.auth import get_current_user
     from mcpgateway.db import get_db
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
+    from tests.utils.rbac_mocks import mock_get_permission_service
+    from mcpgateway.middleware.rbac import get_permission_service
+    app_with_temp_db.dependency_overrides[get_permission_service] = mock_get_permission_service
     from mcpgateway.utils.create_jwt_token import get_jwt_token
     from mcpgateway.utils.verify_credentials import require_admin_auth
 
@@ -204,6 +207,9 @@ async def client(app_with_temp_db):
     # Mock all authentication dependencies
     app_with_temp_db.dependency_overrides[get_current_user] = lambda: TEST_USER
     app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = lambda: test_user_context
+    from tests.utils.rbac_mocks import mock_get_permission_service
+    from mcpgateway.middleware.rbac import get_permission_service
+    app_with_temp_db.dependency_overrides[get_permission_service] = mock_get_permission_service
     app_with_temp_db.dependency_overrides[require_admin_auth] = mock_require_admin_auth
     app_with_temp_db.dependency_overrides[get_jwt_token] = mock_get_jwt_token
     # Keep the existing get_db override from app_with_temp_db
@@ -218,6 +224,9 @@ async def client(app_with_temp_db):
     # Clean up dependency overrides (except get_db which belongs to app_with_temp_db)
     app_with_temp_db.dependency_overrides.pop(get_current_user, None)
     app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+    from tests.utils.rbac_mocks import mock_get_permission_service
+    from mcpgateway.middleware.rbac import get_permission_service
+    app_with_temp_db.dependency_overrides[get_permission_service] = mock_get_permission_service
     app_with_temp_db.dependency_overrides.pop(require_admin_auth, None)
     app_with_temp_db.dependency_overrides.pop(get_jwt_token, None)
     settings.jwt_secret_key = original_jwt_secret

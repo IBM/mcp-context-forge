@@ -608,7 +608,6 @@ env = [
     "MCPGATEWAY_UI_ENABLED=true",
     "DATABASE_URL=sqlite:///:memory:",
     "TEST_DATABASE_URL=sqlite:///:memory:",
-    "SKIP_POLICY_ENGINE=true"
 ]
 
 # ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
