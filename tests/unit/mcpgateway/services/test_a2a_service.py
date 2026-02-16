@@ -1900,30 +1900,39 @@ class TestListAgentsCacheError:
         return MagicMock(spec=Session)
 
     async def test_list_agents_cache_attribute_error_ignored(self, service, mock_db, monkeypatch):
-        """AttributeError during cache write is silently ignored."""
-        # Return an agent-like object that lacks model_dump
-        agent_without_model_dump = SimpleNamespace(
-            id="a1", name="ag", slug="ag", endpoint_url="https://example.com",
-            enabled=True, visibility="public",
-        )
+        """AttributeError during cache write is silently ignored.
 
-        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent_without_model_dump]
+        Tests coverage of the try/except block (lines 720-721) that catches AttributeError
+        when result objects don't support model_dump() during cache serialization.
+        """
+        # Setup: DB returns minimal agent object with required attributes
+        agent_obj = SimpleNamespace(
+            id="a1", name="ag", slug="ag", endpoint_url="https://example.com",
+            enabled=True, visibility="public", team_id=None,
+        )
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [agent_obj]
         mock_db.execute.return_value.scalar.return_value = 1
 
-        # Mock convert_agent_to_read to return objects without model_dump
+        # Mock convert_agent_to_read to return objects WITHOUT model_dump method
+        # This triggers the AttributeError in the cache write block when trying to serialize
         result_obj = SimpleNamespace(id="a1", name="ag")
         service.convert_agent_to_read = MagicMock(return_value=result_obj)
 
-        # Mock cache to trigger the AttributeError path
+        # Mock async cache methods properly
         mock_cache = MagicMock()
-        mock_cache.get = MagicMock(return_value=None)
-        mock_cache.set = MagicMock()
+        mock_cache.hash_filters = MagicMock(return_value="hash")
+        mock_cache.get = AsyncMock(return_value=None)
+        mock_cache.set = AsyncMock()  # Must be AsyncMock for await expression
         monkeypatch.setattr("mcpgateway.services.a2a_service._get_registry_cache", lambda: mock_cache)
 
-        # This should not raise despite the objects not having model_dump
+        # Execute: Should NOT raise AttributeError despite objects lacking model_dump()
+        # The exception during cache_data creation is silently caught (except AttributeError: pass)
         result, next_cursor = await service.list_agents(mock_db)
 
+        # Verify: Method completed successfully and returned results
         assert result is not None
+        assert len(result) == 1
+        # cache.set is never called because AttributeError occurs during list comprehension
 
 
 class TestInvokeAgentEdgeCases:
