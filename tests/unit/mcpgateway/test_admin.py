@@ -3431,6 +3431,61 @@ class TestAdminUIRoute:
     @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
     @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
     @patch.object(RootService, "list_roots", new_callable=AsyncMock)
+    async def test_admin_ui_team_loaded_when_data_sections_visible_even_if_org_hidden(
+        self,
+        mock_roots,
+        mock_gateways,
+        mock_prompts,
+        mock_resources,
+        mock_tools,
+        mock_servers,
+        mock_request,
+        mock_db,
+        monkeypatch,
+    ):
+        """Team role context should still load for visible data sections with mutation controls."""
+        mock_request.query_params = {"ui_hide": "teams,tokens,users"}
+        mock_request.cookies = {}
+
+        mock_roots.return_value = []
+        mock_servers.return_value = ([], None)
+        mock_tools.return_value = ([], None)
+        mock_resources.return_value = ([], None)
+        mock_prompts.return_value = ([], None)
+        mock_gateways.return_value = ([], None)
+
+        monkeypatch.setattr(settings, "email_auth_enabled", True, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings,
+            "mcpgateway_ui_hide_header_items",
+            ["team_selector"],
+            raising=False,
+        )
+
+        team_service_mock = MagicMock()
+        team_service_mock.get_teams_for_user = MagicMock(return_value=[])
+        team_service_ctor = MagicMock(return_value=team_service_mock)
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", team_service_ctor)
+
+        response = await admin_ui(
+            request=mock_request,
+            team_id=None,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db},
+        )
+
+        assert isinstance(response, HTMLResponse)
+        assert team_service_ctor.call_count == 1
+
+    @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
+    @patch.object(ToolService, "list_tools", new_callable=AsyncMock)
+    @patch.object(ResourceService, "list_resources", new_callable=AsyncMock)
+    @patch.object(PromptService, "list_prompts", new_callable=AsyncMock)
+    @patch.object(GatewayService, "list_gateways", new_callable=AsyncMock)
+    @patch.object(RootService, "list_roots", new_callable=AsyncMock)
     async def test_admin_ui_team_loaded_when_team_id_provided(
         self,
         mock_roots,

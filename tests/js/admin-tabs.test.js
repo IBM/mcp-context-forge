@@ -34,6 +34,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
+    vi.restoreAllMocks();
     doc.body.textContent = "";
     win.UI_HIDDEN_TABS = [];
     win.UI_HIDDEN_SECTIONS = [];
@@ -108,6 +109,21 @@ describe("showTab idempotency", () => {
         // The link should get its active class restored but no full re-render
         expect(overviewLink.classList.contains("active")).toBe(true);
         expect(overviewPanel.classList.contains("hidden")).toBe(false);
+    });
+
+    test("re-processes when multiple panels are visible to restore a clean state", () => {
+        const { panel: overviewPanel } = createTab("overview");
+        const { panel: toolOpsPanel } = createTab("tool-ops");
+        createTab("gateways");
+
+        win.showTab("overview");
+        toolOpsPanel.classList.remove("hidden");
+
+        // Same-tab navigation should still hide other visible panels.
+        win.showTab("overview");
+
+        expect(overviewPanel.classList.contains("hidden")).toBe(false);
+        expect(toolOpsPanel.classList.contains("hidden")).toBe(true);
     });
 });
 
@@ -283,6 +299,57 @@ describe("renderGlobalSearchResults hidden section filtering", () => {
         });
 
         expect(container.innerHTML).toContain("No matching results");
+    });
+});
+
+describe("runGlobalSearch visible entity filtering", () => {
+    test("sends only visible entity types to the backend", async () => {
+        const container = doc.createElement("div");
+        container.id = "global-search-results";
+        doc.body.appendChild(container);
+
+        win.ROOT_PATH = "";
+        win.IS_ADMIN = true;
+        win.UI_HIDDEN_SECTIONS = ["tools", "prompts", "teams"];
+        const fetchSpy = vi
+            .spyOn(win, "fetchWithAuth")
+            .mockResolvedValue({
+                ok: true,
+                json: async () => ({ groups: [] }),
+            });
+
+        await win.runGlobalSearch("gateway");
+
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const requestUrl = new URL(fetchSpy.mock.calls[0][0], "http://localhost");
+        expect(requestUrl.searchParams.get("entity_types")).toBe(
+            "servers,gateways,resources,agents,users",
+        );
+    });
+
+    test("short-circuits when all searchable sections are hidden", async () => {
+        const container = doc.createElement("div");
+        container.id = "global-search-results";
+        doc.body.appendChild(container);
+
+        win.ROOT_PATH = "";
+        win.IS_ADMIN = true;
+        win.UI_HIDDEN_SECTIONS = [
+            "servers",
+            "gateways",
+            "tools",
+            "resources",
+            "prompts",
+            "agents",
+            "teams",
+            "users",
+        ];
+        const fetchSpy = vi.spyOn(win, "fetchWithAuth");
+
+        await win.runGlobalSearch("anything");
+
+        expect(fetchSpy).not.toHaveBeenCalled();
+        expect(container.innerHTML).toContain("No searchable sections are visible");
     });
 });
 

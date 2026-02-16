@@ -270,7 +270,7 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
     /admin/?ui_hide=prompts,resources,teams
     ```
 
-    The query value is stored in a cookie for the session. Clear it by visiting:
+    The query value is stored in an HttpOnly cookie with a 30-day lifetime. Clear it by visiting:
     ```text
     /admin/?ui_hide=
     ```

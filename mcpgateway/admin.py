@@ -2889,8 +2889,19 @@ async def admin_ui(
     # --------------------------------------------------------------------------------
     user_teams = []
     team_service = None
+    sections_requiring_user_teams = {
+        "teams",
+        "tokens",
+        "users",
+        "tools",
+        "servers",
+        "resources",
+        "prompts",
+        "gateways",
+        "agents",
+    }
     should_load_user_teams = getattr(settings, "email_auth_enabled", False) and (
-        team_id is not None or "teams" not in hidden_sections or "team_selector" not in hidden_header_items or "tokens" not in hidden_sections
+        team_id is not None or "team_selector" not in hidden_header_items or bool(sections_requiring_user_teams - hidden_sections)
     )
     if should_load_user_teams:
         try:

@@ -7775,13 +7775,19 @@ function showTab(tabName) {
         // tab is already visible, do nothing to avoid duplicate loads/HTMX calls.
         const existingPanel = safeGetElement(`${tabName}-panel`, true);
         if (existingPanel && !existingPanel.classList.contains("hidden")) {
+            const visiblePanels = document.querySelectorAll(
+                ".tab-panel:not(.hidden)",
+            );
             const existingNav = document.querySelector(
                 `.sidebar-link[href="#${tabName}"]`,
             );
             if (existingNav) {
                 existingNav.classList.add("active");
             }
-            return;
+            // If multiple panels are visible, continue to force a clean state.
+            if (visiblePanels.length <= 1) {
+                return;
+            }
         }
 
         console.log(`Switching to tab: ${tabName}`);
@@ -17922,6 +17928,28 @@ async function runGlobalSearch(query) {
     const params = new URLSearchParams();
     params.set("q", normalizedQuery);
     params.set("limit_per_type", "8");
+    const searchableEntityTypes = [
+        "servers",
+        "gateways",
+        "tools",
+        "resources",
+        "prompts",
+        "agents",
+        "teams",
+        "users",
+    ];
+    const visibleEntityTypes = searchableEntityTypes.filter((entityType) => {
+        if (entityType === "users" && !isAdminUser()) {
+            return false;
+        }
+        return !getUiHiddenSections().has(entityType);
+    });
+    if (visibleEntityTypes.length === 0) {
+        renderGlobalSearchMessage("No searchable sections are visible.");
+        return;
+    }
+    params.set("entity_types", visibleEntityTypes.join(","));
+
     const currentTeamId = getCurrentTeamId();
     if (currentTeamId) {
         params.set("team_id", currentTeamId);
