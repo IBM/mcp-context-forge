@@ -367,6 +367,25 @@ class GrpcEndpoint:
             self._channel.close()
             logger.info(f"Closed gRPC connection to {self._target}")
 
+    def load_file_descriptors(self, file_descriptor_protos: List[bytes]) -> None:
+        """Load serialized FileDescriptorProto bytes into the descriptor pool.
+
+        This populates the pool with message type definitions so that
+        invoke() can serialize/deserialize requests without a reflection
+        round-trip.
+
+        Args:
+            file_descriptor_protos: List of raw FileDescriptorProto bytes.
+        """
+        for proto_bytes in file_descriptor_protos:
+            try:
+                fd = FileDescriptorProto()
+                fd.ParseFromString(proto_bytes)
+                self._pool.Add(fd)
+            except Exception:  # pylint: disable=broad-except
+                # Already in pool or corrupt — safe to skip
+                pass
+
     def get_services(self) -> List[str]:
         """Get list of discovered service names.
 
