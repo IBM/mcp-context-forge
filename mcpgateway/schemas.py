@@ -1146,9 +1146,7 @@ class ToolUpdate(BaseModelWithConfigDict):
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             path_template = parsed.path
             # Ensure path_template starts with a single '/'
-            if path_template and not path_template.startswith("/"):
-                path_template = "/" + path_template.lstrip("/")
-            elif path_template:
+            if path_template:
                 path_template = "/" + path_template.lstrip("/")
             if not values.get("base_url"):
                 values["base_url"] = base_url

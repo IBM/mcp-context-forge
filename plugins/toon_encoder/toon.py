@@ -802,9 +802,7 @@ def _decode_array(s: str) -> List[Any]:
     # Get remaining content, preserving indentation
     remaining = s[match.end():]
     # Strip just the leading space/newline after colon (": " or ":\n")
-    if remaining.startswith(" "):
-        remaining = remaining[1:]
-    elif remaining.startswith("\n"):
+    if remaining[:1] in (" ", "\n"):
         remaining = remaining[1:]
     remaining_stripped = remaining.strip()
 
