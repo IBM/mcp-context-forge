@@ -23,7 +23,7 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
 import html
 import io
 import json
@@ -247,33 +247,25 @@ grpc_service_mgr: Optional[Any] = GrpcService() if (settings.mcpgateway_grpc_ena
 # Rate limiting storage
 rate_limit_storage = defaultdict(list)
 
-# SRI (Subresource Integrity) hash cache
-_sri_hashes_cache: Optional[Dict[str, str]] = None
-
-
+@lru_cache(maxsize=1)
 def load_sri_hashes() -> Dict[str, str]:
     """Load SRI hashes from sri_hashes.json file.
+
+    Uses lru_cache to ensure the file is only read once per process.
 
     Returns:
         Dict[str, str]: Dictionary mapping resource names to SRI hash strings.
                        Returns empty dict if file not found or invalid.
     """
-    global _sri_hashes_cache
-
-    if _sri_hashes_cache is not None:
-        return _sri_hashes_cache
-
     try:
         sri_file = Path(__file__).parent / "sri_hashes.json"
         if sri_file.exists():
             with sri_file.open("r") as f:
-                _sri_hashes_cache = json.load(f)
-                return _sri_hashes_cache
+                return json.load(f)
     except Exception as e:
         LOGGER.warning(f"Failed to load SRI hashes: {e}")
 
-    _sri_hashes_cache = {}
-    return _sri_hashes_cache
+    return {}
 
 
 def _normalize_team_id(team_id: Optional[str]) -> Optional[str]:
