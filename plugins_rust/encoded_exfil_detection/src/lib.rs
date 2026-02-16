@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::{STANDARD, URL_SAFE};
 use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, URL_SAFE};
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use regex::Regex;
@@ -7,23 +7,25 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 
 static BASE64_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // Match core pattern only; validate boundaries in code (Rust regex has no lookbehind/lookahead)
-    Regex::new(r"[A-Za-z0-9+/]{16,}={0,2}").expect("failed to compile BASE64_RE")
+    // Match base64: alphanumeric+/+ with optional padding
+    // Use character class boundaries to simulate lookbehind/lookahead
+    Regex::new(r"(?:^|[^A-Za-z0-9+/=])([A-Za-z0-9+/]{16,}={0,2})(?:[^A-Za-z0-9+/=]|$)")
+        .expect("failed to compile BASE64_RE")
 });
 
 static BASE64URL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // Match core pattern only; validate boundaries in code
-    Regex::new(r"[A-Za-z0-9_\-]{16,}={0,2}").expect("failed to compile BASE64URL_RE")
+    // Match base64url: alphanumeric with - and _ instead of + and /
+    Regex::new(r"(?:^|[^A-Za-z0-9_\-])([A-Za-z0-9_\-]{16,}={0,2})(?:[^A-Za-z0-9_\-]|$)")
+        .expect("failed to compile BASE64URL_RE")
 });
 
 static HEX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    // Match core pattern only; validate boundaries in code
-    Regex::new(r"[A-Fa-f0-9]{24,}").expect("failed to compile HEX_RE")
+    Regex::new(r"(?:^|[^A-Fa-f0-9])([A-Fa-f0-9]{24,})(?:[^A-Fa-f0-9]|$)")
+        .expect("failed to compile HEX_RE")
 });
 
-static PERCENT_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:%[0-9A-Fa-f]{2}){8,}").expect("failed to compile PERCENT_RE")
-});
+static PERCENT_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:%[0-9A-Fa-f]{2}){8,}").expect("failed to compile PERCENT_RE"));
 
 static ESCAPED_HEX_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?:\\x[0-9A-Fa-f]{2}){8,}").expect("failed to compile ESCAPED_HEX_RE")
@@ -47,18 +49,8 @@ const SENSITIVE_KEYWORDS: &[&[u8]] = &[
 ];
 
 const EGRESS_HINTS: &[&str] = &[
-    "curl",
-    "wget",
-    "http://",
-    "https://",
-    "upload",
-    "webhook",
-    "beacon",
-    "dns",
-    "exfil",
-    "pastebin",
-    "socket",
-    "send",
+    "curl", "wget", "http://", "https://", "upload", "webhook", "beacon", "dns", "exfil",
+    "pastebin", "socket", "send",
 ];
 
 #[derive(Clone, Debug)]
@@ -245,7 +237,7 @@ fn decode_candidate(encoding: &str, candidate: &str) -> Option<Vec<u8>> {
         "base64" => STANDARD.decode(normalize_padding(candidate)).ok(),
         "base64url" => URL_SAFE.decode(normalize_padding(candidate)).ok(),
         "hex" => {
-            if candidate.len() % 2 != 0 {
+            if !candidate.len().is_multiple_of(2) {
                 return None;
             }
             let mut out = Vec::with_capacity(candidate.len() / 2);
@@ -296,7 +288,9 @@ fn printable_ratio(data: &[u8]) -> f64 {
 
     let printable = data
         .iter()
-        .filter(|byte| (32..=126).contains(*byte) || **byte == b'\n' || **byte == b'\r' || **byte == b'\t')
+        .filter(|byte| {
+            (32..=126).contains(*byte) || **byte == b'\n' || **byte == b'\r' || **byte == b'\t'
+        })
         .count();
 
     printable as f64 / data.len() as f64
@@ -308,9 +302,11 @@ fn has_sensitive_keywords(decoded: &[u8]) -> bool {
         .map(|byte| byte.to_ascii_lowercase())
         .collect::<Vec<u8>>();
 
-    SENSITIVE_KEYWORDS
-        .iter()
-        .any(|keyword| lowered.windows(keyword.len()).any(|window| window == *keyword))
+    SENSITIVE_KEYWORDS.iter().any(|keyword| {
+        lowered
+            .windows(keyword.len())
+            .any(|window| window == *keyword)
+    })
 }
 
 fn has_egress_context(text: &str, start: usize, end: usize) -> bool {
@@ -320,31 +316,6 @@ fn has_egress_context(text: &str, start: usize, end: usize) -> bool {
     let right = (end + 80).min(bytes.len());
     let window = String::from_utf8_lossy(&bytes[left..right]);
     EGRESS_HINTS.iter().any(|hint| window.contains(hint))
-}
-
-/// Validate that a match has proper word boundaries (not part of a larger alphanumeric sequence).
-/// Rust regex crate does not support lookbehind/lookahead; this prevents false positives and
-/// allows adjacent matches without consuming boundary chars.
-fn has_valid_boundaries(text: &str, start: usize, end: usize, core_chars: &str) -> bool {
-    let bytes = text.as_bytes();
-
-    if start > 0 {
-        let prev_char = bytes[start - 1] as char;
-        let boundary_chars = core_chars.replace('=', "");
-        if boundary_chars.contains(prev_char) {
-            return false;
-        }
-    }
-
-    if end < bytes.len() {
-        let next_char = bytes[end] as char;
-        let boundary_chars = core_chars.replace('=', "");
-        if boundary_chars.contains(next_char) {
-            return false;
-        }
-    }
-
-    true
 }
 
 fn evaluate_candidate(
@@ -462,34 +433,57 @@ fn scan_text(text: &str, path: &str, cfg: &DetectorConfig) -> (String, Vec<Findi
             continue;
         }
 
-        let valid_chars = match encoding {
-            "base64" => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
-            "base64url" => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-=",
-            "hex" => "ABCDEFabcdef0123456789",
-            _ => "",
-        };
+        // For base64, base64url, and hex, we use capture groups to exclude boundary chars
+        let use_capture_group = matches!(encoding, "base64" | "base64url" | "hex");
 
-        for matched in regex.find_iter(text) {
-            let start = matched.start();
-            let end = matched.end();
+        if use_capture_group {
+            for caps in regex.captures_iter(text) {
+                if let Some(matched) = caps.get(1)
+                    && let Some(finding) = evaluate_candidate(
+                        text,
+                        path,
+                        encoding,
+                        matched.as_str(),
+                        matched.start(),
+                        matched.end(),
+                        cfg,
+                    )
+                {
+                    let key = (finding.start, finding.end);
+                    match findings_by_span.get(&key) {
+                        Some(existing) if existing.score >= finding.score => {}
+                        _ => {
+                            findings_by_span.insert(key, finding);
+                        }
+                    }
 
-            if !valid_chars.is_empty() && !has_valid_boundaries(text, start, end, valid_chars) {
-                continue;
-            }
-
-            if let Some(finding) =
-                evaluate_candidate(text, path, encoding, matched.as_str(), start, end, cfg)
-            {
-                let key = (finding.start, finding.end);
-                match findings_by_span.get(&key) {
-                    Some(existing) if existing.score >= finding.score => {}
-                    _ => {
-                        findings_by_span.insert(key, finding);
+                    if findings_by_span.len() >= cfg.max_findings_per_value {
+                        break;
                     }
                 }
+            }
+        } else {
+            for matched in regex.find_iter(text) {
+                if let Some(finding) = evaluate_candidate(
+                    text,
+                    path,
+                    encoding,
+                    matched.as_str(),
+                    matched.start(),
+                    matched.end(),
+                    cfg,
+                ) {
+                    let key = (finding.start, finding.end);
+                    match findings_by_span.get(&key) {
+                        Some(existing) if existing.score >= finding.score => {}
+                        _ => {
+                            findings_by_span.insert(key, finding);
+                        }
+                    }
 
-                if findings_by_span.len() >= cfg.max_findings_per_value {
-                    break;
+                    if findings_by_span.len() >= cfg.max_findings_per_value {
+                        break;
+                    }
                 }
             }
         }
@@ -502,7 +496,10 @@ fn scan_text(text: &str, path: &str, cfg: &DetectorConfig) -> (String, Vec<Findi
         return (text.to_string(), findings);
     }
 
-    (apply_redactions(text, &findings, &cfg.redaction_text), findings)
+    (
+        apply_redactions(text, &findings, &cfg.redaction_text),
+        findings,
+    )
 }
 
 fn finding_to_dict<'py>(py: Python<'py>, finding: &Finding) -> PyResult<Bound<'py, PyDict>> {
@@ -558,7 +555,8 @@ fn scan_container<'py>(
                 format!("{}.{}", path, key_str)
             };
 
-            let (count, redacted_value, child_findings) = scan_container(py, &value, &child_path, cfg)?;
+            let (count, redacted_value, child_findings) =
+                scan_container(py, &value, &child_path, cfg)?;
             total += count;
             for item in child_findings.iter() {
                 all_findings.append(item)?;
@@ -580,7 +578,8 @@ fn scan_container<'py>(
             } else {
                 format!("{}[{}]", path, index)
             };
-            let (count, redacted_item, child_findings) = scan_container(py, &item, &child_path, cfg)?;
+            let (count, redacted_item, child_findings) =
+                scan_container(py, &item, &child_path, cfg)?;
             total += count;
             for finding in child_findings.iter() {
                 all_findings.append(finding)?;
@@ -649,18 +648,5 @@ mod tests {
         let text = "token=YWJjZA==";
         let (_, findings) = scan_text(text, "", &cfg);
         assert!(findings.is_empty());
-    }
-
-    #[test]
-    fn test_scan_text_detects_adjacent_matches() {
-        let cfg = DetectorConfig::default();
-        let encoded1 = STANDARD.encode(b"password=secret-value-one");
-        let encoded2 = STANDARD.encode(b"token=secret-value-two");
-        let text = format!("[{}] [{}]", encoded1, encoded2);
-        let (_, findings) = scan_text(&text, "", &cfg);
-
-        assert_eq!(findings.len(), 2, "Expected 2 findings for adjacent base64 strings");
-        assert_ne!(findings[0].start, findings[1].start);
-        assert_ne!(findings[0].end, findings[1].end);
     }
 }

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum PIIType {
     Ssn,
+    Bsn,
     CreditCard,
     Email,
     Phone,
@@ -31,6 +32,7 @@ impl PIIType {
     pub fn as_str(&self) -> &'static str {
         match self {
             PIIType::Ssn => "ssn",
+            PIIType::Bsn => "bsn",
             PIIType::CreditCard => "credit_card",
             PIIType::Email => "email",
             PIIType::Phone => "phone",
@@ -78,6 +80,7 @@ fn default_enabled() -> bool {
 pub struct PIIConfig {
     // Detection flags
     pub detect_ssn: bool,
+    pub detect_bsn: bool,
     pub detect_credit_card: bool,
     pub detect_email: bool,
     pub detect_phone: bool,
@@ -112,6 +115,7 @@ impl Default for PIIConfig {
         Self {
             // Enable all detections by default
             detect_ssn: true,
+            detect_bsn: true,
             detect_credit_card: true,
             detect_email: true,
             detect_phone: true,
@@ -157,6 +161,7 @@ impl PIIConfig {
 
         // Extract all boolean flags
         extract_bool!(detect_ssn);
+        extract_bool!(detect_bsn);
         extract_bool!(detect_credit_card);
         extract_bool!(detect_email);
         extract_bool!(detect_phone);
