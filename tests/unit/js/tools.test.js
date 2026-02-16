@@ -7,6 +7,23 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import {
+  viewTool,
+  editTool,
+  initToolSelect,
+  testTool,
+  loadTools,
+  enrichTool,
+  generateToolTestCases,
+  generateTestCases,
+  validateTool,
+  runToolTest,
+  cleanupToolTestState,
+  cleanupToolTestModal,
+} from "../../../mcpgateway/admin_ui/tools.js";
+import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
+import { openModal } from "../../../mcpgateway/admin_ui/modals";
+
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
   AppState: {
     parameterCount: 0,
@@ -47,23 +64,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   showSuccessMessage: vi.fn(),
   updateEditToolUrl: vi.fn(),
 }));
-
-import {
-  viewTool,
-  editTool,
-  initToolSelect,
-  testTool,
-  loadTools,
-  enrichTool,
-  generateToolTestCases,
-  generateTestCases,
-  validateTool,
-  runToolTest,
-  cleanupToolTestState,
-  cleanupToolTestModal,
-} from "../../../mcpgateway/admin_ui/tools.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
-import { openModal } from "../../../mcpgateway/admin_ui/modals";
 
 afterEach(() => {
   document.body.innerHTML = "";

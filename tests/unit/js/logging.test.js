@@ -11,22 +11,6 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
-  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
-}));
-vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
-  fetchWithAuth: vi.fn(),
-}));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  fetchWithTimeout: vi.fn(),
-  formatTimestamp: vi.fn((ts) => ts || ""),
-  getRootPath: vi.fn(() => ""),
-  safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
-  showNotification: vi.fn(),
-  showToast: vi.fn(),
-  truncateText: vi.fn((s, len) => (s != null ? String(s).slice(0, len || 80) : "")),
-}));
-
 import {
   getLogLevelClass,
   getSeverityClass,
@@ -46,6 +30,22 @@ import {
   setLogFiltersVisibility,
 } from "../../../mcpgateway/admin_ui/logging.js";
 import { fetchWithAuth } from "../../../mcpgateway/admin_ui/tokens.js";
+
+vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
+}));
+vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
+  fetchWithAuth: vi.fn(),
+}));
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  fetchWithTimeout: vi.fn(),
+  formatTimestamp: vi.fn((ts) => ts || ""),
+  getRootPath: vi.fn(() => ""),
+  safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
+  showNotification: vi.fn(),
+  showToast: vi.fn(),
+  truncateText: vi.fn((s, len) => (s != null ? String(s).slice(0, len || 80) : "")),
+}));
 
 afterEach(() => {
   document.body.innerHTML = "";

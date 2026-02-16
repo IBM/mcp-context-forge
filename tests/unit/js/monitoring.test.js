@@ -5,14 +5,14 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import { initializeRealTimeMonitoring } from "../../../mcpgateway/admin_ui/monitoring.js";
+
 vi.mock("../../../mcpgateway/admin_ui/logging.js", () => ({
   updateEntityActionButtons: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
-
-import { initializeRealTimeMonitoring } from "../../../mcpgateway/admin_ui/monitoring.js";
 
 afterEach(() => {
   document.body.innerHTML = "";

@@ -375,6 +375,7 @@ import {
   dedupeSelectorItems,
   filterByRelationship,
   filterTeams,
+  hideTeamEditModal,
   leaveTeam,
   rejectJoinRequest,
   requestToJoinTeam,
@@ -387,6 +388,7 @@ Admin.approveJoinRequest = approveJoinRequest;
 Admin.dedupeSelectorItems = dedupeSelectorItems;
 Admin.filterByRelationship = filterByRelationship;
 Admin.filterTeams = filterTeams;
+Admin.hideTeamEditModal = hideTeamEditModal;
 Admin.leaveTeam = leaveTeam;
 Admin.rejectJoinRequest = rejectJoinRequest;
 Admin.requestToJoinTeam = requestToJoinTeam;

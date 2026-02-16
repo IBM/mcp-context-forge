@@ -12,16 +12,6 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
-  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
-}));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  fetchWithTimeout: vi.fn(),
-  handleFetchError: vi.fn((e) => e.message),
-  safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
-  showNotification: vi.fn(),
-}));
-
 import {
   showMetricsLoading,
   hideMetricsLoading,
@@ -31,6 +21,16 @@ import {
   createStandardPaginationControls,
   showTopPerformerTab,
 } from "../../../mcpgateway/admin_ui/metrics.js";
+
+vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
+}));
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  fetchWithTimeout: vi.fn(),
+  handleFetchError: vi.fn((e) => e.message),
+  safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
+  showNotification: vi.fn(),
+}));
 
 afterEach(() => {
   document.body.innerHTML = "";

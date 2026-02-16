@@ -7,6 +7,16 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import {
+  viewGateway,
+  editGateway,
+  initGatewaySelect,
+  getSelectedGatewayIds,
+  testGateway,
+} from "../../../mcpgateway/admin_ui/gateway.js";
+import { fetchWithTimeout, showErrorMessage } from "../../../mcpgateway/admin_ui/utils";
+import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
+
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
   loadAuthHeaders: vi.fn(),
   updateAuthHeadersJSON: vi.fn(),
@@ -48,16 +58,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
 }));
-
-import {
-  viewGateway,
-  editGateway,
-  initGatewaySelect,
-  getSelectedGatewayIds,
-  testGateway,
-} from "../../../mcpgateway/admin_ui/gateway.js";
-import { fetchWithTimeout, showErrorMessage } from "../../../mcpgateway/admin_ui/utils";
-import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
 
 afterEach(() => {
   document.body.innerHTML = "";

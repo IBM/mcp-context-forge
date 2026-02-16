@@ -6,10 +6,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-}));
-
 import {
   extractAvailableTags,
   updateAvailableTags,
@@ -19,6 +15,10 @@ import {
   clearTagFilter,
   initializeTagFiltering,
 } from "../../../mcpgateway/admin_ui/tags.js";
+
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
 
 // Helper to build a minimal table with tags column
 function buildTable(entityType, rows) {
