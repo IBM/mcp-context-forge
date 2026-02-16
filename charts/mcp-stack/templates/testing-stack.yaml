@@ -1,0 +1,364 @@
+{{- if .Values.testing.enabled }}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+{{- $gatewaySvc := printf "%s-mcpgateway" $fullName -}}
+{{- $gatewayPort := .Values.mcpContextForge.service.port -}}
+{{- $locustHost := .Values.testing.locust.host -}}
+{{- if not $locustHost -}}
+  {{- if .Values.nginxProxy.enabled -}}
+    {{- $locustHost = printf "http://%s-nginx:%v" $fullName .Values.nginxProxy.service.port -}}
+  {{- else if .Values.tls.enabled -}}
+    {{- $locustHost = printf "http://%s-nginx-tls:%v" $fullName .Values.tls.service.httpPort -}}
+  {{- else -}}
+    {{- $locustHost = printf "http://%s:%v" $gatewaySvc $gatewayPort -}}
+  {{- end -}}
+{{- end -}}
+
+{{- if .Values.testing.fastTestServer.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-fast-test-server
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-fast-test-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-fast-test-server
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-fast-test-server
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: fast-test-server
+          image: "{{ .Values.testing.fastTestServer.image.repository }}:{{ .Values.testing.fastTestServer.image.tag }}"
+          imagePullPolicy: {{ .Values.testing.fastTestServer.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.testing.fastTestServer.service.port }}
+          env:
+            {{- range $key, $val := .Values.testing.fastTestServer.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          {{- with .Values.testing.fastTestServer.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          {{- with .Values.testing.fastTestServer.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          resources:
+{{- toYaml .Values.testing.fastTestServer.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-fast-test-server
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-fast-test-server
+spec:
+  type: {{ .Values.testing.fastTestServer.service.type }}
+  selector:
+    app: {{ $fullName }}-fast-test-server
+  ports:
+    - name: http
+      port: {{ .Values.testing.fastTestServer.service.port }}
+      targetPort: {{ .Values.testing.fastTestServer.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if .Values.testing.a2aEchoAgent.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-a2a-echo-agent
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-a2a-echo-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-a2a-echo-agent
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-a2a-echo-agent
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      containers:
+        - name: a2a-echo-agent
+          image: "{{ .Values.testing.a2aEchoAgent.image.repository }}:{{ .Values.testing.a2aEchoAgent.image.tag }}"
+          imagePullPolicy: {{ .Values.testing.a2aEchoAgent.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.testing.a2aEchoAgent.service.port }}
+          env:
+            {{- range $key, $val := .Values.testing.a2aEchoAgent.env }}
+            - name: {{ $key }}
+              value: {{ $val | quote }}
+            {{- end }}
+          {{- with .Values.testing.a2aEchoAgent.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          {{- with .Values.testing.a2aEchoAgent.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          resources:
+{{- toYaml .Values.testing.a2aEchoAgent.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-a2a-echo-agent
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-a2a-echo-agent
+spec:
+  type: {{ .Values.testing.a2aEchoAgent.service.type }}
+  selector:
+    app: {{ $fullName }}-a2a-echo-agent
+  ports:
+    - name: http
+      port: {{ .Values.testing.a2aEchoAgent.service.port }}
+      targetPort: {{ .Values.testing.a2aEchoAgent.service.port }}
+      protocol: TCP
+{{- end }}
+
+{{- if and .Values.testing.locust.enabled (not .Values.testing.locust.script.existingConfigMap) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullName }}-locust-script
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-locust
+    app.kubernetes.io/component: loadtest
+data:
+  {{ .Values.testing.locust.script.key }}: |
+{{ .Values.testing.locust.script.inline | nindent 4 }}
+{{- end }}
+
+{{- if .Values.testing.locust.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-locust
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-locust
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-locust
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-locust
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      initContainers:
+        - name: generate-jwt
+          image: "{{ .Values.testing.registration.image.repository }}:{{ .Values.testing.registration.image.tag }}"
+          imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+                --username {{ .Values.testing.registration.jwt.username | quote }} \
+                --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} \
+                --secret {{ .Values.testing.registration.jwt.secret | quote }} \
+                --algo HS256 2>/dev/null)
+              printf "%s" "$TOKEN" > /tokens/gateway.jwt
+          volumeMounts:
+            - name: token-volume
+              mountPath: /tokens
+      containers:
+        - name: locust
+          image: "{{ .Values.testing.locust.image.repository }}:{{ .Values.testing.locust.image.tag }}"
+          imagePullPolicy: {{ .Values.testing.locust.image.pullPolicy }}
+          ports:
+            - name: web
+              containerPort: {{ .Values.testing.locust.service.port }}
+          env:
+            - name: HOME
+              value: /tmp
+            - name: LOCUST_MODE
+              value: {{ .Values.testing.locust.mode | quote }}
+            - name: LOCUST_USERS
+              value: {{ .Values.testing.locust.users | quote }}
+            - name: LOCUST_SPAWN_RATE
+              value: {{ .Values.testing.locust.spawnRate | quote }}
+            - name: LOCUST_RUN_TIME
+              value: {{ .Values.testing.locust.runTime | quote }}
+            - name: LOCUST_EXPECT_WORKERS
+              value: {{ .Values.testing.locust.expectWorkers | quote }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export MCPGATEWAY_BEARER_TOKEN="$(cat /tokens/gateway.jwt)"
+              MODE="${LOCUST_MODE:-master}"
+              if [ "$MODE" = "headless" ]; then
+                exec locust -f /mnt/locust/{{ .Values.testing.locust.script.key }} \
+                  --host={{ $locustHost | quote }} \
+                  --users="${LOCUST_USERS:-100}" \
+                  --spawn-rate="${LOCUST_SPAWN_RATE:-10}" \
+                  --run-time="${LOCUST_RUN_TIME:-5m}" \
+                  --headless \
+                  --only-summary
+              fi
+
+              exec locust -f /mnt/locust/{{ .Values.testing.locust.script.key }} \
+                --host={{ $locustHost | quote }} \
+                --web-host=0.0.0.0 \
+                --web-port={{ .Values.testing.locust.service.port }} \
+                --master \
+                --expect-workers="${LOCUST_EXPECT_WORKERS:-1}" \
+                --class-picker
+          volumeMounts:
+            - name: token-volume
+              mountPath: /tokens
+            - name: locust-script
+              mountPath: /mnt/locust
+          resources:
+{{- toYaml .Values.testing.locust.resources | nindent 12 }}
+      volumes:
+        - name: token-volume
+          emptyDir: {}
+        - name: locust-script
+          configMap:
+            name: {{ .Values.testing.locust.script.existingConfigMap | default (printf "%s-locust-script" $fullName) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullName }}-locust
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-locust
+spec:
+  type: {{ .Values.testing.locust.service.type }}
+  selector:
+    app: {{ $fullName }}-locust
+  ports:
+    - name: web
+      port: {{ .Values.testing.locust.service.port }}
+      targetPort: {{ .Values.testing.locust.service.port }}
+      protocol: TCP
+{{- if and .Values.testing.locust.worker.enabled (gt (.Values.testing.locust.worker.replicaCount | int) 0) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullName }}-locust-worker
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ $fullName }}-locust-worker
+spec:
+  replicas: {{ .Values.testing.locust.worker.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ $fullName }}-locust-worker
+  template:
+    metadata:
+      labels:
+        app: {{ $fullName }}-locust-worker
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      initContainers:
+        - name: generate-jwt
+          image: "{{ .Values.testing.registration.image.repository }}:{{ .Values.testing.registration.image.tag }}"
+          imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+                --username {{ .Values.testing.registration.jwt.username | quote }} \
+                --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} \
+                --secret {{ .Values.testing.registration.jwt.secret | quote }} \
+                --algo HS256 2>/dev/null)
+              printf "%s" "$TOKEN" > /tokens/gateway.jwt
+          volumeMounts:
+            - name: token-volume
+              mountPath: /tokens
+      containers:
+        - name: locust-worker
+          image: "{{ .Values.testing.locust.image.repository }}:{{ .Values.testing.locust.image.tag }}"
+          imagePullPolicy: {{ .Values.testing.locust.image.pullPolicy }}
+          env:
+            - name: HOME
+              value: /tmp
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              export MCPGATEWAY_BEARER_TOKEN="$(cat /tokens/gateway.jwt)"
+              exec locust -f /mnt/locust/{{ .Values.testing.locust.script.key }} \
+                --host={{ $locustHost | quote }} \
+                --worker \
+                --master-host={{ $fullName }}-locust
+          volumeMounts:
+            - name: token-volume
+              mountPath: /tokens
+            - name: locust-script
+              mountPath: /mnt/locust
+          resources:
+{{- toYaml .Values.testing.locust.resources | nindent 12 }}
+      volumes:
+        - name: token-volume
+          emptyDir: {}
+        - name: locust-script
+          configMap:
+            name: {{ .Values.testing.locust.script.existingConfigMap | default (printf "%s-locust-script" $fullName) }}
+{{- end }}
+{{- end }}
+
+{{- end }}

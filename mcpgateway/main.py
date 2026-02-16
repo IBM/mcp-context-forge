@@ -46,7 +46,7 @@ from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from jinja2 import Environment, FileSystemLoader
@@ -1441,6 +1441,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Exempts login-related paths and static assets:
     - /admin/login - login page
     - /admin/logout - logout action
+    - /admin/forgot-password - self-service password reset request page
+    - /admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -1451,8 +1453,14 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Paths under /admin that don't require admin privileges
-    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
+    # Public paths under /admin that do not require prior authentication.
+    EXEMPT_PATHS = [
+        "/admin/login",
+        "/admin/logout",
+        "/admin/forgot-password",
+        "/admin/reset-password",
+        "/admin/static",
+    ]
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1466,7 +1474,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             error_param: Optional error parameter for login redirect URL.
 
         Returns:
-            RedirectResponse for HTML/HTMX requests, ORJSONResponse for API requests.
+            Response with HX-Redirect for HTMX requests, RedirectResponse for HTML requests, ORJSONResponse for API requests.
         """
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
@@ -1474,6 +1482,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
             login_url = f"{root_path}/admin/login" if root_path else "/admin/login"
             if error_param:
                 login_url = f"{login_url}?error={error_param}"
+            if is_htmx:
+                return Response(status_code=200, headers={"HX-Redirect": login_url})
             return RedirectResponse(url=login_url, status_code=302)
         return ORJSONResponse(status_code=status_code, content={"detail": detail})
 
@@ -1590,7 +1600,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         logger.info(f"Platform admin bootstrap authentication for {username}")
                         # Allow platform admin through - they have implicit admin privileges
                     else:
-                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
+                        return self._error_response(request, root_path, 401, "User not found")
                 else:
                     # User exists in DB - check active status
                     if not user.is_active:
@@ -1747,11 +1757,15 @@ class MCPPathRewriteMiddleware:
 
         original_path = scope.get("path", "")
         scope["modified_path"] = original_path
-        if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
-            # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
-            scope["path"] = "/mcp/"
-            await self.application(scope, receive, send)
-            return
+
+        # Skip rewriting for well-known URIs (RFC 9728 OAuth metadata, etc.)
+        # These paths may end with /mcp but should not be rewritten to the MCP transport
+        if not original_path.startswith("/.well-known/"):
+            if (original_path.endswith("/mcp") and original_path != "/mcp") or (original_path.endswith("/mcp/") and original_path != "/mcp/"):
+                # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
+                scope["path"] = "/mcp/"
+                await self.application(scope, receive, send)
+                return
         await self.application(scope, receive, send)
 
 

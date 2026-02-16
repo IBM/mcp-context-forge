@@ -190,6 +190,7 @@ class StdioTransport(Transport):
             Received messages
 
         Raises:
+            asyncio.CancelledError: If the receive loop is cancelled.
             RuntimeError: If transport is not connected
 
         Examples:
@@ -226,8 +227,6 @@ class StdioTransport(Transport):
                 message = orjson.loads(line.strip())
                 yield message
 
-            except asyncio.CancelledError:
-                break
             except Exception as e:
                 logger.error(f"Failed to receive message: {e}")
                 continue

@@ -14,8 +14,10 @@
 #  DOCKER COMPOSE PROFILES
 #
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
+#  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
 #  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
@@ -51,6 +53,7 @@ volumes:                # Named volumes survive podman-compose down/up
   lokidata:
   tempodata:
   locust_token:
+  keycloakdata:
 
 ###############################################################################
 #  CORE SERVICE - MCP Gateway
@@ -230,6 +233,43 @@ services:
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=admin@example.com
       - PLATFORM_ADMIN_PASSWORD=changeme
+      - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
+      # Self-service password reset (feature flags + hardening controls)
+      - PASSWORD_RESET_ENABLED=${PASSWORD_RESET_ENABLED:-true}
+      - PASSWORD_RESET_TOKEN_EXPIRY_MINUTES=${PASSWORD_RESET_TOKEN_EXPIRY_MINUTES:-60}
+      - PASSWORD_RESET_RATE_LIMIT=${PASSWORD_RESET_RATE_LIMIT:-5}
+      - PASSWORD_RESET_RATE_WINDOW_MINUTES=${PASSWORD_RESET_RATE_WINDOW_MINUTES:-15}
+      - PASSWORD_RESET_INVALIDATE_SESSIONS=${PASSWORD_RESET_INVALIDATE_SESSIONS:-true}
+      - PASSWORD_RESET_MIN_RESPONSE_MS=${PASSWORD_RESET_MIN_RESPONSE_MS:-250}
+      # SMTP for password reset / lockout notifications (optional)
+      - SMTP_ENABLED=${SMTP_ENABLED:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - "SMTP_FROM_NAME=${SMTP_FROM_NAME:-MCP Gateway}"
+      - SMTP_USE_TLS=${SMTP_USE_TLS:-true}
+      - SMTP_USE_SSL=${SMTP_USE_SSL:-false}
+      - SMTP_TIMEOUT_SECONDS=${SMTP_TIMEOUT_SECONDS:-15}
+      # ═══════════════════════════════════════════════════════════════════════════
+      # SSO Configuration (default OFF; enabled by docker-compose.sso.yml)
+      # ═══════════════════════════════════════════════════════════════════════════
+      - SSO_ENABLED=${SSO_ENABLED:-false}
+      - SSO_KEYCLOAK_ENABLED=${SSO_KEYCLOAK_ENABLED:-false}
+      - SSO_KEYCLOAK_BASE_URL=${SSO_KEYCLOAK_BASE_URL:-http://keycloak:8080}
+      - SSO_KEYCLOAK_PUBLIC_BASE_URL=${SSO_KEYCLOAK_PUBLIC_BASE_URL:-}
+      - SSO_KEYCLOAK_REALM=${SSO_KEYCLOAK_REALM:-mcp-gateway}
+      - SSO_KEYCLOAK_CLIENT_ID=${SSO_KEYCLOAK_CLIENT_ID:-mcp-gateway}
+      - SSO_KEYCLOAK_CLIENT_SECRET=${SSO_KEYCLOAK_CLIENT_SECRET:-keycloak-dev-secret}
+      - SSO_KEYCLOAK_MAP_REALM_ROLES=${SSO_KEYCLOAK_MAP_REALM_ROLES:-true}
+      - SSO_KEYCLOAK_MAP_CLIENT_ROLES=${SSO_KEYCLOAK_MAP_CLIENT_ROLES:-false}
+      - SSO_KEYCLOAK_GROUPS_CLAIM=${SSO_KEYCLOAK_GROUPS_CLAIM:-groups}
+      - SSO_KEYCLOAK_ROLE_MAPPINGS=${SSO_KEYCLOAK_ROLE_MAPPINGS:-{}}
+      - SSO_KEYCLOAK_DEFAULT_ROLE=${SSO_KEYCLOAK_DEFAULT_ROLE:-}
+      - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
+      - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
+      - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
       # Security defaults (tokens require expiration and JTI for revocation)
       - REQUIRE_TOKEN_EXPIRATION=${REQUIRE_TOKEN_EXPIRATION:-true}
       - REQUIRE_JTI=${REQUIRE_JTI:-true}
@@ -274,6 +314,9 @@ services:
       # Uncomment to enable catalog
       - MCPGATEWAY_CATALOG_ENABLED=true
       - MCPGATEWAY_CATALOG_FILE=/app/mcp-catalog.yml
+      # Uncomment to enable direct proxy mode
+      # - MCPGATEWAY_DIRECT_PROXY_ENABLED=false
+      # - MCPGATEWAY_DIRECT_PROXY_TIMEOUT=30
       # Authentication configuration
       - AUTH_REQUIRED=true
       - MCP_CLIENT_AUTH_ENABLED=true
@@ -569,6 +612,52 @@ services:
     # 1. Generate keys: make certs-jwt
     # 2. Uncomment volumes mount above
     # 3. Switch JWT_ALGORITHM to RS256 and uncomment JWT_*_KEY_PATH variables
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Keycloak - Local Identity Provider for SSO development/testing
+  # Admin Console: http://localhost:8180 (admin/changeme)
+  # Usage: docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+  # ──────────────────────────────────────────────────────────────────────
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.1
+    restart: unless-stopped
+    profiles: ["sso"]
+    networks: [mcpnet]
+    ports:
+      - "8180:8080"
+    environment:
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-changeme}
+      - KC_HOSTNAME=${KC_HOSTNAME:-localhost}
+      - KC_HOSTNAME_PORT=${KC_HOSTNAME_PORT:-8180}
+      - KC_HOSTNAME_STRICT=${KC_HOSTNAME_STRICT:-false}
+      - KC_HTTP_ENABLED=true
+      - KC_HEALTH_ENABLED=true
+      - KC_METRICS_ENABLED=false
+    command: ["start-dev", "--import-realm"]
+    volumes:
+      - ./infra/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloakdata:/opt/keycloak/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bash",
+          "-ec",
+          "exec 3<>/dev/tcp/127.0.0.1/9000; printf 'GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3; grep -Eq '\"status\"[[:space:]]*:[[:space:]]*\"UP\"' <&3"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
 
 ###############################################################################
 #  DATABASES - enable ONE of these blocks and adjust DATABASE_URL
@@ -1366,6 +1455,107 @@ services:
         echo "✅ Setup complete!"
 
   ###############################################################################
+  # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing
+  # Introduces artificial latency on every tool call. Use for testing gateway
+  # timeout enforcement, circuit breaker behaviour, and session pool resilience.
+  # Usage: docker compose --profile resilience up -d
+  ###############################################################################
+  slow_time_server:
+    build:
+      context: ./mcp-servers/go/slow-time-server
+      dockerfile: Dockerfile
+    image: mcpgateway/slow-time-server:latest
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "8889:8081"    # Map host port 8889 to container port 8081
+    environment:
+      - DEFAULT_LATENCY=${SLOW_TIME_LATENCY:-5s}
+      - FAILURE_RATE=${SLOW_TIME_FAILURE_RATE:-0.0}
+    command: ["-transport=dual", "-listen=0.0.0.0", "-port=8081", "-log-level=info"]
+    healthcheck:
+      test: ["CMD", "/slow-time-server", "-health", "-port=8081"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
+    profiles: ["resilience"]
+
+  ###############################################################################
+  # Auto-registration service - registers slow_time_server with gateway
+  ###############################################################################
+  register_slow_time:
+    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+    networks: [mcpnet]
+    depends_on:
+      gateway:
+        condition: service_healthy
+      slow_time_server:
+        condition: service_healthy
+    environment:
+      - JWT_SECRET_KEY=my-test-key
+    restart: "no"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Registering slow_time_server with gateway..."
+
+        # Generate JWT token
+        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key --algo HS256 2>/dev/null)
+
+        python3 -c "
+        import urllib.request
+        import json
+        import os
+        import sys
+
+        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+
+        def api_request(method, path, data=None):
+            url = f'http://gateway:4444{path}'
+            req = urllib.request.Request(url, method=method)
+            req.add_header('Authorization', f'Bearer {token}')
+            req.add_header('Content-Type', 'application/json')
+            if data:
+                req.data = json.dumps(data).encode('utf-8')
+            with urllib.request.urlopen(req) as response:
+                return json.loads(response.read().decode('utf-8'))
+
+        # Delete existing gateway if present
+        try:
+            gateways = api_request('GET', '/gateways')
+            for gw in gateways:
+                if gw.get('name') == 'slow_time':
+                    print(f'Found existing gateway {gw[\"id\"]}, deleting...')
+                    api_request('DELETE', f'/gateways/{gw[\"id\"]}')
+        except Exception as e:
+            print(f'Note: {e}')
+
+        # Register the gateway
+        try:
+            result = api_request('POST', '/gateways', {
+                'name': 'slow_time',
+                'url': 'http://slow_time_server:8081/http',
+                'transport': 'STREAMABLEHTTP'
+            })
+            gateway_id = result.get('id')
+            print(f'✅ Registered slow_time_server (gateway_id: {gateway_id})')
+        except Exception as e:
+            print(f'❌ Registration failed: {e}')
+            exit(1)
+        "
+        echo "✅ Registration complete!"
+    profiles: ["resilience"]
+
+  ###############################################################################
   # Fast Test Server - Ultra-fast Rust MCP server for performance testing
   # Provides: echo, get_system_time, get_stats tools via MCP Streamable HTTP
   # Also exposes REST API endpoints for baseline comparison
@@ -1406,7 +1596,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing", "monitoring"]
+    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
   # Auto-registration service - registers fast_test_server with gateway
@@ -1472,7 +1662,7 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing", "monitoring"]
+    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
   # A2A Echo Agent - Lightweight A2A-compatible agent for end-to-end testing
@@ -1506,7 +1696,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 64M
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Auto-registration service - registers a2a_echo_agent with gateway
@@ -1575,7 +1765,7 @@ services:
         print(f'✅ Registered a2a_echo_agent: {result.get(\"id\", \"unknown\")}')
         "
         echo "✅ Registration complete!"
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Locust JWT token generator - produces a gateway JWT for containerized load tests
@@ -1599,7 +1789,7 @@ services:
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo ""
         echo "✅ Token written to /tokens/gateway.jwt"
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Locust - Containerized load testing with web UI (master + optional workers)
@@ -1666,7 +1856,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   locust_worker:
     image: locustio/locust:latest
@@ -1701,7 +1891,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing"]
+    profiles: ["testing", "sso"]
 
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool
@@ -2000,4 +2190,4 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
-    profiles: ["inspector"]
+    profiles: ["inspector", "sso"]

@@ -78,6 +78,27 @@ def find_server(page: Page, server_name: str, retries: int = 5):
     return find_entity_by_name(page, "servers", server_name, retries)
 
 
+def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int = 10) -> bool:
+    """Wait until an entity is no longer found via admin API.
+
+    Retries with increasing delay to handle DB commit propagation lag.
+
+    Returns:
+        True if entity disappeared within retries, False otherwise.
+    """
+    headers = _get_auth_headers(page)
+    for attempt in range(retries):
+        url = f"/admin/{endpoint}?per_page=500&cache_bust=del{attempt}"
+        response = page.request.get(url, headers=headers)
+        if response.ok:
+            payload = response.json()
+            data = payload if isinstance(payload, list) else payload.get("data", [])
+            if not any(item.get("name") == name for item in data):
+                return True
+        page.wait_for_timeout(500)
+    return False
+
+
 def find_tool(page: Page, tool_name: str, retries: int = 5):
     """Find tool by name.
 

@@ -653,7 +653,7 @@ async def test_create_sse_response_event_generator_cancelled_sets_client_gone(mo
     response = await transport.create_sse_response(request)
     generator = response.body_iterator
     _ = await anext(generator)
-    with pytest.raises(StopAsyncIteration):
+    with pytest.raises(asyncio.CancelledError):
         await anext(generator)
     assert transport._client_gone.is_set()
 

@@ -203,6 +203,7 @@ class TestEntraIDRoleMapping:
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
             mock_settings.sso_entra_admin_groups = ["Admin"]
             mock_settings.sso_entra_role_mappings = {}
+            mock_settings.default_admin_role = "platform_admin"
 
             user_groups = ["Admin", "Developer"]
             role_assignments = await sso_service._map_groups_to_roles("user@company.com", user_groups, entra_provider)
@@ -588,6 +589,7 @@ class TestEntraIDDefaultRoleForNoGroups:
             mock_settings.sso_entra_admin_groups = ["Admin"]
             mock_settings.sso_entra_role_mappings = {}
             mock_settings.sso_entra_default_role = "viewer"
+            mock_settings.default_admin_role = "platform_admin"
 
             # User is in Admin group
             role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["Admin"], entra_provider)
@@ -669,6 +671,7 @@ class TestProviderLevelSyncOptOut:
             mock_settings.sso_entra_admin_groups = ["Admin"]
             mock_settings.sso_entra_role_mappings = {}
             mock_settings.sso_entra_default_role = None
+            mock_settings.default_admin_role = "platform_admin"
 
             role_assignments = await sso_service._map_groups_to_roles("user@company.com", ["Admin"], entra_provider)
 

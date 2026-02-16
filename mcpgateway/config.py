@@ -199,7 +199,7 @@ class Settings(BaseSettings):
     app_root_path: str = ""
 
     # Protocol
-    protocol_version: str = "2025-06-18"
+    protocol_version: str = "2025-11-25"
 
     # Authentication
     basic_auth_user: str = "admin"
@@ -249,11 +249,18 @@ class Settings(BaseSettings):
 
     sso_keycloak_enabled: bool = Field(default=False, description="Enable Keycloak OIDC authentication")
     sso_keycloak_base_url: Optional[str] = Field(default=None, description="Keycloak base URL (e.g., https://keycloak.example.com)")
+    sso_keycloak_public_base_url: Optional[str] = Field(
+        default=None,
+        description="Browser-facing Keycloak base URL for authorization redirects (e.g., http://localhost:8180)",
+    )
     sso_keycloak_realm: str = Field(default="master", description="Keycloak realm name")
     sso_keycloak_client_id: Optional[str] = Field(default=None, description="Keycloak client ID")
     sso_keycloak_client_secret: Optional[SecretStr] = Field(default=None, description="Keycloak client secret")
     sso_keycloak_map_realm_roles: bool = Field(default=True, description="Map Keycloak realm roles to gateway teams")
     sso_keycloak_map_client_roles: bool = Field(default=False, description="Map Keycloak client roles to gateway RBAC")
+    sso_keycloak_role_mappings: Dict[str, str] = Field(default_factory=dict, description="Map Keycloak groups/roles to Context Forge roles (JSON: {group_or_role: role_name})")
+    sso_keycloak_default_role: Optional[str] = Field(default=None, description="Default Context Forge role for Keycloak users without role mapping")
+    sso_keycloak_resolve_team_scope_to_personal_team: bool = Field(default=False, description="Resolve team-scoped Keycloak role mappings to the user's personal team")
     sso_keycloak_username_claim: str = Field(default="preferred_username", description="JWT claim for username")
 
     # Security Validation & Sanitization
@@ -472,6 +479,30 @@ class Settings(BaseSettings):
     # Account Security Configuration
     max_failed_login_attempts: int = Field(default=10, description="Maximum failed login attempts before account lockout")
     account_lockout_duration_minutes: int = Field(default=1, description="Account lockout duration in minutes")
+    account_lockout_notification_enabled: bool = Field(default=True, description="Send lockout notification emails when accounts are locked")
+
+    # Self-service password reset
+    password_reset_enabled: bool = Field(default=True, description="Enable self-service password reset workflow (set false to disable public forgot/reset endpoints)")
+    password_reset_token_expiry_minutes: int = Field(default=60, description="Password reset token expiration time in minutes")
+    password_reset_rate_limit: int = Field(default=5, description="Maximum password reset requests allowed per email in each rate-limit window")
+    password_reset_rate_window_minutes: int = Field(default=15, description="Password reset request rate-limit window in minutes")
+    password_reset_invalidate_sessions: bool = Field(default=True, description="Invalidate active sessions after password reset")
+    password_reset_min_response_ms: int = Field(default=250, description="Minimum response duration for forgot-password requests to reduce timing side channels")
+
+    # Email delivery for auth notifications
+    smtp_enabled: bool = Field(
+        default=False,
+        description="Enable SMTP email delivery for password reset and account lockout notifications (when false, reset requests are accepted but no email is sent)",
+    )
+    smtp_host: Optional[str] = Field(default=None, description="SMTP server host")
+    smtp_port: int = Field(default=587, description="SMTP server port")
+    smtp_user: Optional[str] = Field(default=None, description="SMTP username")
+    smtp_password: Optional[SecretStr] = Field(default=None, description="SMTP password")
+    smtp_from_email: Optional[str] = Field(default=None, description="From email address used for auth notifications")
+    smtp_from_name: str = Field(default="MCP Gateway", description="From display name used for auth notifications")
+    smtp_use_tls: bool = Field(default=True, description="Use STARTTLS for SMTP connections")
+    smtp_use_ssl: bool = Field(default=False, description="Use implicit SSL/TLS for SMTP connections")
+    smtp_timeout_seconds: int = Field(default=15, description="SMTP connection timeout in seconds")
 
     # Personal Teams Configuration
     auto_create_personal_teams: bool = Field(default=True, description="Enable automatic personal team creation for new users")
@@ -480,6 +511,12 @@ class Settings(BaseSettings):
     max_members_per_team: int = Field(default=100, description="Maximum number of members per team")
     invitation_expiry_days: int = Field(default=7, description="Number of days before team invitations expire")
     require_email_verification_for_invites: bool = Field(default=True, description="Require email verification for team invitations")
+
+    # Default Role Configuration
+    default_admin_role: str = Field(default="platform_admin", description="Global role assigned to admin users")
+    default_user_role: str = Field(default="platform_viewer", description="Global role assigned to non-admin users")
+    default_team_owner_role: str = Field(default="team_admin", description="Team-scoped role assigned to team owners (e.g. personal team creator)")
+    default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members")
 
     # UI/Admin Feature Flags
     mcpgateway_ui_enabled: bool = False
@@ -508,6 +545,10 @@ class Settings(BaseSettings):
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
+
+    # Direct Proxy Configuration (disabled by default)
+    mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
+    mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")
 
     # ===================================
     # Performance Monitoring Configuration

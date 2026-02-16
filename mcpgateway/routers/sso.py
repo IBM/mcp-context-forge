@@ -309,8 +309,14 @@ async def handle_sso_callback(
 
     sso_service = SSOService(db)
 
-    # Handle OAuth callback
-    user_info = await sso_service.handle_oauth_callback(provider_id, code, state)
+    # Handle OAuth callback — returns (user_info, token_data) or None
+    user_info: Optional[Dict[str, object]] = None
+    token_data: Dict[str, object] = {}
+
+    callback_result = await sso_service.handle_oauth_callback_with_tokens(provider_id, code, state)
+    if callback_result:
+        user_info, token_data = callback_result
+
     if not user_info:
         # Redirect back to login with error
         # Third-Party
@@ -345,6 +351,24 @@ async def handle_sso_callback(
             status_code=302,
         )
         return redirect_response
+
+    # Persist Keycloak ID token as short-lived, HTTP-only hint for RP-initiated logout.
+    # Without id_token_hint, some Keycloak versions show confirmation and may preserve SSO.
+    id_token = token_data.get("id_token")
+    if provider_id == "keycloak" and isinstance(id_token, str) and id_token:
+        if len(id_token) > 3800:  # Leave room for cookie metadata within browser 4KB limit
+            logger.warning("Keycloak id_token too large for cookie storage (%d bytes). RP-initiated logout will not include id_token_hint.", len(id_token))
+        else:
+            use_secure = (settings.environment == "production") or settings.secure_cookies
+            redirect_response.set_cookie(
+                key="sso_id_token_hint",
+                value=id_token,
+                max_age=settings.token_expiry * 60,  # match session token lifetime
+                httponly=True,
+                secure=use_secure,
+                samesite=settings.cookie_samesite,
+                path=settings.app_root_path or "/",
+            )
 
     return redirect_response
 

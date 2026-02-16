@@ -33,3 +33,12 @@ Configuration (example)
 Notes
 - Emits metadata (`secrets_findings`, `count`) when not blocking; includes up to 5 example types.
 - Uses conservative regexes; combine with PII filter for broader coverage.
+
+## Testing
+
+```bash
+make benchmark    # Compare Python vs Rust performance
+make test         # Run integration tests
+```
+
+Benchmark shows speedup metrics and detects active implementation (Python/Rust). Integration tests use Python by default; Rust used automatically if available. Build Rust: `cd plugins_rust/secrets_detection && maturin develop --release`

@@ -30,7 +30,6 @@ import logging
 from pathlib import Path
 import shutil
 import subprocess  # nosec B404 # Safe: Used only for git commands with hardcoded args
-from typing import Optional
 
 # Third-Party
 import typer
@@ -126,42 +125,51 @@ def git_user_email() -> str:
 @app.command(help="Creates a new plugin project from template.")
 def bootstrap(
     destination: Annotated[Path, typer.Option("--destination", "-d", help="The directory in which to bootstrap the plugin project.")] = DEFAULT_PROJECT_DIR,
-    template_url: Annotated[str, typer.Option("--template_url", "-u", help="The URL to the plugins copier template.")] = DEFAULT_TEMPLATE_URL,
+    template_url: Annotated[str, typer.Option("--template_url", "-u", help="The URL to the plugins cookiecutter template.")] = DEFAULT_TEMPLATE_URL,
+    template_type: Annotated[str, typer.Option("--template_type", "-t", help="Plugin template type: native or external.")] = "native",
     vcs_ref: Annotated[str, typer.Option("--vcs_ref", "-r", help="The version control system tag/branch/commit to use for the template.")] = DEFAULT_VCS_REF,
-    answers_file: Optional[Annotated[typer.FileText, typer.Option("--answers_file", "-a", help="The answers file to be used for bootstrapping.")]] = None,
-    defaults: Annotated[bool, typer.Option("--defaults", help="Bootstrap with defaults.")] = False,
+    no_input: Annotated[bool, typer.Option("--no_input", help="Use defaults without prompting.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry_run", help="Run but do not make any changes.")] = False,
 ) -> None:
     """Boostrap a new plugin project from a template.
 
     Args:
         destination: The directory in which to bootstrap the plugin project.
-        template_url: The URL to the plugins copier template.
+        template_url: The URL to the plugins cookiecutter template.
+        template_type: Plugin template type (native or external).
         vcs_ref: The version control system tag/branch/commit to use for the template.
-        answers_file: The copier answers file that can be used to skip interactive mode.
-        defaults: Bootstrap with defaults.
+        no_input: Use defaults without prompting.
         dry_run: Run but do not make any changes.
 
     Raises:
-        Exit: If copier is not installed.
+        Exit: If cookiecutter is not installed.
     """
     try:
         # Third-Party
-        from copier import run_copy  # pylint: disable=import-outside-toplevel
+        from cookiecutter.main import cookiecutter  # pylint: disable=import-outside-toplevel
     except ImportError:
-        logger.error("copier is not installed. Install with: pip install mcp-contextforge-gateway[templating]")
+        logger.error("cookiecutter is not installed. Install with: pip install mcp-contextforge-gateway[templating]")
         raise typer.Exit(1)
+
+    if dry_run:
+        logger.info("Dry run: would create plugin project at %s from template %s (type=%s)", destination, template_url, template_type)
+        return
 
     try:
         if command_exists("git"):
-            run_copy(
-                src_path=template_url,
-                dst_path=destination,
-                answers_file=answers_file,
-                defaults=defaults,
-                vcs_ref=vcs_ref,
-                data={"default_author_name": git_user_name(), "default_author_email": git_user_email()},
-                pretend=dry_run,
+            output_dir = str(destination.parent) if destination.parent != destination else "."
+            extra_context = {
+                "plugin_slug": destination.name,
+                "author": git_user_name(),
+                "email": git_user_email(),
+            }
+            cookiecutter(
+                template=template_url,
+                checkout=vcs_ref,
+                directory=f"plugin_templates/{template_type}",
+                output_dir=output_dir,
+                no_input=no_input,
+                extra_context=extra_context,
             )
         else:
             logger.warning("A git client was not found in the environment to copy remote template.")

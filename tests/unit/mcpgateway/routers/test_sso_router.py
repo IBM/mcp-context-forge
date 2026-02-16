@@ -185,7 +185,7 @@ async def test_handle_sso_callback_failure_redirect(monkeypatch: pytest.MonkeyPa
         def __init__(self, _db):
             pass
 
-        async def handle_oauth_callback(self, *_args, **_kwargs):
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
             return None
 
     monkeypatch.setattr(sso_router, "SSOService", DummyService)
@@ -218,8 +218,8 @@ async def test_handle_sso_callback_user_creation_failed(monkeypatch: pytest.Monk
         def __init__(self, _db):
             pass
 
-        async def handle_oauth_callback(self, *_args, **_kwargs):
-            return {"email": "user@example.com"}
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
 
         async def authenticate_or_create_user(self, *_args, **_kwargs):
             return None
@@ -244,8 +244,8 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
         def __init__(self, _db):
             pass
 
-        async def handle_oauth_callback(self, *_args, **_kwargs):
-            return {"email": "user@example.com"}
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {}
 
         async def authenticate_or_create_user(self, *_args, **_kwargs):
             return "token"
@@ -265,6 +265,44 @@ async def test_handle_sso_callback_success_sets_cookie(monkeypatch: pytest.Monke
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 302
     assert response.headers.get("location", "").endswith("/admin")
+    assert set_cookie.called
+
+
+@pytest.mark.asyncio
+async def test_handle_sso_callback_keycloak_sets_id_token_hint_cookie(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sso_router.settings, "sso_enabled", True)
+    monkeypatch.setattr(sso_router.settings, "environment", "development")
+    monkeypatch.setattr(sso_router.settings, "secure_cookies", False)
+    monkeypatch.setattr(sso_router.settings, "cookie_samesite", "lax")
+    monkeypatch.setattr(sso_router.settings, "app_root_path", "/")
+    monkeypatch.setattr(sso_router.settings, "token_expiry", 60)
+
+    class DummyService:
+        def __init__(self, _db):
+            pass
+
+        async def handle_oauth_callback_with_tokens(self, *_args, **_kwargs):
+            return {"email": "user@example.com"}, {"id_token": "id-token-hint"}
+
+        async def authenticate_or_create_user(self, *_args, **_kwargs):
+            return "token"
+
+    monkeypatch.setattr(sso_router, "SSOService", DummyService)
+
+    import mcpgateway.utils.security_cookies as cookie_module
+
+    set_cookie = MagicMock()
+    monkeypatch.setattr(cookie_module, "set_auth_cookie", set_cookie)
+
+    request = MagicMock()
+    request.scope = {"root_path": ""}
+
+    response = await sso_router.handle_sso_callback("keycloak", "code", "state", request=request, response=MagicMock(), db=MagicMock())
+
+    assert isinstance(response, RedirectResponse)
+    assert response.status_code == 302
+    assert response.headers.get("location", "").endswith("/admin")
+    assert "sso_id_token_hint=id-token-hint" in response.headers.get("set-cookie", "")
     assert set_cookie.called
 
 

@@ -115,7 +115,7 @@ async def test_register_service_sets_metadata_and_handles_reflection_error(servi
             db,
             service_data,
             user_email="user@example.com",
-            metadata={"ip": "127.0.0.1", "via": "tests", "user_agent": "pytest"},
+            metadata={"created_from_ip": "127.0.0.1", "created_via": "tests", "created_user_agent": "pytest"},
         )
 
     assert result.name == "svc"
@@ -207,7 +207,7 @@ async def test_update_service_sets_metadata(service, db):
         "svc-1",
         GrpcServiceUpdate(description="updated"),
         user_email="user@example.com",
-        metadata={"ip": "10.0.0.1", "via": "tests", "user_agent": "pytest"},
+        metadata={"modified_from_ip": "10.0.0.1", "modified_via": "tests", "modified_user_agent": "pytest"},
     )
 
     assert result.description == "updated"
@@ -254,24 +254,36 @@ async def test_set_service_state_and_delete(service, db):
 
 @pytest.mark.asyncio
 async def test_list_services_team_filter(service, db):
-    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+    mock_svc = MagicMock()
+    mock_svc.team_id = None
+    db.execute.return_value.scalars.return_value.all.return_value = [mock_svc]
+    db.commit = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
         mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
         with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
-            result = await service.list_services(db, include_inactive=False, user_email="user@example.com", team_id="team-1")
+            with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+                mock_paginate.return_value = ([mock_svc], None)
+                result, next_cursor = await service.list_services(db, include_inactive=False, user_email="user@example.com", team_id="team-1")
 
     assert len(result) == 1
+    assert next_cursor is None
 
 
 @pytest.mark.asyncio
 async def test_list_services_team_id_only(service, db):
-    db.execute.return_value.scalars.return_value.all.return_value = [MagicMock()]
+    mock_svc = MagicMock()
+    mock_svc.team_id = None
+    db.execute.return_value.scalars.return_value.all.return_value = [mock_svc]
+    db.commit = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
-        result = await service.list_services(db, include_inactive=True, user_email=None, team_id="team-1")
+        with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
+            mock_paginate.return_value = ([mock_svc], None)
+            result, next_cursor = await service.list_services(db, include_inactive=True, user_email=None, team_id="team-1")
 
     assert len(result) == 1
+    assert next_cursor is None
 
 
 @pytest.mark.asyncio
@@ -387,13 +399,7 @@ async def test_get_service_methods(service, db):
         reachable=True,
         service_count=0,
         method_count=0,
-        discovered_services={
-            "pkg.Service": {
-                "methods": [
-                    {"name": "Ping", "input_type": "PingReq", "output_type": "PingResp", "client_streaming": False, "server_streaming": False}
-                ]
-            }
-        },
+        discovered_services={"pkg.Service": {"methods": [{"name": "Ping", "input_type": "PingReq", "output_type": "PingResp", "client_streaming": False, "server_streaming": False}]}},
         last_reflection=None,
         tags=[],
         created_at=datetime.now(timezone.utc),

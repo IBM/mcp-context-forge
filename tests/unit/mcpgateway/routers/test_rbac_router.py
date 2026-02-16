@@ -12,7 +12,6 @@ import pytest
 # Local
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
-
 _originals = patch_rbac_decorators()
 # First-Party
 from mcpgateway.routers import rbac as rbac_router  # noqa: E402
@@ -203,6 +202,18 @@ async def test_delete_role_success(monkeypatch):
 
     result = await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
     assert result["message"] == "Role deleted successfully"
+
+
+@pytest.mark.asyncio
+async def test_delete_role_value_error(monkeypatch):
+    service = MagicMock()
+    service.delete_role = AsyncMock(side_effect=ValueError("Cannot delete system role"))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
+
+    with pytest.raises(rbac_router.HTTPException) as excinfo:
+        await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+    assert excinfo.value.status_code == 400
+    assert "Cannot delete system role" in excinfo.value.detail
 
 
 @pytest.mark.asyncio

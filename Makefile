@@ -26,6 +26,13 @@ DOCS_DIR          = docs
 HANDSDOWN_PARAMS  = -o $(DOCS_DIR)/ -n $(PROJECT_NAME) --name "MCP Gateway" --cleanup
 
 TEST_DOCS_DIR ?= $(DOCS_DIR)/docs/test
+MCP_2025_TEST_DIR ?= tests/compliance/mcp_2025_11_25
+MCP_2025_ARTIFACTS_DIR ?= artifacts/mcp-2025-11-25
+MCP_2025_MARKER ?= mcp20251125
+MCP_2025_PYTEST_ARGS ?=
+MCP_2025_BASE_URL ?=
+MCP_2025_RPC_PATH ?= /mcp/
+MCP_2025_BEARER_TOKEN ?=
 
 # -----------------------------------------------------------------------------
 # Project-wide clean-up targets
@@ -40,6 +47,7 @@ FILES_TO_CLEAN := .coverage .coverage.* coverage.xml mcp.prof mcp.pstats mcp.db-
 	snakefood.dot packages.dot classes.dot \
 	$(DOCS_DIR)/pstats.png \
 	$(DOCS_DIR)/docs/test/sbom.md \
+	$(LICENSE_CHECK_REPORT) \
 	$(DOCS_DIR)/docs/test/{unittest,full,index,test}.md \
 	$(DOCS_DIR)/docs/images/coverage.svg $(LICENSES_MD) $(METRICS_MD) \
 	*.db *.sqlite *.sqlite3 mcp.db-journal *.py,cover \
@@ -63,6 +71,10 @@ EXTRA_FILES_TO_CLEAN := docs/docs/security/report.md \
 
 COVERAGE_DIR ?= $(DOCS_DIR)/docs/coverage
 LICENSES_MD  ?= $(DOCS_DIR)/docs/test/licenses.md
+LICENSE_CHECK_REPORT ?= $(DOCS_DIR)/docs/test/license-check-report.json
+LICENSE_CHECK_POLICY ?= license-policy.toml
+LICENSE_CHECK_INCLUDE_DEV_GROUPS ?= false
+LICENSE_CHECK_SUMMARY_ONLY ?= false
 METRICS_MD   ?= $(DOCS_DIR)/docs/metrics/loc.md
 
 # -----------------------------------------------------------------------------
@@ -575,12 +587,17 @@ clean:
 # help: doctest-check        - Check doctest coverage percentage (fail if < 100%)
 # help: test-db-perf         - Run database performance and N+1 query detection tests
 # help: test-db-perf-verbose - Run database performance tests with full SQL query output
+# help: 2025-11-25        - Run full MCP 2025-11-25 compliance suite (manual)
+# help: 2025-11-25-core   - Run MCP core compliance subset
+# help: 2025-11-25-tasks  - Run MCP tasks compliance subset
+# help: 2025-11-25-auth   - Run MCP authorization compliance subset
+# help: 2025-11-25-report - Run MCP suite and emit JUnit XML + Markdown reports
 # help: dev-query-log        - Run dev server with query logging to file (N+1 detection)
 # help: query-log-tail       - Tail the database query log file
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test test-verbose test-altk test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
 
 ## --- Automated checks --------------------------------------------------------
 smoketest:
@@ -778,6 +795,83 @@ test-db-perf-verbose:            ## Run database performance tests with full SQL
 		export TEST_DATABASE_URL='sqlite:///:memory:' && \
 		export SQLALCHEMY_ECHO=true && \
 		uv run --active pytest tests/performance/test_db_query_patterns.py -v -s --tb=short"
+
+2025-11-25:                      ## Run full MCP 2025-11-25 compliance suite
+	@echo "🧪 Running MCP 2025-11-25 compliance suite..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-core:                 ## Run MCP core compliance subset
+	@echo "🧪 Running MCP 2025-11-25 core compliance subset..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_core\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-tasks:                ## Run MCP tasks compliance subset
+	@echo "🧪 Running MCP 2025-11-25 tasks compliance subset..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_tasks\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-auth:                 ## Run MCP authorization compliance subset
+	@echo "🧪 Running MCP 2025-11-25 authorization compliance subset..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER) and mcp_auth\" $(MCP_2025_PYTEST_ARGS)"
+
+2025-11-25-report:               ## Run MCP suite and emit JUnit XML + Markdown reports
+	@echo "🧪 Running MCP 2025-11-25 suite with report artifacts..."
+	@test -d "$(MCP_2025_TEST_DIR)" || { echo "❌ Compliance suite path not found: $(MCP_2025_TEST_DIR)"; echo "   Update MCP_2025_TEST_DIR or add the suite first."; exit 1; }
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p "$(MCP_2025_ARTIFACTS_DIR)"
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		export DATABASE_URL='sqlite:///:memory:' && \
+		export TEST_DATABASE_URL='sqlite:///:memory:' && \
+		export ARGON2ID_TIME_COST=1 && \
+		export ARGON2ID_MEMORY_COST=1024 && \
+		export MCP_COMPLIANCE_BASE_URL='$(MCP_2025_BASE_URL)' && \
+		export MCP_COMPLIANCE_RPC_PATH='$(MCP_2025_RPC_PATH)' && \
+		export MCP_COMPLIANCE_BEARER_TOKEN='$(MCP_2025_BEARER_TOKEN)' && \
+		uv run --active pytest $(MCP_2025_TEST_DIR) -v --maxfail=0 -m \"$(MCP_2025_MARKER)\" \
+			--junitxml=$(MCP_2025_ARTIFACTS_DIR)/junit.xml \
+			--md-report --md-report-output=$(MCP_2025_ARTIFACTS_DIR)/report.md \
+			$(MCP_2025_PYTEST_ARGS)"
+	@echo "✅ Compliance artifacts:"
+	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/junit.xml"
+	@echo "   - $(MCP_2025_ARTIFACTS_DIR)/report.md"
 
 dev-query-log:                   ## Run dev server with query logging to file
 	@echo "📊 Starting dev server with database query logging"
@@ -1268,6 +1362,87 @@ demo-a2a-apikey:                           ## Start only X-API-Key demo agent
 	uv run python scripts/demo_a2a_agent_auth.py --auth-type apikey --port $(DEMO_A2A_APIKEY_PORT) --auto-register
 
 # =============================================================================
+# help: 🛡️  RESILIENCE TESTING STACK (slow-time-server)
+# help: resilience-up          - Start slow-time-server for timeout/circuit breaker testing
+# help: resilience-down        - Stop resilience testing stack
+# help: resilience-logs        - Show resilience stack logs
+# help: resilience-locust      - Run Locust load test against slow-time-server (10 users, 120s)
+# help: resilience-locust-ui   - Start Locust web UI for slow-time-server
+# help: resilience-jmeter      - Run JMeter baseline test against slow-time-server (20 threads, 5min)
+
+RESILIENCE_HOST ?= http://localhost:8889
+RESILIENCE_LOCUSTFILE := tests/loadtest/locustfile_slow_time_server.py
+RESILIENCE_JMETER_PLAN := tests/jmeter/slow_time_server_baseline.jmx
+
+resilience-up:                             ## Start slow-time-server for resilience testing
+	@echo "Starting resilience testing stack (slow-time-server on port 8889)..."
+	$(COMPOSE_CMD_MONITOR) --profile resilience up -d
+	@echo ""
+	@echo "Resilience stack started!"
+	@echo ""
+	@echo "   Slow Time Server: $(RESILIENCE_HOST)"
+	@echo "     REST API:       $(RESILIENCE_HOST)/api/v1/time?delay=5"
+	@echo "     MCP SSE:        $(RESILIENCE_HOST)/sse"
+	@echo "     MCP HTTP:       $(RESILIENCE_HOST)/http"
+	@echo "     API Docs:       $(RESILIENCE_HOST)/api/v1/docs"
+	@echo "     Health:         $(RESILIENCE_HOST)/health"
+	@echo ""
+	@echo "   Run: make resilience-locust  or  make resilience-jmeter"
+
+resilience-down:                           ## Stop resilience testing stack
+	@echo "Stopping resilience testing stack..."
+	$(COMPOSE_CMD_MONITOR) --profile resilience down --remove-orphans
+	@echo "Resilience stack stopped."
+
+resilience-logs:                           ## Show resilience stack logs
+	$(COMPOSE_CMD_MONITOR) --profile resilience logs -f --tail=100
+
+resilience-locust:                         ## Run Locust load test against slow-time-server (10 users, 120s)
+	@echo "Running resilience Locust load test..."
+	@echo "   Host: $(RESILIENCE_HOST)"
+	@echo "   Users: 10, Duration: 120s"
+	@echo "   Requires: make resilience-up"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(RESILIENCE_LOCUSTFILE) \
+			--host=$(RESILIENCE_HOST) \
+			--users=10 \
+			--spawn-rate=2 \
+			--run-time=120s \
+			--headless \
+			--html=reports/loadtest_resilience.html \
+			--csv=reports/loadtest_resilience \
+			--only-summary"
+	@echo "Report: reports/loadtest_resilience.html"
+
+resilience-locust-ui:                      ## Start Locust web UI for slow-time-server
+	@echo "Starting Locust web UI for resilience testing..."
+	@echo "   Open http://localhost:8090 in your browser"
+	@echo "   Host: $(RESILIENCE_HOST)"
+	@echo "   Requires: make resilience-up"
+	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		locust -f $(RESILIENCE_LOCUSTFILE) \
+			--host=$(RESILIENCE_HOST) \
+			--web-host=0.0.0.0 --web-port=8090"
+
+resilience-jmeter: jmeter-check            ## Run JMeter baseline test against slow-time-server (20 threads, 5min)
+	@echo "Running resilience JMeter baseline test..."
+	@echo "   Slow Time Server: $(RESILIENCE_HOST)"
+	@echo "   Threads: 20, Duration: 5 minutes"
+	@echo "   Requires: make resilience-up"
+	@mkdir -p $(JMETER_RESULTS_DIR)
+	@TIMESTAMP=$$(date +%Y%m%d_%H%M%S); \
+	$(JMETER_BIN) -n -t $(RESILIENCE_JMETER_PLAN) \
+		-JSLOW_TIME_URL=$(RESILIENCE_HOST) \
+		-JTHREADS=20 -JRAMP_UP=30 -JDURATION=300 \
+		-l $(JMETER_RESULTS_DIR)/resilience_$$TIMESTAMP.jtl \
+		-e -o $(JMETER_RESULTS_DIR)/resilience_$$TIMESTAMP \
+		$(JMETER_SUMMARISER) $(JMETER_OPTS)
+	@echo "Report: $(JMETER_RESULTS_DIR)/resilience_*/index.html"
+
+# =============================================================================
 # help: 🎯 BENCHMARK STACK (Go benchmark-server)
 # help: benchmark-up           - Start benchmark stack (MCP servers + auto-registration)
 # help: benchmark-down         - Stop benchmark stack
@@ -1419,6 +1594,7 @@ LOADTEST_USERS ?= 4000
 LOADTEST_SPAWN_RATE ?= 200
 LOADTEST_RUN_TIME ?= 5m
 LOADTEST_PROCESSES ?= -1
+LOADTEST_UI_PORT ?= 8090
 LOADTEST_LOCUSTFILE := tests/loadtest/locustfile.py
 LOADTEST_HTML_REPORT := reports/locust_report.html
 LOADTEST_CSV_PREFIX := reports/locust
@@ -1468,9 +1644,9 @@ load-test:                                 ## Run HTTP load test (4000 users, 5m
 	@echo "📄 HTML Report: $(LOADTEST_HTML_REPORT)"
 	@echo "📊 CSV Reports: $(LOADTEST_CSV_PREFIX)_*.csv"
 
-load-test-ui:                              ## Start Locust web UI at http://localhost:8089
+load-test-ui:                              ## Start Locust web UI at http://localhost:$(LOADTEST_UI_PORT)
 	@echo "🔥 Starting Locust Web UI (optimized for 4000+ users)..."
-	@echo "   🌐 Open http://localhost:8089 in your browser"
+	@echo "   🌐 Open http://localhost:$(LOADTEST_UI_PORT) in your browser"
 	@echo "   🎯 Default host: $(LOADTEST_HOST)"
 	@echo "   👥 Default users: $(LOADTEST_USERS), spawn rate: $(LOADTEST_SPAWN_RATE)/s"
 	@echo "   ⏱️  Default run time: $(LOADTEST_RUN_TIME)"
@@ -1504,6 +1680,7 @@ load-test-ui:                              ## Start Locust web UI at http://loca
 			--spawn-rate=$(LOADTEST_SPAWN_RATE) \
 			--run-time=$(LOADTEST_RUN_TIME) \
 			--processes=$(LOADTEST_PROCESSES) \
+			--web-port=$(LOADTEST_UI_PORT) \
 			--class-picker"
 
 load-test-cli:                             ## Run HTTP load test with live stats (same as UI but headless)
@@ -2260,17 +2437,30 @@ mutmut-clean:
 # =============================================================================
 # help: 📊 METRICS
 # help: pip-licenses         - Produce dependency license inventory (markdown)
+# help: license-check         - Check repo licenses with policy file (`pyproject`, pip, Go, Rust).
+# help:                      - Set LICENSE_CHECK_INCLUDE_DEV_GROUPS=true to include dev groups.
+# help:                      - Set LICENSE_CHECK_SUMMARY_ONLY=true for compact output.
 # help: scc                  - Quick LoC/complexity snapshot with scc
 # help: scc-report           - Generate HTML LoC & per-file metrics with scc
-.PHONY: pip-licenses scc scc-report
+.PHONY: ensure-pip-licenses pip-licenses license-check scc scc-report
 
-pip-licenses:
+ensure-pip-licenses:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install -q pip-licenses"
+
+pip-licenses: ensure-pip-licenses
 	@mkdir -p $(dir $(LICENSES_MD))
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		pip-licenses --format=markdown --with-authors --with-urls > $(LICENSES_MD)"
 	@cat $(LICENSES_MD)
 	@echo "📜  License inventory written to $(LICENSES_MD)"
+
+license-check: ensure-pip-licenses
+	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
+		python3 scripts/license_checker.py \
+		--config $(LICENSE_CHECK_POLICY) \
+		--report-json $(LICENSE_CHECK_REPORT) \
+		$(if $(filter true,$(strip $(LICENSE_CHECK_INCLUDE_DEV_GROUPS))),--include-dev-groups) \
+		$(if $(filter true,$(strip $(LICENSE_CHECK_SUMMARY_ONLY))),--summary-only)"
 
 scc:
 	@command -v scc >/dev/null 2>&1 || { \
@@ -2396,6 +2586,27 @@ images:
 # help: check-manifest       - Verify sdist/wheel completeness
 # help: unimport             - Unused import detection
 # help: vulture              - Dead code detection
+# help: linting-workflow-actionlint  - Lint GitHub Actions workflows (actionlint; shellcheck disabled)
+# help: linting-workflow-zizmor      - Security-focused linting of GitHub Actions workflows
+# help: linting-workflow-reviewdog   - Run reviewdog locally (non-PR reporter mode)
+# help: linting-workflow-commitlint  - Validate commit messages (Conventional Commits)
+# help: linting-python-fixit         - Run Fixit Python linter (modernization suggestions)
+# help: linting-python-xenon         - Run Xenon complexity threshold checks
+# help: linting-python-refurb        - Run Refurb Python modernization linter
+# help: linting-python-darglint      - Run Darglint docstring checks
+# help: linting-docs-codespell       - Spell-check repository text with codespell
+# help: linting-docs-markdown-links  - Check Markdown links (default: README.md)
+# help: linting-web-depcheck         - Check unused/missing Node.js dependencies
+# help: linting-helm-lint            - Run Helm chart lint
+# help: linting-helm-chart-testing   - Run chart-testing lint (ct) for Helm chart
+# help: linting-helm-unittest        - Run Helm chart unit tests via helm-unittest plugin
+# help: linting-go-gosec             - Run gosec on discovered Go modules
+# help: linting-go-govulncheck       - Run govulncheck on discovered Go modules
+# help: linting-security-checkov     - Run Checkov IaC security scan
+# help: linting-security-kube-linter - Run kube-linter against Kubernetes/Helm manifests
+# help: linting-security-trufflehog  - Run TruffleHog filesystem secret scan
+# help: linting-coverage-diff-cover  - Run diff-cover against changed lines
+# help: linting-full                 - Run passing linting gates used by CI
 
 # Allow specific file/directory targeting
 DEFAULT_TARGETS := mcpgateway
@@ -2424,7 +2635,16 @@ FILE_AWARE_LINTERS := isort black flake8 pylint mypy bandit pydocstyle \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
-	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all
+	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all \
+	lint-actionlint lint-chart-testing lint-helm-unittest lint-commitlint \
+	linting-python-env \
+	linting-workflow-actionlint linting-workflow-zizmor linting-workflow-reviewdog linting-workflow-commitlint \
+	linting-python-fixit linting-python-xenon linting-python-refurb linting-python-darglint \
+	linting-docs-codespell linting-docs-markdown-links linting-web-depcheck \
+	linting-helm-lint linting-helm-chart-testing linting-helm-unittest \
+	linting-go-gosec linting-go-govulncheck \
+	linting-security-checkov linting-security-kube-linter linting-security-trufflehog \
+	linting-coverage-diff-cover linting-full
 
 
 ## --------------------------------------------------------------------------- ##
@@ -2559,6 +2779,290 @@ lint-smart:
 			fi ;; \
 	esac
 
+# Commit range defaults for commitlint
+COMMITLINT_FROM ?= HEAD~1
+COMMITLINT_TO ?= HEAD
+
+# Temporary roots for ad-hoc linting tools
+LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+LINT_GO_ROOT ?= $(LINT_TMP_ROOT)/go
+LINT_HELM_ROOT ?= $(LINT_TMP_ROOT)/helm
+LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
+LINT_PY_VENV ?= $(LINT_TMP_ROOT)/py-venv
+LINT_GO_TOOLCHAIN ?= go1.25.7
+
+# Tool target defaults
+LINT_ZIZMOR_TARGET ?= .github/workflows
+LINT_XENON_TARGET ?= mcpgateway
+LINT_FIXIT_TARGET ?= mcpgateway
+LINT_REFURB_TARGET ?= mcpgateway
+LINT_CODESPELL_TARGET ?= .
+LINT_CODESPELL_SKIP ?= ./.git,./.venv,./coverage,./docs/docs/coverage,./uv.lock,./package-lock.json,./docs/docs/design/images/*
+LINT_MARKDOWN_LINKS_TARGET ?= README.md
+LINT_DEPCHECK_TARGET ?= .
+LINT_DARGLINT_TARGET ?= mcpgateway
+LINT_CHECKOV_TARGET ?= .
+LINT_KUBE_LINTER_TARGET ?= charts/mcp-stack
+LINT_TRUFFLEHOG_TARGET ?= mcpgateway tests docs charts deployment mcp-servers a2a-agents
+LINT_TRUFFLEHOG_VERSION ?= v3.93.3
+LINT_GO_MODULE_SEARCH_DIRS ?= mcp-servers a2a-agents
+
+# Passing gates only (used by CI workflow linting-full)
+LINTING_FULL_TARGETS := linting-workflow-actionlint linting-workflow-reviewdog linting-workflow-commitlint linting-helm-lint linting-helm-chart-testing linting-helm-unittest linting-go-gosec linting-go-govulncheck
+
+# Tools requiring auth/login (e.g. safety, OSSF scorecard) are intentionally excluded.
+
+linting-python-env:
+	@command -v python3 >/dev/null 2>&1 || { echo "❌ python3 not found"; exit 1; }
+	@mkdir -p "$(LINT_TMP_ROOT)"
+	@if [ ! -x "$(LINT_PY_VENV)/bin/python" ]; then \
+		python3 -m venv "$(LINT_PY_VENV)"; \
+	fi
+
+linting-workflow-actionlint:         ## 🧭  GitHub Actions workflow linting
+	@echo "🧭 actionlint ($(LINT_ZIZMOR_TARGET); shellcheck integration disabled)..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck="
+
+linting-workflow-zizmor:             ## 🔐  GitHub Actions security linting
+	@echo "🔐 zizmor scan of $(LINT_ZIZMOR_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check zizmor
+	@"$(LINT_PY_VENV)/bin/zizmor" "$(LINT_ZIZMOR_TARGET)"
+
+linting-workflow-reviewdog:          ## 🐶  reviewdog in local reporter mode
+	@echo "🐶 reviewdog local run (input: actionlint)..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install github.com/reviewdog/reviewdog/cmd/reviewdog@latest >/dev/null; \
+		go run github.com/rhysd/actionlint/cmd/actionlint@latest -shellcheck= -oneline | \
+			'$(LINT_GO_ROOT)/bin/reviewdog' -name=actionlint -efm='%f:%l:%c: %m' -reporter=local"
+
+linting-workflow-commitlint:         ## 📝  Conventional Commits linting
+	@echo "📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)..."
+	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
+	@mkdir -p "$(LINT_NODE_ROOT)/commitlint" "$(LINT_NODE_ROOT)/npm-cache"
+	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/commitlint'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional"
+	@NODE_PATH="$(LINT_NODE_ROOT)/commitlint/node_modules" \
+		node "$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js" \
+		--extends @commitlint/config-conventional \
+		--from "$(COMMITLINT_FROM)" \
+		--to "$(COMMITLINT_TO)"
+
+linting-python-fixit:                ## 🧪  Fixit Python linting
+	@echo "🧪 fixit lint of $(LINT_FIXIT_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check fixit
+	@"$(LINT_PY_VENV)/bin/python" -c "import sys; from concurrent.futures import ThreadPoolExecutor; import trailrunner.core; trailrunner.core.Trailrunner.DEFAULT_EXECUTOR = ThreadPoolExecutor; from fixit.cli import main; sys.argv=['fixit','lint','$(LINT_FIXIT_TARGET)']; raise SystemExit(main())"
+
+linting-python-xenon:                ## 📈  Xenon complexity checks
+	@echo "📈 xenon complexity scan of $(LINT_XENON_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check xenon
+	@"$(LINT_PY_VENV)/bin/xenon" --max-absolute C --max-modules C --max-average C "$(LINT_XENON_TARGET)"
+
+linting-python-refurb:               ## 🧼  Refurb modernization checks
+	@echo "🧼 refurb scan of $(LINT_REFURB_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check refurb mypy pydantic
+	@"$(LINT_PY_VENV)/bin/refurb" "$(LINT_REFURB_TARGET)"
+
+linting-python-darglint:             ## 📚  Darglint docstring validation
+	@echo "📚 darglint scan of $(LINT_DARGLINT_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check darglint
+	@while IFS= read -r -d '' file; do \
+		"$(LINT_PY_VENV)/bin/darglint" "$$file"; \
+	done < <(find "$(LINT_DARGLINT_TARGET)" -name '*.py' -not -path '*/__pycache__/*' -print0)
+
+linting-docs-codespell:              ## 🔤  Spell-check repository text
+	@echo "🔤 codespell scan of $(LINT_CODESPELL_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check codespell
+	@"$(LINT_PY_VENV)/bin/codespell" --skip="$(LINT_CODESPELL_SKIP)" "$(LINT_CODESPELL_TARGET)"
+
+linting-docs-markdown-links:         ## 🔗  Markdown link checking
+	@echo "🔗 markdown-link-check on $(LINT_MARKDOWN_LINKS_TARGET)..."
+	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
+	@mkdir -p "$(LINT_NODE_ROOT)/markdown-link-check" "$(LINT_NODE_ROOT)/npm-cache"
+	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/markdown-link-check'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent markdown-link-check"
+	@PATH="$(LINT_NODE_ROOT)/markdown-link-check/node_modules/.bin:$$PATH" \
+		markdown-link-check "$(LINT_MARKDOWN_LINKS_TARGET)"
+
+linting-web-depcheck:                ## 🧩  Node dependency hygiene
+	@echo "🧩 depcheck scan of $(LINT_DEPCHECK_TARGET)..."
+	@command -v node >/dev/null 2>&1 || { echo "❌ node not found"; exit 1; }
+	@command -v npm >/dev/null 2>&1 || { echo "❌ npm not found"; exit 1; }
+	@mkdir -p "$(LINT_NODE_ROOT)/depcheck" "$(LINT_NODE_ROOT)/npm-cache"
+	@/bin/bash -c "set -euo pipefail; cd '$(LINT_NODE_ROOT)/depcheck'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent depcheck"
+	@PATH="$(LINT_NODE_ROOT)/depcheck/node_modules/.bin:$$PATH" depcheck "$(LINT_DEPCHECK_TARGET)"
+
+linting-helm-lint:                   ## ⎈  Helm lint wrapper
+	@$(MAKE) --no-print-directory helm-lint
+
+linting-helm-chart-testing:          ## ⎈  chart-testing lint (relaxed local defaults)
+	@echo "⎈ chart-testing lint..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache'; \
+		go run github.com/helm/chart-testing/v3/ct@latest lint \
+			--charts $(CHART_DIR) \
+			--validate-chart-schema=false \
+			--validate-yaml=false \
+			--validate-maintainers=false \
+			--check-version-increment=false"
+
+linting-helm-unittest:               ## 🧪  Helm template unit tests
+	@echo "🧪 helm-unittest..."
+	@command -v helm >/dev/null 2>&1 || { echo "❌ helm not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export HELM_PLUGINS='$(LINT_HELM_ROOT)/plugins'; \
+		export HELM_DATA_HOME='$(LINT_HELM_ROOT)/data'; \
+		export HELM_CACHE_HOME='$(LINT_HELM_ROOT)/cache'; \
+		export HELM_CONFIG_HOME='$(LINT_HELM_ROOT)/config'; \
+		mkdir -p '$(LINT_HELM_ROOT)/plugins' '$(LINT_HELM_ROOT)/data' '$(LINT_HELM_ROOT)/cache' '$(LINT_HELM_ROOT)/config'; \
+		if ! helm plugin list 2>/dev/null | grep -q '^unittest[[:space:]]'; then \
+			if helm plugin install --help 2>/dev/null | grep -q -- '--verify'; then \
+				helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 --verify=false >/dev/null; \
+			else \
+				helm plugin install https://github.com/helm-unittest/helm-unittest --version v0.5.2 >/dev/null; \
+			fi; \
+		fi; \
+		helm unittest $(CHART_DIR)"
+
+linting-go-gosec:                    ## 🔒  Go security static analysis
+	@echo "🔒 gosec scan of discovered Go modules..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install github.com/securego/gosec/v2/cmd/gosec@latest >/dev/null; \
+		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
+		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
+		while IFS= read -r d; do \
+			[ -n "$$d" ] || continue; \
+			echo "→ gosec $$d"; \
+			(cd "$$d" && "$(LINT_GO_ROOT)/bin/gosec" ./...); \
+		done <<< "$$mods"
+
+linting-go-govulncheck:              ## 🔎  Go vulnerability checks
+	@echo "🔎 govulncheck scan of discovered Go modules..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install golang.org/x/vuln/cmd/govulncheck@latest >/dev/null; \
+		mods="$$( { find $(LINT_GO_MODULE_SEARCH_DIRS) -name go.mod -not -path '*/templates/*' -exec dirname {} ';' 2>/dev/null || true; } | sort -u )"; \
+		if [ -z "$$mods" ]; then echo 'ℹ️  No Go modules found'; exit 0; fi; \
+		while IFS= read -r d; do \
+			[ -n "$$d" ] || continue; \
+			echo "→ govulncheck $$d"; \
+			(cd "$$d" && "$(LINT_GO_ROOT)/bin/govulncheck" ./...); \
+		done <<< "$$mods"
+
+linting-security-checkov:            ## 🛡️  IaC security scanning with Checkov
+	@echo "🛡️ checkov scan of $(LINT_CHECKOV_TARGET)..."
+	@$(MAKE) --no-print-directory linting-python-env
+	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check checkov
+	@"$(LINT_PY_VENV)/bin/checkov" -d "$(LINT_CHECKOV_TARGET)" --quiet
+
+linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
+	@echo "🧱 kube-linter scan of $(LINT_KUBE_LINTER_TARGET)..."
+	@command -v go >/dev/null 2>&1 || { echo "❌ go not found"; exit 1; }
+	@/bin/bash -c "set -euo pipefail; \
+		export GOPATH='$(LINT_GO_ROOT)/gopath'; \
+		export GOMODCACHE='$(LINT_GO_ROOT)/gopath/pkg/mod'; \
+		export GOCACHE='$(LINT_GO_ROOT)/gocache'; \
+		export GOBIN='$(LINT_GO_ROOT)/bin'; \
+		export GOTOOLCHAIN='$(LINT_GO_TOOLCHAIN)'; \
+		mkdir -p '$(LINT_GO_ROOT)/gopath' '$(LINT_GO_ROOT)/gopath/pkg/mod' '$(LINT_GO_ROOT)/gocache' '$(LINT_GO_ROOT)/bin'; \
+		go install golang.stackrox.io/kube-linter/cmd/kube-linter@latest >/dev/null; \
+		'$(LINT_GO_ROOT)/bin/kube-linter' lint '$(LINT_KUBE_LINTER_TARGET)'"
+
+linting-security-trufflehog:         ## 🔑  Secret scanning with TruffleHog
+	@echo "🔑 trufflehog filesystem scan of $(LINT_TRUFFLEHOG_TARGET)..."
+	@command -v curl >/dev/null 2>&1 || { echo "❌ curl not found"; exit 1; }
+	@command -v tar >/dev/null 2>&1 || { echo "❌ tar not found"; exit 1; }
+	@version='$(LINT_TRUFFLEHOG_VERSION)'; \
+		version_no_v="$${version#v}"; \
+		os="$$(uname -s | tr '[:upper:]' '[:lower:]')"; \
+		arch="$$(uname -m)"; \
+		case "$$arch" in \
+			x86_64) arch='amd64' ;; \
+			aarch64|arm64) arch='arm64' ;; \
+			*) echo "❌ Unsupported architecture: $$arch"; exit 1 ;; \
+		esac; \
+		asset="trufflehog_$${version_no_v}_$${os}_$${arch}.tar.gz"; \
+		url="https://github.com/trufflesecurity/trufflehog/releases/download/$${version}/$${asset}"; \
+		mkdir -p '$(LINT_GO_ROOT)/bin' '$(LINT_TMP_ROOT)'; \
+		curl -fsSL "$$url" -o '$(LINT_TMP_ROOT)/trufflehog.tar.gz'; \
+		tar -xzf '$(LINT_TMP_ROOT)/trufflehog.tar.gz' -C '$(LINT_GO_ROOT)/bin' trufflehog; \
+		chmod +x '$(LINT_GO_ROOT)/bin/trufflehog'; \
+		exclude_file='$(LINT_TMP_ROOT)/trufflehog-exclude-regexes.txt'; \
+		printf '%s\n' \
+			'^\\.git/' \
+			'^\\.venv/' \
+			'^\\.tmp/' \
+			'^\\.npm-cache/' \
+			'^\\.uv-cache/' \
+			'^dist/' \
+			'^coverage/' \
+			'^htmlcov/' \
+			'^mcp_contextforge_gateway\\.egg-info/' \
+			'^\\.pytest_cache/' \
+			'^\\.mypy_cache/' \
+			'^node_modules/' \
+			'^.*__pycache__/' \
+			'^.*\\.pyc$$' \
+			'^z_.*,cover$$' > "$$exclude_file"; \
+		'$(LINT_GO_ROOT)/bin/trufflehog' filesystem --fail --exclude-paths "$$exclude_file" $(LINT_TRUFFLEHOG_TARGET)
+
+linting-coverage-diff-cover:         ## 📊  Changed-lines coverage gate
+	@$(MAKE) --no-print-directory diff-cover
+
+linting-full: $(LINTING_FULL_TARGETS) ## ✅ Passing lint gates for CI
+	@echo "✅ linting-full passed"
+
+# Backward-compatible aliases (keep previous names working)
+lint-actionlint: linting-workflow-actionlint
+	@:
+
+lint-chart-testing: linting-helm-chart-testing
+	@:
+
+lint-helm-unittest: linting-helm-unittest
+	@:
+
+lint-commitlint: linting-workflow-commitlint
+	@:
+
 ## --------------------------------------------------------------------------- ##
 ##  Individual targets (alphabetical, updated to use TARGET)
 ## --------------------------------------------------------------------------- ##
@@ -2633,11 +3137,36 @@ pydocstyle:                         ## 📚  Docstring style
 pycodestyle:                        ## 📝  Simple PEP-8 checker
 	@echo "📝 pycodestyle $(TARGET)..." && $(VENV_DIR)/bin/pycodestyle $(TARGET) --max-line-length=200
 
-pre-commit: uv                      ## 🪄  Run pre-commit tool
+pre-commit: uv                     ## 🪄  Run pre-commit tool
 	@echo "🪄  Running pre-commit hooks..."
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@if [ ! -x "$(VENV_DIR)/bin/pre-commit" ]; then \
+		echo "📦 Installing pre-commit in $(VENV_DIR)..."; \
+		$(UV_BIN) pip install --python "$(VENV_DIR)/bin/python" --quiet pre-commit; \
+	fi
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		uv run --active pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
+		mkdir -p '$(CURDIR)/.cache/pre-commit-home' \
+			'$(CURDIR)/.cache/xdg-cache' \
+			'$(CURDIR)/.cache/xdg-data' \
+			'$(CURDIR)/.cache/virtualenv-app-data' \
+			'$(CURDIR)/.cache/go-cache' \
+			'$(CURDIR)/.cache/go-mod' \
+			'$(CURDIR)/.cache/go-build' \
+			'$(CURDIR)/.cache/pip-cache' \
+			'$(CURDIR)/.cache/tmp'; \
+		PRE_COMMIT_HOME='$(CURDIR)/.cache/pre-commit-home' \
+		XDG_CACHE_HOME='$(CURDIR)/.cache/xdg-cache' \
+		XDG_DATA_HOME='$(CURDIR)/.cache/xdg-data' \
+		VIRTUALENV_OVERRIDE_APP_DATA='$(CURDIR)/.cache/virtualenv-app-data' \
+		PATH='/usr/bin:$$PATH' \
+		TMPDIR='$(CURDIR)/.cache/tmp' \
+		PIP_CACHE_DIR='$(CURDIR)/.cache/pip-cache' \
+		PIP_USE_PEP517='0' \
+		PIP_NO_BUILD_ISOLATION='1' \
+		GOPATH='$(CURDIR)/.cache/go-cache' \
+		GOMODCACHE='$(CURDIR)/.cache/go-mod' \
+		GOCACHE='$(CURDIR)/.cache/go-build' \
+		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-lite.yaml --all-files --show-diff-on-failure"
 
 ruff:                               ## ⚡  Ruff lint + (eventually) format
 	@echo "⚡ ruff $(TARGET)..." && $(VENV_DIR)/bin/ruff check $(TARGET)
@@ -3229,7 +3758,10 @@ tomllint:                         ## 📑 TOML validation (tomlcheck)
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		uv pip install -q tomlcheck 2>/dev/null || true"
-	@find . -type f -name '*.toml' -print0 \
+	@find . -type f -name '*.toml' \
+	  -not -path './plugin_templates/*' \
+	  -not -path './mcp-servers/templates/*' \
+	  -print0 \
 	  | xargs -0 -I{} $(VENV_DIR)/bin/tomlcheck "{}"
 
 # =============================================================================
@@ -4397,6 +4929,12 @@ docker-shell:
 # =============================================================================
 # help: 🛠️ COMPOSE STACK     - Build / start / stop the multi-service stack
 # help: compose-up            - Bring the whole stack up (detached)
+# help: compose-sso           - Start stack with Keycloak SSO profile enabled
+# help: compose-sso-monitoring - Start stack with SSO + monitoring profiles
+# help: compose-sso-testing   - Start stack with SSO + testing (+ inspector) profiles
+# help: compose-sso-down      - Stop & remove SSO-profile containers (keep named volumes)
+# help: compose-sso-clean     - ✨ Down SSO stack and delete named volumes (data-loss ⚠)
+# help: sso-test-login        - Run SSO smoke checks against compose stack
 # help: compose-lite-up       - Start lite stack (reduced resources for local dev)
 # help: compose-lite-down     - Stop lite stack
 # help: compose-restart      - Recreate changed containers, pulling / building as needed
@@ -4461,7 +4999,8 @@ define COMPOSE
 $(COMPOSE_CMD) -f $(COMPOSE_FILE) $(PROFILE)
 endef
 
-.PHONY: compose-up compose-lite-up compose-restart compose-build compose-pull \
+.PHONY: compose-up compose-sso compose-sso-monitoring compose-sso-testing compose-sso-down compose-sso-clean sso-test-login \
+	compose-lite-up compose-restart compose-build compose-pull \
 	compose-logs compose-ps compose-shell compose-stop compose-down \
 	compose-lite-down compose-rm compose-clean compose-validate compose-exec \
 	compose-logs-service compose-restart-service compose-scale compose-up-safe \
@@ -4495,6 +5034,70 @@ compose-upgrade-pg18: compose-validate
 compose-up: compose-validate
 	@echo "🚀  Using $(COMPOSE_CMD); starting stack..."
 	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE) up -d
+
+compose-sso: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐 Starting stack with SSO profile (Keycloak)..."
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+	@echo "✅ SSO stack started."
+	@echo "   Gateway:  http://localhost:8080"
+	@echo "   Keycloak: http://localhost:8180 (admin/changeme)"
+
+compose-sso-monitoring: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐📊 Starting stack with SSO + monitoring profiles..."
+	LOG_FORMAT=json \
+	OTEL_ENABLE_OBSERVABILITY=true \
+	OTEL_TRACES_EXPORTER=otlp \
+	OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317 \
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile monitoring up -d
+	@echo "✅ SSO + monitoring stack started."
+
+compose-sso-testing: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🔐🧪 Starting stack with SSO + testing (+ inspector) profiles..."
+	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make compose-sso-testing)"
+	@mkdir -p reports
+	HOST_UID=$(HOST_UID) HOST_GID=$(HOST_GID) \
+	LOCUST_EXPECT_WORKERS=$(TESTING_LOCUST_WORKERS) \
+	IMAGE_LOCAL=$(call get_image_name) \
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso --profile testing --profile inspector up -d --scale locust_worker=$(TESTING_LOCUST_WORKERS)
+	@echo "✅ SSO + testing stack started."
+
+compose-sso-down: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🛑 Stopping SSO stack..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso down --remove-orphans
+	@echo "✅ SSO stack stopped."
+
+compose-sso-clean: compose-validate
+	@if [ ! -f "docker-compose.sso.yml" ]; then \
+		echo "❌ Compose override file not found: docker-compose.sso.yml"; \
+		exit 1; \
+	fi
+	@echo "🧹 Stopping SSO stack and removing volumes..."
+	@$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso stop -t 10 2>/dev/null || true
+	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.sso.yml --profile sso down -v --remove-orphans
+	@echo "✅ SSO stack and volumes removed."
+
+sso-test-login:
+	@echo "🧪 Running SSO smoke checks..."
+	@COMPOSE_CMD="$(COMPOSE_CMD)" ./scripts/test-sso-flow.sh
 
 compose-lite-up: ## 💻 Start lite stack (docker-compose.yml + docker-compose.override.lite.yml)
 	@if [ ! -f "docker-compose.override.lite.yml" ]; then \
@@ -5757,6 +6360,15 @@ PLAYWRIGHT_CI_SMOKE_TESTS := \
 	tests/playwright/test_version_page.py::TestVersionPage::test_version_panel_loads \
 	tests/playwright/test_mcp_registry_page.py::TestMCPRegistryPage::test_registry_panel_loads
 
+# default path when FILE is not provided
+PLAYWRIGHT_TEST_TARGET ?= tests/playwright/
+
+# If FILE is set, use that instead of the whole folder
+ifdef FILE
+  PLAYWRIGHT_TEST_TARGET := $(FILE)
+endif
+
+
 ## --- Playwright Setup -------------------------------------------------------
 playwright-install:
 	@echo "🎭 Installing Playwright browsers (chromium)..."
@@ -5793,7 +6405,7 @@ test-ui: playwright-install
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		python -m pytest tests/playwright/ -v --headed --screenshot=only-on-failure \
+		python -m pytest ${PLAYWRIGHT_TEST_TARGET} -v --headed --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
@@ -5804,7 +6416,7 @@ test-ui-headless: playwright-install
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		export TEST_BASE_URL='$(TEST_BASE_URL)' && \
-		pytest $(PLAYWRIGHT_DIR)/ -v --screenshot=only-on-failure \
+		pytest ${PLAYWRIGHT_TEST_TARGET} -v --screenshot=only-on-failure \
 		--browser chromium || { echo '❌ UI tests failed!'; exit 1; }"
 	@echo "✅ UI tests completed!"
 
@@ -5814,7 +6426,7 @@ test-ui-debug: playwright-install
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@mkdir -p $(PLAYWRIGHT_SCREENSHOTS) $(PLAYWRIGHT_REPORTS)
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest $(PLAYWRIGHT_DIR)/ -v -s --headed \
+		PWDEBUG=1 TEST_BASE_URL='$(TEST_BASE_URL)' pytest ${PLAYWRIGHT_TEST_TARGET} -v -s --headed \
 		--browser chromium"
 
 test-ui-smoke: playwright-install
@@ -6722,16 +7334,19 @@ fuzz-all: fuzz-hypothesis fuzz-atheris fuzz-api fuzz-security fuzz-report  ## �
 # help: migration-cleanup        - Clean up migration test containers and volumes
 # help: migration-debug          - Debug migration test failures with diagnostic info
 # help: migration-status         - Show current version configuration and supported versions
+# help: upgrade-validate         - Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
 
 # Migration testing configuration
 MIGRATION_TEST_DIR := tests/migration
 MIGRATION_REPORTS_DIR := $(MIGRATION_TEST_DIR)/reports
+UPGRADE_BASE_IMAGE ?= ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+UPGRADE_TARGET_IMAGE ?= mcpgateway/mcpgateway:latest
 
 # Get supported versions from version config (n-2 policy)
 MIGRATION_VERSIONS := $(shell cd $(MIGRATION_TEST_DIR) && python3 -c "from version_config import get_supported_versions; print(' '.join(get_supported_versions()))" 2>/dev/null || echo "0.5.0 0.8.0 0.9.0 latest")
 
 .PHONY: migration-test-all migration-test-sqlite migration-test-postgres migration-test-performance \
-        migration-setup migration-cleanup migration-debug migration-status
+        migration-setup migration-cleanup migration-debug migration-status upgrade-validate
 
 migration-test-all: migration-setup        ## Run comprehensive migration test suite (SQLite + PostgreSQL)
 	@echo "🚀 Running comprehensive migration tests..."
@@ -6839,6 +7454,12 @@ migration-status:                          ## Show current version configuration
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		cd $(MIGRATION_TEST_DIR) && python3 version_status.py"
+
+upgrade-validate:                         ## Validate fresh + upgrade DB startup paths (SQLite + PostgreSQL)
+	@echo "🔄 Running upgrade validation harness..."
+	@echo "  Base image:   $(UPGRADE_BASE_IMAGE)"
+	@echo "  Target image: $(UPGRADE_TARGET_IMAGE)"
+	@BASE_IMAGE=$(UPGRADE_BASE_IMAGE) TARGET_IMAGE=$(UPGRADE_TARGET_IMAGE) bash scripts/ci/run_upgrade_validation.sh
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🦀 RUST PLUGIN FRAMEWORK (OPTIONAL)
@@ -6981,3 +7602,34 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+# -----------------------------------------------------------------------------
+# Temporary CI toggle for Conventional Commit message linting
+# -----------------------------------------------------------------------------
+# Default is disabled to avoid blocking in-flight PRs with legacy commit titles.
+# Re-enable by setting COMMITLINT_ENFORCED=1 in CI or locally.
+COMMITLINT_ENFORCED ?= 0
+COMMITLINT_FROM ?= HEAD~1
+COMMITLINT_TO ?= HEAD
+LINT_TMP_ROOT ?= /tmp/mcp-context-forge-lint
+LINT_NODE_ROOT ?= $(LINT_TMP_ROOT)/node
+
+linting-workflow-commitlint:         ## 📝  Conventional Commits linting (toggleable)
+	@/bin/bash -c "set -euo pipefail; \
+		if [ '$(COMMITLINT_ENFORCED)' != '1' ]; then \
+			echo '⏭️ commitlint disabled (set COMMITLINT_ENFORCED=1 to enable)'; \
+			exit 0; \
+		fi; \
+		echo '📝 commitlint $(COMMITLINT_FROM)..$(COMMITLINT_TO)...'; \
+		command -v node >/dev/null 2>&1 || { echo '❌ node not found'; exit 1; }; \
+		command -v npm >/dev/null 2>&1 || { echo '❌ npm not found'; exit 1; }; \
+		mkdir -p '$(LINT_NODE_ROOT)/commitlint' '$(LINT_NODE_ROOT)/npm-cache'; \
+		cd '$(LINT_NODE_ROOT)/commitlint'; \
+		if [ ! -f package.json ]; then npm init -y >/dev/null 2>&1; fi; \
+		npm_config_cache='$(LINT_NODE_ROOT)/npm-cache' npm install --silent @commitlint/cli @commitlint/config-conventional; \
+		cd '$(CURDIR)'; \
+		NODE_PATH='$(LINT_NODE_ROOT)/commitlint/node_modules' \
+			node '$(LINT_NODE_ROOT)/commitlint/node_modules/@commitlint/cli/lib/cli.js' \
+			--extends @commitlint/config-conventional \
+			--from '$(COMMITLINT_FROM)' \
+			--to '$(COMMITLINT_TO)'"

@@ -18,6 +18,12 @@ Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 import os
 import platform
 
+# macOS fork safety fix: Must be set before any workers fork
+# On macOS, Objective-C is not fork-safe. When gunicorn forks workers after
+# certain libraries have initialized Objective-C, it causes crashes.
+if platform.system() == "Darwin":
+    os.environ["OBJC_DISABLE_INITIALIZE_FORK_SAFETY"] = "YES"
+
 # First-Party
 # Import Pydantic Settings singleton
 from mcpgateway.config import settings

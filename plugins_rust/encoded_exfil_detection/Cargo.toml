@@ -1,0 +1,25 @@
+[workspace]
+
+[package]
+name = "encoded_exfil_detection"
+version = "0.1.0"
+edition = "2024"
+authors = ["MCP Gateway Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+description = "Rust acceleration for encoded exfiltration detection plugin"
+
+[lib]
+name = "encoded_exfil_detection"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["abi3-py311", "extension-module"] }
+regex = "1.12"
+base64 = "0.22"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = true

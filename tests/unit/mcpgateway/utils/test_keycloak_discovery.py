@@ -56,6 +56,60 @@ async def test_discover_keycloak_endpoints_success(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_discover_keycloak_endpoints_rewrites_backchannel_urls(monkeypatch: pytest.MonkeyPatch):
+    response = DummyAsyncResponse(
+        {
+            "authorization_endpoint": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/auth",
+            "token_endpoint": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/token",
+            "userinfo_endpoint": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/userinfo",
+            "issuer": "http://localhost:8180/realms/mcp-gateway",
+            "jwks_uri": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/certs",
+        }
+    )
+
+    async def fake_get_http_client():
+        return DummyAsyncClient(response)
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    endpoints = await keycloak_discovery.discover_keycloak_endpoints("http://keycloak:8080", "mcp-gateway")
+
+    assert endpoints["authorization_url"].startswith("http://localhost:8180/")
+    assert endpoints["token_url"].startswith("http://keycloak:8080/")
+    assert endpoints["userinfo_url"].startswith("http://keycloak:8080/")
+    assert endpoints["jwks_uri"].startswith("http://keycloak:8080/")
+
+
+@pytest.mark.asyncio
+async def test_discover_keycloak_endpoints_rewrites_authorization_url_to_public_base(monkeypatch: pytest.MonkeyPatch):
+    response = DummyAsyncResponse(
+        {
+            "authorization_endpoint": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/auth",
+            "token_endpoint": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/token",
+            "userinfo_endpoint": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/userinfo",
+            "issuer": "http://localhost:8080/realms/mcp-gateway",
+            "jwks_uri": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/certs",
+        }
+    )
+
+    async def fake_get_http_client():
+        return DummyAsyncClient(response)
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_http_client", fake_get_http_client)
+
+    endpoints = await keycloak_discovery.discover_keycloak_endpoints(
+        "http://keycloak:8080",
+        "mcp-gateway",
+        public_base_url="http://localhost:8180",
+    )
+
+    assert endpoints["authorization_url"].startswith("http://localhost:8180/")
+    assert endpoints["token_url"].startswith("http://keycloak:8080/")
+    assert endpoints["userinfo_url"].startswith("http://keycloak:8080/")
+    assert endpoints["jwks_uri"].startswith("http://keycloak:8080/")
+
+
+@pytest.mark.asyncio
 async def test_discover_keycloak_endpoints_incomplete(monkeypatch: pytest.MonkeyPatch):
     response = DummyAsyncResponse({"authorization_endpoint": "https://kc/auth"})
 
@@ -140,6 +194,52 @@ def test_discover_keycloak_endpoints_sync_success(monkeypatch: pytest.MonkeyPatc
     assert endpoints["token_url"] == "https://kc/token"
 
 
+def test_discover_keycloak_endpoints_sync_rewrites_backchannel_urls(monkeypatch: pytest.MonkeyPatch):
+    response = DummySyncResponse(
+        {
+            "authorization_endpoint": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/auth",
+            "token_endpoint": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/token",
+            "userinfo_endpoint": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/userinfo",
+            "issuer": "http://localhost:8180/realms/mcp-gateway",
+            "jwks_uri": "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/certs",
+        }
+    )
+
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: DummySyncClient(response))
+
+    endpoints = keycloak_discovery.discover_keycloak_endpoints_sync("http://keycloak:8080", "mcp-gateway")
+
+    assert endpoints["authorization_url"].startswith("http://localhost:8180/")
+    assert endpoints["token_url"].startswith("http://keycloak:8080/")
+    assert endpoints["userinfo_url"].startswith("http://keycloak:8080/")
+    assert endpoints["jwks_uri"].startswith("http://keycloak:8080/")
+
+
+def test_discover_keycloak_endpoints_sync_rewrites_authorization_url_to_public_base(monkeypatch: pytest.MonkeyPatch):
+    response = DummySyncResponse(
+        {
+            "authorization_endpoint": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/auth",
+            "token_endpoint": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/token",
+            "userinfo_endpoint": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/userinfo",
+            "issuer": "http://localhost:8080/realms/mcp-gateway",
+            "jwks_uri": "http://localhost:8080/realms/mcp-gateway/protocol/openid-connect/certs",
+        }
+    )
+
+    monkeypatch.setattr(httpx, "Client", lambda *args, **kwargs: DummySyncClient(response))
+
+    endpoints = keycloak_discovery.discover_keycloak_endpoints_sync(
+        "http://keycloak:8080",
+        "mcp-gateway",
+        public_base_url="http://localhost:8180",
+    )
+
+    assert endpoints["authorization_url"].startswith("http://localhost:8180/")
+    assert endpoints["token_url"].startswith("http://keycloak:8080/")
+    assert endpoints["userinfo_url"].startswith("http://keycloak:8080/")
+    assert endpoints["jwks_uri"].startswith("http://keycloak:8080/")
+
+
 def test_discover_keycloak_endpoints_sync_http_error(monkeypatch: pytest.MonkeyPatch):
     response = DummySyncResponse({}, raise_exc=httpx.HTTPError("boom"))
 
@@ -167,3 +267,14 @@ def test_discover_keycloak_endpoints_sync_unexpected(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(httpx, "Client", boom)
     endpoints = keycloak_discovery.discover_keycloak_endpoints_sync("https://kc", "master")
     assert endpoints is None
+
+
+def test_rewrite_endpoint_base_ignores_invalid_target_base():
+    """Rewrite helper should return original URL when target base lacks scheme/netloc."""
+    original = "http://localhost:8180/realms/mcp-gateway/protocol/openid-connect/token"
+    rewritten = keycloak_discovery._rewrite_endpoint_base(  # pylint: disable=protected-access
+        original,
+        "localhost:8180",
+        "token",
+    )
+    assert rewritten == original

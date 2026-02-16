@@ -9,8 +9,8 @@ Tests for token catalog service implementation.
 
 # Standard
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
 import hashlib
+from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
 
 # Third-Party
@@ -415,7 +415,7 @@ class TestTokenCatalogService:
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen_token:
             mock_gen_token.return_value = "jwt_token_team"
 
-            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123")
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123", expires_in_days=30)
 
             assert raw_token == "jwt_token_team"
             added_token = mock_db.add.call_args[0][0]
@@ -436,6 +436,7 @@ class TestTokenCatalogService:
                 user_email="test@example.com",
                 name="Inactive Token",
                 is_active=False,
+                expires_in_days=30,
             )
 
             assert raw_token == "jwt_token_inactive"
@@ -457,6 +458,7 @@ class TestTokenCatalogService:
             token, raw_token = await token_service.create_token(
                 user_email="test@example.com",
                 name="Default Active Token",
+                expires_in_days=30,
             )
 
             # Verify the token added to DB has is_active=True by default
@@ -503,6 +505,7 @@ class TestTokenCatalogService:
                 name="Scoped Token",
                 scope=token_scope,
                 caller_permissions=["tools.read", "resources.read"],  # Caller has these permissions
+                expires_in_days=30,
             )
 
             assert raw_token == "jwt_token_scoped"
@@ -534,9 +537,8 @@ class TestTokenCatalogService:
         tokens = await token_service.list_user_tokens("test@example.com", include_inactive=True)
 
         assert tokens == []
-        # Verify query was built correctly
-        call_args = mock_db.execute.call_args[0][0]
-        # The query should not filter out inactive tokens
+        # Verify query was executed (should not filter out inactive tokens)
+        assert mock_db.execute.called
 
     @pytest.mark.asyncio
     async def test_list_user_tokens_with_pagination(self, token_service, mock_db):
@@ -547,9 +549,8 @@ class TestTokenCatalogService:
 
         await token_service.list_user_tokens("test@example.com", limit=10, offset=20)
 
-        # Verify pagination was applied
-        call_args = mock_db.execute.call_args[0][0]
-        # Query should have limit and offset applied
+        # Verify query was executed (should have limit and offset applied)
+        assert mock_db.execute.called
 
     @pytest.mark.asyncio
     async def test_list_user_tokens_invalid_limit(self, token_service, mock_db):
@@ -567,44 +568,102 @@ class TestTokenCatalogService:
         # Should use default limit of 50
 
     @pytest.mark.asyncio
-    async def test_list_team_tokens_success(self, token_service, mock_db, mock_team_member, mock_api_token):
-        """Test list_team_tokens method - successful."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_team_member
+    async def test_list_team_tokens_success(self, token_service, mock_db, mock_api_token):
+        """Test list_team_tokens method - user is active team member."""
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_api_token]
-        mock_db.execute.side_effect = [
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_team_member)),
-            mock_result,
-        ]
+        mock_db.execute.return_value = mock_result
 
-        tokens = await token_service.list_team_tokens("team-123", "test@example.com")
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=["team-123"]):
+            tokens = await token_service.list_team_tokens("team-123", "test@example.com")
 
         assert len(tokens) == 1
         assert tokens[0] == mock_api_token
 
     @pytest.mark.asyncio
-    async def test_list_team_tokens_invalid_limit_uses_default(self, token_service, mock_db, mock_team_member):
+    async def test_list_team_tokens_invalid_limit_uses_default(self, token_service, mock_db):
         """Invalid list_team_tokens limit should fall back to the default limit (50)."""
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.side_effect = [
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_team_member)),
-            mock_result,
-        ]
+        mock_db.execute.return_value = mock_result
 
-        await token_service.list_team_tokens("team-123", "test@example.com", limit=0)
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=["team-123"]):
+            await token_service.list_team_tokens("team-123", "test@example.com", limit=0)
 
-        # Second execute call is the list query; make sure default limit was applied.
-        query = mock_db.execute.call_args_list[1][0][0]
+        query = mock_db.execute.call_args_list[-1][0][0]
         assert query._limit_clause.value == 50  # pylint: disable=protected-access
 
     @pytest.mark.asyncio
-    async def test_list_team_tokens_not_owner(self, token_service, mock_db):
-        """Test list_team_tokens method - user not team owner."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    async def test_list_team_tokens_not_member(self, token_service, mock_db):
+        """Test list_team_tokens method - user is not a team member."""
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=[]):
+            with pytest.raises(ValueError, match="is not an active member of team"):
+                await token_service.list_team_tokens("team-123", "notmember@example.com")
 
-        with pytest.raises(ValueError, match="Only team owners can view team tokens"):
-            await token_service.list_team_tokens("team-123", "notowner@example.com")
+    @pytest.mark.asyncio
+    async def test_list_user_and_team_tokens_basic(self, token_service, mock_db, mock_api_token):
+        """Test list_user_and_team_tokens method - basic case with personal tokens."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_api_token]
+
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=[]):
+            tokens = await token_service.list_user_and_team_tokens("test@example.com")
+
+        assert len(tokens) == 1
+        assert tokens[0] == mock_api_token
+
+    @pytest.mark.asyncio
+    async def test_list_user_and_team_tokens_with_team_member(self, token_service, mock_db):
+        """Test list_user_and_team_tokens includes team tokens for team members."""
+        personal_token = MagicMock(spec=EmailApiToken)
+        personal_token.id = "personal-token"
+        personal_token.user_email = "test@example.com"
+        personal_token.team_id = None
+
+        team_token = MagicMock(spec=EmailApiToken)
+        team_token.id = "team-token"
+        team_token.user_email = "other@example.com"  # Created by someone else
+        team_token.team_id = "team-123"
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [personal_token, team_token]
+
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=["team-123"]):
+            tokens = await token_service.list_user_and_team_tokens("test@example.com")
+
+        assert len(tokens) == 2
+        token_ids = [t.id for t in tokens]
+        assert "personal-token" in token_ids
+        assert "team-token" in token_ids
+
+    @pytest.mark.asyncio
+    async def test_list_user_and_team_tokens_with_inactive(self, token_service, mock_db):
+        """Test list_user_and_team_tokens method - including inactive tokens."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=[]):
+            await token_service.list_user_and_team_tokens("test@example.com", include_inactive=True)
+
+        mock_db.execute.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_list_user_and_team_tokens_with_pagination(self, token_service, mock_db):
+        """Test list_user_and_team_tokens method with pagination."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=[]):
+            await token_service.list_user_and_team_tokens("test@example.com", limit=10, offset=20)
+
+        mock_db.execute.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_list_user_and_team_tokens_invalid_limit(self, token_service, mock_db):
+        """Test list_user_and_team_tokens method with invalid limit."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=[]):
+            await token_service.list_user_and_team_tokens("test@example.com", limit=2000)
+            await token_service.list_user_and_team_tokens("test@example.com", limit=-5)
+
+        mock_db.execute.assert_called()
 
     @pytest.mark.asyncio
     async def test_get_token_found(self, token_service, mock_db, mock_api_token):
@@ -810,6 +869,105 @@ class TestTokenCatalogService:
             assert result is False
 
     @pytest.mark.asyncio
+    async def test_revoke_token_team_owner_can_revoke_team_token(self, token_service, mock_db):
+        """Test that a team owner can revoke a token scoped to their team even if they don't own it."""
+        team_token = MagicMock(spec=EmailApiToken)
+        team_token.id = "team-token-456"
+        team_token.user_email = "other@example.com"  # Owned by someone else
+        team_token.team_id = "team-123"
+        team_token.is_active = True
+        team_token.jti = "jti-team-456"
+        team_token.name = "Other's Team Token"
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            # First call (with user_email) returns None (not owned by caller)
+            # Second call (without user_email) returns the team token
+            mock_get.side_effect = [None, team_token]
+
+            with patch("mcpgateway.services.team_management_service.TeamManagementService") as mock_team_cls:
+                mock_team_svc = MagicMock()
+                mock_team_svc.get_user_role_in_team = AsyncMock(return_value="owner")
+                mock_team_cls.return_value = mock_team_svc
+
+                result = await token_service.revoke_token(
+                    token_id="team-token-456",
+                    user_email="owner@example.com",
+                    revoked_by="owner@example.com",
+                    reason="No longer needed",
+                )
+
+        assert result is True
+        assert team_token.is_active is False
+        revocation = mock_db.add.call_args[0][0]
+        assert isinstance(revocation, TokenRevocation)
+        assert revocation.jti == "jti-team-456"
+        assert revocation.revoked_by == "owner@example.com"
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_regular_member_cannot_revoke_team_token(self, token_service):
+        """Test that a regular team member cannot revoke another member's team token."""
+        team_token = MagicMock(spec=EmailApiToken)
+        team_token.id = "team-token-789"
+        team_token.team_id = "team-123"
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = [None, team_token]
+
+            with patch("mcpgateway.services.team_management_service.TeamManagementService") as mock_team_cls:
+                mock_team_svc = MagicMock()
+                mock_team_svc.get_user_role_in_team = AsyncMock(return_value="member")
+                mock_team_cls.return_value = mock_team_svc
+
+                result = await token_service.revoke_token(
+                    token_id="team-token-789",
+                    user_email="member@example.com",
+                    revoked_by="member@example.com",
+                )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_non_member_cannot_revoke_team_token(self, token_service):
+        """Test that a non-member cannot revoke a team-scoped token."""
+        team_token = MagicMock(spec=EmailApiToken)
+        team_token.id = "team-token-789"
+        team_token.team_id = "team-123"
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = [None, team_token]
+
+            with patch("mcpgateway.services.team_management_service.TeamManagementService") as mock_team_cls:
+                mock_team_svc = MagicMock()
+                mock_team_svc.get_user_role_in_team = AsyncMock(return_value=None)
+                mock_team_cls.return_value = mock_team_svc
+
+                result = await token_service.revoke_token(
+                    token_id="team-token-789",
+                    user_email="outsider@example.com",
+                    revoked_by="outsider@example.com",
+                )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_revoke_token_non_team_token_not_owned(self, token_service):
+        """Test that a non-team token that isn't owned by the caller cannot be revoked."""
+        personal_token = MagicMock(spec=EmailApiToken)
+        personal_token.id = "personal-token-999"
+        personal_token.team_id = None  # Not a team token
+
+        with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
+            mock_get.side_effect = [None, personal_token]
+
+            result = await token_service.revoke_token(
+                token_id="personal-token-999",
+                user_email="other@example.com",
+                revoked_by="other@example.com",
+            )
+
+        assert result is False
+
+    @pytest.mark.asyncio
     async def test_admin_revoke_token_not_found(self, token_service):
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
@@ -822,6 +980,7 @@ class TestTokenCatalogService:
             mock_get.return_value = mock_api_token
 
             with patch("mcpgateway.cache.auth_cache.auth_cache.invalidate_revocation", new_callable=AsyncMock):
+                # Standard
                 import asyncio  # pylint: disable=import-outside-toplevel
 
                 def _boom_create_task(coro):
@@ -984,6 +1143,107 @@ class TestTokenCatalogService:
         assert revocation is None
 
     @pytest.mark.asyncio
+    async def test_get_user_team_ids(self, token_service, mock_db):
+        """Test get_user_team_ids delegates to TeamManagementService."""
+        mock_team1 = MagicMock()
+        mock_team1.id = "team-a"
+        mock_team2 = MagicMock()
+        mock_team2.id = "team-b"
+
+        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+            mock_tms = MagicMock()
+            mock_tms.get_user_teams = AsyncMock(return_value=[mock_team1, mock_team2])
+            MockTMS.return_value = mock_tms
+
+            result = await token_service.get_user_team_ids("user@example.com")
+
+        assert result == ["team-a", "team-b"]
+        mock_tms.get_user_teams.assert_awaited_once_with("user@example.com")
+
+    @pytest.mark.asyncio
+    async def test_get_user_team_ids_no_teams(self, token_service, mock_db):
+        """Test get_user_team_ids returns empty list when user has no teams."""
+        with patch("mcpgateway.services.team_management_service.TeamManagementService") as MockTMS:
+            mock_tms = MagicMock()
+            mock_tms.get_user_teams = AsyncMock(return_value=[])
+            MockTMS.return_value = mock_tms
+
+            result = await token_service.get_user_team_ids("lonely@example.com")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_count_user_and_team_tokens(self, token_service, mock_db):
+        """Test count_user_and_team_tokens with teams."""
+        with patch.object(token_service, "get_user_team_ids", AsyncMock(return_value=["team-1"])):
+            mock_db.execute.return_value.scalar.return_value = 5
+
+            count = await token_service.count_user_and_team_tokens("user@example.com")
+
+        assert count == 5
+
+    @pytest.mark.asyncio
+    async def test_count_user_and_team_tokens_no_teams(self, token_service, mock_db):
+        """Test count_user_and_team_tokens without teams."""
+        with patch.object(token_service, "get_user_team_ids", AsyncMock(return_value=[])):
+            mock_db.execute.return_value.scalar.return_value = 2
+
+            count = await token_service.count_user_and_team_tokens("user@example.com")
+
+        assert count == 2
+
+    @pytest.mark.asyncio
+    async def test_count_user_and_team_tokens_include_inactive(self, token_service, mock_db):
+        """Test count_user_and_team_tokens with include_inactive=True."""
+        with patch.object(token_service, "get_user_team_ids", AsyncMock(return_value=[])):
+            mock_db.execute.return_value.scalar.return_value = 10
+
+            count = await token_service.count_user_and_team_tokens("user@example.com", include_inactive=True)
+
+        assert count == 10
+
+    @pytest.mark.asyncio
+    async def test_count_user_and_team_tokens_none_result(self, token_service, mock_db):
+        """Test count_user_and_team_tokens returns 0 when scalar returns None."""
+        with patch.object(token_service, "get_user_team_ids", AsyncMock(return_value=[])):
+            mock_db.execute.return_value.scalar.return_value = None
+
+            count = await token_service.count_user_and_team_tokens("user@example.com")
+
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_get_token_revocations_batch_multiple(self, token_service, mock_db):
+        """Test batch revocation lookup returns dict keyed by JTI."""
+        rev1 = MagicMock(spec=TokenRevocation)
+        rev1.jti = "jti-1"
+        rev2 = MagicMock(spec=TokenRevocation)
+        rev2.jti = "jti-3"
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [rev1, rev2]
+
+        result = await token_service.get_token_revocations_batch(["jti-1", "jti-2", "jti-3"])
+
+        assert result == {"jti-1": rev1, "jti-3": rev2}
+        assert "jti-2" not in result
+
+    @pytest.mark.asyncio
+    async def test_get_token_revocations_batch_empty_input(self, token_service, mock_db):
+        """Test batch revocation lookup with empty list returns empty dict without querying."""
+        result = await token_service.get_token_revocations_batch([])
+
+        assert result == {}
+        mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_token_revocations_batch_none_revoked(self, token_service, mock_db):
+        """Test batch revocation lookup when no tokens are revoked."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        result = await token_service.get_token_revocations_batch(["jti-1", "jti-2"])
+
+        assert result == {}
+
+    @pytest.mark.asyncio
     async def test_cleanup_expired_tokens_multiple(self, token_service, mock_db):
         """Test cleanup_expired_tokens method with multiple expired tokens."""
         # Mock bulk UPDATE returning count of 5 updated rows
@@ -1045,7 +1305,7 @@ class TestTokenCatalogServiceEdgeCases:
 
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="")  # Empty name should still work
+            token, _ = await token_service.create_token(user_email="test@example.com", name="", expires_in_days=30)  # Empty name should still work
             assert mock_db.add.called
 
     @pytest.mark.asyncio
@@ -1059,7 +1319,7 @@ class TestTokenCatalogServiceEdgeCases:
         long_desc = "A" * 10000  # Very long description
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", description=long_desc)
+            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", description=long_desc, expires_in_days=30)
 
             added_token = mock_db.add.call_args[0][0]
             assert added_token.description == long_desc
@@ -1097,7 +1357,8 @@ class TestTokenCatalogServiceEdgeCases:
 
             await token_service.update_token(token_id="token-123", user_email="test@example.com", description=None)
 
-            # Description should not change when None is passed
+            # Description should remain unchanged
+            assert mock_api_token.description == original_desc
             mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
@@ -1143,11 +1404,103 @@ class TestTokenCatalogServiceEdgeCases:
         empty_scope = TokenScope()  # All defaults
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", scope=empty_scope)
+            token, _ = await token_service.create_token(user_email="test@example.com", name="Token", scope=empty_scope, expires_in_days=30)
 
             added_token = mock_db.add.call_args[0][0]
             assert added_token.server_id is None
             assert added_token.resource_scopes == []
+
+    @pytest.mark.asyncio
+    async def test_create_token_no_expiry_when_required(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token rejects None expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="Token expiration is required by server policy"):
+            await token_service.create_token(user_email="test@example.com", name="No Expiry Token", expires_in_days=None)
+
+    @pytest.mark.asyncio
+    async def test_create_token_no_expiry_when_allowed(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token allows None expiry when REQUIRE_TOKEN_EXPIRATION=false."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", False)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "jwt_token_without_exp"
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="No Expiry Token", expires_in_days=None)
+
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.expires_at is None
+            assert raw_token == "jwt_token_without_exp"
+
+    @pytest.mark.asyncio
+    async def test_create_token_with_expiry_when_required(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token accepts expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
+            mock_gen.return_value = "jwt_token_with_exp"
+            token, raw_token = await token_service.create_token(user_email="test@example.com", name="Token With Expiry", expires_in_days=30)
+
+            added_token = mock_db.add.call_args[0][0]
+            assert added_token.expires_at is not None
+            assert raw_token == "jwt_token_with_exp"
+
+    @pytest.mark.asyncio
+    async def test_create_token_with_team_and_expiry_required(self, token_service, mock_db, mock_user, mock_team, mock_team_member, monkeypatch):
+        """Test create_token with team requires expiry when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            mock_team,
+            mock_team_member,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="Token expiration is required by server policy"):
+            await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123", expires_in_days=None)
+
+    @pytest.mark.asyncio
+    async def test_create_token_zero_expiry_days_when_required(self, token_service, mock_db, mock_user, monkeypatch):
+        """Test create_token with expires_in_days=0 is treated as no expiry and rejected when REQUIRE_TOKEN_EXPIRATION=true."""
+        # First-Party
+        from mcpgateway import config
+
+        monkeypatch.setattr(config.settings, "require_token_expiration", True)
+
+        mock_db.execute.return_value.scalar_one_or_none.side_effect = [
+            mock_user,
+            None,
+        ]
+
+        with pytest.raises(ValueError, match="Token expiration is required by server policy"):
+            await token_service.create_token(user_email="test@example.com", name="Zero Expiry Token", expires_in_days=0)
 
     @pytest.mark.asyncio
     async def test_generate_token_settings_values(self, token_service):
@@ -1185,7 +1538,7 @@ class TestTokenCatalogServiceIntegration:
 
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt_new"
-            token, raw = await token_service.create_token(user_email="test@example.com", name="Lifecycle Token")
+            token, raw = await token_service.create_token(user_email="test@example.com", name="Lifecycle Token", expires_in_days=30)
 
         # Update token
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
@@ -1201,7 +1554,7 @@ class TestTokenCatalogServiceIntegration:
 
         # Get stats
         mock_db.execute.return_value.scalars.return_value.all.return_value = []
-        stats = await token_service.get_token_usage_stats("test@example.com")
+        await token_service.get_token_usage_stats("test@example.com")
 
         # Revoke token
         with patch.object(token_service, "get_token", new_callable=AsyncMock) as mock_get:
@@ -1231,16 +1584,14 @@ class TestTokenCatalogServiceIntegration:
 
         with patch.object(token_service, "_generate_token", new_callable=AsyncMock) as mock_gen:
             mock_gen.return_value = "jwt_team"
-            token, _ = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123")
+            token, _ = await token_service.create_token(user_email="test@example.com", name="Team Token", team_id="team-123", expires_in_days=30)
 
         # List team tokens
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_team_member
-        mock_db.execute.side_effect = [
-            MagicMock(scalar_one_or_none=MagicMock(return_value=mock_team_member)),
-            MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),
-        ]
+        mock_db.execute.side_effect = None
+        mock_db.execute.return_value = MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[]))))
 
-        tokens = await token_service.list_team_tokens("team-123", "test@example.com")
+        with patch.object(token_service, "get_user_team_ids", new_callable=AsyncMock, return_value=["team-123"]):
+            tokens = await token_service.list_team_tokens("team-123", "test@example.com")
         assert isinstance(tokens, list)
 
     @pytest.mark.asyncio
@@ -1386,3 +1737,176 @@ class TestTokenCatalogServiceSqlOptimization:
         assert stats["total_requests"] == 0
         assert stats["successful_requests"] == 0
         assert stats["success_rate"] == 0
+
+
+# --------------------------------------------------------------------------- #
+# Token Count Tests                                                           #
+# --------------------------------------------------------------------------- #
+class TestTokenCountFunctions:
+    """Tests for token counting functions."""
+
+    @pytest.mark.asyncio
+    async def test_count_user_tokens_include_inactive(self, mock_db):
+        """Test counting user tokens including inactive ones."""
+        service = TokenCatalogService(mock_db)
+
+        # Mock the query result
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 5
+        mock_db.execute.return_value = mock_result
+
+        count = await service.count_user_tokens("test@example.com", include_inactive=True)
+
+        assert count == 5
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_count_user_tokens_active_only(self, mock_db):
+        """Test counting only active user tokens."""
+        service = TokenCatalogService(mock_db)
+
+        # Mock the query result
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 3
+        mock_db.execute.return_value = mock_result
+
+        count = await service.count_user_tokens("test@example.com", include_inactive=False)
+
+        assert count == 3
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_count_user_tokens_returns_zero(self, mock_db):
+        """Test counting user tokens when none exist."""
+        service = TokenCatalogService(mock_db)
+
+        # Mock the query result returning None
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        count = await service.count_user_tokens("test@example.com")
+
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_count_team_tokens_include_inactive(self, mock_db):
+        """Test counting team tokens including inactive ones."""
+        service = TokenCatalogService(mock_db)
+
+        # Mock the query result
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 10
+        mock_db.execute.return_value = mock_result
+
+        count = await service.count_team_tokens("team-123", include_inactive=True)
+
+        assert count == 10
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_count_team_tokens_active_only(self, mock_db):
+        """Test counting only active team tokens."""
+        service = TokenCatalogService(mock_db)
+
+        # Mock the query result
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = 7
+        mock_db.execute.return_value = mock_result
+
+        count = await service.count_team_tokens("team-123", include_inactive=False)
+
+        assert count == 7
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_count_team_tokens_returns_zero(self, mock_db):
+        """Test counting team tokens when none exist."""
+        service = TokenCatalogService(mock_db)
+
+        # Mock the query result returning None
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        count = await service.count_team_tokens("team-123")
+
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_list_all_tokens_basic(self, token_service, mock_db, mock_api_token):
+        """Test list_all_tokens method - basic case."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [mock_api_token]
+        mock_db.execute.return_value = mock_result
+
+        tokens = await token_service.list_all_tokens()
+
+        assert len(tokens) == 1
+        assert tokens[0] == mock_api_token
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_list_all_tokens_include_inactive(self, token_service, mock_db):
+        """Test list_all_tokens with include_inactive=True."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        await token_service.list_all_tokens(include_inactive=True)
+
+        call_args = mock_db.execute.call_args[0][0]
+        assert call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_list_all_tokens_pagination(self, token_service, mock_db):
+        """Test list_all_tokens with pagination."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        await token_service.list_all_tokens(limit=50, offset=10)
+
+        call_args = mock_db.execute.call_args[0][0]
+        assert call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_list_all_tokens_invalid_limit(self, token_service, mock_db):
+        """Test list_all_tokens with invalid limit falls back to default."""
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        await token_service.list_all_tokens(limit=0)
+        await token_service.list_all_tokens(limit=2000)
+
+        assert mock_db.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_count_all_tokens_basic(self, token_service, mock_db):
+        """Test count_all_tokens method - basic case."""
+        mock_db.execute.return_value.scalar.return_value = 5
+
+        count = await token_service.count_all_tokens()
+
+        assert count == 5
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_count_all_tokens_include_inactive(self, token_service, mock_db):
+        """Test count_all_tokens with include_inactive=True."""
+        mock_db.execute.return_value.scalar.return_value = 10
+
+        count = await token_service.count_all_tokens(include_inactive=True)
+
+        assert count == 10
+        mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_count_all_tokens_no_tokens(self, token_service, mock_db):
+        """Test count_all_tokens returns 0 when no tokens exist."""
+        mock_db.execute.return_value.scalar.return_value = None
+
+        count = await token_service.count_all_tokens()
+
+        assert count == 0

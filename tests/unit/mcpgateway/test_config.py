@@ -927,3 +927,18 @@ def test_derive_ed25519_non_ed25519_key_is_ignored():
 
     s = Settings(ed25519_private_key=pem, _env_file=None)
     assert s.ed25519_public_key is None
+
+
+# --------------------------------------------------------------------------- #
+#                    direct_proxy feature flag defaults                         #
+# --------------------------------------------------------------------------- #
+def test_direct_proxy_enabled_default_false():
+    """mcpgateway_direct_proxy_enabled should default to False."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_direct_proxy_enabled is False
+
+
+def test_direct_proxy_timeout_default_30():
+    """mcpgateway_direct_proxy_timeout should default to 30."""
+    s = Settings(_env_file=None)
+    assert s.mcpgateway_direct_proxy_timeout == 30

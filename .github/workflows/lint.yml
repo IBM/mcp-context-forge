@@ -44,7 +44,10 @@ jobs:
           - id: tomllint
             setup: pip install tomlcheck
             cmd: |
-              find . -type f -name '*.toml' -print0 |
+              find . -type f -name '*.toml' \
+                -not -path './plugin_templates/*' \
+                -not -path './mcp-servers/templates/*' \
+                -print0 |
                 xargs -0 -I{} tomlcheck "{}"
 
           # -------------------------------------------------------

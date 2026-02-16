@@ -1,0 +1,32 @@
+# docker-compose.sso.yml
+#
+# SSO profile overrides for local development/testing with Keycloak.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso up -d
+#   docker compose -f docker-compose.yml -f docker-compose.sso.yml --profile sso down
+
+services:
+  gateway:
+    depends_on:
+      keycloak:
+        condition: service_healthy
+    environment:
+      # Enable SSO and preconfigure Keycloak provider bootstrap
+      - SSO_ENABLED=true
+      - SSO_KEYCLOAK_ENABLED=true
+      - SSO_KEYCLOAK_BASE_URL=http://keycloak:8080
+      - SSO_KEYCLOAK_PUBLIC_BASE_URL=http://localhost:8180
+      - SSO_KEYCLOAK_REALM=mcp-gateway
+      - SSO_KEYCLOAK_CLIENT_ID=mcp-gateway
+      - SSO_KEYCLOAK_CLIENT_SECRET=keycloak-dev-secret
+      - SSO_KEYCLOAK_MAP_REALM_ROLES=true
+      - SSO_KEYCLOAK_MAP_CLIENT_ROLES=false
+      - SSO_KEYCLOAK_GROUPS_CLAIM=groups
+      # RBAC mapping for pre-seeded Keycloak realm roles
+      - 'SSO_KEYCLOAK_ROLE_MAPPINGS={"gateway-admin":"platform_admin","gateway-developer":"developer","gateway-viewer":"viewer"}'
+      - SSO_KEYCLOAK_DEFAULT_ROLE=viewer
+      - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=true
+      # Keep existing local admin login alongside SSO
+      - SSO_AUTO_CREATE_USERS=true
+      - SSO_PRESERVE_ADMIN_AUTH=true

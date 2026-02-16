@@ -319,6 +319,8 @@ class DcrService:
         # Decrypt registration access token
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
         registration_access_token = await encryption.decrypt_secret_async(client_record.registration_access_token_encrypted)
+        if registration_access_token is None:
+            raise DcrError("Failed to decrypt registration access token for update operation")
 
         # Build update request
         update_request = {"client_id": client_record.client_id, "redirect_uris": orjson.loads(client_record.redirect_uris), "grant_types": orjson.loads(client_record.grant_types)}
@@ -354,22 +356,27 @@ class DcrService:
             db: Database session
 
         Returns:
-            True if deletion succeeded
+            bool: True if deletion succeeded at the Authorization Server.
+                False if deletion failed (missing prerequisites, decryption error, network error).
+                Note: Does not guarantee local database deletion.
 
         Raises:
-            DcrError: If deletion fails (except 404)
+            DcrError: If deletion fails catastrophically
         """
         if not client_record.registration_client_uri:
             logger.warning("Cannot delete client at AS: no registration_client_uri")
-            return True  # Consider it deleted locally
+            return False
 
         if not client_record.registration_access_token_encrypted:
             logger.warning("Cannot delete client at AS: no registration_access_token")
-            return True  # Consider it deleted locally
+            return False
 
         # Decrypt registration access token
         encryption = get_encryption_service(self.settings.auth_encryption_secret)
         registration_access_token = await encryption.decrypt_secret_async(client_record.registration_access_token_encrypted)
+        if registration_access_token is None:
+            logger.error("Failed to decrypt registration access token; cannot authenticate delete request to AS")
+            return False
 
         # Send delete request
         try:
@@ -381,10 +388,10 @@ class DcrService:
                 return True
 
             logger.warning(f"Unexpected status when deleting client: {response.status_code}")
-            return True  # Consider it best-effort
+            return False
         except httpx.HTTPError as e:
-            logger.warning(f"Failed to delete client at AS: {e}")
-            return True  # Best-effort, don't fail if AS is unreachable
+            logger.error(f"Failed to delete client at AS: {e}")
+            return False
 
 
 class DcrError(Exception):

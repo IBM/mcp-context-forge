@@ -6,8 +6,9 @@ MCP server implementation guidance for AI coding assistants.
 
 ```
 mcp-servers/
-├── go/                         # Go MCP servers (5 implementations)
+├── go/                         # Go MCP servers (6 implementations)
 │   ├── fast-time-server/       # Time/date operations
+│   ├── slow-time-server/       # Configurable-latency testing server
 │   ├── calculator-server/      # Math operations
 │   ├── system-monitor-server/  # System metrics
 │   ├── benchmark-server/       # Performance benchmarking
@@ -33,7 +34,7 @@ mcp-servers/
 │   ├── synthetic_data_server/  # Test data generation
 │   ├── url_to_markdown_server/ # URL to markdown conversion
 │   └── xlsx_server/            # Excel/spreadsheet handling
-├── templates/                  # Copier scaffolding templates
+├── templates/                  # Cookiecutter scaffolding templates
 ├── scaffold-go-server.sh       # Go server scaffolding script
 └── scaffold-python-server.sh   # Python server scaffolding script
 ```

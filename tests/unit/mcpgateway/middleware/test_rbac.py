@@ -72,7 +72,7 @@ async def test_get_current_user_with_permissions_cookie_token_success():
     mock_request.headers = {"user-agent": "pytest", "accept": "text/html"}  # Mark as browser request
     mock_request.client = MagicMock()
     mock_request.client.host = "127.0.0.1"
-    mock_request.state = MagicMock(auth_method="jwt", request_id="req123")
+    mock_request.state = MagicMock(auth_method="jwt", request_id="req123", token_teams=["team-1"])
 
     mock_user = MagicMock(email="user@example.com", full_name="User", is_admin=True)
     with patch("mcpgateway.middleware.rbac.get_current_user", return_value=mock_user):
@@ -80,6 +80,7 @@ async def test_get_current_user_with_permissions_cookie_token_success():
         assert result["email"] == "user@example.com"
         assert result["auth_method"] == "jwt"
         assert result["request_id"] == "req123"
+        assert result["token_teams"] == ["team-1"]
 
 
 @pytest.mark.asyncio

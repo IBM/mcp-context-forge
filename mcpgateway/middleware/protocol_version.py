@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Middleware to validate MCP-Protocol-Version header per MCP spec 2025-06-18."""
+"""Middleware to validate MCP-Protocol-Version header for MCP HTTP endpoints."""
 
 # Standard
 import logging
@@ -7,6 +7,8 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
+from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
+from mcp.types import LATEST_PROTOCOL_VERSION
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
@@ -14,19 +16,15 @@ from mcpgateway.utils.orjson_response import ORJSONResponse
 
 logger = logging.getLogger(__name__)
 
-# MCP Protocol Versions (per MCP specification)
-SUPPORTED_PROTOCOL_VERSIONS = ["2024-11-05", "2025-03-26", "2025-06-18"]
-DEFAULT_PROTOCOL_VERSION = "2025-03-26"  # Per spec, default for backwards compatibility
+# MCP protocol versions are sourced from the MCP SDK to stay aligned with schema.ts.
+SUPPORTED_PROTOCOL_VERSIONS = list(MCP_SUPPORTED_PROTOCOL_VERSIONS)
+# Default to the latest protocol for this implementation.
+DEFAULT_PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
 
 
 class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
     """
-    Validates MCP-Protocol-Version header per MCP spec 2025-06-18.
-
-    Per the MCP specification (basic/transports.mdx):
-    - Clients MUST include MCP-Protocol-Version header on all HTTP requests
-    - If not provided, server SHOULD assume 2025-03-26 for backwards compatibility
-    - If unsupported version provided, server MUST respond with 400 Bad Request
+    Validates MCP-Protocol-Version header on MCP protocol HTTP endpoints.
     """
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
@@ -134,8 +132,9 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
         Check if path is an MCP protocol endpoint that requires version validation.
 
         MCP protocol endpoints include:
-        - /rpc (main JSON-RPC endpoint)
-        - /servers/*/sse (Server-Sent Events transport)
+        - /mcp and /mcp/ (Streamable HTTP transport)
+        - /rpc and /rpc/ (gateway JSON-RPC endpoint)
+        - /servers/*/sse (SSE transport)
         - /servers/*/ws (WebSocket transport)
 
         Non-MCP endpoints (admin, health, openapi, etc.) are excluded.
@@ -147,7 +146,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             bool: True if path is an MCP protocol endpoint, False otherwise
         """
         # Exact match for main RPC endpoint
-        if path in ("/rpc", "/"):
+        if path in ("/mcp", "/mcp/", "/rpc", "/rpc/"):
             return True
 
         # Prefix matches for SSE/WebSocket/Server endpoints

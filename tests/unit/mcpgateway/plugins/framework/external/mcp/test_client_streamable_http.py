@@ -212,6 +212,8 @@ def server_proc_uds():
             env=current_env,
         ) as server_proc:
             _wait_for_socket(uds_path, proc=server_proc)
+            # Give the server a moment to fully initialize after socket creation
+            time.sleep(5)
             yield server_proc, uds_path
             server_proc.terminate()
             server_proc.wait(timeout=3)

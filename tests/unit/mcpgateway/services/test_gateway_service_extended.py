@@ -609,6 +609,7 @@ class TestGatewayServiceExtended:
         existing_tool = MagicMock()
         existing_tool.original_name = "test_tool"
         existing_tool.description = "Old description"
+        existing_tool.original_description = "Old description"
         existing_tool.request_type = "GET"
         existing_tool.input_schema = {"type": "string"}
         existing_tool.url = "http://old-url.com"
@@ -651,8 +652,9 @@ class TestGatewayServiceExtended:
         # Should return empty list (no new tools, existing one updated)
         assert len(result) == 0
 
-        # Existing tool should be updated
+        # Existing tool should be updated (description not customized, so it gets updated)
         assert existing_tool.description == "Updated description"
+        assert existing_tool.original_description == "Updated description"
         assert existing_tool.request_type == "POST"
         assert existing_tool.headers == {"Content-Type": "application/json"}
         assert existing_tool.input_schema == {"type": "object"}
@@ -661,6 +663,55 @@ class TestGatewayServiceExtended:
         assert existing_tool.auth_type == "bearer"
         assert existing_tool.auth_value == "new-token"
         assert existing_tool.visibility == "public"
+
+    @pytest.mark.asyncio
+    async def test_update_or_create_tools_preserves_custom_description(self):
+        """Test _update_or_create_tools preserves user-customized descriptions."""
+        service = GatewayService()
+
+        mock_db = MagicMock()
+
+        # Existing tool with a customized description (differs from original)
+        existing_tool = MagicMock()
+        existing_tool.original_name = "test_tool"
+        existing_tool.description = "My custom description"
+        existing_tool.original_description = "Old upstream description"
+        existing_tool.request_type = "GET"
+        existing_tool.input_schema = {"type": "string"}
+        existing_tool.url = "http://old-url.com"
+        existing_tool.headers = {}
+        existing_tool.auth_type = "none"
+        existing_tool.auth_value = ""
+        existing_tool.visibility = "private"
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = [existing_tool]
+        mock_db.execute.return_value = mock_result
+
+        mock_gateway = MagicMock()
+        mock_gateway.id = "test-gateway-id"
+        mock_gateway.url = "http://new-url.com"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.auth_value = "new-token"
+        mock_gateway.visibility = "public"
+
+        # Upstream tool with new description from MCP server
+        mock_tool = MagicMock()
+        mock_tool.name = "test_tool"
+        mock_tool.description = "New upstream description"
+        mock_tool.request_type = "POST"
+        mock_tool.headers = {}
+        mock_tool.input_schema = {"type": "object"}
+        mock_tool.annotations = {}
+        mock_tool.jsonpath_filter = None
+
+        result = service._update_or_create_tools(mock_db, [mock_tool], mock_gateway, "update")
+
+        assert len(result) == 0
+        # Custom description should be preserved
+        assert existing_tool.description == "My custom description"
+        # original_description should track the latest upstream value
+        assert existing_tool.original_description == "New upstream description"
 
     @pytest.mark.asyncio
     async def test_update_or_create_resources_new_resources(self):
@@ -861,6 +912,7 @@ class TestGatewayServiceExtended:
         existing_tool1 = MagicMock()
         existing_tool1.original_name = "existing_tool"
         existing_tool1.description = "Original description"
+        existing_tool1.original_description = "Original description"
         existing_tool1.url = "http://old.com"
         existing_tool1.auth_type = "none"
         existing_tool1.visibility = "private"
@@ -873,6 +925,7 @@ class TestGatewayServiceExtended:
         existing_tool2 = MagicMock()
         existing_tool2.original_name = "update_tool"
         existing_tool2.description = "Old description"
+        existing_tool2.original_description = "Old description"
         existing_tool2.url = "http://old.com"
         existing_tool2.auth_type = "none"
         existing_tool2.visibility = "private"
@@ -936,8 +989,9 @@ class TestGatewayServiceExtended:
         assert len(result) == 1
         assert result[0].original_name == "new_tool"
 
-        # existing_tool2 should be updated (some fields will change due to gateway changes)
+        # existing_tool2 should be updated (description not customized, so upstream value applies)
         assert existing_tool2.description == "Updated description"
+        assert existing_tool2.original_description == "Updated description"
         assert existing_tool2.url == "http://new.com"  # Updated from gateway
         assert existing_tool2.auth_type == "bearer"  # Updated from gateway
         assert existing_tool2.visibility == "public"  # Updated from gateway
@@ -1098,6 +1152,7 @@ class TestGatewayServiceExtended:
         existing_tool1 = MagicMock()
         existing_tool1.original_name = "tool_to_keep"
         existing_tool1.description = "Keep this tool"
+        existing_tool1.original_description = "Keep this tool"
         existing_tool1.url = "http://old.com"
         existing_tool1.auth_type = "none"
         existing_tool1.visibility = "private"
@@ -1110,6 +1165,7 @@ class TestGatewayServiceExtended:
         existing_tool3 = MagicMock()
         existing_tool3.original_name = "tool_to_update"
         existing_tool3.description = "Old description"
+        existing_tool3.original_description = "Old description"
         existing_tool3.url = "http://old.com"
         existing_tool3.auth_type = "none"
         existing_tool3.visibility = "private"
@@ -1169,8 +1225,9 @@ class TestGatewayServiceExtended:
         assert existing_tool1.auth_type == "bearer"  # Updated from gateway
         assert existing_tool1.visibility == "public"  # Updated from gateway
 
-        # existing_tool3 should be updated
+        # existing_tool3 should be updated (description not customized, so upstream value applies)
         assert existing_tool3.description == "Updated description"
+        assert existing_tool3.original_description == "Updated description"
         assert existing_tool3.url == "http://new.com"  # Updated from gateway
 
         # Note: The actual removal of missing tools happens in the calling methods

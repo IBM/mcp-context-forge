@@ -9,6 +9,7 @@ Team page object for Teams features.
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -130,12 +131,13 @@ class TeamPage(BasePage):
         # Setup dialog listener for confirmation
         self.page.once("dialog", lambda dialog: dialog.accept())
 
-        # Click delete button and wait for the DELETE response
-        with self.page.expect_response(lambda r: "/admin/teams/" in r.url and r.request.method == "DELETE"):
-            self.click_locator(self.get_team_delete_btn(team_name))
+        # Click delete button
+        self.click_locator(self.get_team_delete_btn(team_name))
 
-        # Wait for HTMX refresh cycles to settle (delete .then() + HX-Trigger 1s delay)
-        self.page.wait_for_timeout(2000)
+        # Wait for DELETE request to complete and HX-Trigger to fire
+        # Then wait for the subsequent GET /admin/teams/partial refresh
+        # Total: DELETE + 1000ms delay + GET + DOM update
+        self.page.wait_for_timeout(5000)
 
     def team_exists(self, team_name: str) -> bool:
         """Check if a team with the given name exists.
@@ -162,14 +164,29 @@ class TeamPage(BasePage):
     def wait_for_team_hidden(self, team_name: str, timeout: int = 30000) -> None:
         """Wait for a team to be hidden from the list.
 
-        Reloads the page to bypass stale HTMX display (see bug #2864).
-
         Args:
             team_name: The name of the team
             timeout: Maximum time to wait in milliseconds
         """
-        # Reload to get fresh data - workaround for stale HTMX refresh race condition
-        self.page.reload(wait_until="domcontentloaded")
-        self.navigate_to_teams_tab()
+        # Clear the search filter so HTMX refresh shows all teams (not filtered by deleted team name)
+        team_search = self.page.locator("#team-search")
+        if team_search.is_visible():
+            team_search.fill("")
+
+            # Teams search is debounced + HTMX-driven; avoid networkidle because
+            # admin pages can keep long-lived requests open.
+            try:
+                self.page.wait_for_selector("#teams-loading.htmx-request", timeout=3000)
+            except PlaywrightTimeoutError:
+                # Fallback: explicitly trigger server-side teams search refresh.
+                self.page.evaluate("window.serverSideTeamSearch && window.serverSideTeamSearch('')")
+
+            self.page.wait_for_function(
+                "() => !document.querySelector('#teams-loading.htmx-request')",
+                timeout=10000,
+            )
+            self.page.wait_for_selector("#unified-teams-list", state="attached", timeout=10000)
+
+        # Now check that the team card is hidden
         team_card = self.get_team_card(team_name)
         expect(team_card).to_be_hidden(timeout=timeout)

@@ -78,7 +78,7 @@
     newParams.set(prefix + 'page', page);
     newParams.set(prefix + 'size', this.perPage);
     if (includeInactive !== undefined) {
-      newParams.set(prefix + 'inactive', includeInactive);
+      newParams.set(prefix + 'inactive', includeInactive.toString());
     }
 
     const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
@@ -115,11 +115,19 @@
     // Preserve other query parameters
     {% if query_params %}
     {% for key, value in query_params.items() %}
-    {% if key != 'include_inactive' %}
-    url.searchParams.set('{{ key }}', '{{ value }}');
+    {% if key != 'include_inactive' and value is not none %}
+    url.searchParams.set({{ key | tojson }}, {{ value | tojson }});
     {% endif %}
     {% endfor %}
     {% endif %}
+
+    // Preserve team_id from current URL (if present) - this ensures team filter
+    // is maintained during pagination
+    const currentUrlParams = new URLSearchParams(window.location.search);
+    const teamIdFromUrl = currentUrlParams.get('team_id');
+    if (teamIdFromUrl) {
+      url.searchParams.set('team_id', teamIdFromUrl);
+    }
 
     // Update browser URL for bookmarking/sharing (with namespaced params)
     this.updateBrowserUrl(page, includeInactive);

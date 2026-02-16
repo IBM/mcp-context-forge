@@ -53,6 +53,7 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_entra_role_mappings={"admin": "Admin"},
         sso_keycloak_enabled=True,
         sso_keycloak_base_url="https://keycloak.example.com",
+        sso_keycloak_public_base_url="https://login.example.com",
         sso_keycloak_client_id="kc-client",
         sso_keycloak_client_secret=secret,
         sso_keycloak_realm="master",
@@ -61,6 +62,9 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_keycloak_username_claim="preferred_username",
         sso_keycloak_email_claim="email",
         sso_keycloak_groups_claim="groups",
+        sso_keycloak_role_mappings={"gateway-admin": "platform_admin"},
+        sso_keycloak_default_role="viewer",
+        sso_keycloak_resolve_team_scope_to_personal_team=True,
         sso_generic_enabled=True,
         sso_generic_provider_id="authentik",
         sso_generic_display_name=None,
@@ -78,12 +82,12 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
     monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
     monkeypatch.setattr(
         "mcpgateway.utils.keycloak_discovery.discover_keycloak_endpoints_sync",
-        lambda base_url, realm: {
-            "authorization_url": f"{base_url}/auth",
-            "token_url": f"{base_url}/token",
-            "userinfo_url": f"{base_url}/userinfo",
-            "issuer": f"{base_url}/realms/{realm}",
-            "jwks_uri": f"{base_url}/jwks",
+        lambda *args, **kwargs: {
+            "authorization_url": f"{args[0]}/auth",
+            "token_url": f"{args[0]}/token",
+            "userinfo_url": f"{args[0]}/userinfo",
+            "issuer": f"{args[0]}/realms/{args[1]}",
+            "jwks_uri": f"{args[0]}/jwks",
         },
     )
 
@@ -91,6 +95,15 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
     provider_ids = {provider["id"] for provider in providers}
 
     assert {"github", "google", "ibm_verify", "okta", "entra", "keycloak", "authentik"} <= provider_ids
+
+    keycloak_provider = next(provider for provider in providers if provider["id"] == "keycloak")
+    metadata = keycloak_provider["provider_metadata"]
+    assert "jwks_uri" not in keycloak_provider
+    assert metadata["jwks_uri"] == "https://keycloak.example.com/jwks"
+    assert metadata["public_base_url"] == "https://login.example.com"
+    assert metadata["role_mappings"] == {"gateway-admin": "platform_admin"}
+    assert metadata["default_role"] == "viewer"
+    assert metadata["resolve_team_scope_to_personal_team"] is True
 
 
 def test_get_predefined_sso_providers_keycloak_discovery_none_logs_error(monkeypatch, caplog):

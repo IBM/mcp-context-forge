@@ -1131,7 +1131,12 @@ class EmailUser(Base):
         """
         if self.locked_until is None:
             return False
-        return utc_now() < self.locked_until
+        if utc_now() >= self.locked_until:
+            # Lockout expired: reset counters so users get a fresh attempt window.
+            self.failed_login_attempts = 0
+            self.locked_until = None
+            return False
+        return True
 
     def get_display_name(self) -> str:
         """Get the user's display name.
@@ -1409,6 +1414,45 @@ class EmailAuthEvent(Base):
             EmailAuthEvent: New authentication event
         """
         return cls(user_email=user_email, event_type="password_change", success=success, ip_address=ip_address, user_agent=user_agent)
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token record.
+
+    Stores only a SHA-256 hash of the user-facing token. Tokens are one-time use
+    and expire after a configured duration.
+    """
+
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_email: Mapped[str] = mapped_column(String(255), ForeignKey("email_users.email", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    user: Mapped["EmailUser"] = relationship("EmailUser")
+
+    __table_args__ = (Index("ix_password_reset_tokens_expires_at", "expires_at"),)
+
+    def is_expired(self) -> bool:
+        """Return whether the reset token has expired.
+
+        Returns:
+            bool: True when `expires_at` is in the past.
+        """
+        return self.expires_at <= utc_now()
+
+    def is_used(self) -> bool:
+        """Return whether the reset token was already consumed.
+
+        Returns:
+            bool: True when `used_at` is set.
+        """
+        return self.used_at is not None
 
 
 class EmailTeam(Base):
@@ -2778,6 +2822,7 @@ class Tool(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
     original_name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(String(767), nullable=True)
+    original_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     integration_type: Mapped[str] = mapped_column(String(20), default="MCP")
     request_type: Mapped[str] = mapped_column(String(20), default="SSE")
@@ -4402,6 +4447,11 @@ class Gateway(Base):
     # Per-gateway refresh configuration
     refresh_interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, comment="Per-gateway refresh interval in seconds; NULL uses global default")
     last_refresh_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True, comment="Timestamp of the last successful tools/resources/prompts refresh")
+
+    # Gateway mode: 'cache' (default) or 'direct_proxy'
+    # - 'cache': Tools/resources/prompts are cached in database upon gateway registration (current behavior)
+    # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
+    gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
 
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")

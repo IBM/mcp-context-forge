@@ -303,6 +303,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         auth_method = getattr(request.state, "auth_method", None)
         request_id = getattr(request.state, "request_id", None)
         team_id = getattr(request.state, "team_id", None)
+        token_teams = getattr(request.state, "token_teams", None)
 
         # Read plugin context data from request.state for cross-hook context sharing
         # (set by HttpAuthMiddleware for passing contexts between different hook types)
@@ -323,6 +324,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "auth_method": auth_method,  # Include auth_method from plugin
             "request_id": request_id,  # Include request_id from middleware
             "team_id": team_id,  # Include team_id from token
+            "token_teams": token_teams,  # Include token teams for query-level scoping
             "token_use": token_use,  # Include token_use for RBAC team derivation
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency

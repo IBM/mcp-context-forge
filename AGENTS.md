@@ -247,6 +247,7 @@ make test
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
 - Require green lint and tests before PR
+- Don't push until asked, and if it's an external contributor, see todo/force-push.md first to push to the contributor's branch.
 
 ## Important Constraints
 

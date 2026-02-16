@@ -251,6 +251,8 @@ celerybeat-schedule
 # ========================================
 uv.lock
 **/uv.lock
+.uv-cache/
+.uv-tmp/
 
 # ========================================
 # Rust (plugins_rust)
@@ -293,11 +295,16 @@ todo/
 TODO.md
 FIXMEs
 
+# Upgrade validation outputs
+artifacts/upgrade-validation*/
+
 # Debug & profiling artifacts
 debug_login_page.png
 docs/pstats.png
 docs/docs/coverage/
 docs/docs/images/coverage.svg
+docs/docs/design/images/code2flow.dot
+docs/docs/test/
 mcp.prof
 mcp.pstats
 coverage_re
@@ -335,6 +342,10 @@ bin/flagged
 flagged/
 dictionary.dic
 .config
+
+# Generated reports
+license-check-report.json
+docs/docs/test/license-check-report.json
 
 # Generated performance test files
 nginx.conf

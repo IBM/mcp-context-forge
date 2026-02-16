@@ -820,6 +820,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
 
             oauth_config = getattr(gateway, "oauth_config", None)
             ca_certificate = getattr(gateway, "ca_certificate", None)
+
+            # Check if gateway is in direct_proxy mode
+            gateway_mode = getattr(gateway, "gateway_mode", "cache")
+
+            if gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
+                raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
+
             if initialize_timeout is not None:
                 try:
                     capabilities, tools, resources, prompts = await asyncio.wait_for(
@@ -861,6 +868,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     custom_name_slug=slugify(tool.name),
                     display_name=generate_display_name(tool.name),
                     url=normalized_url,
+                    original_description=tool.description,
                     description=tool.description,
                     integration_type="MCP",  # Gateway-discovered tools are MCP type
                     request_type=tool.request_type,
@@ -1083,6 +1091,8 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 ca_certificate=gateway.ca_certificate,
                 ca_certificate_sig=gateway.ca_certificate_sig,
                 signing_algorithm=gateway.signing_algorithm,
+                # Gateway mode configuration
+                gateway_mode=gateway_mode,
             )
 
             # Add to DB
@@ -2186,6 +2196,12 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 # Update tags if provided
                 if gateway_update.tags is not None:
                     gateway.tags = gateway_update.tags
+
+                # Update gateway_mode if provided
+                if hasattr(gateway_update, "gateway_mode") and gateway_update.gateway_mode is not None:
+                    if gateway_update.gateway_mode == "direct_proxy" and not settings.mcpgateway_direct_proxy_enabled:
+                        raise GatewayError("direct_proxy gateway mode is disabled. Set MCPGATEWAY_DIRECT_PROXY_ENABLED=true to enable.")
+                    gateway.gateway_mode = gateway_update.gateway_mode
 
                 # Update metadata fields
                 gateway.updated_at = datetime.now(timezone.utc)
@@ -4057,6 +4073,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             custom_name_slug=slugify(tool.name),
             display_name=generate_display_name(tool.name),
             url=gateway.url,
+            original_description=tool.description,
             description=tool.description,
             integration_type="MCP",  # Gateway-discovered tools are MCP type
             request_type=tool.request_type,
@@ -4118,8 +4135,13 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                     fields_to_update = False
 
                     # Check basic field changes
+                    # Compare against original_description (upstream value) rather than description
+                    # (which may have been customized by the user)
                     basic_fields_changed = (
-                        existing_tool.url != gateway.url or existing_tool.description != tool.description or existing_tool.integration_type != "MCP" or existing_tool.request_type != tool.request_type
+                        existing_tool.url != gateway.url
+                        or existing_tool.original_description != tool.description
+                        or existing_tool.integration_type != "MCP"
+                        or existing_tool.request_type != tool.request_type
                     )
 
                     # Check schema and configuration changes
@@ -4137,7 +4159,11 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                         fields_to_update = True
                     if fields_to_update:
                         existing_tool.url = gateway.url
-                        existing_tool.description = tool.description
+                        # Only overwrite user-facing description if it hasn't been customized
+                        # (mirrors original_name/custom_name pattern)
+                        if existing_tool.description == existing_tool.original_description:
+                            existing_tool.description = tool.description
+                        existing_tool.original_description = tool.description
                         existing_tool.integration_type = "MCP"
                         existing_tool.request_type = tool.request_type
                         existing_tool.headers = tool.headers

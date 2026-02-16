@@ -79,7 +79,7 @@
   {% set hx_target = '#resources-table' %}
   {% set hx_indicator = '#resources-loading' %}
   {% set table_name = 'resources' %}
-  {% set query_params = {'include_inactive': include_inactive} %}
+  {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}
   {% autoescape false %}
   {% include 'pagination_controls.html' %}
   {% endautoescape %}

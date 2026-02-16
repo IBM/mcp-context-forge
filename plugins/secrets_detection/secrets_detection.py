@@ -15,8 +15,9 @@ Hooks: prompt_pre_fetch, tool_post_invoke, resource_post_fetch
 from __future__ import annotations
 
 # Standard
+import logging
 import re
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Tuple
 
 # Third-Party
 from pydantic import BaseModel
@@ -34,6 +35,24 @@ from mcpgateway.plugins.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+
+# Initialize logging
+logger = logging.getLogger(__name__)
+
+# Try to import Rust-accelerated implementation
+try:
+    import secret_detection
+
+    _RUST_AVAILABLE = True
+    logger.info("🦀 Rust secrets detection available - using high-performance implementation (2-8x speedup)")
+except ImportError as e:
+    _RUST_AVAILABLE = False
+    secret_detection = None  # type: ignore
+    logger.debug(f"Rust secrets detection not available (will use Python): {e}")
+except Exception as e:
+    _RUST_AVAILABLE = False
+    secret_detection = None  # type: ignore
+    logger.warning(f"⚠️  Unexpected error loading Rust module: {e}", exc_info=True)
 
 PATTERNS = {
     "aws_access_key_id": re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -65,39 +84,6 @@ class SecretsDetectionConfig(BaseModel):
     min_findings_to_block: int = 1
 
 
-def _iter_strings(value: Any) -> Iterable[Tuple[str, str]]:
-    """Iterate over all string values in nested data structure.
-
-    Args:
-        value: Value to iterate (can be dict, list, str, or other).
-
-    Yields:
-        Tuples of (path, text) for each string found.
-    """
-
-    # Yields pairs of (path, text)
-    def walk(obj: Any, path: str):
-        """Recursively walk nested structure yielding string paths.
-
-        Args:
-            obj: Object to walk (can be str, dict, list, or other).
-            path: Current path string.
-
-        Yields:
-            Tuples of (path, text) for each string found.
-        """
-        if isinstance(obj, str):
-            yield path, obj
-        elif isinstance(obj, dict):
-            for k, v in obj.items():
-                yield from walk(v, f"{path}.{k}" if path else str(k))
-        elif isinstance(obj, list):
-            for i, v in enumerate(obj):
-                yield from walk(v, f"{path}[{i}]")
-
-    yield from walk(value, "")
-
-
 def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
     """Detect secrets in text using configured patterns.
 
@@ -117,16 +103,29 @@ def _detect(text: str, cfg: SecretsDetectionConfig) -> list[dict[str, Any]]:
     return findings
 
 
-def _scan_container(container: Any, cfg: SecretsDetectionConfig) -> Tuple[int, Any, list[dict[str, Any]]]:
+def _scan_container(container: Any, cfg: SecretsDetectionConfig, use_rust: bool = True) -> Tuple[int, Any, list[dict[str, Any]]]:
     """Recursively scan container for secrets and optionally redact.
 
     Args:
         container: Container to scan (str, dict, list, or other).
         cfg: Secrets detection configuration.
+        use_rust: Whether to use Rust implementation if available (default: True).
 
     Returns:
         Tuple of (count, redacted_container, all_findings).
     """
+    # Use Rust implementation if available and requested
+    if use_rust and _RUST_AVAILABLE and secret_detection is not None:
+        try:
+            logger.debug("Using Rust implementation")
+            # Pass Pydantic model directly - Rust extracts attributes
+            return secret_detection.py_scan_container(container, cfg)
+        except Exception as e:
+            logger.warning(f"Rust scan failed, falling back to Python: {e}")
+            # Fall through to Python implementation
+
+    # Python implementation
+    logger.debug(f"Using Python implementation (use_rust={use_rust}, _RUST_AVAILABLE={_RUST_AVAILABLE})")
     total = 0
     redacted = container
     all_findings: list[dict[str, Any]] = []
@@ -143,7 +142,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig) -> Tuple[int, A
     if isinstance(container, dict):
         new = {}
         for k, v in container.items():
-            c, rv, f = _scan_container(v, cfg)
+            c, rv, f = _scan_container(v, cfg, use_rust=use_rust)
             total += c
             all_findings.extend(f)
             new[k] = rv
@@ -151,7 +150,7 @@ def _scan_container(container: Any, cfg: SecretsDetectionConfig) -> Tuple[int, A
     if isinstance(container, list):
         new_list = []
         for v in container:
-            c, rv, f = _scan_container(v, cfg)
+            c, rv, f = _scan_container(v, cfg, use_rust=use_rust)
             total += c
             all_findings.extend(f)
             new_list.append(rv)
@@ -170,6 +169,14 @@ class SecretsDetectionPlugin(Plugin):
         """
         super().__init__(config)
         self._cfg = SecretsDetectionConfig(**(config.config or {}))
+
+        # Set implementation type based on Rust availability
+        if _RUST_AVAILABLE:
+            self.implementation = "Rust"
+            logger.info("🦀 SecretsDetectionPlugin initialized with Rust acceleration (2-7x speedup)")
+        else:
+            self.implementation = "Python"
+            logger.info("🐍 SecretsDetectionPlugin initialized with Python implementation")
 
     async def prompt_pre_fetch(self, payload: PromptPrehookPayload, context: PluginContext) -> PromptPrehookResult:
         """Detect secrets in prompt arguments.
@@ -193,7 +200,7 @@ class SecretsDetectionPlugin(Plugin):
                 ),
             )
         if self._cfg.redact and new_args != (payload.args or {}):
-            return PromptPrehookResult(modified_payload=PromptPrehookPayload(name=payload.name, args=new_args), metadata={"secrets_redacted": True, "count": count})
+            return PromptPrehookResult(modified_payload=PromptPrehookPayload(prompt_id=payload.prompt_id, args=new_args), metadata={"secrets_redacted": True, "count": count})
         return PromptPrehookResult(metadata={"secrets_findings": findings, "count": count} if count else {})
 
     async def tool_post_invoke(self, payload: ToolPostInvokePayload, context: PluginContext) -> ToolPostInvokeResult:

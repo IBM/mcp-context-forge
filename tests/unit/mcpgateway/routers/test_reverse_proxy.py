@@ -765,7 +765,7 @@ class TestHTTPEndpoints:
             manager.sessions.clear()
 
     def test_sse_endpoint_handles_cancelled_error(self, mock_websocket):
-        """SSE generator should swallow CancelledError and stop."""
+        """SSE generator should re-raise CancelledError after yielding connected event."""
         session = ReverseProxySession("test-session", mock_websocket, "test-user")
         session.server_info = {"name": "test-server"}
         manager.sessions["test-session"] = session
@@ -781,7 +781,7 @@ class TestHTTPEndpoints:
                 response = await sse_endpoint("test-session", DummyRequest(), credentials="test-user")
                 agen = response.body_iterator
                 first = await agen.__anext__()
-                with pytest.raises(StopAsyncIteration):
+                with pytest.raises(asyncio.CancelledError):
                     await agen.__anext__()
                 return first
 

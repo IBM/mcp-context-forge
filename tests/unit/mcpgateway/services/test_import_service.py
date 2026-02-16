@@ -2848,3 +2848,84 @@ async def test_assign_imported_items_to_team_handles_outer_exception(import_serv
 
     # Should not raise
     await import_service._assign_imported_items_to_team(db, imported_by="user@example.com")
+
+
+@pytest.mark.asyncio
+async def test_process_tools_bulk_restores_original_description(import_service, mock_db):
+    """Test that import restores original_description from export data for newly created tools."""
+    status = ImportStatus("restore-orig-desc-1")
+
+    tools_data = [
+        {
+            "name": "my_tool",
+            "url": "https://api.example.com",
+            "description": "User customized description",
+            "original_description": "Original upstream description",
+            "integration_type": "REST",
+            "request_type": "GET",
+        },
+    ]
+
+    # Simulate 1 tool created by bulk registration
+    import_service.tool_service.register_tools_bulk.return_value = {
+        "created": 1, "updated": 0, "skipped": 0, "failed": 0, "errors": []
+    }
+
+    # Mock the DB query for the restore step
+    mock_tool = MagicMock()
+    mock_tool.original_description = "User customized description"
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_tool
+
+    await import_service._process_tools_bulk(
+        db=mock_db,
+        tools_data=tools_data,
+        conflict_strategy=ConflictStrategy.UPDATE,
+        dry_run=False,
+        status=status,
+        imported_by="test_user",
+    )
+
+    assert status.created_entities == 1
+    # original_description should be restored from export data
+    assert mock_tool.original_description == "Original upstream description"
+    mock_db.commit.assert_called()
+
+    # Verify batch_id was passed to register_tools_bulk
+    call_kwargs = import_service.tool_service.register_tools_bulk.call_args[1]
+    assert call_kwargs["import_batch_id"] is not None
+    assert call_kwargs["created_via"] == "import"
+
+
+@pytest.mark.asyncio
+async def test_process_tools_bulk_skips_restore_when_no_creates(import_service, mock_db):
+    """Test that import does NOT restore original_description when all tools were skipped."""
+    status = ImportStatus("skip-restore-1")
+
+    tools_data = [
+        {
+            "name": "existing_tool",
+            "url": "https://api.example.com",
+            "description": "Custom desc",
+            "original_description": "Original desc",
+            "integration_type": "REST",
+            "request_type": "GET",
+        },
+    ]
+
+    # All tools skipped — no creates
+    import_service.tool_service.register_tools_bulk.return_value = {
+        "created": 0, "updated": 0, "skipped": 1, "failed": 0, "errors": []
+    }
+
+    await import_service._process_tools_bulk(
+        db=mock_db,
+        tools_data=tools_data,
+        conflict_strategy=ConflictStrategy.SKIP,
+        dry_run=False,
+        status=status,
+        imported_by="test_user",
+    )
+
+    assert status.skipped_entities == 1
+    # No DB queries for restore since nothing was created
+    mock_db.execute.return_value.scalar_one_or_none.assert_not_called()

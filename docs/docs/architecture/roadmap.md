@@ -297,7 +297,7 @@
     - ⏳ [**#1340**](https://github.com/IBM/mcp-context-forge/issues/1340) - Proposal: Split Monorepo into Separate Repositories in contextforge-org
     - ⏳ [**#1688**](https://github.com/IBM/mcp-context-forge/issues/1688) - Deprecate MySQL/MariaDB support - Focus on SQLite and PostgreSQL
     - ⏳ [**#2139**](https://github.com/IBM/mcp-context-forge/issues/2139) - Documentation rationalization and Diataxis framework adoption
-    - ⏳ [**#2361**](https://github.com/IBM/mcp-context-forge/issues/2361) - Replace copier with cookiecutter for template scaffolding
+    - ✅ [**#2361**](https://github.com/IBM/mcp-context-forge/issues/2361) - Replace copier with cookiecutter for template scaffolding
     - ⏳ [**#2383**](https://github.com/IBM/mcp-context-forge/issues/2383) - Evaluate and select additional CI/CD quality tools
 
 ???+ info "🔧 Chores - Remaining (2)"
@@ -641,7 +641,7 @@
     - ⏳ [**#2502**](https://github.com/IBM/mcp-context-forge/issues/2502) - [README-FIRST]: Project Backlog & Issue Guide
     - ⏳ [**#2503**](https://github.com/IBM/mcp-context-forge/issues/2503) - [QUICK-START]: 5-Minute Setup & First Steps
     - ⏳ [**#2504**](https://github.com/IBM/mcp-context-forge/issues/2504) - [SUPPORT]: Getting Help & Support Options
-    - ⏳ [**#2542**](https://github.com/IBM/mcp-context-forge/issues/2542) - [FEATURE][AUTH]: Self-Service Password Reset Workflow (Forgot Password)
+    - ✅ [**#2542**](https://github.com/IBM/mcp-context-forge/issues/2542) - [FEATURE][AUTH]: Self-Service Password Reset Workflow (Forgot Password)
     - ⏳ [**#2575**](https://github.com/IBM/mcp-context-forge/issues/2575) - [EPIC][PLUGIN]: Decouple plugin framework from mcpgateway dependencies
     - ⏳ [**#2609**](https://github.com/IBM/mcp-context-forge/issues/2609) - [ENHANCEMENT][TESTING]: Achieve 100% REST API coverage in Locust load tests
     - ⏳ [**#2653**](https://github.com/IBM/mcp-context-forge/issues/2653) - [ENHANCEMENT][DATABASE]: Add retry logic for row lock contention in service layer
@@ -713,7 +713,7 @@
     - ⏳ [**#2606**](https://github.com/IBM/mcp-context-forge/issues/2606) - [BUG][EXPORT]: Selective export fails with 'Server' object has no attribute 'is_active'
     - ⏳ [**#2621**](https://github.com/IBM/mcp-context-forge/issues/2621) - [BUG][PLUGINS]: Race conditions in plugin global state dictionaries under concurrent load
     - ⏳ [**#2626**](https://github.com/IBM/mcp-context-forge/issues/2626) - [BUG][UI]: Browser autocomplete incorrectly fills fields with saved credentials (UX issue)
-    - ⏳ [**#2628**](https://github.com/IBM/mcp-context-forge/issues/2628) - [BUG][AUTH]: Account lockout issues - counter persists after expiry, no user notification, no admin unlock capability
+    - ✅ [**#2628**](https://github.com/IBM/mcp-context-forge/issues/2628) - [BUG][AUTH]: Account lockout issues - counter persists after expiry, no user notification, no admin unlock capability
     - ⏳ [**#2641**](https://github.com/IBM/mcp-context-forge/issues/2641) - [BUG][API]: Endpoints using current_user_ctx["db"] fail with NoneType error
     - ⏳ [**#2643**](https://github.com/IBM/mcp-context-forge/issues/2643) - [BUG][UI]: Total Executions metric fluctuates randomly on page refresh
     - ⏳ [**#2668**](https://github.com/IBM/mcp-context-forge/issues/2668) - [BUG]: Follow-up: Rate limiter — incorrect HTTP status, missing headers, and feature gaps (refs #2397)
@@ -760,7 +760,7 @@
 ???+ info "📚 Documentation - Remaining (2)"
 
     - ⏳ [**#264**](https://github.com/IBM/mcp-context-forge/issues/264) - [DOCS]: GA Documentation Review & End-to-End Validation Audit
-    - ⏳ [**#2543**](https://github.com/IBM/mcp-context-forge/issues/2543) - [DOCS][AUTH]: Administrator Password Reset & Recovery Guide
+    - ✅ [**#2543**](https://github.com/IBM/mcp-context-forge/issues/2543) - [DOCS][AUTH]: Administrator Password Reset & Recovery Guide
 
 ???+ info "🧪 Testing - Remaining (97)"
 

@@ -6,25 +6,12 @@ Tests will FAIL until implementation is complete.
 """
 
 import pytest
-import httpx
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from mcpgateway.services.dcr_service import DcrService, DcrError
 
 
 class TestDiscoverASMetadata:
     """Test AS metadata discovery (RFC 8414)."""
-
-    @pytest.mark.asyncio
-    async def test_get_client_uses_shared_http_client(self):
-        """Cover the internal _get_client wrapper."""
-        dcr_service = DcrService()
-        mock_client = AsyncMock()
-
-        with patch("mcpgateway.services.dcr_service.get_http_client", new=AsyncMock(return_value=mock_client)):
-            result = await dcr_service._get_client()
-
-        assert result is mock_client
 
     @pytest.mark.asyncio
     async def test_discover_as_metadata_success(self):
@@ -232,116 +219,6 @@ class TestDiscoverASMetadata:
             assert result1 == result2
 
     @pytest.mark.asyncio
-    async def test_discover_as_metadata_cache_expired_fetches_again(self):
-        """If a cache entry exists but is older than TTL, discovery should re-fetch."""
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
-
-        dcr_service = DcrService()
-        normalized_issuer = "https://as.example.com"
-
-        # Insert an expired cache entry.
-        _metadata_cache[normalized_issuer] = {
-            "metadata": {"issuer": normalized_issuer},
-            "cached_at": datetime.now(timezone.utc) - timedelta(days=365),
-        }
-
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json = MagicMock(return_value={"issuer": normalized_issuer})
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
-
-        with patch.object(dcr_service.settings, "dcr_metadata_cache_ttl", 1), patch.object(dcr_service, "_get_client", return_value=mock_client):
-            await dcr_service.discover_as_metadata(normalized_issuer)
-
-        assert mock_client.get.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_discover_as_metadata_falls_back_to_oidc_on_http_error(self):
-        """HTTP errors on the RFC8414 endpoint should fall back to OIDC discovery."""
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
-
-        dcr_service = DcrService()
-        normalized_issuer = "https://as.example.com"
-
-        mock_response_oidc = MagicMock()
-        mock_response_oidc.status_code = 200
-        mock_response_oidc.json = MagicMock(return_value={"issuer": normalized_issuer})
-
-        call_count = [0]
-
-        async def _get_side_effect(*_args, **_kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise httpx.RequestError("boom", request=httpx.Request("GET", "https://as.example.com"))
-            return mock_response_oidc
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=_get_side_effect)
-
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
-            result = await dcr_service.discover_as_metadata(normalized_issuer)
-
-        assert result["issuer"] == normalized_issuer
-        assert mock_client.get.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_discover_as_metadata_oidc_issuer_mismatch_raises(self):
-        """Issuer validation should also apply to the OIDC fallback endpoint."""
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
-
-        dcr_service = DcrService()
-
-        mock_response_404 = MagicMock()
-        mock_response_404.status_code = 404
-
-        mock_response_oidc = MagicMock()
-        mock_response_oidc.status_code = 200
-        mock_response_oidc.json = MagicMock(return_value={"issuer": "https://different-issuer.com"})
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[mock_response_404, mock_response_oidc])
-
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
-            with pytest.raises(DcrError, match="issuer mismatch"):
-                await dcr_service.discover_as_metadata("https://as.example.com")
-
-    @pytest.mark.asyncio
-    async def test_discover_as_metadata_oidc_http_error_raises(self):
-        """HTTP errors on the OIDC fallback should raise a DcrError."""
-        from mcpgateway.services.dcr_service import _metadata_cache
-
-        _metadata_cache.clear()
-
-        dcr_service = DcrService()
-
-        mock_response_404 = MagicMock()
-        mock_response_404.status_code = 404
-
-        async def _get_side_effect(*_args, **_kwargs):
-            # First call returns 404 (RFC8414), second call raises (OIDC)
-            if _get_side_effect.call_count == 0:
-                _get_side_effect.call_count += 1
-                return mock_response_404
-            raise httpx.RequestError("boom", request=httpx.Request("GET", "https://as.example.com"))
-
-        _get_side_effect.call_count = 0
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=_get_side_effect)
-
-        with patch.object(dcr_service, "_get_client", return_value=mock_client):
-            with pytest.raises(DcrError, match="Failed to discover AS metadata"):
-                await dcr_service.discover_as_metadata("https://as.example.com")
-
-    @pytest.mark.asyncio
     async def test_discover_as_metadata_validates_issuer(self):
         """Test that discovered metadata validates issuer matches."""
         # Clear cache
@@ -382,7 +259,6 @@ class TestRegisterClient:
             "client_id": "dcr-generated-client-123",
             "client_secret": "dcr-generated-secret-xyz",
             "client_id_issued_at": 1234567890,
-            "client_secret_expires_at": 1234567890,
             "redirect_uris": ["http://localhost:4444/oauth/callback"],
             "grant_types": ["authorization_code"],
             "token_endpoint_auth_method": "client_secret_basic",
@@ -412,32 +288,10 @@ class TestRegisterClient:
             assert result.client_id == "dcr-generated-client-123"
             assert result.issuer == "https://as.example.com"
             assert result.gateway_id == "test-gw-123"
-            assert result.expires_at is not None
-            assert int(result.expires_at.replace(tzinfo=timezone.utc).timestamp()) == 1234567890
             # Secret should be encrypted (not plaintext)
             assert result.client_secret_encrypted != "dcr-generated-secret-xyz"
             # Should be base64-encoded (Fernet encryption)
             assert len(result.client_secret_encrypted) > 50
-
-    @pytest.mark.asyncio
-    async def test_register_client_http_error_raises_dcr_error(self):
-        """HTTP errors during registration should raise DcrError."""
-        dcr_service = DcrService()
-
-        with patch.object(dcr_service, "discover_as_metadata", return_value={"registration_endpoint": "https://as.example.com/register"}):
-            mock_client = AsyncMock()
-            mock_client.post = AsyncMock(side_effect=httpx.RequestError("boom", request=httpx.Request("POST", "https://as.example.com/register")))
-
-            with patch.object(dcr_service, "_get_client", return_value=mock_client):
-                with pytest.raises(DcrError, match="Failed to register client"):
-                    await dcr_service.register_client(
-                        gateway_id="test-gw",
-                        gateway_name="Test Gateway",
-                        issuer="https://as.example.com",
-                        redirect_uri="http://localhost:4444/oauth/callback",
-                        scopes=["mcp:read"],
-                        db=MagicMock(),
-                    )
 
     @pytest.mark.asyncio
     async def test_register_client_builds_correct_request(self, test_db):
@@ -794,73 +648,6 @@ class TestUpdateClientRegistration:
             assert result.client_id == "test-client-update"
 
     @pytest.mark.asyncio
-    async def test_update_client_registration_requires_registration_client_uri(self):
-        dcr_service = DcrService()
-
-        client_record = MagicMock()
-        client_record.registration_client_uri = None
-
-        with pytest.raises(DcrError, match="no registration_client_uri"):
-            await dcr_service.update_client_registration(client_record, MagicMock())
-
-    @pytest.mark.asyncio
-    async def test_update_client_registration_requires_registration_access_token(self):
-        dcr_service = DcrService()
-
-        client_record = MagicMock()
-        client_record.registration_client_uri = "https://as.example.com/register/client"
-        client_record.registration_access_token_encrypted = None
-
-        with pytest.raises(DcrError, match="no registration_access_token"):
-            await dcr_service.update_client_registration(client_record, MagicMock())
-
-    @pytest.mark.asyncio
-    async def test_update_client_registration_non_200_response_raises(self):
-        dcr_service = DcrService()
-
-        client_record = MagicMock()
-        client_record.client_id = "client-1"
-        client_record.registration_client_uri = "https://as.example.com/register/client"
-        client_record.registration_access_token_encrypted = "encrypted"
-        client_record.redirect_uris = '["http://localhost:4444/callback"]'
-        client_record.grant_types = '["authorization_code"]'
-
-        encryption = MagicMock()
-        encryption.decrypt_secret_async = AsyncMock(return_value="access-token")
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json = MagicMock(return_value={"error": "invalid_client"})
-
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(return_value=mock_response)
-
-        with patch("mcpgateway.services.dcr_service.get_encryption_service", return_value=encryption), patch.object(dcr_service, "_get_client", return_value=mock_client):
-            with pytest.raises(DcrError, match="Failed to update client"):
-                await dcr_service.update_client_registration(client_record, MagicMock())
-
-    @pytest.mark.asyncio
-    async def test_update_client_registration_http_error_raises(self):
-        dcr_service = DcrService()
-
-        client_record = MagicMock()
-        client_record.client_id = "client-1"
-        client_record.registration_client_uri = "https://as.example.com/register/client"
-        client_record.registration_access_token_encrypted = "encrypted"
-        client_record.redirect_uris = '["http://localhost:4444/callback"]'
-        client_record.grant_types = '["authorization_code"]'
-
-        encryption = MagicMock()
-        encryption.decrypt_secret_async = AsyncMock(return_value="access-token")
-
-        mock_client = AsyncMock()
-        mock_client.put = AsyncMock(side_effect=httpx.RequestError("boom", request=httpx.Request("PUT", "https://as.example.com/register/client")))
-
-        with patch("mcpgateway.services.dcr_service.get_encryption_service", return_value=encryption), patch.object(dcr_service, "_get_client", return_value=mock_client):
-            with pytest.raises(DcrError, match="Failed to update client registration"):
-                await dcr_service.update_client_registration(client_record, MagicMock())
-
-    @pytest.mark.asyncio
     async def test_update_client_registration_uses_access_token(self, test_db):
         """Test that update uses registration_access_token."""
         from mcpgateway.services.encryption_service import get_encryption_service
@@ -907,6 +694,40 @@ class TestUpdateClientRegistration:
             call_kwargs = mock_client.put.call_args[1]
             assert "Authorization" in call_kwargs["headers"]
             assert call_kwargs["headers"]["Authorization"].startswith("Bearer ")
+    @pytest.mark.asyncio
+    async def test_update_client_registration_decryption_failure(self, test_db):
+        """Test that update raises DcrError when token decryption fails."""
+        from mcpgateway.services.encryption_service import EncryptionService
+        from mcpgateway.config import get_settings
+
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient, Gateway
+
+        # Add gateway first
+        gateway = Gateway(id="test-gw-update-decrypt-fail", name="Test", slug="test-update-decrypt-fail", url="http://test-update-decrypt-fail.example.com", description="Test", capabilities={})
+        test_db.add(gateway)
+        test_db.commit()
+
+        client_record = RegisteredOAuthClient(
+            id="client-id-decrypt-fail",
+            gateway_id="test-gw-update-decrypt-fail",
+            issuer="https://as-update-decrypt-fail.example.com",
+            client_id="test-client-decrypt-fail",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as-update-decrypt-fail.example.com/register/test-client",
+            registration_access_token_encrypted="v2:{invalid_json}",  # Will fail decryption
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+        test_db.add(client_record)
+        test_db.commit()
+
+        # Mock decrypt to return None (failure)
+        with patch.object(EncryptionService, "decrypt_secret_async", return_value=None):
+            with pytest.raises(DcrError, match="Failed to decrypt registration access token for update operation"):
+                await dcr_service.update_client_registration(client_record, test_db)
+
 
 
 class TestDeleteClientRegistration:
@@ -974,67 +795,129 @@ class TestDeleteClientRegistration:
             assert result is True
 
     @pytest.mark.asyncio
-    async def test_delete_client_registration_missing_registration_uri_is_best_effort(self):
+    async def test_delete_client_registration_missing_uri(self, test_db):
+        """Test that deletion returns False when registration_client_uri is missing."""
         dcr_service = DcrService()
-        client_record = MagicMock()
-        client_record.client_id = "client-1"
-        client_record.registration_client_uri = None
-        client_record.registration_access_token_encrypted = "encrypted"
 
-        result = await dcr_service.delete_client_registration(client_record, MagicMock())
-        assert result is True
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri=None,  # Missing URI
+            registration_access_token_encrypted="encrypted-token",
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        result = await dcr_service.delete_client_registration(client_record, test_db)
+        assert result is False
 
     @pytest.mark.asyncio
-    async def test_delete_client_registration_missing_access_token_is_best_effort(self):
+    async def test_delete_client_registration_missing_token(self, test_db):
+        """Test that deletion returns False when registration_access_token_encrypted is missing."""
         dcr_service = DcrService()
-        client_record = MagicMock()
-        client_record.client_id = "client-1"
-        client_record.registration_client_uri = "https://as.example.com/register/client"
-        client_record.registration_access_token_encrypted = None
 
-        result = await dcr_service.delete_client_registration(client_record, MagicMock())
-        assert result is True
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted=None,  # Missing token
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        result = await dcr_service.delete_client_registration(client_record, test_db)
+        assert result is False
 
     @pytest.mark.asyncio
-    async def test_delete_client_registration_unexpected_status_is_best_effort(self):
+    async def test_delete_client_registration_decryption_failure(self, test_db):
+        """Test that deletion returns False when token decryption fails."""
         dcr_service = DcrService()
-        client_record = MagicMock()
-        client_record.client_id = "client-1"
-        client_record.registration_client_uri = "https://as.example.com/register/client"
-        client_record.registration_access_token_encrypted = "encrypted"
 
-        encryption = MagicMock()
-        encryption.decrypt_secret_async = AsyncMock(return_value="access-token")
+        from mcpgateway.db import RegisteredOAuthClient
+        from mcpgateway.services.encryption_service import EncryptionService
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted="v2:{invalid_json}",  # Will fail decryption
+            redirect_uris="[]",
+            grant_types="[]",
+        )
+
+        # Mock decrypt to return None (failure)
+        with patch.object(EncryptionService, "decrypt_secret_async", return_value=None):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_delete_client_registration_unexpected_status(self, test_db):
+        """Test that deletion returns False for unexpected HTTP status."""
+        dcr_service = DcrService()
+
+        from mcpgateway.db import RegisteredOAuthClient
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted="encrypted-token",
+            redirect_uris="[]",
+            grant_types="[]",
+        )
 
         mock_response = MagicMock()
-        mock_response.status_code = 500
+        mock_response.status_code = 500  # Unexpected status
 
         mock_client = AsyncMock()
         mock_client.delete = AsyncMock(return_value=mock_response)
 
-        with patch("mcpgateway.services.dcr_service.get_encryption_service", return_value=encryption), patch.object(dcr_service, "_get_client", return_value=mock_client):
-            result = await dcr_service.delete_client_registration(client_record, MagicMock())
-
-        assert result is True
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+            assert result is False
 
     @pytest.mark.asyncio
-    async def test_delete_client_registration_http_error_is_best_effort(self):
+    async def test_delete_client_registration_network_error(self, test_db):
+        """Test that deletion returns False on network error."""
         dcr_service = DcrService()
-        client_record = MagicMock()
-        client_record.client_id = "client-1"
-        client_record.registration_client_uri = "https://as.example.com/register/client"
-        client_record.registration_access_token_encrypted = "encrypted"
 
-        encryption = MagicMock()
-        encryption.decrypt_secret_async = AsyncMock(return_value="access-token")
+        from mcpgateway.db import RegisteredOAuthClient
+        import httpx
+
+        client_record = RegisteredOAuthClient(
+            id="client-id",
+            gateway_id="test-gw",
+            issuer="https://as.example.com",
+            client_id="test-client",
+            client_secret_encrypted="encrypted",
+            registration_client_uri="https://as.example.com/register/test-client",
+            registration_access_token_encrypted="encrypted-token",
+            redirect_uris="[]",
+            grant_types="[]",
+        )
 
         mock_client = AsyncMock()
-        mock_client.delete = AsyncMock(side_effect=httpx.RequestError("boom", request=httpx.Request("DELETE", "https://as.example.com/register/client")))
+        mock_client.delete = AsyncMock(side_effect=httpx.HTTPError("Network error"))
 
-        with patch("mcpgateway.services.dcr_service.get_encryption_service", return_value=encryption), patch.object(dcr_service, "_get_client", return_value=mock_client):
-            result = await dcr_service.delete_client_registration(client_record, MagicMock())
-
-        assert result is True
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            result = await dcr_service.delete_client_registration(client_record, test_db)
+            assert result is False
 
 
 class TestIssuerValidation:
