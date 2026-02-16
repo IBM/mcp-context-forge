@@ -131,16 +131,23 @@ class ResourceCache:
         self._lock = threading.Lock()
         # Min-heap of (expires_at, key) for efficient expiration cleanup
         self._expiry_heap: list[tuple[float, str]] = []
+        self._cleanup_task: Optional[asyncio.Task] = None
 
     async def initialize(self) -> None:
         """Initialize cache service."""
         logger.info("Initializing resource cache")
-        # Start cleanup task
-        asyncio.create_task(self._cleanup_loop())
+        # Start cleanup task and store reference to prevent GC
+        self._cleanup_task = asyncio.create_task(self._cleanup_loop())
 
     async def shutdown(self) -> None:
         """Shutdown cache service."""
         logger.info("Shutting down resource cache")
+        if self._cleanup_task and not self._cleanup_task.done():
+            self._cleanup_task.cancel()
+            try:
+                await self._cleanup_task
+            except asyncio.CancelledError:
+                pass
         self.clear()
 
     def get(self, key: str) -> Optional[Any]:

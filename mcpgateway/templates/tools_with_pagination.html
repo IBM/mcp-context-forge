@@ -166,9 +166,7 @@
     {% set hx_indicator = '#tools-loading' %}
     {% set table_name = 'tools' %}
     {% set query_params = {'include_inactive': include_inactive} %}
-    {% autoescape false %}
     {% include 'pagination_controls.html' %}
-    {% endautoescape %}
   </div>
 
   {% else %}

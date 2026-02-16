@@ -54,6 +54,9 @@ from mcpgateway.utils.pagination import unified_paginate
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
+# Strong references to background tasks to prevent GC before completion
+_background_tasks: set[asyncio.Task] = set()
+
 _GET_ALL_USERS_LIMIT = 10000
 
 
@@ -1724,9 +1727,10 @@ class EmailAuthService:
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-                asyncio.create_task(auth_cache.invalidate_user(email))
-                asyncio.create_task(auth_cache.invalidate_user_teams(email))
-                asyncio.create_task(auth_cache.invalidate_team_membership(email))
+                for coro in [auth_cache.invalidate_user(email), auth_cache.invalidate_user_teams(email), auth_cache.invalidate_team_membership(email)]:
+                    task = asyncio.create_task(coro)
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
             except Exception as cache_error:
                 logger.debug(f"Failed to invalidate cache on user delete: {cache_error}")
 
