@@ -10,6 +10,21 @@
 
 import { describe, test, expect, vi, afterEach, beforeEach } from "vitest";
 
+import {
+  initializeCodeMirrorEditors,
+  initializeToolSelects,
+  initializeEventListeners,
+  setupTabNavigation,
+  initializeSearchInputs,
+  initializeTabState,
+  setupSchemaModeHandlers,
+  setupIntegrationTypeHandlers,
+  setupBulkImportModal,
+  initializeExportImport,
+  setupTooltipsWithAlpine,
+  registerReloadAllResourceSections,
+} from "../../../mcpgateway/admin_ui/initialization.js";
+
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
   handleAuthTypeChange: vi.fn(),
   handleAuthTypeSelection: vi.fn(),
@@ -94,21 +109,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
 vi.mock("../../../mcpgateway/admin_ui/tokens", () => ({
   getTeamNameById: vi.fn(() => null),
 }));
-
-import {
-  initializeCodeMirrorEditors,
-  initializeToolSelects,
-  initializeEventListeners,
-  setupTabNavigation,
-  initializeSearchInputs,
-  initializeTabState,
-  setupSchemaModeHandlers,
-  setupIntegrationTypeHandlers,
-  setupBulkImportModal,
-  initializeExportImport,
-  setupTooltipsWithAlpine,
-  registerReloadAllResourceSections,
-} from "../../../mcpgateway/admin_ui/initialization.js";
 
 beforeEach(() => {
   // Ensure window.Admin exists for functions that write to it

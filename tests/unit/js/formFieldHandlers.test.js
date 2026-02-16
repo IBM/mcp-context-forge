@@ -6,6 +6,13 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  generateSchema,
+  updateSchemaPreview,
+  createParameterForm,
+} from "../../../mcpgateway/admin_ui/formFieldHandlers.js";
+import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
+
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   validateInputName: vi.fn((name) => {
     if (!name || typeof name !== "string" || name.trim() === "") {
@@ -17,13 +24,6 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
-
-import {
-  generateSchema,
-  updateSchemaPreview,
-  createParameterForm,
-} from "../../../mcpgateway/admin_ui/formFieldHandlers.js";
-import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
 
 beforeEach(() => {
   AppState.parameterCount = 0;

@@ -9,20 +9,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock dependencies BEFORE importing the module under test
-vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
-  openModal: vi.fn(),
-  closeModal: vi.fn(),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  fetchWithTimeout: vi.fn(),
-  handleFetchError: vi.fn((error, context) => `Error ${context}: ${error.message}`),
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-  showErrorMessage: vi.fn(),
-  showSuccessMessage: vi.fn(),
-}));
-
 import {
   generateAndShowConfig,
   exportServerConfig,
@@ -39,6 +25,20 @@ import {
   showErrorMessage,
   showSuccessMessage,
 } from "../../../mcpgateway/admin_ui/utils.js";
+
+// Mock dependencies BEFORE importing the module under test
+vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
+  openModal: vi.fn(),
+  closeModal: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  fetchWithTimeout: vi.fn(),
+  handleFetchError: vi.fn((error, context) => `Error ${context}: ${error.message}`),
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+  showErrorMessage: vi.fn(),
+  showSuccessMessage: vi.fn(),
+}));
 
 beforeEach(() => {
   // Mock navigator.clipboard for all tests

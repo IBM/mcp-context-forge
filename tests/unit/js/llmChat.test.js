@@ -7,6 +7,22 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  buildLLMConfigLegacy,
+  copyEnvVariables,
+  handleChatInputKeydown,
+  handleLLMModelChange,
+  loadVirtualServersForChat,
+  sendChatMessage,
+  initializeLLMChat,
+  connectLLMChat,
+  disconnectLLMChat,
+  serverSideToolSearch,
+  serverSidePromptSearch,
+  serverSideResourceSearch,
+} from "../../../mcpgateway/admin_ui/llmChat.js";
+import { showErrorMessage, fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils.js";
+
 // Mock all heavy dependencies
 vi.mock("../../../mcpgateway/admin_ui/gateway.js", () => ({
   getSelectedGatewayIds: vi.fn(() => []),
@@ -33,22 +49,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   showErrorMessage: vi.fn(),
   showNotification: vi.fn(),
 }));
-
-import {
-  buildLLMConfigLegacy,
-  copyEnvVariables,
-  handleChatInputKeydown,
-  handleLLMModelChange,
-  loadVirtualServersForChat,
-  sendChatMessage,
-  initializeLLMChat,
-  connectLLMChat,
-  disconnectLLMChat,
-  serverSideToolSearch,
-  serverSidePromptSearch,
-  serverSideResourceSearch,
-} from "../../../mcpgateway/admin_ui/llmChat.js";
-import { showErrorMessage, fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils.js";
 
 afterEach(() => {
   document.body.innerHTML = "";

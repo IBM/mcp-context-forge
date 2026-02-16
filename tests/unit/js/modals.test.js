@@ -7,14 +7,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
-  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
-}));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  getCookie: vi.fn(() => "test-jwt"),
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-}));
-
 import {
   registerModalCleanup,
   openModal,
@@ -28,6 +20,14 @@ import {
   viewGrpcMethods,
 } from "../../../mcpgateway/admin_ui/modals.js";
 import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
+
+vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
+}));
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  getCookie: vi.fn(() => "test-jwt"),
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
 
 beforeEach(() => {
   AppState.activeModals.clear();

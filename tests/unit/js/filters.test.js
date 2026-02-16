@@ -7,11 +7,11 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import { clearSearch } from "../../../mcpgateway/admin_ui/filters.js";
+
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
-
-import { clearSearch } from "../../../mcpgateway/admin_ui/filters.js";
 
 afterEach(() => {
   document.body.innerHTML = "";

@@ -8,6 +8,23 @@
 
 import { describe, test, expect, vi, afterEach, beforeEach } from "vitest";
 
+import {
+  handleGatewayFormSubmit,
+  handleResourceFormSubmit,
+  handlePromptFormSubmit,
+  handleEditPromptFormSubmit,
+  handleServerFormSubmit,
+  handleA2AFormSubmit,
+  handleToolFormSubmit,
+  handleEditToolFormSubmit,
+  handleEditGatewayFormSubmit,
+  handleEditA2AAgentFormSubmit,
+  handleEditServerFormSubmit,
+  handleEditResFormSubmit,
+} from "../../../mcpgateway/admin_ui/formSubmitHandlers.js";
+import { showErrorMessage } from "../../../mcpgateway/admin_ui/utils";
+import { safeParseJsonResponse } from "../../../mcpgateway/admin_ui/security";
+
 vi.mock("../../../mcpgateway/admin_ui/constants", () => ({
   HEADER_NAME_REGEX: /^[A-Za-z0-9-]+$/,
 }));
@@ -34,23 +51,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
 }));
-
-import {
-  handleGatewayFormSubmit,
-  handleResourceFormSubmit,
-  handlePromptFormSubmit,
-  handleEditPromptFormSubmit,
-  handleServerFormSubmit,
-  handleA2AFormSubmit,
-  handleToolFormSubmit,
-  handleEditToolFormSubmit,
-  handleEditGatewayFormSubmit,
-  handleEditA2AAgentFormSubmit,
-  handleEditServerFormSubmit,
-  handleEditResFormSubmit,
-} from "../../../mcpgateway/admin_ui/formSubmitHandlers.js";
-import { showErrorMessage } from "../../../mcpgateway/admin_ui/utils";
-import { safeParseJsonResponse } from "../../../mcpgateway/admin_ui/security";
 
 let locationHref;
 

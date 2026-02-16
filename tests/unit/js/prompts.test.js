@@ -6,6 +6,18 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import {
+  viewPrompt,
+  editPrompt,
+  initPromptSelect,
+  testPrompt,
+  buildPromptTestForm,
+  runPromptTest,
+  cleanupPromptTestModal,
+} from "../../../mcpgateway/admin_ui/prompts.js";
+import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
+import { openModal } from "../../../mcpgateway/admin_ui/modals";
+
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
   AppState: {
     parameterCount: 0,
@@ -33,18 +45,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
 }));
-
-import {
-  viewPrompt,
-  editPrompt,
-  initPromptSelect,
-  testPrompt,
-  buildPromptTestForm,
-  runPromptTest,
-  cleanupPromptTestModal,
-} from "../../../mcpgateway/admin_ui/prompts.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
-import { openModal } from "../../../mcpgateway/admin_ui/modals";
 
 afterEach(() => {
   document.body.innerHTML = "";

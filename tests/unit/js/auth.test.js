@@ -7,15 +7,6 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/constants.js", () => ({
-  MASKED_AUTH_VALUE: "*****",
-}));
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-  showSuccessMessage: vi.fn(),
-  showErrorMessage: vi.fn(),
-}));
-
 import {
   toggleInputMask,
   addAuthHeader,
@@ -29,6 +20,15 @@ import {
   handleEditOAuthGrantTypeChange,
 } from "../../../mcpgateway/admin_ui/auth.js";
 import { showErrorMessage, showSuccessMessage } from "../../../mcpgateway/admin_ui/utils.js";
+
+vi.mock("../../../mcpgateway/admin_ui/constants.js", () => ({
+  MASKED_AUTH_VALUE: "*****",
+}));
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+  showSuccessMessage: vi.fn(),
+  showErrorMessage: vi.fn(),
+}));
 
 afterEach(() => {
   document.body.innerHTML = "";

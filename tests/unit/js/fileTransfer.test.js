@@ -8,28 +8,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock dependencies BEFORE importing module under test
-vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
-  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/selectiveImport.js", () => ({
-  displayImportPreview: vi.fn(),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
-  getAuthToken: vi.fn(() => Promise.resolve("test-token")),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({
-  loadTools: vi.fn(),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  showNotification: vi.fn(),
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-}));
-
 // Import module under test AFTER mocks are set up
 import {
   handleExportAll,
@@ -53,6 +31,28 @@ import { showNotification } from "../../../mcpgateway/admin_ui/utils.js";
 import { getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
 import { displayImportPreview } from "../../../mcpgateway/admin_ui/selectiveImport.js";
 import { loadTools } from "../../../mcpgateway/admin_ui/tools.js";
+
+// Mock dependencies BEFORE importing module under test
+vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/selectiveImport.js", () => ({
+  displayImportPreview: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
+  getAuthToken: vi.fn(() => Promise.resolve("test-token")),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({
+  loadTools: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  showNotification: vi.fn(),
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
 
 // ---------------------------------------------------------------------------
 // handleExportAll
@@ -1209,7 +1209,7 @@ describe("displayImportResults", () => {
     const result = {
       status: "completed",
       progress: { total: 10, processed: 10, created: 0, updated: 0, failed: 10 },
-      errors: errors,
+      errors,
       warnings: [],
     };
 

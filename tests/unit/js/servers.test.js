@@ -5,6 +5,15 @@
 
 import { describe, test, expect, vi, afterEach, beforeEach } from "vitest";
 
+import {
+  viewServer,
+  editServer,
+  setEditServerAssociations,
+  loadServers,
+} from "../../../mcpgateway/admin_ui/servers.js";
+import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
+import { openModal } from "../../../mcpgateway/admin_ui/modals";
+
 vi.mock("../../../mcpgateway/admin_ui/configExport.js", () => ({
   getCatalogUrl: vi.fn(() => "http://localhost/catalog"),
 }));
@@ -33,15 +42,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   showErrorMessage: vi.fn(),
   decodeHtml: vi.fn((s) => s || ""),
 }));
-
-import {
-  viewServer,
-  editServer,
-  setEditServerAssociations,
-  loadServers,
-} from "../../../mcpgateway/admin_ui/servers.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
-import { openModal } from "../../../mcpgateway/admin_ui/modals";
 
 beforeEach(() => {
   window.Admin = window.Admin || {};

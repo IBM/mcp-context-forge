@@ -5,17 +5,17 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
-vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
-  isInactiveChecked: vi.fn(() => false),
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-}));
-
 import {
   handleToggleSubmit,
   handleSubmitWithConfirmation,
   handleDeleteSubmit,
 } from "../../../mcpgateway/admin_ui/formHandlers.js";
 import { isInactiveChecked } from "../../../mcpgateway/admin_ui/utils";
+
+vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
+  isInactiveChecked: vi.fn(() => false),
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
 
 afterEach(() => {
   document.body.innerHTML = "";

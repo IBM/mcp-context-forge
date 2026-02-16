@@ -5,6 +5,9 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import { setupFormValidation } from "../../../mcpgateway/admin_ui/formValidation.js";
+import { validateInputName, validateUrl } from "../../../mcpgateway/admin_ui/security.js";
+
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   validateInputName: vi.fn((value, label) => {
     if (!value || value.trim() === "") {
@@ -25,9 +28,6 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
     return { valid: true, value: value.trim() };
   }),
 }));
-
-import { setupFormValidation } from "../../../mcpgateway/admin_ui/formValidation.js";
-import { validateInputName, validateUrl } from "../../../mcpgateway/admin_ui/security.js";
 
 afterEach(() => {
   document.body.innerHTML = "";

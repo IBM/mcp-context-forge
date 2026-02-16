@@ -6,11 +6,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock dependencies
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-}));
-
 import {
   populatePluginFilters,
   filterPlugins,
@@ -20,6 +15,11 @@ import {
   showPluginDetails,
   closePluginDetails,
 } from "../../../mcpgateway/admin_ui/plugins.js";
+
+// Mock dependencies
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
 
 afterEach(() => {
   document.body.innerHTML = "";

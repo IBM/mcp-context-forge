@@ -6,6 +6,18 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import {
+  viewA2AAgent,
+  editA2AAgent,
+  toggleA2AAuthFields,
+  testA2AAgent,
+  handleA2ATestSubmit,
+  handleA2ATestClose,
+  cleanupA2ATestModal,
+} from "../../../mcpgateway/admin_ui/a2aAgents.js";
+import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
+import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
+
 vi.mock("../../../mcpgateway/admin_ui/modals", () => ({
   closeModal: vi.fn(),
   openModal: vi.fn(),
@@ -30,18 +42,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   }),
   showErrorMessage: vi.fn(),
 }));
-
-import {
-  viewA2AAgent,
-  editA2AAgent,
-  toggleA2AAuthFields,
-  testA2AAgent,
-  handleA2ATestSubmit,
-  handleA2ATestClose,
-  cleanupA2ATestModal,
-} from "../../../mcpgateway/admin_ui/a2aAgents.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
-import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
 
 afterEach(() => {
   document.body.innerHTML = "";

@@ -6,6 +6,18 @@
 
 import { describe, test, expect, vi, afterEach, beforeEach } from "vitest";
 
+import {
+  testResource,
+  openResourceTestModal,
+  runResourceTest,
+  viewResource,
+  editResource,
+  initResourceSelect,
+  cleanupResourceTestModal,
+} from "../../../mcpgateway/admin_ui/resources.js";
+import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
+import { openModal } from "../../../mcpgateway/admin_ui/modals.js";
+
 vi.mock("../../../mcpgateway/admin_ui/gateway.js", () => ({
   getSelectedGatewayIds: vi.fn(() => []),
 }));
@@ -26,18 +38,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
 }));
-
-import {
-  testResource,
-  openResourceTestModal,
-  runResourceTest,
-  viewResource,
-  editResource,
-  initResourceSelect,
-  cleanupResourceTestModal,
-} from "../../../mcpgateway/admin_ui/resources.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils";
-import { openModal } from "../../../mcpgateway/admin_ui/modals.js";
 
 beforeEach(() => {
   // Ensure window.Admin exists (cleanupResourceTestModal needs it)

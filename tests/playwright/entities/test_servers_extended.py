@@ -12,9 +12,10 @@ visibility settings, OAuth configuration, and advanced features.
 # Standard
 import re
 import uuid
+import base64 # To encode the transparent PNG
 
 # Third-Party
-from playwright.sync_api import expect
+from playwright.sync_api import Page, expect
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 import pytest
 
@@ -22,6 +23,24 @@ import pytest
 from ..pages.admin_utils import cleanup_server, find_server
 from ..pages.servers_page import ServersPage
 
+
+
+@pytest.fixture(scope="function", autouse=True)
+def intercept_example_icon(page: Page):
+    """Intercepts requests to example.com/icon.png and serves a transparent PNG."""
+    # Base64 encoded 1x1 transparent PNG
+    transparent_png_base64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+    transparent_png_bytes = base64.b64decode(transparent_png_base64)
+
+    # Intercept requests for the problematic icon
+    page.route("https://example.com/icon.png", lambda route: route.fulfill(
+        status=200,
+        content_type="image/png",
+        body=transparent_png_bytes
+    ))
+    yield
+    # Optionally, remove the route after the test if it's not autouse
+    # page.unroute("https://example.com/icon.png")
 
 class TestServersExtended:
     """Extended tests for Virtual MCP Servers functionality."""
@@ -442,7 +461,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
@@ -450,6 +469,7 @@ class TestServersExtended:
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
         pagination_select.select_option("100")
         servers_page.page.wait_for_load_state("domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
 
         # Find the server row - should now be visible with 100 items per page
         server_row = servers_page.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
@@ -461,7 +481,7 @@ class TestServersExtended:
             view_btn.click()
 
             # Verify modal opens
-            server_modal = servers_page.page.locator("#server-modal, #server-details-modal, .modal:visible")
+            server_modal = servers_page.page.locator("#server-modal, #server-details, .modal:visible")
             expect(server_modal.first).to_be_visible(timeout=5000)
 
             # Close modal
@@ -489,7 +509,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
@@ -508,7 +528,7 @@ class TestServersExtended:
             edit_btn.click()
 
             # Verify edit modal opens
-            edit_modal = servers_page.page.locator("#server-edit-modal, #edit-server-modal, .modal:visible")
+            edit_modal = servers_page.page.locator("#server-edit-modal, #edit-server-form, .modal:visible")
             expect(edit_modal.first).to_be_visible(timeout=5000)
 
             # Verify form is pre-filled with server data
@@ -541,7 +561,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
@@ -549,6 +569,7 @@ class TestServersExtended:
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
         pagination_select.select_option("100")
         servers_page.page.wait_for_load_state("domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
 
         # Find the server row - should now be visible with 100 items per page
         server_row = servers_page.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
@@ -582,7 +603,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
@@ -629,7 +650,7 @@ class TestServersExtended:
         # Wait for JS redirect (handleServerFormSubmit sets window.location.href)
         servers_page.page.wait_for_url(re.compile(r".*#catalog"), timeout=10000)
         servers_page.page.wait_for_load_state("domcontentloaded")
-        servers_page.page.reload(wait_until="domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
         servers_page.navigate_to_servers_tab()
         servers_page.wait_for_servers_table_loaded()
 
@@ -637,6 +658,7 @@ class TestServersExtended:
         pagination_select = servers_page.page.locator("#servers-pagination-controls select")
         pagination_select.select_option("100")
         servers_page.page.wait_for_load_state("domcontentloaded")
+        servers_page.wait_for_servers_table_loaded()
 
         # Find the server row - should now be visible with 100 items per page
         server_row = servers_page.page.locator(f'[data-testid="server-item"]:has-text("{server_name}")').first
@@ -646,7 +668,7 @@ class TestServersExtended:
         # (delete confirmation + metrics purge), then a form POST with page navigation.
         delete_btn = server_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
         if delete_btn.count() > 0:
-            server_row.scroll_into_view_if_needed()
+            expect(delete_btn).to_be_visible(timeout=10000)
             servers_page.page.wait_for_timeout(500)
 
             def handle_dialog(dialog):

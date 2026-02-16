@@ -8,6 +8,29 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  validatePasswordRequirements,
+  validatePasswordMatch,
+  resetTeamCreateForm,
+  filterByRelationship,
+  filterTeams,
+  dedupeSelectorItems,
+  updateAddMembersCount,
+  requestToJoinTeam,
+  leaveTeam,
+  approveJoinRequest,
+  rejectJoinRequest,
+  serverSideTeamSearch,
+} from "../../../mcpgateway/admin_ui/teams.js";
+
+import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
+import {
+  fetchWithTimeout,
+  showErrorMessage,
+  showSuccessMessage,
+} from "../../../mcpgateway/admin_ui/utils.js";
+import { getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
+
 // Mock dependencies BEFORE importing the module under test
 vi.mock("../../../mcpgateway/admin_ui/appState.js", () => ({
   AppState: {
@@ -40,29 +63,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   showErrorMessage: vi.fn(),
   showSuccessMessage: vi.fn(),
 }));
-
-import {
-  validatePasswordRequirements,
-  validatePasswordMatch,
-  resetTeamCreateForm,
-  filterByRelationship,
-  filterTeams,
-  dedupeSelectorItems,
-  updateAddMembersCount,
-  requestToJoinTeam,
-  leaveTeam,
-  approveJoinRequest,
-  rejectJoinRequest,
-  serverSideTeamSearch,
-} from "../../../mcpgateway/admin_ui/teams.js";
-
-import { AppState } from "../../../mcpgateway/admin_ui/appState.js";
-import {
-  fetchWithTimeout,
-  showErrorMessage,
-  showSuccessMessage,
-} from "../../../mcpgateway/admin_ui/utils.js";
-import { getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
 
 // ---------------------------------------------------------------------------
 // validatePasswordRequirements

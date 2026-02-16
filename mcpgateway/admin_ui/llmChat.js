@@ -262,7 +262,7 @@ export const loadVirtualServersForChat = async function () {
 /**
  * Select a server for chat
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const selectServerForChat = async function (
   serverId,
   serverName,
@@ -404,7 +404,7 @@ const loadLLMModels = async function () {
 /**
  * Handle LLM model selection change
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const handleLLMModelChange = function () {
   const modelSelect = safeGetElement("llm-model-select");
   const modelBadge = safeGetElement("llm-model-badge");
@@ -446,7 +446,7 @@ const updateConnectButtonState = function () {
 /**
  * Connect to LLM chat
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const connectLLMChat = async function () {
   if (!llmChatState.selectedServerId) {
     showErrorMessage("Please select a virtual server first");
@@ -655,7 +655,7 @@ const buildLLMConfig = function (modelId) {
  * Legacy function - kept for compatibility but no longer used
  * @deprecated Use buildLLMConfig(modelId) instead
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const buildLLMConfigLegacy = function (provider) {
   const config = {
     provider,
@@ -839,7 +839,7 @@ export const buildLLMConfigLegacy = function (provider) {
 /**
  * Copy environment variables to clipboard for the specified provider
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const copyEnvVariables = async function (provider) {
   const envVariables = {
     azure: `AZURE_OPENAI_API_KEY=<api_key>
@@ -1063,7 +1063,7 @@ const showConnectionError = function (message) {
 /**
  * Disconnect from LLM chat
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const disconnectLLMChat = async function () {
   if (!llmChatState.isConnected) {
     console.warn("No active connection to disconnect");
@@ -1988,7 +1988,7 @@ const scrollChatToBottom = function (force = false) {
 /**
  * Handle Enter key in chat input (send on Enter, new line on Shift+Enter)
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export const handleChatInputKeydown = function (event) {
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();

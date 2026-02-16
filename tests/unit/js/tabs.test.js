@@ -5,6 +5,15 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  ADMIN_ONLY_TABS,
+  isAdminOnlyTab,
+  getDefaultTabName,
+  getTableNamesForTab,
+  showTab,
+} from "../../../mcpgateway/admin_ui/tabs.js";
+import { isAdminUser } from "../../../mcpgateway/admin_ui/utils.js";
+
 // Mock heavy dependencies before importing tabs
 vi.mock("../../../mcpgateway/admin_ui/fileTransfer.js", () => ({
   loadRecentImports: vi.fn(),
@@ -38,15 +47,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id, silent) => document.getElementById(id)),
   showErrorMessage: vi.fn(),
 }));
-
-import {
-  ADMIN_ONLY_TABS,
-  isAdminOnlyTab,
-  getDefaultTabName,
-  getTableNamesForTab,
-  showTab,
-} from "../../../mcpgateway/admin_ui/tabs.js";
-import { isAdminUser } from "../../../mcpgateway/admin_ui/utils.js";
 
 // ---------------------------------------------------------------------------
 // ADMIN_ONLY_TABS
