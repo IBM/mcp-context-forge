@@ -285,6 +285,144 @@ def test_attach_trace_to_session_no_bind_noop():
     session.connection.assert_not_called()
 
 
+
+
+def test_instrumentation_queue_init_with_settings_exception():
+    """Test InstrumentationQueue initialization when settings access fails."""
+    # Mock getattr to raise exception when accessing instrumentation_queue_size
+    original_getattr = getattr
+    
+    def mock_getattr(obj, name, default=None):
+        if name == "instrumentation_queue_size":
+            raise Exception("settings error")
+        return original_getattr(obj, name, default) if default is not None else original_getattr(obj, name)
+    
+    with patch("builtins.getattr", side_effect=mock_getattr):
+        queue = sa.InstrumentationQueue()
+        # Should fall back to default 1000
+        assert queue._maxsize == 1000
+
+
+def test_write_span_to_db_setattr_exception():
+    """Test _write_span_to_db when clearing instrumentation context flag fails."""
+    span_data = {
+        "trace_id": "t1",
+        "name": "db.query.select",
+        "kind": "client",
+        "resource_type": "database",
+        "resource_name": "SELECT",
+        "start_attributes": {},
+        "end_attributes": {},
+        "status": "ok",
+        "duration_ms": 10.0,
+        "row_count": 1,
+    }
+    
+    # Mock to make setattr fail in the finally block
+    original_setattr = setattr
+    call_count = [0]
+    
+    def mock_setattr(obj, name, value):
+        call_count[0] += 1
+        if call_count[0] == 2 and name == "inside_span_creation" and value is False:
+            raise RuntimeError("setattr failed")
+        return original_setattr(obj, name, value)
+    
+    with patch("mcpgateway.services.observability_service.ObservabilityService") as mock_service, \
+         patch("mcpgateway.db.SessionLocal") as mock_db, \
+         patch("mcpgateway.db.ObservabilitySpan", MagicMock()), \
+         patch("builtins.setattr", side_effect=mock_setattr):
+        sa._write_span_to_db(span_data)
+
+
+def test_create_query_span_fallback_put_none():
+    """Test _create_query_span when queue has no put method."""
+    # Create a mock queue without put_nowait
+    mock_queue = MagicMock()
+    del mock_queue.put_nowait  # Remove put_nowait attribute
+    mock_queue.put = None  # Set put to None
+    
+    original_queue = sa._span_queue
+    try:
+        sa._span_queue = mock_queue
+        sa._create_query_span("trace123", "SELECT * FROM test", 10.0, 5, False)
+        # Should handle gracefully
+    finally:
+        sa._span_queue = original_queue
+
+
+def test_create_query_span_fallback_put_returns_true(caplog):
+    """Test _create_query_span when fallback put returns True."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    sa.logger.setLevel(logging.DEBUG)
+    sa.logger.propagate = True
+    
+    # Create a mock queue without put_nowait but with put returning True
+    mock_queue = MagicMock()
+    del mock_queue.put_nowait
+    mock_queue.put = MagicMock(return_value=True)
+    
+    original_queue = sa._span_queue
+    try:
+        sa._span_queue = mock_queue
+        sa._create_query_span("trace123", "SELECT * FROM test", 10.0, 5, False)
+        assert "Enqueued span for SELECT query" in caplog.text
+    finally:
+        sa._span_queue = original_queue
+
+
+def test_create_query_span_fallback_put_returns_false(caplog):
+    """Test _create_query_span when fallback put returns False."""
+    # Create a mock queue without put_nowait but with put returning False
+    mock_queue = MagicMock()
+    del mock_queue.put_nowait
+    mock_queue.put = MagicMock(return_value=False)
+    
+    original_queue = sa._span_queue
+    try:
+        sa._span_queue = mock_queue
+        sa._create_query_span("trace123", "SELECT * FROM test", 10.0, 5, False)
+        assert "Span queue is full" in caplog.text
+    finally:
+        sa._span_queue = original_queue
+
+
+def test_create_query_span_fallback_put_returns_none(caplog):
+    """Test _create_query_span when fallback put returns None."""
+    import logging
+    caplog.set_level(logging.DEBUG)
+    sa.logger.setLevel(logging.DEBUG)
+    sa.logger.propagate = True
+    
+    # Create a mock queue without put_nowait but with put returning None
+    mock_queue = MagicMock()
+    del mock_queue.put_nowait
+    mock_queue.put = MagicMock(return_value=None)
+    
+    original_queue = sa._span_queue
+    try:
+        sa._span_queue = mock_queue
+        sa._create_query_span("trace123", "SELECT * FROM test", 10.0, 5, False)
+        assert "Enqueued span for SELECT query" in caplog.text
+    finally:
+        sa._span_queue = original_queue
+
+
+def test_create_query_span_fallback_put_raises_exception(caplog):
+    """Test _create_query_span when fallback put raises exception."""
+    # Create a mock queue without put_nowait but with put raising exception
+    mock_queue = MagicMock()
+    del mock_queue.put_nowait
+    mock_queue.put = MagicMock(side_effect=RuntimeError("put failed"))
+    
+    original_queue = sa._span_queue
+    try:
+        sa._span_queue = mock_queue
+        sa._create_query_span("trace123", "SELECT * FROM test", 10.0, 5, False)
+        assert "Failed to enqueue span data" in caplog.text
+    finally:
+        sa._span_queue = original_queue
 def test_attach_trace_to_session_connection_without_info():
     session = MagicMock()
     session.bind = True
