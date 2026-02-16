@@ -3821,6 +3821,7 @@ class ToolService:
                 elif tool_integration_type == "gRPC" and tool_grpc_service_id:
                     # gRPC tool invocation using the registered gRPC service
                     try:
+                        # First-Party
                         from mcpgateway.services.grpc_service import GrpcService as GrpcServiceManager  # pylint: disable=import-outside-toplevel
 
                         grpc_manager = GrpcServiceManager()
