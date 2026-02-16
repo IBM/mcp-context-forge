@@ -12,28 +12,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
-// Mock dependencies before imports
-vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
-  showCopyableModal: vi.fn(),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
-  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
-  parseErrorResponse: vi.fn((response, defaultMsg) =>
-    Promise.resolve(defaultMsg)
-  ),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
-  fetchWithAuth: vi.fn(),
-  getAuthToken: vi.fn(() => Promise.resolve("test-token")),
-}));
-
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
-  safeGetElement: vi.fn((id) => document.getElementById(id)),
-  showToast: vi.fn(),
-}));
-
 import {
   switchLLMSettingsTab,
   onLLMProviderTypeChange,
@@ -66,6 +44,28 @@ import { showCopyableModal } from "../../../mcpgateway/admin_ui/modals.js";
 import { escapeHtml, parseErrorResponse } from "../../../mcpgateway/admin_ui/security.js";
 import { fetchWithAuth, getAuthToken } from "../../../mcpgateway/admin_ui/tokens.js";
 import { safeGetElement, showToast } from "../../../mcpgateway/admin_ui/utils.js";
+
+// Mock dependencies before imports
+vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
+  showCopyableModal: vi.fn(),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
+  escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
+  parseErrorResponse: vi.fn((response, defaultMsg) =>
+    Promise.resolve(defaultMsg)
+  ),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
+  fetchWithAuth: vi.fn(),
+  getAuthToken: vi.fn(() => Promise.resolve("test-token")),
+}));
+
+vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+  showToast: vi.fn(),
+}));
 
 beforeEach(() => {
   window.ROOT_PATH = "";

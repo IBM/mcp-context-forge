@@ -7,6 +7,14 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  hideUserEditModal,
+  performUserSearch,
+  registerAdminActionListeners,
+  initializePermissionsPanel,
+} from "../../../mcpgateway/admin_ui/users.js";
+import { fetchWithAuth } from "../../../mcpgateway/admin_ui/tokens.js";
+
 // Mock dependencies
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
@@ -25,14 +33,6 @@ vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
-
-import {
-  hideUserEditModal,
-  performUserSearch,
-  registerAdminActionListeners,
-  initializePermissionsPanel,
-} from "../../../mcpgateway/admin_ui/users.js";
-import { fetchWithAuth } from "../../../mcpgateway/admin_ui/tokens.js";
 
 // ---------------------------------------------------------------------------
 // hideUserEditModal

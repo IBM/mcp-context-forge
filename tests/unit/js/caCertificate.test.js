@@ -6,6 +6,13 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  parseCertificateInfo,
+  updateBodyLabel,
+  initializeCACertUpload,
+  validateCACertFiles,
+} from "../../../mcpgateway/admin_ui/caCertificate.js";
+
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
 }));
@@ -13,13 +20,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   isValidBase64: vi.fn(() => true),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
-
-import {
-  parseCertificateInfo,
-  updateBodyLabel,
-  initializeCACertUpload,
-  validateCACertFiles,
-} from "../../../mcpgateway/admin_ui/caCertificate.js";
 
 // ---------------------------------------------------------------------------
 // parseCertificateInfo

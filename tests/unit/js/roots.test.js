@@ -5,6 +5,10 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import { viewRoot, editRoot, exportRoot } from "../../../mcpgateway/admin_ui/roots.js";
+import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils.js";
+import { openModal } from "../../../mcpgateway/admin_ui/modals.js";
+
 vi.mock("../../../mcpgateway/admin_ui/modals.js", () => ({
   openModal: vi.fn(),
 }));
@@ -18,10 +22,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   handleFetchError: vi.fn((e) => e.message),
   showErrorMessage: vi.fn(),
 }));
-
-import { viewRoot, editRoot, exportRoot } from "../../../mcpgateway/admin_ui/roots.js";
-import { fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils.js";
-import { openModal } from "../../../mcpgateway/admin_ui/modals.js";
 
 afterEach(() => {
   document.body.innerHTML = "";

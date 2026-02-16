@@ -6,6 +6,17 @@
 
 import { describe, test, expect, vi, afterEach } from "vitest";
 
+import {
+  updateSelectionCount,
+  selectAllItems,
+  selectNoneItems,
+  selectOnlyCustom,
+  resetImportSelection,
+  handleSelectiveImport,
+} from "../../../mcpgateway/admin_ui/selectiveImport.js";
+import { showNotification } from "../../../mcpgateway/admin_ui/utils.js";
+import { showImportProgress } from "../../../mcpgateway/admin_ui/fileTransfer.js";
+
 vi.mock("../../../mcpgateway/admin_ui/fileTransfer.js", () => ({
   displayImportResults: vi.fn(),
   refreshCurrentTabData: vi.fn(),
@@ -18,17 +29,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showNotification: vi.fn(),
 }));
-
-import {
-  updateSelectionCount,
-  selectAllItems,
-  selectNoneItems,
-  selectOnlyCustom,
-  resetImportSelection,
-  handleSelectiveImport,
-} from "../../../mcpgateway/admin_ui/selectiveImport.js";
-import { showNotification } from "../../../mcpgateway/admin_ui/utils.js";
-import { showImportProgress } from "../../../mcpgateway/admin_ui/fileTransfer.js";
 
 // Helper to add checkboxes
 function addCheckboxes() {

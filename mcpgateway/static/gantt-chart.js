@@ -388,5 +388,5 @@ class GanttChart {
 let ganttChart = null;
 
 // Support ES module imports (tests) while remaining a plain <script> in the browser
-// eslint-disable-next-line no-undef
+ 
 if (typeof exports !== "undefined") { exports.GanttChart = GanttChart; }

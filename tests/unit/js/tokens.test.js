@@ -7,6 +7,19 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
+import {
+  getAuthToken,
+  fetchWithAuth,
+  getTeamNameById,
+  updateTeamScopingWarning,
+  displayTokensList,
+  loadTokensList,
+  initializeTeamScopingMonitor,
+  setupCreateTokenForm,
+  showTokenDetailsModal,
+} from "../../../mcpgateway/admin_ui/tokens.js";
+import { getCookie, getCurrentTeamId, getCurrentTeamName, fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils.js";
+
 // Mock dependencies
 vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
   escapeHtml: vi.fn((s) => (s != null ? String(s) : "")),
@@ -21,19 +34,6 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showNotification: vi.fn(),
 }));
-
-import {
-  getAuthToken,
-  fetchWithAuth,
-  getTeamNameById,
-  updateTeamScopingWarning,
-  displayTokensList,
-  loadTokensList,
-  initializeTeamScopingMonitor,
-  setupCreateTokenForm,
-  showTokenDetailsModal,
-} from "../../../mcpgateway/admin_ui/tokens.js";
-import { getCookie, getCurrentTeamId, getCurrentTeamName, fetchWithTimeout } from "../../../mcpgateway/admin_ui/utils.js";
 
 // ---------------------------------------------------------------------------
 // getAuthToken
