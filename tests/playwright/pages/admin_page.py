@@ -9,6 +9,7 @@ Admin panel page object with property-based Locators.
 
 # Third-Party
 from playwright.sync_api import Locator, Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -238,12 +239,30 @@ class AdminPage(BasePage):
     def search_servers(self, query: str) -> None:
         """Search for servers.
 
-        Search is server-side via HTMX with a debounce, so we wait for
-        network activity to settle after filling the input.
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because admin pages can keep long-lived requests open.
+        Wait for table/indicator state instead.
         """
         self.fill_locator(self.search_input, query)
-        self.page.wait_for_timeout(500)
-        self.page.wait_for_load_state("networkidle", timeout=10000)
+
+        try:
+            self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload for the catalog panel.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#servers-table-body", state="attached", timeout=15000)
 
     def get_server_count(self) -> int:
         """Get number of servers displayed."""

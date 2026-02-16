@@ -12,6 +12,7 @@ import logging
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -381,25 +382,60 @@ class GatewaysPage(BasePage):
     def search_gateways(self, query: str) -> None:
         """Search for gateways using the search input.
 
-        Search is server-side via HTMX with a debounce, so we wait for
-        network activity to settle after filling the input.
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because the admin UI can keep long-lived requests open.
+        Wait for table/indicator state instead.
 
         Args:
             query: Search query string
         """
+        # Searches are debounced in admin.js (250ms) and search inputs are
+        # occasionally re-initialized on tab switches (cloned/replaced). That
+        # can create a short window where filling doesn't trigger a request.
         self.search_input.fill(query)
-        self.page.wait_for_timeout(500)
-        self.page.wait_for_load_state("networkidle", timeout=10000)
+
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
 
     def clear_search(self) -> None:
         """Clear the gateway search.
 
         Triggers an HTMX reload of the gateways table, then waits for
-        the network to settle.
+        table/indicator settling.
         """
         self.click_locator(self.clear_search_btn)
-        self.page.wait_for_timeout(500)
-        self.page.wait_for_load_state("networkidle", timeout=10000)
+
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+        except PlaywrightTimeoutError:
+            # Fallback: invoke the same clear function the button uses.
+            self.page.evaluate("window.clearSearch && window.clearSearch('gateways')")
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive gateways checkbox.
