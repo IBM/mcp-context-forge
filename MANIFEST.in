@@ -68,6 +68,7 @@ recursive-include alembic *.py
 # Infrastructure configuration (nginx, monitoring)
 recursive-include infra *.conf
 recursive-include infra *.json
+recursive-include infra *.ldif
 recursive-include infra *.md
 recursive-include infra *.sh
 recursive-include infra *.yaml
