@@ -14769,7 +14769,7 @@ class TestTemplateButtonGating:
             user_team_roles=user_team_roles or {},
         )
 
-    def _render_servers_partial(self, jinja_env, server_data, current_user_email, is_admin=False, user_team_roles=None):
+    def _render_servers_partial(self, jinja_env, server_data, current_user_email, is_admin=False, user_team_roles=None, query_params=None):
         template = jinja_env.get_template("servers_partial.html")
         pagination = {"page": 1, "per_page": 10, "total_items": 1, "total_pages": 1, "has_next": False, "has_prev": False}
         return template.render(
@@ -14781,6 +14781,7 @@ class TestTemplateButtonGating:
             current_user_email=current_user_email,
             is_admin=is_admin,
             user_team_roles=user_team_roles or {},
+            query_params=query_params,
         )
 
     def _render_prompts_partial(self, jinja_env, prompt_data, current_user_email, is_admin=False, user_team_roles=None):
@@ -14900,6 +14901,37 @@ class TestTemplateButtonGating:
         html = self._render_servers_partial(jinja_env, server_data, current_user_email="other@example.com")
         assert "editServer" not in html
         assert "/delete" not in html
+
+    def test_servers_pagination_query_params_are_js_escaped(self, jinja_env):
+        """Malicious q/tags values must not break out of JS string context."""
+        server_data = {
+            "id": "srv-1",
+            "name": "Test Server",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A server",
+            "icon": None,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_servers_partial(
+            jinja_env,
+            server_data,
+            current_user_email="owner@example.com",
+            query_params={
+                "q": "x' );alert(1);//",
+                "tags": "</script><script>alert(2)</script>",
+            },
+        )
+
+        assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
+        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
+        assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""
