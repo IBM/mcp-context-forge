@@ -588,6 +588,11 @@ class Settings(BaseSettings):
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
+    # Code Execution (MCP Code Mode)
+    code_execution_enabled: bool = Field(default=True, description="Enable code_execution virtual servers and shell_exec/fs_browse meta-tools")
+    code_execution_base_dir: str = Field(default="/tmp/mcpgateway_code_execution", description="Base directory for ephemeral code execution sessions")
+    code_execution_session_ttl_seconds: int = Field(default=900, ge=60, le=86400, description="TTL for sandbox sessions (seconds)")
+
     # gRPC Support Configuration (EXPERIMENTAL - disabled by default)
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
     mcpgateway_grpc_reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection by default")

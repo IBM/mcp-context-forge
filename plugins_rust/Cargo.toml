@@ -28,6 +28,8 @@ crate-type = ["rlib"]
 [dependencies]
 pyo3.workspace = true
 pii_filter = { path = "pii_filter" }
+regex = "1.11"
+serde_json = "1.0"
 
 [profile.release]
 opt-level = 3

@@ -258,6 +258,25 @@ function updateDefaultVisibility() {
     });
 }
 
+function toggleServerCodeExecutionSection(mode = "create") {
+    const isEdit = mode === "edit";
+    const typeField = safeGetElement(
+        isEdit ? "edit-server-type" : "server-type",
+        true,
+    );
+    const section = safeGetElement(
+        isEdit
+            ? "edit-server-code-execution-section"
+            : "server-code-execution-section",
+        true,
+    );
+    if (!typeField || !section) {
+        return;
+    }
+    const isCodeExecution = typeField.value === "code_execution";
+    section.classList.toggle("hidden", !isCodeExecution);
+}
+
 // Attach event listener after DOM is loaded or when modal opens
 document.addEventListener("DOMContentLoaded", function () {
     const TypeField = document.getElementById("edit-tool-type");
@@ -269,6 +288,22 @@ document.addEventListener("DOMContentLoaded", function () {
 
     // Initialize default visibility based on URL team_id
     updateDefaultVisibility();
+
+    const createServerTypeField = safeGetElement("server-type", true);
+    if (createServerTypeField) {
+        createServerTypeField.addEventListener("change", function () {
+            toggleServerCodeExecutionSection("create");
+        });
+        toggleServerCodeExecutionSection("create");
+    }
+
+    const editServerTypeField = safeGetElement("edit-server-type", true);
+    if (editServerTypeField) {
+        editServerTypeField.addEventListener("change", function () {
+            toggleServerCodeExecutionSection("edit");
+        });
+        toggleServerCodeExecutionSection("edit");
+    }
 
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
@@ -5990,7 +6025,10 @@ async function viewServer(serverId) {
             const fields = [
                 { label: "Server ID", value: server.id },
                 { label: "URL", value: getCatalogUrl(server) || "N/A" },
-                { label: "Type", value: "Virtual Server" },
+                {
+                    label: "Type",
+                    value: server.type || server.server_type || "standard",
+                },
                 { label: "Visibility", value: server.visibility || "private" },
             ];
 
@@ -6410,6 +6448,77 @@ async function viewServer(serverId) {
             metadataDiv.appendChild(metadataGrid);
             container.appendChild(metadataDiv);
 
+            const serverType = (server.type || server.server_type || "standard")
+                .toLowerCase()
+                .trim();
+            if (serverType === "code_execution") {
+                const codeExecSection = document.createElement("div");
+                codeExecSection.className = "mt-6 border-t pt-4";
+
+                const codeExecTitle = document.createElement("strong");
+                codeExecTitle.textContent = "Code Execution:";
+                codeExecSection.appendChild(codeExecTitle);
+
+                let runs = [];
+                let sessions = [];
+                let skills = [];
+                let securityEvents = [];
+                try {
+                    const [runsResp, sessionsResp, skillsResp, secResp] = await Promise.all([
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/runs?limit=5`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/sessions`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/skills`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/security-events?limit=20`,
+                        ),
+                    ]);
+                    if (runsResp.ok) {
+                        runs = await runsResp.json();
+                    }
+                    if (sessionsResp.ok) {
+                        sessions = await sessionsResp.json();
+                    }
+                    if (skillsResp.ok) {
+                        skills = await skillsResp.json();
+                    }
+                    if (secResp.ok) {
+                        securityEvents = await secResp.json();
+                    }
+                } catch (err) {
+                    console.warn(
+                        "Unable to load code_execution details for server:",
+                        err,
+                    );
+                }
+
+                const summary = document.createElement("p");
+                summary.className = "text-sm mt-2 text-gray-600 dark:text-gray-400";
+                summary.textContent = `Recent runs: ${runs.length} | Active sessions: ${sessions.length} | Skills: ${skills.length} | Security events: ${securityEvents.length}`;
+                codeExecSection.appendChild(summary);
+
+                if (runs.length > 0) {
+                    const runsList = document.createElement("div");
+                    runsList.className = "mt-3 space-y-1";
+                    runs.slice(0, 5).forEach((run) => {
+                        const item = document.createElement("div");
+                        item.className = "text-xs text-gray-700 dark:text-gray-300";
+                        const runId = run.id || "";
+                        const shortRun = runId ? runId.slice(0, 8) : "unknown";
+                        item.textContent = `${shortRun} | ${run.status || "unknown"} | ${run.language || "n/a"} | ${run.created_at || ""}`;
+                        runsList.appendChild(item);
+                    });
+                    codeExecSection.appendChild(runsList);
+                }
+
+                container.appendChild(codeExecSection);
+            }
+
             serverDetailsDiv.innerHTML = "";
             serverDetailsDiv.appendChild(container);
         }
@@ -6529,6 +6638,88 @@ async function editServer(serverId) {
         if (iconField) {
             iconField.value = server.icon || "";
         }
+
+        const serverTypeField = safeGetElement("edit-server-type", true);
+        const stubLanguageField = safeGetElement(
+            "edit-server-stub-language",
+            true,
+        );
+        const skillsScopeField = safeGetElement(
+            "edit-server-skills-scope",
+            true,
+        );
+        const skillsRequireApprovalField = safeGetElement(
+            "edit-server-skills-require-approval",
+            true,
+        );
+        const mountRulesField = safeGetElement("edit-server-mount-rules", true);
+        const sandboxPolicyField = safeGetElement(
+            "edit-server-sandbox-policy",
+            true,
+        );
+        const tokenizationField = safeGetElement(
+            "edit-server-tokenization",
+            true,
+        );
+
+        const serverType = (
+            server.type ||
+            server.server_type ||
+            "standard"
+        ).toLowerCase();
+        if (serverTypeField) {
+            serverTypeField.value =
+                serverType === "code_execution" ? "code_execution" : "standard";
+        }
+        if (stubLanguageField) {
+            stubLanguageField.value =
+                server.stub_language || server.stubLanguage || "";
+        }
+        if (skillsScopeField) {
+            skillsScopeField.value =
+                server.skills_scope || server.skillsScope || "";
+        }
+        if (skillsRequireApprovalField) {
+            skillsRequireApprovalField.checked = Boolean(
+                server.skills_require_approval ||
+                    server.skillsRequireApproval,
+            );
+        }
+
+        const formatJsonForTextarea = (value) => {
+            if (value === null || value === undefined || value === "") {
+                return "";
+            }
+            if (typeof value === "string") {
+                try {
+                    return JSON.stringify(JSON.parse(value), null, 2);
+                } catch {
+                    return value;
+                }
+            }
+            try {
+                return JSON.stringify(value, null, 2);
+            } catch {
+                return "";
+            }
+        };
+
+        if (mountRulesField) {
+            mountRulesField.value = formatJsonForTextarea(
+                server.mount_rules || server.mountRules,
+            );
+        }
+        if (sandboxPolicyField) {
+            sandboxPolicyField.value = formatJsonForTextarea(
+                server.sandbox_policy || server.sandboxPolicy,
+            );
+        }
+        if (tokenizationField) {
+            tokenizationField.value = formatJsonForTextarea(
+                server.tokenization,
+            );
+        }
+        toggleServerCodeExecutionSection("edit");
 
         // Set OAuth 2.0 configuration fields (RFC 9728)
         const oauthEnabledCheckbox = safeGetElement(
@@ -18583,6 +18774,7 @@ window.enrichTool = enrichTool;
 window.viewRoot = viewRoot;
 window.editRoot = editRoot;
 window.exportRoot = exportRoot;
+window.toggleServerCodeExecutionSection = toggleServerCodeExecutionSection;
 
 // ===============================================
 // CONFIG EXPORT FUNCTIONALITY

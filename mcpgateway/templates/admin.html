@@ -3092,6 +3092,91 @@
               </div>
             </div>
 
+            <!-- Code Execution (MCP Code Mode) -->
+            <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-type">
+                Server Type
+              </label>
+              <select
+                id="server-type"
+                name="server_type"
+                class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                onchange="toggleServerCodeExecutionSection('create')"
+              >
+                <option value="standard" selected>standard</option>
+                <option value="code_execution">code_execution</option>
+              </select>
+              <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                `code_execution` exposes `shell_exec` and `fs_browse` meta-tools with a virtual tool filesystem.
+              </p>
+
+              <div id="server-code-execution-section" class="hidden mt-4 space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-800">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-stub-language">Stub Language</label>
+                  <select
+                    id="server-stub-language"
+                    name="stub_language"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                  >
+                    <option value="">Auto (runtime default)</option>
+                    <option value="typescript">typescript</option>
+                    <option value="python">python</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-skills-scope">Skills Scope</label>
+                  <input
+                    type="text"
+                    id="server-skills-scope"
+                    name="skills_scope"
+                    placeholder="team:<team_id> or user:<email> (optional)"
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                  />
+                </div>
+                <div class="flex items-center">
+                  <input
+                    type="checkbox"
+                    id="server-skills-require-approval"
+                    name="skills_require_approval"
+                    class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                  />
+                  <label for="server-skills-require-approval" class="ml-2 text-sm text-gray-700 dark:text-gray-400">
+                    Require skill approval before activation
+                  </label>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-mount-rules">Mount Rules (JSON)</label>
+                  <textarea
+                    id="server-mount-rules"
+                    name="mount_rules"
+                    rows="4"
+                    placeholder='{"include_tags":["prod"],"exclude_servers":["admin-tools"]}'
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
+                  ></textarea>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-sandbox-policy">Sandbox Policy (JSON)</label>
+                  <textarea
+                    id="server-sandbox-policy"
+                    name="sandbox_policy"
+                    rows="6"
+                    placeholder='{"runtime":"deno","limits":{"max_execution_time_ms":30000,"max_memory_mb":256},"permissions":{"network":{"allow_tool_calls":true,"allow_raw_http":false}}}'
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
+                  ></textarea>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="server-tokenization">Tokenization Policy (JSON)</label>
+                  <textarea
+                    id="server-tokenization"
+                    name="tokenization"
+                    rows="4"
+                    placeholder='{"enabled":true,"types":["email","phone","ssn","credit_card","name"],"strategy":"bidirectional"}'
+                    class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
+                  ></textarea>
+                </div>
+              </div>
+            </div>
+
             <!-- OAuth 2.0 Configuration Section (RFC 9728) -->
             <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
               <div class="flex items-center mb-4">
@@ -10989,6 +11074,88 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                             class="ml-2 text-sm text-gray-700 dark:text-gray-400"
                             >🔒Private</label
                           >
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Code Execution (MCP Code Mode) -->
+                    <div class="mt-6 border-t border-gray-200 dark:border-gray-700 pt-4">
+                      <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-type">
+                        Server Type
+                      </label>
+                      <select
+                        id="edit-server-type"
+                        name="server_type"
+                        class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                        onchange="toggleServerCodeExecutionSection('edit')"
+                      >
+                        <option value="standard">standard</option>
+                        <option value="code_execution">code_execution</option>
+                      </select>
+                      <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                        `code_execution` uses mount rules and sandbox policy instead of attaching explicit tools.
+                      </p>
+
+                      <div id="edit-server-code-execution-section" class="hidden mt-4 space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-800">
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-stub-language">Stub Language</label>
+                          <select
+                            id="edit-server-stub-language"
+                            name="stub_language"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                          >
+                            <option value="">Auto (runtime default)</option>
+                            <option value="typescript">typescript</option>
+                            <option value="python">python</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-skills-scope">Skills Scope</label>
+                          <input
+                            type="text"
+                            id="edit-server-skills-scope"
+                            name="skills_scope"
+                            placeholder="team:<team_id> or user:<email> (optional)"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300"
+                          />
+                        </div>
+                        <div class="flex items-center">
+                          <input
+                            type="checkbox"
+                            id="edit-server-skills-require-approval"
+                            name="skills_require_approval"
+                            class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
+                          />
+                          <label for="edit-server-skills-require-approval" class="ml-2 text-sm text-gray-700 dark:text-gray-400">
+                            Require skill approval before activation
+                          </label>
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-mount-rules">Mount Rules (JSON)</label>
+                          <textarea
+                            id="edit-server-mount-rules"
+                            name="mount_rules"
+                            rows="4"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
+                          ></textarea>
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-sandbox-policy">Sandbox Policy (JSON)</label>
+                          <textarea
+                            id="edit-server-sandbox-policy"
+                            name="sandbox_policy"
+                            rows="6"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
+                          ></textarea>
+                        </div>
+                        <div>
+                          <label class="block text-sm font-medium text-gray-700 dark:text-gray-400" for="edit-server-tokenization">Tokenization Policy (JSON)</label>
+                          <textarea
+                            id="edit-server-tokenization"
+                            name="tokenization"
+                            rows="4"
+                            class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
+                          ></textarea>
                         </div>
                       </div>
                     </div>

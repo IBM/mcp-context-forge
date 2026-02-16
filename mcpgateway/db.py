@@ -985,6 +985,12 @@ class Permissions:
     TAGS_UPDATE = "tags.update"
     TAGS_DELETE = "tags.delete"
 
+    # Code execution skill permissions
+    SKILLS_CREATE = "skills.create"
+    SKILLS_READ = "skills.read"
+    SKILLS_APPROVE = "skills.approve"
+    SKILLS_REVOKE = "skills.revoke"
+
     # Special permissions
     ALL_PERMISSIONS = "*"  # Wildcard for all permissions
 
@@ -4035,6 +4041,17 @@ class Server(Base):
     enabled: Mapped[bool] = mapped_column(default=True)
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
 
+    # Virtual server execution mode
+    # standard: normal server exposing attached tools/resources/prompts
+    # code_execution: exposes shell_exec/fs_browse meta-tools only
+    server_type: Mapped[str] = mapped_column(String(32), default="standard", nullable=False, index=True)
+    stub_language: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)  # typescript | python
+    mount_rules: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    sandbox_policy: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    tokenization: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    skills_scope: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    skills_require_approval: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     # Comprehensive metadata for audit tracking
     created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
@@ -4057,6 +4074,8 @@ class Server(Base):
     resources: Mapped[List["Resource"]] = relationship("Resource", secondary=server_resource_association, back_populates="servers")
     prompts: Mapped[List["Prompt"]] = relationship("Prompt", secondary=server_prompt_association, back_populates="servers")
     a2a_agents: Mapped[List["A2AAgent"]] = relationship("A2AAgent", secondary=server_a2a_association, back_populates="servers")
+    code_execution_skills: Mapped[List["CodeExecutionSkill"]] = relationship("CodeExecutionSkill", back_populates="server", cascade="all, delete-orphan")
+    code_execution_runs: Mapped[List["CodeExecutionRun"]] = relationship("CodeExecutionRun", back_populates="server", cascade="all, delete-orphan")
 
     # API token relationships
     scoped_tokens: Mapped[List["EmailApiToken"]] = relationship("EmailApiToken", back_populates="server")
@@ -4342,6 +4361,131 @@ class Server(Base):
     __table_args__ = (
         UniqueConstraint("team_id", "owner_email", "name", name="uq_team_owner_name_server"),
         Index("idx_servers_created_at_id", "created_at", "id"),
+    )
+
+
+class CodeExecutionSkill(Base):
+    """Persistent reusable skill source code for code_execution servers."""
+
+    __tablename__ = "code_execution_skills"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    language: Mapped[str] = mapped_column(String(32), default="python", nullable=False)
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    source_code: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)  # pending | approved | rejected | revoked
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Team-scoped ownership
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("email_teams.id", ondelete="SET NULL"), nullable=True, index=True)
+    owner_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+
+    # Review metadata
+    approved_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, nullable=False)
+
+    # Comprehensive metadata for audit tracking
+    created_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    created_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    created_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    modified_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    modified_from_ip: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
+    modified_via: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    modified_user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    version_counter: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+
+    server: Mapped["Server"] = relationship("Server", back_populates="code_execution_skills")
+    approver: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[approved_by])
+
+    __table_args__ = (
+        UniqueConstraint("server_id", "name", "version", name="uq_code_execution_skill_server_name_version"),
+        Index("idx_code_execution_skills_server_status", "server_id", "status"),
+    )
+
+
+class SkillApproval(Base):
+    """Approval workflow records for code execution skills."""
+
+    __tablename__ = "skill_approvals"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    skill_id: Mapped[str] = mapped_column(String(36), ForeignKey("code_execution_skills.id", ondelete="CASCADE"), nullable=False, index=True)
+    requested_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), default="pending", nullable=False)  # pending | approved | rejected | expired
+
+    reviewed_by: Mapped[Optional[str]] = mapped_column(String(255), ForeignKey("email_users.email"), nullable=True)
+    reviewed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    admin_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    skill: Mapped["CodeExecutionSkill"] = relationship("CodeExecutionSkill")
+    requester: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[requested_by])
+    reviewer: Mapped[Optional["EmailUser"]] = relationship("EmailUser", foreign_keys=[reviewed_by])
+
+    __table_args__ = (
+        Index("idx_skill_approvals_status_requested_at", "status", "requested_at"),
+        Index("idx_skill_approvals_expires_at", "expires_at"),
+    )
+
+    def is_expired(self) -> bool:
+        """Return True if approval has expired."""
+        now = utc_now()
+        expires_at = self.expires_at
+        if now.tzinfo is not None and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        elif now.tzinfo is None and expires_at.tzinfo is not None:
+            now = now.replace(tzinfo=timezone.utc)
+        return now > expires_at
+
+
+class CodeExecutionRun(Base):
+    """Run history for shell_exec executions."""
+
+    __tablename__ = "code_execution_runs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False, index=True)
+    session_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    language: Mapped[str] = mapped_column(String(32), nullable=False, default="python")
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    code_body: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # Stored for admin replay, never emitted in logs.
+    status: Mapped[str] = mapped_column(String(20), default="running", nullable=False)  # running | completed | failed | timed_out | blocked
+
+    output: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    metrics: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    tool_calls_made: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
+    security_events: Mapped[Optional[List[Dict[str, Any]]]] = mapped_column(JSON, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, nullable=False)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Team-scoping snapshot at execution time
+    team_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True, index=True)
+    token_teams: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+
+    # Runtime metadata
+    runtime: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    code_size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    server: Mapped["Server"] = relationship("Server", back_populates="code_execution_runs")
+
+    __table_args__ = (
+        Index("idx_code_execution_runs_server_created", "server_id", "created_at"),
+        Index("idx_code_execution_runs_user_created", "user_email", "created_at"),
     )
 
 
