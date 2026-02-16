@@ -250,7 +250,9 @@ def test_after_cursor_execute_handles_rowcount_exception_and_no_trace():
     conn = MagicMock()
     conn.info = {}
     conn_id = id(conn)
-    sa._query_tracking[conn_id] = {"start_time": time.time(), "statement": "SELECT * FROM users", "parameters": None, "executemany": False}
+    if not hasattr(sa._query_tracking, "map"):
+        sa._query_tracking.map = {}
+    sa._query_tracking.map[conn_id] = {"start_time": time.time(), "statement": "SELECT * FROM users", "parameters": None, "executemany": False}
 
     class Cursor:
         @property
@@ -258,20 +260,22 @@ def test_after_cursor_execute_handles_rowcount_exception_and_no_trace():
             raise RuntimeError("no rowcount")
 
     sa._after_cursor_execute(conn, Cursor(), "SELECT * FROM users", None, None, False)
-    assert sa._span_queue.empty()
+    assert sa._span_queue._queue.empty()
 
 
 def test_after_cursor_execute_negative_rowcount_skips_assignment():
     conn = MagicMock()
     conn.info = {}
     conn_id = id(conn)
-    sa._query_tracking[conn_id] = {"start_time": time.time(), "statement": "SELECT * FROM users", "parameters": None, "executemany": False}
+    if not hasattr(sa._query_tracking, "map"):
+        sa._query_tracking.map = {}
+    sa._query_tracking.map[conn_id] = {"start_time": time.time(), "statement": "SELECT * FROM users", "parameters": None, "executemany": False}
 
     cursor = MagicMock()
     cursor.rowcount = -1
 
     sa._after_cursor_execute(conn, cursor, "SELECT * FROM users", None, None, False)
-    assert sa._span_queue.empty()
+    assert sa._span_queue._queue.empty()
 
 
 def test_attach_trace_to_session_no_bind_noop():
