@@ -125,7 +125,15 @@ class TestGrpcService:
                 mock_db,
                 sample_service_create,
                 user_email="test@example.com",
-                metadata={"created_by": "test@example.com", "created_from_ip": "127.0.0.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1},
+                metadata={
+                    "created_by": "test@example.com",
+                    "created_from_ip": "127.0.0.1",
+                    "created_via": "ui",
+                    "created_user_agent": "test/1.0",
+                    "import_batch_id": None,
+                    "federation_source": None,
+                    "version": 1,
+                },
             )
 
         assert result.name == "test-grpc-service"
@@ -591,3 +599,259 @@ class TestGrpcService:
 
         assert result.tls_enabled is True
         assert result.tls_cert_path == "/path/to/cert.pem"
+
+    def test_sync_tools_creates_tools_from_discovered_methods(self, service, mock_db, sample_db_service):
+        """Test that _sync_tools_from_reflection creates Tool records for discovered methods."""
+        sample_db_service.discovered_services = {
+            "test.TestService": {
+                "name": "test.TestService",
+                "methods": [
+                    {
+                        "name": "GetItem",
+                        "input_type": ".test.GetItemRequest",
+                        "output_type": ".test.GetItemResponse",
+                        "client_streaming": False,
+                        "server_streaming": False,
+                    },
+                    {
+                        "name": "ListItems",
+                        "input_type": ".test.ListItemsRequest",
+                        "output_type": ".test.ListItemsResponse",
+                        "client_streaming": False,
+                        "server_streaming": True,
+                    },
+                ],
+            }
+        }
+        sample_db_service.team_id = None
+        sample_db_service.owner_email = "test@example.com"
+
+        # No existing tools
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Should have added 2 tools
+        assert mock_db.add.call_count == 2
+
+        # Verify tool properties
+        calls = mock_db.add.call_args_list
+        tool_names = {call[0][0].original_name for call in calls}
+        assert tool_names == {"test.TestService.GetItem", "test.TestService.ListItems"}
+
+        # Verify tool fields on first created tool
+        for call in calls:
+            tool = call[0][0]
+            assert tool.integration_type == "gRPC"
+            assert tool.grpc_service_id == sample_db_service.id
+            assert tool.created_via == "grpc-reflection"
+            assert tool.federation_source == sample_db_service.name
+            assert tool.url == sample_db_service.target
+            assert tool.owner_email == "test@example.com"
+
+    def test_sync_tools_updates_existing_tools(self, service, mock_db, sample_db_service):
+        """Test that _sync_tools_from_reflection updates existing tools when description changes."""
+        sample_db_service.discovered_services = {
+            "test.TestService": {
+                "name": "test.TestService",
+                "methods": [
+                    {
+                        "name": "GetItem",
+                        "input_type": ".test.GetItemRequest",
+                        "output_type": ".test.GetItemResponse",
+                        "client_streaming": False,
+                        "server_streaming": False,
+                    },
+                ],
+            }
+        }
+        sample_db_service.target = "new-host:50051"
+
+        # Existing tool with old url
+        from mcpgateway.db import Tool as DbTool
+
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.id = "existing-tool-id"
+        existing_tool.original_name = "test.TestService.GetItem"
+        existing_tool.original_description = "gRPC method test.TestService.GetItem"
+        existing_tool.description = "gRPC method test.TestService.GetItem"
+        existing_tool.url = "old-host:50051"
+        existing_tool.input_schema = {}
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [existing_tool]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Should NOT have added new tools
+        mock_db.add.assert_not_called()
+
+        # Existing tool should have been updated
+        assert existing_tool.url == "new-host:50051"
+
+    def test_sync_tools_removes_stale_tools(self, service, mock_db, sample_db_service):
+        """Test that _sync_tools_from_reflection removes tools for methods no longer discovered."""
+        # Service now has no discovered methods
+        sample_db_service.discovered_services = {}
+
+        # But there's a stale tool from a previous reflection
+        from mcpgateway.db import Tool as DbTool
+
+        stale_tool = MagicMock(spec=DbTool)
+        stale_tool.id = "stale-tool-id"
+        stale_tool.original_name = "test.TestService.OldMethod"
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [stale_tool]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Should have executed delete statements for the stale tool
+        # 3 deletes: ToolMetric, server_tool_association, DbTool
+        delete_calls = [call for call in mock_db.execute.call_args_list if "DELETE" in str(call) or "delete" in str(call).lower()]
+        assert len(delete_calls) == 3
+        # At minimum, execute was called for the select + 3 deletes
+        assert mock_db.execute.call_count >= 4  # 1 select + 3 deletes
+
+    def test_sync_tools_empty_discovered_services(self, service, mock_db, sample_db_service):
+        """Test _sync_tools_from_reflection with empty discovered services and no existing tools."""
+        sample_db_service.discovered_services = {}
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # No tools to add
+        mock_db.add.assert_not_called()
+
+    def test_sync_tools_preserves_custom_description(self, service, mock_db, sample_db_service):
+        """Test that _sync_tools_from_reflection preserves user-customized descriptions."""
+        sample_db_service.discovered_services = {
+            "test.TestService": {
+                "name": "test.TestService",
+                "methods": [
+                    {
+                        "name": "GetItem",
+                        "input_type": ".test.GetItemRequest",
+                        "output_type": ".test.GetItemResponse",
+                        "client_streaming": False,
+                        "server_streaming": False,
+                    },
+                ],
+            }
+        }
+
+        from mcpgateway.db import Tool as DbTool
+
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.id = "tool-id"
+        existing_tool.original_name = "test.TestService.GetItem"
+        existing_tool.original_description = "old description"
+        existing_tool.description = "My custom description"  # User customized
+        existing_tool.url = sample_db_service.target
+        existing_tool.input_schema = {
+            "type": "object",
+            "properties": {},
+            "x-grpc-input-type": ".test.GetItemRequest",
+            "x-grpc-output-type": ".test.GetItemResponse",
+            "x-grpc-client-streaming": False,
+            "x-grpc-server-streaming": False,
+        }
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [existing_tool]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # original_description should be updated but custom description preserved
+        assert existing_tool.original_description == "gRPC method test.TestService.GetItem"
+        assert existing_tool.description == "My custom description"
+
+    async def test_delete_service_removes_tools(self, service, mock_db):
+        """Test that deleting a gRPC service also removes its associated tools."""
+        # Use a MagicMock for the service to avoid SQLAlchemy relationship issues
+        mock_service = MagicMock()
+        mock_service.id = "svc-id"
+        mock_service.name = "test-grpc-service"
+        mock_tool1 = MagicMock()
+        mock_tool1.id = "tool-1"
+        mock_tool2 = MagicMock()
+        mock_tool2.id = "tool-2"
+        mock_service.tools = [mock_tool1, mock_tool2]
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_service
+        mock_db.commit = MagicMock()
+
+        await service.delete_service(mock_db, "svc-id")
+
+        # Should have executed delete statements for tool metrics, associations, and tools
+        # plus the select query and the service delete
+        assert mock_db.execute.call_count >= 4  # select + 3 bulk deletes
+        mock_db.delete.assert_called_once_with(mock_service)
+        mock_db.commit.assert_called()
+
+    async def test_delete_service_no_tools(self, service, mock_db):
+        """Test deleting a gRPC service that has no tools."""
+        mock_service = MagicMock()
+        mock_service.id = "svc-id"
+        mock_service.name = "test-grpc-service"
+        mock_service.tools = []
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_service
+        mock_db.commit = MagicMock()
+
+        await service.delete_service(mock_db, "svc-id")
+
+        # Only the select query + service delete, no bulk tool deletes
+        mock_db.delete.assert_called_once_with(mock_service)
+        mock_db.commit.assert_called()
+
+    def test_sync_tools_multiple_services(self, service, mock_db, sample_db_service):
+        """Test tool sync with multiple gRPC services discovered."""
+        sample_db_service.discovered_services = {
+            "pkg.ServiceA": {
+                "name": "pkg.ServiceA",
+                "methods": [
+                    {"name": "MethodA", "input_type": ".pkg.ReqA", "output_type": ".pkg.RespA", "client_streaming": False, "server_streaming": False},
+                ],
+            },
+            "pkg.ServiceB": {
+                "name": "pkg.ServiceB",
+                "methods": [
+                    {"name": "MethodB1", "input_type": ".pkg.ReqB1", "output_type": ".pkg.RespB1", "client_streaming": False, "server_streaming": False},
+                    {"name": "MethodB2", "input_type": ".pkg.ReqB2", "output_type": ".pkg.RespB2", "client_streaming": True, "server_streaming": False},
+                ],
+            },
+        }
+        sample_db_service.team_id = None
+        sample_db_service.owner_email = None
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Should have added 3 tools total
+        assert mock_db.add.call_count == 3
+        tool_names = {call[0][0].original_name for call in mock_db.add.call_args_list}
+        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1", "pkg.ServiceB.MethodB2"}
