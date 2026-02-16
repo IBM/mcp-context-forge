@@ -2355,13 +2355,14 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             )
             raise GatewayError(f"Failed to update gateway: {str(e)}")
 
-    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True) -> GatewayRead:
+    async def get_gateway(self, db: Session, gateway_id: str, include_inactive: bool = True, include_unmasked: bool = False) -> GatewayRead:
         """Get a gateway by its ID.
 
         Args:
             db: Database session
             gateway_id: Gateway ID
             include_inactive: Whether to include inactive gateways
+            include_unmasked: Whether to preserve unmasked credential fields (for admin UI)
 
         Returns:
             GatewayRead object
@@ -2444,7 +2445,7 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
                 db=db,
             )
 
-            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked()
+            return GatewayRead.model_validate(self._prepare_gateway_for_read(gateway)).masked(preserve_unmasked=include_unmasked)
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 

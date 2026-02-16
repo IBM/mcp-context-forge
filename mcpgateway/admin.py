@@ -9855,7 +9855,7 @@ async def admin_get_gateway(gateway_id: str, db: Session = Depends(get_db), user
     """
     LOGGER.debug(f"User {get_user_email(user)} requested details for gateway ID {gateway_id}")
     try:
-        gateway = await gateway_service.get_gateway(db, gateway_id)
+        gateway = await gateway_service.get_gateway(db, gateway_id, include_unmasked=True)
         return gateway.model_dump(by_alias=True)
     except GatewayNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
