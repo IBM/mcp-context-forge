@@ -291,12 +291,12 @@ def test_instrumentation_queue_init_with_settings_exception():
     """Test InstrumentationQueue initialization when settings access fails."""
     # Mock getattr to raise exception when accessing instrumentation_queue_size
     original_getattr = getattr
-    
+
     def mock_getattr(obj, name, default=None):
         if name == "instrumentation_queue_size":
             raise Exception("settings error")
         return original_getattr(obj, name, default) if default is not None else original_getattr(obj, name)
-    
+
     with patch("builtins.getattr", side_effect=mock_getattr):
         queue = sa.InstrumentationQueue()
         # Should fall back to default 1000
@@ -317,17 +317,17 @@ def test_write_span_to_db_setattr_exception():
         "duration_ms": 10.0,
         "row_count": 1,
     }
-    
+
     # Mock to make setattr fail in the finally block
     original_setattr = setattr
     call_count = [0]
-    
+
     def mock_setattr(obj, name, value):
         call_count[0] += 1
         if call_count[0] == 2 and name == "inside_span_creation" and value is False:
             raise RuntimeError("setattr failed")
         return original_setattr(obj, name, value)
-    
+
     with patch("mcpgateway.services.observability_service.ObservabilityService") as mock_service, \
          patch("mcpgateway.db.SessionLocal") as mock_db, \
          patch("mcpgateway.db.ObservabilitySpan", MagicMock()), \
@@ -341,7 +341,7 @@ def test_create_query_span_fallback_put_none():
     mock_queue = MagicMock()
     del mock_queue.put_nowait  # Remove put_nowait attribute
     mock_queue.put = None  # Set put to None
-    
+
     original_queue = sa._span_queue
     try:
         sa._span_queue = mock_queue
@@ -357,12 +357,12 @@ def test_create_query_span_fallback_put_returns_true(caplog):
     caplog.set_level(logging.DEBUG)
     sa.logger.setLevel(logging.DEBUG)
     sa.logger.propagate = True
-    
+
     # Create a mock queue without put_nowait but with put returning True
     mock_queue = MagicMock()
     del mock_queue.put_nowait
     mock_queue.put = MagicMock(return_value=True)
-    
+
     original_queue = sa._span_queue
     try:
         sa._span_queue = mock_queue
@@ -378,7 +378,7 @@ def test_create_query_span_fallback_put_returns_false(caplog):
     mock_queue = MagicMock()
     del mock_queue.put_nowait
     mock_queue.put = MagicMock(return_value=False)
-    
+
     original_queue = sa._span_queue
     try:
         sa._span_queue = mock_queue
@@ -394,12 +394,12 @@ def test_create_query_span_fallback_put_returns_none(caplog):
     caplog.set_level(logging.DEBUG)
     sa.logger.setLevel(logging.DEBUG)
     sa.logger.propagate = True
-    
+
     # Create a mock queue without put_nowait but with put returning None
     mock_queue = MagicMock()
     del mock_queue.put_nowait
     mock_queue.put = MagicMock(return_value=None)
-    
+
     original_queue = sa._span_queue
     try:
         sa._span_queue = mock_queue
@@ -415,7 +415,7 @@ def test_create_query_span_fallback_put_raises_exception(caplog):
     mock_queue = MagicMock()
     del mock_queue.put_nowait
     mock_queue.put = MagicMock(side_effect=RuntimeError("put failed"))
-    
+
     original_queue = sa._span_queue
     try:
         sa._span_queue = mock_queue
