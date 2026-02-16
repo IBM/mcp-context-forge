@@ -196,11 +196,13 @@ class TokenizationContext:
     token_to_value: Dict[str, str] = field(default_factory=dict)
 
     def _next_token(self, category: str) -> str:
+        """Generate the next deterministic token for a category."""
         prefix = category.upper().replace("-", "_")
         idx = len(self.value_to_token) + 1
         return f"TKN_{prefix}_{idx:06d}"
 
     def _tokenize_exact(self, raw: str, category: str) -> str:
+        """Map an exact raw value to a stable token."""
         token = self.value_to_token.get(raw)
         if token is None:
             token = self._next_token(category)
@@ -209,6 +211,7 @@ class TokenizationContext:
         return token
 
     def _replace_with_tokens(self, text: str) -> str:
+        """Replace supported sensitive values in text with stable tokens."""
         if not self.enabled or not text:
             return text
 
@@ -225,14 +228,16 @@ class TokenizationContext:
 
         for category, pattern in patterns:
 
-            def repl(match: re.Match[str]) -> str:
+            def repl(match: re.Match[str], token_category: str = category) -> str:
+                """Tokenize each regex match while preserving category binding."""
                 raw = match.group(0)
-                return self._tokenize_exact(raw, category)
+                return self._tokenize_exact(raw, token_category)
 
             replaced = pattern.sub(repl, replaced)
         return replaced
 
     def _is_name_key(self, key: str) -> bool:
+        """Return whether a key likely contains person-name data."""
         lowered = key.lower()
         return lowered == "name" or lowered.endswith("_name") or lowered.endswith("name")
 
@@ -496,12 +501,14 @@ class DenoRuntime(SandboxRuntime):
         result_exit: int = 1
 
         async def _send_response(payload: Dict[str, Any]) -> None:
+            """Write a JSON RPC-style response line to sandbox stdin."""
             line = json.dumps(payload, ensure_ascii=False) + "\n"
             async with write_lock:
                 proc.stdin.write(line.encode("utf-8"))
                 await proc.stdin.drain()
 
         async def _handle_toolcall(msg: Dict[str, Any]) -> None:
+            """Handle a toolcall request emitted by the sandbox runtime."""
             tool_id = str(msg.get("id") or "")
             server = str(msg.get("server") or "")
             tool = str(msg.get("tool") or "")
@@ -515,6 +522,7 @@ class DenoRuntime(SandboxRuntime):
                 await _send_response({"secret": secret, "type": "toolcall_response", "id": tool_id, "ok": False, "error": str(exc)})
 
         async def _pump_stdout() -> None:
+            """Consume runtime stdout until a final result message is received."""
             nonlocal result_output, result_error, result_exit
             while True:
                 line_b = await proc.stdout.readline()
@@ -532,7 +540,7 @@ class DenoRuntime(SandboxRuntime):
                 if msg.get("type") == "toolcall":
                     task = asyncio.create_task(_handle_toolcall(msg))
                     tool_tasks.add(task)
-                    task.add_done_callback(lambda t: tool_tasks.discard(t))
+                    task.add_done_callback(tool_tasks.discard)
                     continue
                 if msg.get("type") == "result":
                     result_output = str(msg.get("output") or "")
@@ -842,12 +850,14 @@ class PythonSandboxRuntime(SandboxRuntime):
         result_exit: int = 1
 
         async def _send_response(payload: Dict[str, Any]) -> None:
+            """Write a JSON RPC-style response line to sandbox stdin."""
             line = json.dumps(payload, ensure_ascii=False) + "\n"
             async with write_lock:
                 proc.stdin.write(line.encode("utf-8"))
                 await proc.stdin.drain()
 
         async def _handle_toolcall(msg: Dict[str, Any]) -> None:
+            """Handle a toolcall request emitted by the sandbox runtime."""
             tool_id = str(msg.get("id") or "")
             server = str(msg.get("server") or "")
             tool = str(msg.get("tool") or "")
@@ -861,6 +871,7 @@ class PythonSandboxRuntime(SandboxRuntime):
                 await _send_response({"secret": secret, "type": "toolcall_response", "id": tool_id, "ok": False, "error": str(exc)})
 
         async def _pump_stdout() -> None:
+            """Consume runtime stdout until a final result message is received."""
             nonlocal result_output, result_error, result_exit
             while True:
                 line_b = await proc.stdout.readline()
@@ -878,7 +889,7 @@ class PythonSandboxRuntime(SandboxRuntime):
                 if msg.get("type") == "toolcall":
                     task = asyncio.create_task(_handle_toolcall(msg))
                     tool_tasks.add(task)
-                    task.add_done_callback(lambda t: tool_tasks.discard(t))
+                    task.add_done_callback(tool_tasks.discard)
                     continue
                 if msg.get("type") == "result":
                     result_output = str(msg.get("output") or "")
@@ -1245,6 +1256,7 @@ class CodeExecutionService:
         runtime_name = str(policy.get("runtime") or "deno")
 
         async def _runtime_tool_handler(server_name: str, tool_name: str, args: Dict[str, Any]) -> Any:
+            """Bridge sandbox tool invocations to mounted gateway tools."""
             return await self._invoke_mounted_tool(
                 session=session,
                 policy=policy,
@@ -1548,6 +1560,7 @@ class CodeExecutionService:
         language: str,
         token_teams: Optional[List[str]],
     ) -> CodeExecutionSession:
+        """Return an active session, creating or refreshing filesystem state as needed."""
         key = (server.id, user_email, language)
         async with self._lock:
             session = self._sessions.get(key)
@@ -1590,6 +1603,7 @@ class CodeExecutionService:
             return session
 
     async def _refresh_virtual_filesystem_if_needed(self, db: Session, session: CodeExecutionSession, server: DbServer, token_teams: Optional[List[str]]) -> None:
+        """Regenerate mounted tools/skills if source content changed."""
         mounted = self._resolve_mounted_tools(db=db, server=server, user_email=session.user_email, token_teams=token_teams)
         skills = self._resolve_mounted_skills(
             db=db,
@@ -1720,6 +1734,7 @@ class CodeExecutionService:
         session.content_hash = digest
 
     def _resolve_mounted_tools(self, db: Session, server: DbServer, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[DbTool]:
+        """Resolve all reachable tools visible to the current execution scope."""
         query = select(DbTool).options(joinedload(DbTool.gateway)).where(DbTool.enabled.is_(True), DbTool.reachable.is_(True))
         tools = db.execute(query).scalars().all()
         mount_rules = self._server_mount_rules(server)
@@ -1741,6 +1756,7 @@ class CodeExecutionService:
         token_teams: Optional[List[str]],
         language: str,
     ) -> List[CodeExecutionSkill]:
+        """Resolve latest approved skills for the selected language and scope."""
         query = (
             select(CodeExecutionSkill)
             .where(
@@ -1769,6 +1785,7 @@ class CodeExecutionService:
         token_teams: Optional[List[str]],
         skills_scope: str,
     ) -> bool:
+        """Check whether a persisted skill is visible for the caller scope."""
         if token_teams is None:
             return True
 
@@ -1790,6 +1807,7 @@ class CodeExecutionService:
         return True
 
     def _mount_skills(self, session: CodeExecutionSession, skills: Sequence[CodeExecutionSkill]) -> None:
+        """Materialize approved skill sources into the session skills directory."""
         if session.language == "python":
             (session.skills_dir / "__init__.py").write_text("# Auto-generated skills package\n", encoding="utf-8")
 
@@ -1824,6 +1842,7 @@ class CodeExecutionService:
         )
 
     def _tool_visible_for_scope(self, tool: DbTool, user_email: Optional[str], token_teams: Optional[List[str]]) -> bool:
+        """Return whether a tool is visible under token-team scoping rules."""
         # Admin bypass: token_teams is None (normalize_token_teams contract).
         if token_teams is None:
             return True
@@ -1841,6 +1860,7 @@ class CodeExecutionService:
         return bool(user_email and tool.owner_email == user_email)
 
     def _tool_matches_mount_rules(self, tool: DbTool, mount_rules: Dict[str, Any]) -> bool:
+        """Evaluate include/exclude mount rules against a candidate tool."""
         tags = set(tool.tags or [])
         include_tags = set(mount_rules.get("include_tags") or [])
         exclude_tags = set(mount_rules.get("exclude_tags") or [])
@@ -1865,6 +1885,7 @@ class CodeExecutionService:
         return True
 
     def _server_mount_rules(self, server: DbServer) -> Dict[str, Any]:
+        """Normalize server mount-rules payload to a plain dict."""
         raw = getattr(server, "mount_rules", None) or {}
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump()
@@ -1873,6 +1894,7 @@ class CodeExecutionService:
         return dict(raw)
 
     def _server_sandbox_policy(self, server: DbServer) -> Dict[str, Any]:
+        """Normalize and default sandbox policy configuration for execution."""
         raw = getattr(server, "sandbox_policy", None) or {}
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump()
@@ -1956,6 +1978,7 @@ class CodeExecutionService:
         return normalized
 
     def _server_tokenization_policy(self, server: DbServer) -> Dict[str, Any]:
+        """Normalize tokenization policy with system defaults."""
         raw = getattr(server, "tokenization", None) or {}
         if hasattr(raw, "model_dump"):
             raw = raw.model_dump()
@@ -1967,6 +1990,7 @@ class CodeExecutionService:
         return defaults
 
     def _validate_code_safety(self, code: str, language: str, allow_raw_http: bool, user_email: Optional[str], request_headers: Optional[Dict[str, str]]) -> None:
+        """Reject code that matches blocked-language dangerous patterns."""
         patterns = self._python_dangerous_patterns if language == "python" else self._typescript_dangerous_patterns
         if allow_raw_http:
             patterns = tuple(p for p in patterns if "fetch" not in p and "curl" not in p and "wget" not in p)
@@ -1983,6 +2007,7 @@ class CodeExecutionService:
                 raise CodeExecutionSecurityError(message)
 
     def _enforce_rate_limit(self, server: DbServer, user_email: Optional[str], policy: Dict[str, Any], session_id: Optional[str] = None) -> None:
+        """Enforce per-user and optional per-session run throttling windows."""
         key = (server.id, user_email or "anonymous")
         user_window = self._rate_windows[key]
         session_window = self._session_rate_windows[session_id] if session_id else None
@@ -2016,6 +2041,7 @@ class CodeExecutionService:
         stderr_buffer = io.StringIO()
 
         async def _bridge(a: str, b: Optional[Any] = None, c: Optional[Any] = None) -> Any:
+            """Support both tool(args) and server/tool/args bridge signatures."""
             server_name = ""
             tool_name = ""
             args: Dict[str, Any] = {}
@@ -2050,12 +2076,13 @@ class CodeExecutionService:
             "list_dir": lambda p="/tools": self._list_virtual_dir(session, p),
         }
 
+        wrapped_body = "\n".join(f"    {line}" for line in code.splitlines())
         wrapped = "async def __user_main__():\n"
-        for line in code.splitlines():
-            wrapped += f"    {line}\n"
+        if wrapped_body:
+            wrapped += f"{wrapped_body}\n"
 
         try:
-            exec(wrapped, globals_dict)  # noqa: S102,DUO105  # nosec B102 - restricted builtins and explicit sandbox controls are enforced above
+            exec(wrapped, globals_dict)  # noqa: S102,DUO105  # pylint: disable=exec-used  # nosec B102 - restricted builtins and explicit sandbox controls are enforced above
             user_fn = globals_dict["__user_main__"]
             with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
                 result = await asyncio.wait_for(user_fn(), timeout=timeout_ms / 1000)
@@ -2186,6 +2213,7 @@ class CodeExecutionService:
         return SandboxExecutionResult(stdout=stdout, stderr=stderr, exit_code=exit_code, wall_time_ms=wall)
 
     def _execute_shell_pipeline_sync(self, session: CodeExecutionSession, command: str, policy: Dict[str, Any]) -> Tuple[str, str, int]:
+        """Execute a restricted internal shell pipeline synchronously."""
         tokens = shlex.split(command, posix=True)
         if not tokens:
             return ("", "", 0)
@@ -2236,6 +2264,7 @@ class CodeExecutionService:
         return (stdin, stderr, exit_code)
 
     def _shell_ls(self, session: CodeExecutionSession, args: List[str], policy: Dict[str, Any]) -> Tuple[str, str, int]:
+        """Implement the restricted `ls` command over virtual paths."""
         include_hidden = False
         paths: List[str] = []
         for arg in args:
@@ -2268,6 +2297,7 @@ class CodeExecutionService:
         return ("\n".join(entries) + ("\n" if entries else ""), "", 0)
 
     def _shell_cat(self, session: CodeExecutionSession, args: List[str], stdin: str, policy: Dict[str, Any]) -> Tuple[str, str, int]:
+        """Implement the restricted `cat` command over virtual paths/stdin."""
         if not args:
             return (stdin, "", 0)
 
@@ -2282,6 +2312,7 @@ class CodeExecutionService:
         return ("\n".join(chunks), "", 0)
 
     def _shell_grep(self, session: CodeExecutionSession, cmd: str, args: List[str], stdin: str, policy: Dict[str, Any]) -> Tuple[str, str, int]:
+        """Implement restricted `grep`/`rg` searching for virtual filesystem content."""
         recursive = False
         list_files = False
         include_glob: Optional[str] = None
@@ -2391,6 +2422,7 @@ class CodeExecutionService:
         return ("\n".join(matches) + ("\n" if matches else ""), "", 0 if matches else 1)
 
     def _shell_jq(self, session: CodeExecutionSession, args: List[str], stdin: str, policy: Dict[str, Any]) -> Tuple[str, str, int]:
+        """Implement a restricted `jq` transform for JSON content."""
         if not args:
             raise CodeExecutionError("jq: missing filter")
         jq_filter = args[0]
@@ -2425,6 +2457,7 @@ class CodeExecutionService:
         return ("\n".join(out_lines) + ("\n" if out_lines else ""), "", 0)
 
     def _normalize_shell_path(self, path: str) -> str:
+        """Normalize relative/absolute shell paths into virtual root paths."""
         raw = (path or ".").strip()
         if raw == ".":
             return "/scratch"
@@ -2474,6 +2507,7 @@ class CodeExecutionService:
             raise CodeExecutionSecurityError(f"EACCES: tool '{candidate}' is not allowed by policy")
 
     def _matches_any_pattern(self, value: str, patterns: Sequence[str]) -> bool:
+        """Return True when a value matches any configured glob pattern."""
         for pattern in patterns or []:
             if fnmatch.fnmatch(value, pattern):
                 return True
@@ -2482,6 +2516,7 @@ class CodeExecutionService:
         return False
 
     def _build_python_tools_namespace(self, session: CodeExecutionSession, bridge: Callable[[str, Optional[Dict[str, Any]]], Awaitable[Any]]) -> Any:
+        """Build a Python attribute namespace for mounted tool invocations."""
         groups: Dict[str, Dict[str, str]] = defaultdict(dict)
         for tool_name, meta in session.mounted_tools.items():
             server_slug = meta.get("server_slug", "tools")
@@ -2490,21 +2525,25 @@ class CodeExecutionService:
             groups[py_server][py_tool] = tool_name
 
         class ToolGroup:
+            """Namespace for mounted tools under a single server alias."""
+
             def __init__(self, mapping: Dict[str, str]) -> None:
                 self._mapping = mapping
 
             def __getattr__(self, item: str) -> Any:
+                """Resolve a dynamic tool attribute into an async bridge call."""
                 if item not in self._mapping:
                     raise AttributeError(item)
                 resolved_tool = self._mapping[item]
 
                 async def _invoke(args: Optional[Dict[str, Any]] = None) -> Any:
+                    """Invoke the resolved mounted tool through the bridge."""
                     return await bridge(resolved_tool, args)
 
                 return _invoke
 
         class ToolNamespace:
-            pass
+            """Root namespace containing ToolGroup instances by server alias."""
 
         namespace = ToolNamespace()
         for server_slug, mapping in groups.items():
@@ -2512,6 +2551,7 @@ class CodeExecutionService:
         return namespace
 
     def _tool_result_to_python_obj(self, result: "ToolResult") -> Any:
+        """Extract structured data from a tool result for Python callers."""
         payload: Dict[str, Any]
         if hasattr(result, "model_dump"):
             payload = result.model_dump(by_alias=True, mode="json")
@@ -2547,6 +2587,7 @@ class CodeExecutionService:
             return {"text": merged}
 
     def _tool_server_slug(self, tool: DbTool) -> str:
+        """Return a stable server slug for a mounted tool."""
         gateway = getattr(tool, "gateway", None)
         if gateway:
             slug = getattr(gateway, "slug", None) or slugify(getattr(gateway, "name", "gateway"))
@@ -2554,10 +2595,12 @@ class CodeExecutionService:
         return "local"
 
     def _tool_file_name(self, tool: DbTool) -> str:
+        """Return a deterministic filesystem-safe base filename for a tool."""
         value = getattr(tool, "custom_name_slug", None) or getattr(tool, "original_name", None) or tool.name
         return slugify(value).replace("-", "_")
 
     def _python_identifier(self, value: str) -> str:
+        """Convert arbitrary strings into valid Python identifiers."""
         normalized = re.sub(r"[^a-zA-Z0-9_]", "_", value)
         if not normalized:
             normalized = "x"
@@ -2566,6 +2609,7 @@ class CodeExecutionService:
         return normalized
 
     def _generate_typescript_stub(self, tool: DbTool, server_slug: str) -> str:
+        """Generate a TypeScript tool stub for mounted-tool calls."""
         function_name = self._python_identifier(self._tool_file_name(tool))
         if self._is_rust_acceleration_available() and rust_json_schema_to_stubs is not None:
             with contextlib.suppress(Exception):
@@ -2593,6 +2637,7 @@ class CodeExecutionService:
         )
 
     def _generate_python_stub(self, tool: DbTool, server_slug: str) -> str:
+        """Generate a Python tool stub for mounted-tool calls."""
         function_name = self._python_identifier(self._tool_file_name(tool))
         if self._is_rust_acceleration_available() and rust_json_schema_to_stubs is not None:
             with contextlib.suppress(Exception):
@@ -2618,13 +2663,14 @@ class CodeExecutionService:
         )
 
     def _schema_to_typescript_type(self, schema: Dict[str, Any]) -> str:
+        """Map JSON Schema fragments to TypeScript type expressions."""
         schema_type = schema.get("type")
         if schema.get("enum"):
             options = [json.dumps(v) for v in schema.get("enum", [])]
             return " | ".join(options) if options else "any"
         if schema_type == "string":
             return "string"
-        if schema_type == "integer" or schema_type == "number":
+        if schema_type in {"integer", "number"}:
             return "number"
         if schema_type == "boolean":
             return "boolean"
@@ -2644,6 +2690,7 @@ class CodeExecutionService:
         return "any"
 
     def _schema_to_python_type(self, schema: Dict[str, Any]) -> str:
+        """Map JSON Schema fragments to Python typing annotations."""
         schema_type = schema.get("type")
         if schema.get("enum"):
             values = [repr(v) for v in schema.get("enum", [])]
@@ -2663,6 +2710,7 @@ class CodeExecutionService:
         return "Any"
 
     def _write_runtime_helpers(self, tools_dir: Path) -> None:
+        """Write helper runtime bridge files used by generated stubs."""
         (tools_dir / "_runtime.ts").write_text(
             "// Auto-generated runtime helper for code-execution stubs.\n"
             "export type ToolResult<T = any> = Promise<T>;\n"
@@ -2679,6 +2727,7 @@ class CodeExecutionService:
         )
 
     def _build_search_index(self, tools_dir: Path) -> None:
+        """Build a simple text index for fast tool-search operations."""
         index_lines: List[str] = []
         for file_path in tools_dir.rglob("*"):
             if not file_path.is_file():
@@ -2696,6 +2745,7 @@ class CodeExecutionService:
         (tools_dir / ".search_index").write_text("\n".join(index_lines), encoding="utf-8")
 
     def _looks_like_shell_command(self, code: str) -> bool:
+        """Heuristically detect one-line shell-style commands."""
         stripped = code.strip()
         if "\n" in stripped:
             return False
@@ -2707,6 +2757,7 @@ class CodeExecutionService:
         return bool(re.match(r"^[A-Za-z0-9_./-]+\s?.*$", stripped))
 
     def _enforce_disk_limits(self, session: CodeExecutionSession, policy: Dict[str, Any]) -> None:
+        """Enforce per-file and aggregate disk quotas in writable roots."""
         max_file_bytes = int(policy.get("max_file_size_mb", self._sandbox_limit_defaults["max_file_size_mb"])) * 1024 * 1024
         max_total_bytes = int(policy.get("max_total_disk_mb", self._sandbox_limit_defaults["max_total_disk_mb"])) * 1024 * 1024
         total_bytes = 0
@@ -2728,6 +2779,7 @@ class CodeExecutionService:
         request_headers: Optional[Dict[str, str]],
         threat_indicators: Dict[str, Any],
     ) -> None:
+        """Emit a structured security event for blocked or risky operations."""
         client_ip = "unknown"
         if request_headers:
             client_ip = request_headers.get("x-forwarded-for") or request_headers.get("x-real-ip") or "unknown"
@@ -2746,6 +2798,7 @@ class CodeExecutionService:
             )
 
     def _virtual_to_real_path(self, session: CodeExecutionSession, virtual_path: str) -> Optional[Path]:
+        """Resolve a virtual path into a session-scoped real filesystem path."""
         normalized = "/" + virtual_path.strip().lstrip("/")
         mapping = {
             "/tools": session.tools_dir,
@@ -2765,6 +2818,7 @@ class CodeExecutionService:
         return None
 
     def _real_to_virtual_path(self, session: CodeExecutionSession, real_path: Path) -> str:
+        """Convert a real path under session roots back into virtual notation."""
         candidates = (
             (session.tools_dir.resolve(), "/tools"),
             (session.scratch_dir.resolve(), "/scratch"),
@@ -2779,12 +2833,14 @@ class CodeExecutionService:
         return resolved.as_posix()
 
     def _read_virtual_text_file(self, session: CodeExecutionSession, virtual_path: str) -> str:
+        """Read UTF-8 text from an allowed virtual file path."""
         real_path = self._virtual_to_real_path(session, virtual_path)
         if real_path is None or not real_path.exists() or not real_path.is_file():
             raise CodeExecutionSecurityError(f"EACCES: read denied for path: {virtual_path}")
         return real_path.read_text(encoding="utf-8")
 
     def _write_virtual_text_file(self, session: CodeExecutionSession, virtual_path: str, content: str) -> None:
+        """Write UTF-8 text to allowed writable virtual filesystem roots."""
         real_path = self._virtual_to_real_path(session, virtual_path)
         if real_path is None:
             raise CodeExecutionSecurityError(f"EACCES: write denied for path: {virtual_path}")
@@ -2796,12 +2852,14 @@ class CodeExecutionService:
         real_path.write_text(content, encoding="utf-8")
 
     def _list_virtual_dir(self, session: CodeExecutionSession, virtual_path: str) -> List[str]:
+        """List directory entries from an allowed virtual directory path."""
         real_path = self._virtual_to_real_path(session, virtual_path)
         if real_path is None or not real_path.exists() or not real_path.is_dir():
             raise CodeExecutionSecurityError(f"EACCES: read denied for path: {virtual_path}")
         return sorted(child.name for child in real_path.iterdir())
 
     async def _destroy_session(self, session: CodeExecutionSession) -> None:
+        """Destroy runtime artifacts and remove the session workspace."""
         with contextlib.suppress(Exception):
             await self._deno_runtime.destroy_session(session)
         with contextlib.suppress(Exception):
@@ -2809,10 +2867,12 @@ class CodeExecutionService:
         shutil.rmtree(session.root_dir, ignore_errors=True)
 
     def _wipe_and_recreate_directory(self, path: Path) -> None:
+        """Recreate a directory from scratch, discarding previous contents."""
         shutil.rmtree(path, ignore_errors=True)
         path.mkdir(parents=True, exist_ok=True)
 
     def _percentile(self, values: Iterable[int], percentile: int) -> float:
+        """Compute a linear-interpolated percentile for numeric samples."""
         sorted_vals = sorted(values)
         if not sorted_vals:
             return 0.0

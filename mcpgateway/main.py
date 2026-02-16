@@ -3193,6 +3193,7 @@ async def replay_code_execution_run(
         token_teams = []
 
     async def _bridge(tool_name: str, tool_args: Dict[str, Any]):
+        """Invoke nested tool calls during replay with fresh DB session scope."""
         with fresh_db_session() as nested_db:
             return await tool_service.invoke_tool(
                 db=nested_db,
