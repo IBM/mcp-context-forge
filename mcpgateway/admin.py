@@ -938,6 +938,12 @@ def _is_explicit_token_team_scope(user: Any) -> bool:
 
     Tokens with ``token_teams`` present and not ``None`` are scope-constrained
     (including public-only tokens with ``[]``). ``None`` denotes admin bypass.
+
+    Args:
+        user (Any): Authenticated user context.
+
+    Returns:
+        bool: True when ``token_teams`` is present and not ``None``.
     """
     if not isinstance(user, dict):
         return False
@@ -950,6 +956,16 @@ def _owner_access_condition(owner_column, team_column, *, user_email: str, team_
     For explicit token scopes, owner visibility is constrained to token teams.
     For legacy/session contexts without explicit scope (or admin bypass), keep
     existing owner visibility semantics.
+
+    Args:
+        owner_column: SQLAlchemy owner-email column expression.
+        team_column: SQLAlchemy team-id column expression.
+        user_email (str): Current user email.
+        team_ids (list[str]): Team IDs visible to this auth context.
+        user (Any): Authenticated user context.
+
+    Returns:
+        Any: SQLAlchemy boolean predicate for owner visibility.
     """
     if _is_explicit_token_team_scope(user):
         if not team_ids:
@@ -967,7 +983,19 @@ async def _has_permission(
     allow_admin_bypass: bool = False,
     check_any_team: bool = False,
 ) -> bool:
-    """Check a permission for the current user context."""
+    """Check a permission for the current user context.
+
+    Args:
+        db (Session): Database session.
+        user (dict): Authenticated user context.
+        permission (str): Permission to evaluate.
+        team_id (Optional[str]): Optional team scope for the permission check.
+        allow_admin_bypass (bool): Whether admin bypass is allowed.
+        check_any_team (bool): Whether to check across all team-scoped roles.
+
+    Returns:
+        bool: True when permission is granted.
+    """
     permission_service = PermissionService(db)
     return await permission_service.check_permission(
         user_email=get_user_email(user),
