@@ -370,7 +370,7 @@
     - ⏳ [**#2221**](https://github.com/IBM/mcp-context-forge/issues/2221) - [CATALOG]: Curated secure MCP server catalog with trust tiers
     - ⏳ [**#2224**](https://github.com/IBM/mcp-context-forge/issues/2224) - [COMPLIANCE]: Compliance report generator - FedRAMP/HIPAA/SOC2 automation
     - ⏳ [**#2225**](https://github.com/IBM/mcp-context-forge/issues/2225) - [POLICY]: Policy audit trail and decision logging
-    - ⏳ [**#2226**](https://github.com/IBM/mcp-context-forge/issues/2226) - [POLICY]: Policy testing and simulation sandbox
+    - ✅ [**#2226**](https://github.com/IBM/mcp-context-forge/issues/2226) - [POLICY]: Policy testing and simulation sandbox
     - ⏳ [**#2227**](https://github.com/IBM/mcp-context-forge/issues/2227) - Just-in-time (JIT) access and temporary privilege elevation
     - ⏳ [**#2229**](https://github.com/IBM/mcp-context-forge/issues/2229) - [SEARCH]: Tool embedding index and semantic search service
     - ⏳ [**#2230**](https://github.com/IBM/mcp-context-forge/issues/2230) - Virtual meta-server - Comprehensive tool discovery and execution layer

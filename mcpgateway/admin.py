@@ -40,7 +40,7 @@ import urllib.parse
 import uuid
 
 # Third-Party
-from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
@@ -17933,3 +17933,750 @@ async def get_performance_history(
     )
 
     return history.model_dump()
+
+    # ============================================================================
+
+
+# Sandbox Policy Testing Routes (Issue #2226)
+# ============================================================================
+
+
+@admin_router.get("/sandbox/", response_class=HTMLResponse)
+async def sandbox_dashboard(
+    request: Request,
+):
+    """Sandbox dashboard - Policy testing overview.
+
+    Displays statistics, recent simulations, and quick action buttons
+    for policy testing and simulation.
+
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # Mock stats — replace with real database queries when persistence layer is ready
+    stats = {
+        "total_test_cases": 12,
+        "total_simulations": 48,
+        "pass_rate": 87.5,  # nosec B105
+        "critical_regressions": 2,
+    }
+
+    # Mock recent simulations — replace with database query when persistence layer is ready
+    recent_simulations = [
+        {
+            "test_case_id": "test-001",
+            "subject_email": "developer@example.com",
+            "action": "tools.invoke",
+            "passed": True,
+            "execution_time_ms": 45.2,
+            "timestamp": datetime.now(timezone.utc),
+        },
+        {
+            "test_case_id": "test-002",
+            "subject_email": "admin@example.com",
+            "action": "resources.read",
+            "passed": True,
+            "execution_time_ms": 32.8,
+            "timestamp": datetime.now(timezone.utc),
+        },
+        {
+            "test_case_id": "test-003",
+            "subject_email": "viewer@example.com",
+            "action": "tools.delete",
+            "passed": False,
+            "execution_time_ms": 28.1,
+            "timestamp": datetime.now(timezone.utc),
+        },
+    ]
+
+    return request.app.state.templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": None,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_partial.html",
+            "stats": stats,
+            "recent_simulations": recent_simulations,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.get("/sandbox/simulate", response_class=HTMLResponse)
+async def sandbox_simulate_page(
+    request: Request,
+):
+    """Simulation runner page - Run single test case.
+
+    Provides a form to create and run a single policy test case
+    with detailed results and explanation.
+
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    return request.app.state.templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": None,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_simulate.html",
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.post("/sandbox/simulate", response_class=HTMLResponse)
+async def sandbox_simulate_run(
+    request: Request,
+    policy_draft_id: str = Form(...),
+    subject_email: str = Form(...),
+    subject_team_id: str = Form(""),
+    subject_roles: str = Form(...),
+    action: str = Form(...),
+    resource_type: str = Form(...),
+    resource_id: str = Form(...),
+    resource_server: str = Form(""),
+    expected_decision: str = Form(...),
+    db: Session = Depends(get_db),
+):  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    """Run a single policy simulation and return HTML results.
+
+    Receives form data from the simulation UI, constructs a TestCase,
+    runs it through SandboxService, and returns rendered results HTML.
+
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # pylint: disable=import-outside-toplevel
+    # First-Party
+    from mcpgateway.schemas import TestCase
+    from mcpgateway.services.sandbox_service import SandboxService
+    from plugins.unified_pdp.pdp_models import Context, Decision
+    from plugins.unified_pdp.pdp_models import Resource as PDPResource
+    from plugins.unified_pdp.pdp_models import Subject
+
+    return await _run_simulate(
+        request,
+        db,
+        policy_draft_id,
+        subject_email,
+        subject_team_id,
+        subject_roles,
+        action,
+        resource_type,
+        resource_id,
+        resource_server,
+        expected_decision,
+        TestCase,
+        SandboxService,
+        Context,
+        Decision,
+        PDPResource,
+        Subject,
+    )
+
+
+async def _run_simulate(  # pylint: disable=too-many-arguments,too-many-positional-arguments,too-many-locals
+    request: Request,
+    db: Session,
+    policy_draft_id: str,
+    subject_email: str,
+    subject_team_id: str,
+    subject_roles: str,
+    action: str,
+    resource_type: str,
+    resource_id: str,
+    resource_server: str,
+    expected_decision: str,
+    test_case_cls: type,
+    sandbox_svc_cls: type,
+    context_cls: type,
+    decision_cls: type,
+    pdp_resource_cls: type,
+    subject_cls: type,
+) -> HTMLResponse:
+    """Execute single policy simulation (implementation helper)."""
+    tmpl = request.app.state.templates
+    try:
+        roles = [r.strip() for r in subject_roles.split(",") if r.strip()]
+        subject = subject_cls(email=subject_email, roles=roles, team_id=subject_team_id or None)
+        resource = pdp_resource_cls(type=resource_type, id=resource_id, server=resource_server or None)
+
+        decision_map = {"allow": decision_cls.ALLOW, "deny": decision_cls.DENY}
+        expected = decision_map.get(expected_decision.lower(), decision_cls.DENY)
+
+        description_text = f"UI simulation: {subject_email} -> {action} on {resource_type}/{resource_id}"
+        test_case = test_case_cls(
+            subject=subject,
+            action=action,
+            resource=resource,
+            context=context_cls(),
+            expected_decision=expected,
+            description=description_text,
+        )
+
+        LOGGER.info(
+            "Starting sandbox simulation for %s -> %s on %s/%s",
+            subject_email,
+            action,
+            resource_type,
+            resource_id,
+        )
+        sandbox = sandbox_svc_cls(db)
+        try:
+            result = await asyncio.wait_for(
+                sandbox.simulate_single(
+                    policy_draft_id=policy_draft_id,
+                    test_case=test_case,
+                    include_explanation=True,
+                ),
+                timeout=10.0,
+            )
+        except asyncio.TimeoutError:
+            LOGGER.error("Simulation timed out after 10s")
+            return tmpl.TemplateResponse(
+                "sandbox_simulate_results.html",
+                {
+                    "request": request,
+                    "result": None,
+                    "error": "Simulation timed out after 10 seconds.",
+                    "root_path": settings.app_root_path,
+                },
+            )
+
+        LOGGER.info("Simulation complete: passed=%s", result.passed)
+        return tmpl.TemplateResponse(
+            "sandbox_simulate_results.html",
+            {"request": request, "result": result, "error": None, "root_path": settings.app_root_path},
+        )
+
+    except Exception:  # pylint: disable=broad-exception-caught
+        LOGGER.exception("Simulation failed")
+        return tmpl.TemplateResponse(
+            "sandbox_simulate_results.html",
+            {"request": request, "result": None, "error": "Simulation failed", "root_path": settings.app_root_path},
+        )
+
+
+@admin_router.get("/sandbox/test-cases", response_class=HTMLResponse)
+async def sandbox_test_cases_page(
+    request: Request,
+):
+    """Test case management page.
+
+    List, create, edit, and delete test cases for policy testing.
+
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # Placeholder — load from database when persistence layer is ready
+    test_cases = []
+
+    return request.app.state.templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": None,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_test_cases.html",
+            "test_cases": test_cases,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test Case CRUD API (in-memory store)
+# Related to Issue #2226: Policy testing and simulation sandbox
+# ---------------------------------------------------------------------------
+
+
+# In-memory store — simple dict avoids pylint too-few-public-methods.
+_TC_STORE: dict[str, Any] = {
+    "cases": [
+        {
+            "id": "tc-001",
+            "description": "Developer can invoke DB tool",
+            "subject": "dev@example.com",
+            "action": "tools.invoke",
+            "resource": "db-query",
+            "expected": "ALLOW",
+        },
+        {
+            "id": "tc-002",
+            "description": "Viewer cannot delete",
+            "subject": "viewer@example.com",
+            "action": "tools.delete",
+            "resource": "cleanup",
+            "expected": "DENY",
+        },
+        {
+            "id": "tc-003",
+            "description": "Admin reads resources",
+            "subject": "admin@example.com",
+            "action": "resources.read",
+            "resource": "api-keys",
+            "expected": "ALLOW",
+        },
+    ],
+    "counter": 3,
+}
+
+
+@admin_router.get("/sandbox/test-cases/api")
+async def sandbox_test_cases_list(
+    request: Request,  # noqa: ARG001  # pylint: disable=unused-argument
+):
+    """List all sandbox test cases."""
+    return {"cases": _TC_STORE["cases"]}
+
+
+@admin_router.post("/sandbox/test-cases/api")
+async def sandbox_test_cases_create(request: Request):
+    """Create a new sandbox test case."""
+    body = await request.json()
+    _TC_STORE["counter"] += 1
+    tc = {
+        "id": f"tc-{_TC_STORE['counter']:03d}",
+        "description": body.get("description", ""),
+        "subject": body.get("subject", ""),
+        "action": body.get("action", ""),
+        "resource": body.get("resource", ""),
+        "expected": body.get("expected", "ALLOW"),
+    }
+    _TC_STORE["cases"].append(tc)
+    return tc
+
+
+@admin_router.put("/sandbox/test-cases/api/{tc_id}")
+async def sandbox_test_cases_update(tc_id: str, request: Request):
+    """Update an existing sandbox test case."""
+    body = await request.json()
+    for tc in _TC_STORE["cases"]:
+        if tc["id"] == tc_id:
+            tc["description"] = body.get("description", tc["description"])
+            tc["subject"] = body.get("subject", tc["subject"])
+            tc["action"] = body.get("action", tc["action"])
+            tc["resource"] = body.get("resource", tc["resource"])
+            tc["expected"] = body.get("expected", tc["expected"])
+            return tc
+    return {"error": f"Test case {tc_id} not found"}
+
+
+@admin_router.delete("/sandbox/test-cases/api/{tc_id}")
+async def sandbox_test_cases_delete(
+    tc_id: str,
+    request: Request,  # noqa: ARG001  # pylint: disable=unused-argument
+):
+    """Delete a sandbox test case."""
+    before = len(_TC_STORE["cases"])
+    _TC_STORE["cases"] = [tc for tc in _TC_STORE["cases"] if tc["id"] != tc_id]
+    if len(_TC_STORE["cases"]) < before:
+        return {"ok": True}
+    return {"error": f"Test case {tc_id} not found"}
+
+
+@admin_router.post("/sandbox/batch/run")
+async def sandbox_batch_run(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Run batch simulation via JSON API.
+
+    Receives JSON array of test cases, runs each through SandboxService,
+    and returns aggregated results as JSON.
+
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    # First-Party
+    from mcpgateway.schemas import TestCase
+    from mcpgateway.services.sandbox_service import SandboxService
+    from plugins.unified_pdp.pdp_models import Context, Decision
+    from plugins.unified_pdp.pdp_models import Resource as PDPResource
+    from plugins.unified_pdp.pdp_models import Subject
+
+    try:
+        body = await request.json()
+        policy_draft_id = body.get("policy_draft_id", "draft-permissive")
+        parallel = body.get("parallel", True)
+        test_cases_raw = body.get("test_cases", [])
+
+        if not test_cases_raw:
+            return {"error": "No test cases provided"}
+
+        test_cases = _build_batch_test_cases(
+            test_cases_raw,
+            TestCase,
+            Subject,
+            PDPResource,
+            Context,
+            Decision,
+        )
+
+        sandbox = SandboxService(db)
+        batch_result = await asyncio.wait_for(
+            sandbox.run_batch(
+                policy_draft_id=policy_draft_id,
+                test_cases=test_cases,
+                parallel_execution=parallel,
+            ),
+            timeout=30.0,
+        )
+
+        details = _format_batch_details(batch_result, test_cases_raw)
+        return {
+            "total": batch_result.total_tests,
+            "passed": batch_result.passed,
+            "failed": batch_result.failed,
+            "passRate": round(batch_result.pass_rate, 1),
+            "details": details,
+        }
+
+    except asyncio.TimeoutError:
+        LOGGER.error("Batch simulation timed out")
+        return {"error": "Batch simulation timed out after 30 seconds"}
+    except Exception:  # pylint: disable=broad-exception-caught
+        LOGGER.exception("Batch simulation failed")
+        return {"error": "Batch simulation failed"}
+
+
+def _build_batch_test_cases(  # pylint: disable=too-many-arguments,too-many-positional-arguments
+    test_cases_raw: list[dict],
+    test_case_cls: type,
+    subject_cls: type,
+    resource_cls: type,
+    context_cls: type,
+    decision_cls: type,
+) -> list:
+    """Build TestCase objects from raw batch input dicts."""
+    test_cases = []
+    for tc in test_cases_raw:
+        parts = tc.get("resource", "tool:unknown").split(":", 1)
+        rtype = parts[0] if parts else "tool"
+        rid = parts[1] if len(parts) > 1 else parts[0]
+
+        subject = subject_cls(
+            email=tc.get("subject", "unknown@example.com"),
+            roles=["user"],
+        )
+        resource = resource_cls(type=rtype, id=rid)
+        exp_str = tc.get("expected", "ALLOW").lower()
+        expected = decision_cls.ALLOW if exp_str == "allow" else decision_cls.DENY
+
+        test_cases.append(
+            test_case_cls(
+                subject=subject,
+                action=tc.get("action", "tools.invoke"),
+                resource=resource,
+                context=context_cls(),
+                expected_decision=expected,
+            )
+        )
+    return test_cases
+
+
+def _format_batch_details(batch_result: Any, test_cases_raw: list[dict]) -> list[dict]:
+    """Format batch simulation results for JSON response."""
+    details = []
+    for i, r in enumerate(batch_result.results):
+        tc_raw = test_cases_raw[i] if i < len(test_cases_raw) else {}
+        details.append(
+            {
+                "subject": tc_raw.get("subject", ""),
+                "action": tc_raw.get("action", ""),
+                "resource": tc_raw.get("resource", ""),
+                "expected": tc_raw.get("expected", ""),
+                "actual": r.actual_decision.value.upper(),
+                "passed": r.passed,
+                "time": str(round(r.execution_time_ms, 1)),
+            }
+        )
+    return details
+
+
+@admin_router.get("/sandbox/batch", response_class=HTMLResponse)
+async def sandbox_batch_page(
+    request: Request,
+):
+    """Batch runner page - Run multiple test cases."""
+    return request.app.state.templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": None,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_batch.html",
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.post("/sandbox/regression/run")
+async def sandbox_regression_run(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Run regression test via JSON API.
+
+    Receives JSON config, runs regression through SandboxService,
+    and returns results as JSON.
+
+    Related to Issue #2226: Policy testing and simulation sandbox
+    """
+    # pylint: disable=import-outside-toplevel,too-many-locals
+    # First-Party
+    from mcpgateway.services.sandbox_service import SandboxService
+
+    try:
+        body = await request.json()
+        policy_draft_id = body.get("policy_draft_id", "")
+        baseline_version = body.get("baseline_version", "prod-v2.1")
+        replay_days = int(body.get("replay_days", 7))
+        sample_size = int(body.get("sample_size", 1000))
+        filter_subject = body.get("filter_subject") or None
+        filter_action = body.get("filter_action") or None
+
+        if not policy_draft_id:
+            return {"error": "No policy draft selected"}
+
+        sandbox = SandboxService(db)
+        report = await asyncio.wait_for(
+            sandbox.run_regression(
+                policy_draft_id=policy_draft_id,
+                baseline_policy_version=baseline_version,
+                replay_last_days=replay_days,
+                sample_size=sample_size,
+                filter_by_subject=filter_subject,
+                filter_by_action=filter_action,
+            ),
+            timeout=60.0,
+        )
+
+        return _format_regression_report(report)
+
+    except asyncio.TimeoutError:
+        LOGGER.error("Regression test timed out")
+        return {"error": "Regression test timed out after 60 seconds"}
+    except Exception:  # pylint: disable=broad-exception-caught
+        LOGGER.exception("Regression test failed")
+        return {"error": "Regression test failed"}
+
+
+def _format_regression_report(report: Any) -> dict:
+    """Format regression report for JSON response."""
+    regressions_only = [
+        {
+            "historicalId": c.historical_id,
+            "subjectEmail": c.subject_email,
+            "action": c.action,
+            "resourceType": c.resource_type,
+            "resourceId": c.resource_id,
+            "historicalDecision": c.historical_decision.value.upper(),
+            "simulatedDecision": c.simulated_decision.value.upper(),
+            "severity": c.severity,
+            "impactDescription": c.impact_description,
+        }
+        for c in report.regressions_only
+    ]
+
+    return {
+        "policyDraftId": report.policy_draft_id,
+        "baselineVersion": report.baseline_policy_version,
+        "totalDecisions": report.total_decisions,
+        "matchingDecisions": report.matching_decisions,
+        "differentDecisions": report.different_decisions,
+        "regressionRate": report.regression_rate,
+        "criticalRegressions": report.critical_regressions,
+        "highRegressions": report.high_regressions,
+        "mediumRegressions": report.medium_regressions,
+        "lowRegressions": report.low_regressions,
+        "durationMs": report.duration_ms,
+        "completedAt": report.completed_at.isoformat(),
+        "regressionsOnly": regressions_only,
+    }
+
+
+@admin_router.get("/sandbox/regression", response_class=HTMLResponse)
+async def sandbox_regression_page(
+    request: Request,
+):
+    """Regression testing page - Detect policy regressions."""
+    return request.app.state.templates.TemplateResponse(
+        "admin.html",
+        {
+            "request": request,
+            "current_user": None,
+            "active_tab": "sandbox",
+            "partial_template": "sandbox_regression.html",
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.get("/sandbox/partial", response_class=HTMLResponse)
+async def admin_sandbox_partial(
+    request: Request,
+):
+    """Return the sandbox dashboard partial for HTMX (lazy-loaded into admin shell).
+
+    This mirrors /admin/sandbox/ which renders the full admin shell but allows
+    the in-page tab to fetch only the partial content.
+    """
+    # Mock stats for now - keep consistent with sandbox_dashboard
+    stats = {
+        "total_test_cases": 12,
+        "total_simulations": 48,
+        "pass_rate": 87.5,  # nosec B105
+        "critical_regressions": 2,
+    }
+
+    recent_simulations = [
+        {
+            "test_case_id": "test-001",
+            "subject_email": "developer@example.com",
+            "action": "tools.invoke",
+            "passed": True,
+            "execution_time_ms": 45.2,
+            "timestamp": datetime.now(timezone.utc),
+        },
+        {
+            "test_case_id": "test-002",
+            "subject_email": "admin@example.com",
+            "action": "resources.read",
+            "passed": True,
+            "execution_time_ms": 32.8,
+            "timestamp": datetime.now(timezone.utc),
+        },
+    ]
+
+    return request.app.state.templates.TemplateResponse(
+        "sandbox_partial.html",
+        {
+            "request": request,
+            "current_user": None,
+            "stats": stats,
+            "recent_simulations": recent_simulations,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.get("/sandbox/simulate/partial", response_class=HTMLResponse)
+async def admin_sandbox_simulate_partial(
+    request: Request,
+):
+    """Return the simulate page partial for HTMX (lazy-loaded into sandbox panel)."""
+    return request.app.state.templates.TemplateResponse(
+        "sandbox_simulate.html",
+        {
+            "request": request,
+            "current_user": None,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.get("/sandbox/test-cases/partial", response_class=HTMLResponse)
+async def admin_sandbox_test_cases_partial(
+    request: Request,
+):
+    """Return the test cases page partial for HTMX (lazy-loaded into sandbox panel)."""
+    test_cases = []
+    return request.app.state.templates.TemplateResponse(
+        "sandbox_test_cases.html",
+        {
+            "request": request,
+            "current_user": None,
+            "test_cases": test_cases,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.get("/sandbox/batch/partial", response_class=HTMLResponse)
+async def admin_sandbox_batch_partial(
+    request: Request,
+):
+    """Return the batch testing page partial for HTMX (lazy-loaded into sandbox panel)."""
+    return request.app.state.templates.TemplateResponse(
+        "sandbox_batch.html",
+        {
+            "request": request,
+            "current_user": None,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )
+
+
+@admin_router.get("/sandbox/regression/partial", response_class=HTMLResponse)
+async def admin_sandbox_regression_partial(
+    request: Request,
+):
+    """Return the regression testing page partial for HTMX (lazy-loaded into sandbox panel)."""
+    return request.app.state.templates.TemplateResponse(
+        "sandbox_regression.html",
+        {
+            "request": request,
+            "current_user": None,
+            "root_path": settings.app_root_path,
+            "ui_airgapped": settings.mcpgateway_ui_airgapped,
+            "max_name_length": settings.validation_max_name_length,
+            "gateway_tool_name_separator": settings.gateway_tool_name_separator,
+            "is_admin": False,
+            "user_teams": [],
+            "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
+        },
+    )

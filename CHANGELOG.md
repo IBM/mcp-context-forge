@@ -4,6 +4,14 @@
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Sandbox Policy Testing UI** ([#2226](https://github.com/IBM/mcp-context-forge/issues/2226)) - Admin sidebar tab with HTMX in-panel navigation for policy simulation, batch testing, regression analysis, and test case management.
+
+---
+
 ## [1.0.0-RC1] - 2026-01-28 - Security Hardening, Enterprise Controls & Quality
 
 ### Overview

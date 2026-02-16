@@ -378,6 +378,28 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
+    // Re-initialize Alpine.js components when HTMX swaps content into sandbox panel
+    // Uses setTimeout to allow inline <script> tags in swapped content to execute
+    // before Alpine tries to evaluate x-data="componentName()" expressions
+    document.body.addEventListener("htmx:afterSettle", function (event) {
+        const target = event.detail.target;
+        if (target && (target.id === "sandbox-panel" || (target.closest && target.closest("#sandbox-panel")))) {
+            setTimeout(function () {
+                if (window.Alpine && typeof window.Alpine.initTree === "function") {
+                    try {
+                        const sandboxPanel = document.getElementById("sandbox-panel");
+                        if (sandboxPanel) {
+                            window.Alpine.initTree(sandboxPanel);
+                            console.log("🧪 Alpine.js re-initialized for sandbox panel");
+                        }
+                    } catch (err) {
+                        console.warn("Alpine re-init failed for sandbox panel:", err);
+                    }
+                }
+            }, 50);
+        }
+    });
+
     // Initialize search when switching tabs
     document.addEventListener("click", function (event) {
         if (
@@ -390,6 +412,254 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 });
+
+// ===================================================================
+// SANDBOX ALPINE.JS COMPONENTS
+// Defined globally so they're available before Alpine.initTree() runs
+// after HTMX swaps. Uses window.SANDBOX_ROOT_PATH set in admin.html.
+// Related to Issue #2226: Policy testing and simulation sandbox
+// ===================================================================
+
+/**
+ * Batch Runner component - run multiple policy test cases at once
+ */
+function batchRunner() {
+  var rootPath = window.SANDBOX_ROOT_PATH || '';
+  return {
+    policyDraft: '',
+    testSuite: '',
+    parallelExecution: true,
+    testCases: [
+      { selected: true, subject: 'developer@example.com', action: 'tools.invoke', resource: 'tool:db-query', expected: 'ALLOW' },
+      { selected: true, subject: 'admin@example.com', action: 'tools.delete', resource: 'tool:cleanup', expected: 'ALLOW' },
+      { selected: true, subject: 'viewer@example.com', action: 'tools.invoke', resource: 'tool:db-query', expected: 'DENY' },
+    ],
+    newTest: { subject: '', action: '', resource: '', expected: 'ALLOW' },
+    results: null,
+
+    selectedCount: function() {
+      return this.testCases.filter(function(tc) { return tc.selected; }).length;
+    },
+
+    selectAll: function() {
+      this.testCases.forEach(function(tc) { tc.selected = true; });
+    },
+
+    addTestCase: function() {
+      if (this.newTest.subject && this.newTest.action && this.newTest.resource) {
+        this.testCases.push({
+          selected: true,
+          subject: this.newTest.subject,
+          action: this.newTest.action,
+          resource: this.newTest.resource,
+          expected: this.newTest.expected
+        });
+        this.newTest = { subject: '', action: '', resource: '', expected: 'ALLOW' };
+      }
+    },
+
+    removeTestCase: function(index) {
+      this.testCases.splice(index, 1);
+    },
+
+    runBatch: async function() {
+      var selected = this.testCases.filter(function(tc) { return tc.selected; });
+      if (selected.length === 0 || !this.policyDraft) return;
+      this.results = null;
+
+      try {
+        var response = await fetch(rootPath + '/admin/sandbox/batch/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            policy_draft_id: this.policyDraft,
+            parallel: this.parallelExecution,
+            test_cases: selected.map(function(tc) {
+              return { subject: tc.subject, action: tc.action, resource: tc.resource, expected: tc.expected };
+            }),
+          }),
+        });
+        var data = await response.json();
+        if (data.error) { alert('Batch failed: ' + data.error); return; }
+        this.results = data;
+      } catch (err) {
+        alert('Batch request failed: ' + err.message);
+      }
+
+      setTimeout(function() {
+        var el = document.getElementById('batchResults');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    }
+  };
+}
+
+/**
+ * Regression Dashboard component - replay historical decisions
+ */
+function regressionDashboard() {
+  var rootPath = window.SANDBOX_ROOT_PATH || '';
+  return {
+    config: {
+      policyDraft: '',
+      baselineVersion: '',
+      replayDays: 7,
+      sampleSize: 1000,
+      filterSubject: '',
+      filterAction: ''
+    },
+    loading: false,
+    results: null,
+
+    runRegression: async function() {
+      this.loading = true;
+      this.results = null;
+
+      try {
+        var response = await fetch(rootPath + '/admin/sandbox/regression/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            policy_draft_id: this.config.policyDraft,
+            baseline_version: this.config.baselineVersion,
+            replay_days: parseInt(this.config.replayDays),
+            sample_size: parseInt(this.config.sampleSize),
+            filter_subject: this.config.filterSubject || null,
+            filter_action: this.config.filterAction || null,
+          }),
+        });
+        var data = await response.json();
+        if (data.error) { alert('Regression test failed: ' + data.error); this.loading = false; return; }
+        this.results = data;
+      } catch (err) {
+        alert('Regression request failed: ' + err.message);
+      }
+      this.loading = false;
+
+      setTimeout(function() {
+        var el = document.querySelector('[x-show="results"]');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }, 100);
+    },
+
+    getSeverityBadgeClass: function(severity) {
+      var classes = {
+        critical: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200',
+        high: 'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+        medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200',
+        low: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
+      };
+      return classes[severity] || classes.low;
+    },
+
+    getSeverityRowClass: function(severity) {
+      var classes = {
+        critical: 'bg-red-50/50 dark:bg-red-900/10',
+        high: 'bg-orange-50/50 dark:bg-orange-900/10',
+        medium: 'bg-yellow-50/50 dark:bg-yellow-900/10',
+        low: 'bg-blue-50/50 dark:bg-blue-900/10'
+      };
+      return classes[severity] || '';
+    },
+
+    formatDate: function(dateStr) {
+      if (!dateStr) return '';
+      return new Date(dateStr).toLocaleString();
+    }
+  };
+}
+
+/**
+ * Test Case Manager component - CRUD for policy test cases
+ */
+function testCaseManager() {
+  var rootPath = window.SANDBOX_ROOT_PATH || '';
+  var apiBase = rootPath + '/admin/sandbox/test-cases/api';
+  return {
+    cases: [],
+    filtered: [],
+    search: '',
+    filterAction: '',
+    filterDecision: '',
+    modal: false,
+    editing: null,
+    form: { description: '', subject: '', action: '', resource: '', expected: '' },
+
+    init: async function() {
+      try {
+        var resp = await fetch(apiBase);
+        var data = await resp.json();
+        this.cases = data.cases || [];
+      } catch(e) { console.error('Failed to load test cases:', e); }
+      this.filter();
+    },
+
+    filter: function() {
+      var search = this.search;
+      var filterAction = this.filterAction;
+      var filterDecision = this.filterDecision;
+      this.filtered = this.cases.filter(function(c) {
+        return (!search || c.description.toLowerCase().indexOf(search.toLowerCase()) >= 0 || c.subject.toLowerCase().indexOf(search.toLowerCase()) >= 0) &&
+          (!filterAction || c.action === filterAction) &&
+          (!filterDecision || c.expected === filterDecision);
+      });
+    },
+
+    openCreate: function() {
+      this.editing = null;
+      this.form = { description: '', subject: '', action: '', resource: '', expected: '' };
+      this.modal = true;
+    },
+
+    openEdit: function(tc) {
+      this.editing = tc.id;
+      this.form = Object.assign({}, tc);
+      this.modal = true;
+    },
+
+    closeModal: function() {
+      this.modal = false;
+      this.editing = null;
+    },
+
+    save: async function() {
+      try {
+        if (this.editing) {
+          var resp = await fetch(apiBase + '/' + this.editing, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.form)
+          });
+          var updated = await resp.json();
+          if (!updated.error) {
+            var i = this.cases.findIndex(function(c) { return c.id === updated.id; });
+            if (i >= 0) this.cases[i] = updated;
+          }
+        } else {
+          var resp2 = await fetch(apiBase, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(this.form)
+          });
+          var created = await resp2.json();
+          if (!created.error) this.cases.push(created);
+        }
+      } catch(e) { alert('Save failed: ' + e.message); }
+      this.filter();
+      this.closeModal();
+    },
+
+    deleteCase: async function(id) {
+      if (!confirm('Delete test case?')) return;
+      try {
+        await fetch(apiBase + '/' + id, { method: 'DELETE' });
+        this.cases = this.cases.filter(function(c) { return c.id !== id; });
+      } catch(e) { alert('Delete failed: ' + e.message); }
+      this.filter();
+    }
+  };
+}
+
 /**
  * ====================================================================
  * SECURE ADMIN.JS - COMPLETE VERSION WITH XSS PROTECTION
@@ -7737,6 +8007,20 @@ function showTab(tabName) {
                             // Trigger HTMX load manually if HTMX is available
                             if (window.htmx && window.htmx.trigger) {
                                 window.htmx.trigger(gatewaysTable, "load");
+                            }
+                        }
+                    }
+                }
+
+                if (tabName === "sandbox") {
+                    const sandboxPanel = safeGetElement("sandbox-panel");
+                    if (sandboxPanel) {
+                        const hasLoadingMessage = sandboxPanel.innerHTML.includes("Loading sandbox");
+                        const needsLoad = hasLoadingMessage || sandboxPanel.getAttribute("data-loaded") !== "true";
+                        if (needsLoad) {
+                            if (window.htmx && window.htmx.trigger) {
+                                window.htmx.trigger(sandboxPanel, "revealed");
+                                sandboxPanel.setAttribute("data-loaded", "true");
                             }
                         }
                     }
