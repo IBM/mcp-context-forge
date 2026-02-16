@@ -5958,6 +5958,186 @@ async function editGateway(gatewayId) {
 /**
  * SECURE: View Server function
  */
+function formatCodeExecutionTimestamp(value) {
+    if (!value) {
+        return "N/A";
+    }
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) {
+        return String(value);
+    }
+    return parsed.toLocaleString();
+}
+
+function shortenCodeExecutionId(value, length = 8) {
+    if (!value) {
+        return "unknown";
+    }
+    const text = String(value);
+    return text.length <= length ? text : text.slice(0, length);
+}
+
+async function extractCodeExecutionError(response, fallbackMessage) {
+    try {
+        const payload = await response.json();
+        if (payload && typeof payload.detail === "string" && payload.detail) {
+            return payload.detail;
+        }
+    } catch {
+        // Ignore non-JSON payloads
+    }
+    return fallbackMessage || `Request failed: HTTP ${response.status}`;
+}
+
+async function replayCodeExecutionRun(serverId, runId) {
+    if (!runId) {
+        showErrorMessage("Run ID is required for replay.");
+        return;
+    }
+    if (!confirm(`Replay run ${shortenCodeExecutionId(runId)}?`)) {
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/code/runs/${runId}/replay`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: "{}",
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    `Failed to replay run ${shortenCodeExecutionId(runId)}`,
+                ),
+            );
+        }
+        showSuccessMessage(
+            `Run ${shortenCodeExecutionId(runId)} replayed successfully.`,
+        );
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "replay code execution run");
+        showErrorMessage(errorMessage);
+    }
+}
+
+async function approveSkillApprovalRequest(serverId, approvalId) {
+    if (!approvalId) {
+        showErrorMessage("Approval ID is required.");
+        return;
+    }
+    const notes = window.prompt(
+        "Optional approval notes:",
+        "Approved by admin review",
+    );
+    if (notes === null) {
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/skills/approvals/${approvalId}/approve`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ notes }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    "Failed to approve skill request.",
+                ),
+            );
+        }
+        showSuccessMessage("Skill request approved.");
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "approve skill request");
+        showErrorMessage(errorMessage);
+    }
+}
+
+async function rejectSkillApprovalRequest(serverId, approvalId) {
+    if (!approvalId) {
+        showErrorMessage("Approval ID is required.");
+        return;
+    }
+    const reason = window.prompt("Rejection reason:", "Rejected");
+    if (reason === null) {
+        return;
+    }
+    if (!reason.trim()) {
+        showErrorMessage("A rejection reason is required.");
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/skills/approvals/${approvalId}/reject`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reason: reason.trim() }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(
+                    response,
+                    "Failed to reject skill request.",
+                ),
+            );
+        }
+        showSuccessMessage("Skill request rejected.");
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "reject skill request");
+        showErrorMessage(errorMessage);
+    }
+}
+
+async function revokeCodeExecutionSkill(serverId, skillId, skillName = "") {
+    if (!skillId) {
+        showErrorMessage("Skill ID is required.");
+        return;
+    }
+    const skillLabel = skillName || shortenCodeExecutionId(skillId);
+    if (
+        !confirm(
+            `Revoke skill ${skillLabel}? This will deactivate it for future sessions.`,
+        )
+    ) {
+        return;
+    }
+    const reason = window.prompt("Optional revoke reason:", "Revoked by admin");
+    if (reason === null) {
+        return;
+    }
+    try {
+        const response = await fetchWithTimeout(
+            `${window.ROOT_PATH}/servers/${serverId}/skills/${skillId}/revoke`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ reason }),
+            },
+        );
+        if (!response.ok) {
+            throw new Error(
+                await extractCodeExecutionError(response, "Failed to revoke skill."),
+            );
+        }
+        showSuccessMessage(`Skill ${skillLabel} revoked.`);
+        await viewServer(serverId);
+    } catch (error) {
+        const errorMessage = handleFetchError(error, "revoke skill");
+        showErrorMessage(errorMessage);
+    }
+}
+
 async function viewServer(serverId) {
     try {
         console.log(`Viewing server ID: ${serverId}`);
@@ -6462,20 +6642,31 @@ async function viewServer(serverId) {
                 let runs = [];
                 let sessions = [];
                 let skills = [];
+                let approvals = [];
                 let securityEvents = [];
+                let approvalsAccessDenied = false;
                 try {
-                    const [runsResp, sessionsResp, skillsResp, secResp] = await Promise.all([
+                    const [
+                        runsResp,
+                        sessionsResp,
+                        skillsResp,
+                        approvalsResp,
+                        secResp,
+                    ] = await Promise.all([
                         fetchWithTimeout(
-                            `${window.ROOT_PATH}/servers/${server.id}/code/runs?limit=5`,
+                            `${window.ROOT_PATH}/servers/${server.id}/code/runs?limit=25`,
                         ),
                         fetchWithTimeout(
                             `${window.ROOT_PATH}/servers/${server.id}/code/sessions`,
                         ),
                         fetchWithTimeout(
-                            `${window.ROOT_PATH}/servers/${server.id}/skills`,
+                            `${window.ROOT_PATH}/servers/${server.id}/skills?include_inactive=true`,
                         ),
                         fetchWithTimeout(
-                            `${window.ROOT_PATH}/servers/${server.id}/code/security-events?limit=20`,
+                            `${window.ROOT_PATH}/servers/${server.id}/skills/approvals?status=pending`,
+                        ),
+                        fetchWithTimeout(
+                            `${window.ROOT_PATH}/servers/${server.id}/code/security-events?limit=50`,
                         ),
                     ]);
                     if (runsResp.ok) {
@@ -6486,6 +6677,11 @@ async function viewServer(serverId) {
                     }
                     if (skillsResp.ok) {
                         skills = await skillsResp.json();
+                    }
+                    if (approvalsResp.ok) {
+                        approvals = await approvalsResp.json();
+                    } else if (approvalsResp.status === 401 || approvalsResp.status === 403) {
+                        approvalsAccessDenied = true;
                     }
                     if (secResp.ok) {
                         securityEvents = await secResp.json();
@@ -6499,22 +6695,224 @@ async function viewServer(serverId) {
 
                 const summary = document.createElement("p");
                 summary.className = "text-sm mt-2 text-gray-600 dark:text-gray-400";
-                summary.textContent = `Recent runs: ${runs.length} | Active sessions: ${sessions.length} | Skills: ${skills.length} | Security events: ${securityEvents.length}`;
+                summary.textContent = `Runs: ${runs.length} | Active sessions: ${sessions.length} | Skills: ${skills.length} | Pending approvals: ${approvals.length} | Security events: ${securityEvents.length}`;
                 codeExecSection.appendChild(summary);
 
                 if (runs.length > 0) {
+                    const runsSection = document.createElement("div");
+                    runsSection.className = "mt-4";
+
+                    const runsTitle = document.createElement("h4");
+                    runsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                    runsTitle.textContent = "Run History";
+                    runsSection.appendChild(runsTitle);
+
                     const runsList = document.createElement("div");
-                    runsList.className = "mt-3 space-y-1";
-                    runs.slice(0, 5).forEach((run) => {
-                        const item = document.createElement("div");
-                        item.className = "text-xs text-gray-700 dark:text-gray-300";
-                        const runId = run.id || "";
-                        const shortRun = runId ? runId.slice(0, 8) : "unknown";
-                        item.textContent = `${shortRun} | ${run.status || "unknown"} | ${run.language || "n/a"} | ${run.created_at || ""}`;
-                        runsList.appendChild(item);
+                    runsList.className = "mt-2 space-y-2";
+                    runs.slice(0, 10).forEach((run) => {
+                        const row = document.createElement("div");
+                        row.className = "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+
+                        const details = document.createElement("div");
+                        details.className = "text-xs text-gray-700 dark:text-gray-300";
+                        const runId = shortenCodeExecutionId(run.id);
+                        const toolCalls = Array.isArray(run.tool_calls_made)
+                            ? run.tool_calls_made.length
+                            : 0;
+                        const wallTime =
+                            run.metrics &&
+                            typeof run.metrics.wall_time_ms === "number"
+                                ? `${run.metrics.wall_time_ms}ms`
+                                : "n/a";
+                        details.textContent = `${runId} | ${run.status || "unknown"} | ${run.language || "n/a"} | ${formatCodeExecutionTimestamp(run.created_at)} | tools=${toolCalls} | wall=${wallTime}`;
+                        row.appendChild(details);
+
+                        const replayButton = document.createElement("button");
+                        replayButton.type = "button";
+                        replayButton.className =
+                            "text-xs px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700";
+                        replayButton.textContent = "Replay";
+                        replayButton.addEventListener("click", () => {
+                            replayCodeExecutionRun(server.id, run.id);
+                        });
+                        row.appendChild(replayButton);
+
+                        runsList.appendChild(row);
                     });
-                    codeExecSection.appendChild(runsList);
+                    runsSection.appendChild(runsList);
+                    codeExecSection.appendChild(runsSection);
                 }
+
+                const sessionsSection = document.createElement("div");
+                sessionsSection.className = "mt-4";
+                const sessionsTitle = document.createElement("h4");
+                sessionsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                sessionsTitle.textContent = "Active Sessions";
+                sessionsSection.appendChild(sessionsTitle);
+                if (sessions.length === 0) {
+                    const emptySessions = document.createElement("p");
+                    emptySessions.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptySessions.textContent = "No active in-memory sessions.";
+                    sessionsSection.appendChild(emptySessions);
+                } else {
+                    const sessionsList = document.createElement("div");
+                    sessionsList.className = "mt-2 space-y-2";
+                    sessions.slice(0, 10).forEach((session) => {
+                        const item = document.createElement("div");
+                        item.className = "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        const sessionId = shortenCodeExecutionId(
+                            session.session_id,
+                            10,
+                        );
+                        item.textContent = `${sessionId} | ${session.user_email || "unknown"} | ${session.language || "n/a"} | tools=${session.tool_count || 0} | skills=${session.skill_count || 0} | last=${formatCodeExecutionTimestamp(session.last_used_at)}`;
+                        sessionsList.appendChild(item);
+                    });
+                    sessionsSection.appendChild(sessionsList);
+                }
+                codeExecSection.appendChild(sessionsSection);
+
+                const approvalsSection = document.createElement("div");
+                approvalsSection.className = "mt-4";
+                const approvalsTitle = document.createElement("h4");
+                approvalsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                approvalsTitle.textContent = "Pending Skill Approvals";
+                approvalsSection.appendChild(approvalsTitle);
+
+                if (approvalsAccessDenied) {
+                    const denied = document.createElement("p");
+                    denied.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    denied.textContent =
+                        "Approval actions require additional permissions (skills.approve).";
+                    approvalsSection.appendChild(denied);
+                } else if (approvals.length === 0) {
+                    const emptyApprovals = document.createElement("p");
+                    emptyApprovals.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptyApprovals.textContent = "No pending approvals.";
+                    approvalsSection.appendChild(emptyApprovals);
+                } else {
+                    const approvalsList = document.createElement("div");
+                    approvalsList.className = "mt-2 space-y-2";
+                    approvals.slice(0, 10).forEach((approval) => {
+                        const row = document.createElement("div");
+                        row.className =
+                            "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+
+                        const details = document.createElement("div");
+                        details.className = "text-xs text-gray-700 dark:text-gray-300";
+                        details.textContent = `${shortenCodeExecutionId(approval.id)} | skill=${shortenCodeExecutionId(approval.skill_id, 10)} | requested_by=${approval.requested_by || "unknown"} | requested_at=${formatCodeExecutionTimestamp(approval.requested_at)}`;
+                        row.appendChild(details);
+
+                        const actions = document.createElement("div");
+                        actions.className = "flex items-center gap-2";
+
+                        const approveButton = document.createElement("button");
+                        approveButton.type = "button";
+                        approveButton.className =
+                            "text-xs px-2 py-1 rounded bg-green-600 text-white hover:bg-green-700";
+                        approveButton.textContent = "Approve";
+                        approveButton.addEventListener("click", () => {
+                            approveSkillApprovalRequest(server.id, approval.id);
+                        });
+                        actions.appendChild(approveButton);
+
+                        const rejectButton = document.createElement("button");
+                        rejectButton.type = "button";
+                        rejectButton.className =
+                            "text-xs px-2 py-1 rounded bg-red-600 text-white hover:bg-red-700";
+                        rejectButton.textContent = "Reject";
+                        rejectButton.addEventListener("click", () => {
+                            rejectSkillApprovalRequest(server.id, approval.id);
+                        });
+                        actions.appendChild(rejectButton);
+
+                        row.appendChild(actions);
+                        approvalsList.appendChild(row);
+                    });
+                    approvalsSection.appendChild(approvalsList);
+                }
+                codeExecSection.appendChild(approvalsSection);
+
+                const skillsSection = document.createElement("div");
+                skillsSection.className = "mt-4";
+                const skillsTitle = document.createElement("h4");
+                skillsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                skillsTitle.textContent = "Skills";
+                skillsSection.appendChild(skillsTitle);
+
+                if (skills.length === 0) {
+                    const emptySkills = document.createElement("p");
+                    emptySkills.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptySkills.textContent = "No skills registered.";
+                    skillsSection.appendChild(emptySkills);
+                } else {
+                    const skillsList = document.createElement("div");
+                    skillsList.className = "mt-2 space-y-2";
+                    skills.slice(0, 15).forEach((skill) => {
+                        const row = document.createElement("div");
+                        row.className =
+                            "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        const details = document.createElement("div");
+                        details.className = "text-xs text-gray-700 dark:text-gray-300";
+                        details.textContent = `${skill.name || "unknown"} v${skill.version || 1} | ${skill.status || "unknown"} | owner=${skill.owner_email || "unknown"} | updated=${formatCodeExecutionTimestamp(skill.updated_at)}`;
+                        row.appendChild(details);
+
+                        if (
+                            skill.id &&
+                            skill.is_active &&
+                            skill.status !== "revoked"
+                        ) {
+                            const revokeButton = document.createElement("button");
+                            revokeButton.type = "button";
+                            revokeButton.className =
+                                "text-xs px-2 py-1 rounded bg-orange-600 text-white hover:bg-orange-700";
+                            revokeButton.textContent = "Revoke";
+                            revokeButton.addEventListener("click", () => {
+                                revokeCodeExecutionSkill(
+                                    server.id,
+                                    skill.id,
+                                    skill.name,
+                                );
+                            });
+                            row.appendChild(revokeButton);
+                        }
+
+                        skillsList.appendChild(row);
+                    });
+                    skillsSection.appendChild(skillsList);
+                }
+                codeExecSection.appendChild(skillsSection);
+
+                const eventsSection = document.createElement("div");
+                eventsSection.className = "mt-4";
+                const eventsTitle = document.createElement("h4");
+                eventsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                eventsTitle.textContent = "Security Events";
+                eventsSection.appendChild(eventsTitle);
+
+                if (securityEvents.length === 0) {
+                    const emptyEvents = document.createElement("p");
+                    emptyEvents.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptyEvents.textContent = "No recent security events.";
+                    eventsSection.appendChild(emptyEvents);
+                } else {
+                    const eventsList = document.createElement("div");
+                    eventsList.className = "mt-2 space-y-2";
+                    securityEvents.slice(0, 20).forEach((event) => {
+                        const item = document.createElement("div");
+                        item.className = "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        const eventName = event.event || event.type || "event";
+                        const runId = shortenCodeExecutionId(event.run_id, 8);
+                        const message =
+                            event.message ||
+                            event.error ||
+                            event.reason ||
+                            JSON.stringify(event);
+                        item.textContent = `${eventName} | run=${runId} | ${formatCodeExecutionTimestamp(event.created_at)} | ${message}`;
+                        eventsList.appendChild(item);
+                    });
+                    eventsSection.appendChild(eventsList);
+                }
+                codeExecSection.appendChild(eventsSection);
 
                 container.appendChild(codeExecSection);
             }
@@ -6531,6 +6929,11 @@ async function viewServer(serverId) {
         showErrorMessage(errorMessage);
     }
 }
+
+window.replayCodeExecutionRun = replayCodeExecutionRun;
+window.approveSkillApprovalRequest = approveSkillApprovalRequest;
+window.rejectSkillApprovalRequest = rejectSkillApprovalRequest;
+window.revokeCodeExecutionSkill = revokeCodeExecutionSkill;
 
 /**
  * SECURE: Edit Server function
