@@ -677,6 +677,15 @@ class TestValidationMiddleware:
             mock_settings.sanitize_output = True
             mock_settings.allowed_roots = []
             mock_settings.dangerous_patterns = []
+            mock_settings.validation_middleware_enabled = False
+            mock_settings.validation_max_body_size = 0
+            mock_settings.validation_max_response_size = 0
+            mock_settings.validation_skip_endpoints = []
+            mock_settings.validation_sample_large_responses = False
+            mock_settings.validation_sample_size = 1024
+            mock_settings.validation_cache_enabled = False
+            mock_settings.validation_cache_max_size = 1000
+            mock_settings.validation_cache_ttl = 300
 
             middleware = ValidationMiddleware(app=None)
 
