@@ -2997,6 +2997,37 @@ class TestUIVisibilityConfig:
         assert config["hidden_tabs"] == ["users"]
         assert config["cookie_action"] == "set"
 
+    def test_get_ui_visibility_config_extended_sections_map_to_tabs(
+        self,
+        monkeypatch,
+    ):
+        """Extended hideable sections should map directly to their tab IDs."""
+        request = MagicMock(spec=Request)
+        request.query_params = {"ui_hide": "overview,mcp-registry,logs,version-info"}
+        request.cookies = {}
+
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
+        monkeypatch.setattr(
+            settings, "mcpgateway_ui_hide_header_items", [], raising=False
+        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
+
+        config = get_ui_visibility_config(request)
+
+        assert config["hidden_sections"] == [
+            "logs",
+            "mcp-registry",
+            "overview",
+            "version-info",
+        ]
+        assert config["hidden_tabs"] == [
+            "logs",
+            "mcp-registry",
+            "overview",
+            "version-info",
+        ]
+        assert config["cookie_action"] == "set"
+
 
 class TestAdminUIRoute:
     """Test the main admin UI route with enhanced coverage."""

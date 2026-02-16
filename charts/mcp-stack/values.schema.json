@@ -636,7 +636,7 @@
             },
             "MCPGATEWAY_UI_HIDE_SECTIONS": {
               "type": "string",
-              "description": "CSV/JSON list of UI sections to hide (servers, gateways, tools, prompts, resources, teams, users, agents, tokens, settings)",
+              "description": "CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings)",
               "default": ""
             },
             "MCPGATEWAY_UI_HIDE_HEADER_ITEMS": {

@@ -6,7 +6,7 @@
 
 ## Context
 
-MCP Gateway's Admin UI is a full-featured dashboard with 10+ sections (servers, gateways, tools, prompts, resources, teams, users, agents, tokens, settings). When the UI is embedded inside a third-party portal via iframe, or when an operator wants to expose only a subset of functionality to certain audiences, the full dashboard is too broad. There was no mechanism to hide irrelevant sections, header controls (logout, team selector), or prevent data loading for hidden sections.
+MCP Gateway's Admin UI is a full-featured dashboard with many sections (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings). When the UI is embedded inside a third-party portal via iframe, or when an operator wants to expose only a subset of functionality to certain audiences, the full dashboard is too broad. There was no mechanism to hide irrelevant sections, header controls (logout, team selector), or prevent data loading for hidden sections.
 
 Key requirements:
 

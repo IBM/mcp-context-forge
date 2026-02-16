@@ -120,11 +120,20 @@ FORGE_CONTENT_TYPE = os.getenv("FORGE_CONTENT_TYPE", "application/json")
 # UI embedding / visibility controls
 UI_HIDABLE_SECTIONS = frozenset(
     {
+        "overview",
         "servers",
         "gateways",
         "tools",
         "prompts",
         "resources",
+        "roots",
+        "mcp-registry",
+        "metrics",
+        "plugins",
+        "export-import",
+        "logs",
+        "version-info",
+        "maintenance",
         "teams",
         "users",
         "agents",
@@ -551,7 +560,11 @@ class Settings(BaseSettings):
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
         default_factory=list,
-        description=("CSV/JSON list of UI sections to hide. " "Valid values: servers, gateways, tools, prompts, resources, teams, users, agents, tokens, settings"),
+        description=(
+            "CSV/JSON list of UI sections to hide. "
+            "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
+            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
+        ),
     )
     mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
         default_factory=list,

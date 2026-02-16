@@ -187,11 +187,20 @@ logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
 
 UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
+    "overview": ("overview",),
     "servers": ("catalog",),
     "gateways": ("gateways",),
     "tools": ("tools", "tool-ops"),
     "prompts": ("prompts",),
     "resources": ("resources",),
+    "roots": ("roots",),
+    "mcp-registry": ("mcp-registry",),
+    "metrics": ("metrics",),
+    "plugins": ("plugins",),
+    "export-import": ("export-import",),
+    "logs": ("logs",),
+    "version-info": ("version-info",),
+    "maintenance": ("maintenance",),
     "teams": ("teams",),
     "users": ("users",),
     "agents": ("a2a-agents", "grpc-services"),

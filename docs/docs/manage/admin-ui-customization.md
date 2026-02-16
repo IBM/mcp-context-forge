@@ -33,16 +33,25 @@ Comma-separated or JSON list of sections to hide globally. Invalid values are lo
 
 | Section | What It Hides |
 |---------|---------------|
+| `overview` | Overview dashboard tab |
 | `servers` | Catalog / virtual servers tab |
 | `gateways` | Gateway connections tab |
 | `tools` | Tools registry tab |
 | `prompts` | Prompts registry tab |
 | `resources` | Resources registry tab |
+| `roots` | Root directories tab |
+| `mcp-registry` | MCP Registry tab |
+| `metrics` | Metrics dashboard tab |
+| `plugins` | Plugins tab |
+| `export-import` | Export/Import tab |
+| `logs` | System Logs tab |
+| `version-info` | Version Info tab |
+| `maintenance` | Maintenance tab |
 | `teams` | Team management tab |
 | `users` | User management tab |
 | `agents` | A2A agents tab |
 | `tokens` | API tokens tab |
-| `settings` | LLM / gateway settings tab |
+| `settings` | LLM settings tab |
 
 **Aliases**: The following alternative names are also accepted:
 
