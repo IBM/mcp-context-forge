@@ -55,6 +55,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import tempfile
 from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
 from urllib.parse import urlparse
 
@@ -590,7 +591,10 @@ class Settings(BaseSettings):
 
     # Code Execution (MCP Code Mode)
     code_execution_enabled: bool = Field(default=False, description="Enable code_execution virtual servers and shell_exec/fs_browse meta-tools")
-    code_execution_base_dir: str = Field(default="/tmp/mcpgateway_code_execution", description="Base directory for ephemeral code execution sessions")
+    code_execution_base_dir: str = Field(
+        default_factory=lambda: str(Path(tempfile.gettempdir()) / "mcpgateway_code_execution"),
+        description="Base directory for ephemeral code execution sessions",
+    )
     code_execution_session_ttl_seconds: int = Field(default=900, ge=60, le=86400, description="TTL for sandbox sessions (seconds)")
     code_execution_shell_exec_enabled: bool = Field(default=True, description="Enable shell_exec meta-tool for code_execution servers")
     code_execution_fs_browse_enabled: bool = Field(default=True, description="Enable fs_browse meta-tool for code_execution servers")

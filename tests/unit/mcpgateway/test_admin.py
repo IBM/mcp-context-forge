@@ -618,6 +618,7 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "register_server")
     async def test_admin_add_server_code_execution_fields(self, mock_register_server, mock_request, mock_db, monkeypatch):
         """Ensure code_execution server fields are parsed and forwarded from admin form."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
         form_data = FakeForm(
             {
                 "name": "CodeExecServer",
@@ -675,8 +676,9 @@ class TestAdminServerRoutes:
         assert result.status_code == 400
         assert b"code_execution servers are disabled" in result.body
 
-    async def test_admin_add_server_invalid_code_execution_json_returns_400(self, mock_request, mock_db):
+    async def test_admin_add_server_invalid_code_execution_json_returns_400(self, mock_request, mock_db, monkeypatch):
         """Invalid JSON payload in code_execution fields should fail validation."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
         form_data = FakeForm(
             {
                 "name": "BadCodeExec",
@@ -693,6 +695,7 @@ class TestAdminServerRoutes:
     @patch.object(ServerService, "update_server")
     async def test_admin_edit_server_code_execution_fields(self, mock_update_server, mock_request, mock_db, monkeypatch):
         """Ensure edit server parses and forwards code_execution form values."""
+        monkeypatch.setattr("mcpgateway.admin.settings.code_execution_enabled", True, raising=False)
         server_id = str(uuid4())
         form_data = FakeForm(
             {
@@ -15891,6 +15894,49 @@ class TestTemplateButtonGating:
         assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
         assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
         assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+
+    def test_servers_code_execution_visual_marker(self, jinja_env):
+        """Code execution servers should render highlighted badge/emoji in the list."""
+        server_data = {
+            "id": "srv-code-1",
+            "name": "Code Server",
+            "type": "code_execution",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A code execution server",
+            "icon": None,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_servers_partial(jinja_env, server_data, current_user_email="owner@example.com")
+        assert "💻 Code Mode" in html
+        assert "⚡" in html
+
+    def test_servers_standard_has_no_code_execution_marker(self, jinja_env):
+        """Standard servers should not show code execution marker."""
+        server_data = {
+            "id": "srv-standard-1",
+            "name": "Standard Server",
+            "type": "standard",
+            "ownerEmail": "owner@example.com",
+            "teamId": "team-1",
+            "visibility": "public",
+            "enabled": True,
+            "description": "A standard server",
+            "icon": None,
+            "associatedTools": [],
+            "associatedResources": [],
+            "associatedPrompts": [],
+            "tags": [],
+            "team": None,
+        }
+        html = self._render_servers_partial(jinja_env, server_data, current_user_email="owner@example.com")
+        assert "💻 Code Mode" not in html
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""
