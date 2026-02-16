@@ -846,6 +846,33 @@ class TestAdminAuthMiddleware:
         assert response.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_admin_auth_user_not_found_browser_redirects_to_login(self, monkeypatch):
+        middleware = AdminAuthMiddleware(None)
+        request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "text/html"})
+        call_next = AsyncMock(return_value="ok")
+
+        monkeypatch.setattr(settings, "auth_required", True)
+        monkeypatch.setattr(settings, "require_user_in_db", True)
+
+        mock_db = MagicMock()
+
+        def _db_gen():
+            yield mock_db
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.get_user_by_email = AsyncMock(return_value=None)
+
+        with (
+            patch("mcpgateway.main.get_db", _db_gen),
+            patch("mcpgateway.main.verify_jwt_token", new=AsyncMock(return_value={"sub": "user@example.com"})),
+            patch("mcpgateway.main.EmailAuthService", return_value=mock_auth_service),
+        ):
+            response = await middleware.dispatch(request, call_next)
+
+        assert response.status_code == 302
+        assert "/admin/login" in response.headers.get("location", "")
+
+    @pytest.mark.asyncio
     async def test_admin_auth_disabled_user_returns_403(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
         request = _make_request("/admin/tools", cookies={"jwt_token": "token"}, headers={"accept": "application/json"})

@@ -9,6 +9,7 @@ Servers page object for Virtual MCP Server management features.
 
 # Third-Party
 from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 # Local
 from .base_page import BasePage
@@ -282,14 +283,57 @@ class ServersPage(BasePage):
     def search_servers(self, query: str) -> None:
         """Search for servers using the search input.
 
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because admin pages can keep long-lived requests open.
+        Wait for table/indicator state instead.
+
         Args:
             query: Search query string
         """
         self.fill_locator(self.search_input, query)
 
+        try:
+            self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload for the catalog panel.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('catalog-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('catalog'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#servers-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#servers-table-body", state="attached", timeout=15000)
+
     def clear_search(self) -> None:
-        """Clear the server search."""
+        """Clear the server search.
+
+        Triggers an HTMX reload of the servers table, then waits for
+        table/indicator settling.
+        """
         self.click_locator(self.clear_search_btn)
+
+        try:
+            self.page.wait_for_selector("#servers-loading.htmx-request", timeout=2000)
+        except PlaywrightTimeoutError:
+            # Fallback: invoke the same clear function the button uses.
+            self.page.evaluate("window.clearSearch && window.clearSearch('catalog')")
+            try:
+                self.page.wait_for_selector("#servers-loading.htmx-request", timeout=2000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#servers-loading.htmx-request')",
+            timeout=15000,
+        )
+        self.page.wait_for_selector("#servers-table-body", state="attached", timeout=15000)
 
     def toggle_show_inactive(self, show: bool = True) -> None:
         """Toggle the show inactive servers checkbox.
