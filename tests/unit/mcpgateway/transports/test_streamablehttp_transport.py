@@ -7333,10 +7333,10 @@ async def test_list_resources_gateway_found_not_direct_proxy_mode(monkeypatch):
     with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
         with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
             mock_rs.list_server_resources = AsyncMock(return_value=[])
-            
+
             # This triggers the "Gateway found but not in direct_proxy mode" log path
             await list_resources()
-            
+
             # Should fall back to cache mode
             mock_rs.list_server_resources.assert_called_once()
 
@@ -7368,10 +7368,10 @@ async def test_list_resources_direct_proxy_disabled_setting(monkeypatch):
             mock_settings.mcpgateway_direct_proxy_enabled = False
             with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
                 mock_rs.list_server_resources = AsyncMock(return_value=[])
-                
+
                 # This triggers the check failing on settings.mcpgateway_direct_proxy_enabled
                 await list_resources()
-                
+
                 # Should fall back to cache mode
                 mock_rs.list_server_resources.assert_called_once()
 
@@ -7397,7 +7397,7 @@ async def test_list_resources_gateway_not_found_log(monkeypatch, caplog):
     with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
         with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
             mock_rs.list_server_resources = AsyncMock(return_value=[])
-            
+
             with caplog.at_level("WARNING"):
                 await list_resources()
                 # Case-insensitive check or matching the exact log output
@@ -7432,13 +7432,13 @@ async def test_list_resources_direct_proxy_meta_lookup_error(monkeypatch):
             with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True):
                 with patch("mcpgateway.transports.streamablehttp_transport._proxy_list_resources_to_gateway") as mock_proxy:
                     mock_proxy.return_value = []
-                    
+
                     # Force LookupError when accessing request_context
                     type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError("No context")))
-                    
+
                     try:
                         await list_resources()
-                        
+
                         # Verify called with meta=None
                         mock_proxy.assert_awaited_once()
                         args = mock_proxy.call_args[0]
@@ -7463,15 +7463,15 @@ async def test_get_request_context_no_request_object(monkeypatch, caplog):
     from unittest.mock import PropertyMock
 
     token = server_id_var.set("default_server_id")
-    
+
     mock_ctx = MagicMock()
     mock_ctx.request = None
-    
+
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
             with caplog.at_level("WARNING"):
                 sid, headers, user = await _get_request_context_or_default()
-                
+
                 assert sid == "default_server_id"
                 assert "No request object found in MCP context" in caplog.text
     finally:
@@ -7485,15 +7485,15 @@ async def test_get_request_context_stateful_success(monkeypatch):
     from unittest.mock import PropertyMock
 
     token = server_id_var.set("default_server_id")
-    
+
     # Use a HEX server ID because the regex enforces [a-fA-F0-9\-]+
     valid_hex_id = "abc-123-def-456"
-    
+
     mock_request = MagicMock()
     mock_request.url.path = f"/servers/{valid_hex_id}/mcp"
     mock_request.headers = {"authorization": "Bearer token"}
     mock_request.cookies = {}
-    
+
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
@@ -7503,7 +7503,7 @@ async def test_get_request_context_stateful_success(monkeypatch):
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
             sid, headers, user = await _get_request_context_or_default()
-            
+
             # Verify server_id extracted from URL
             assert sid == valid_hex_id
             assert headers["authorization"] == "Bearer token"
@@ -7519,12 +7519,12 @@ async def test_get_request_context_auth_failure(monkeypatch, caplog):
     from unittest.mock import PropertyMock
 
     token = server_id_var.set("default_server_id")
-    
+
     mock_request = MagicMock()
     mock_request.url.path = "/mcp" # No server ID
     mock_request.headers = {}
     mock_request.cookies = {}
-    
+
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
@@ -7535,7 +7535,7 @@ async def test_get_request_context_auth_failure(monkeypatch, caplog):
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
             with caplog.at_level("WARNING"):
                 sid, headers, user = await _get_request_context_or_default()
-                
+
                 assert sid == "default_server_id"
                 assert user == {}
                 assert "Failed to recover user context" in caplog.text
@@ -7552,7 +7552,7 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
     """Test handle_streamable_http injects server_id into params for local affinity (lines 1956-1960)."""
     from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
     import orjson
-    
+
     # Setup mocks for SessionManagerWrapper
     class DummySessionManager:
         @asynccontextmanager
@@ -7571,14 +7571,14 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
     # Use a HEX server ID because the regex enforces [a-fA-F0-9\-]+
     server_id = "abc-123-def-456"
     scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
-    
+
     original_body = orjson.dumps({"jsonrpc": "2.0", "method": "test", "params": {}})
     receive = _make_receive(original_body)
     send, messages = _make_send_collector()
 
     mock_pool = MagicMock()
     mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
-    
+
     mock_session_class = MagicMock()
     mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
 
@@ -7595,13 +7595,13 @@ async def test_local_affinity_post_injects_server_id(monkeypatch):
                     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
                     mock_client.__aexit__ = AsyncMock(return_value=None)
                     mock_client_cls.return_value = mock_client
-                    
+
                     await wrapper.handle_streamable_http(scope, receive, send)
 
                     mock_client.post.assert_called_once()
                     posted_content = mock_client.post.call_args.kwargs["content"]
                     posted_json = orjson.loads(posted_content)
-                    
+
                     assert "server_id" in posted_json["params"]
                     assert posted_json["params"]["server_id"] == server_id
 
@@ -7619,7 +7619,7 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
 
     # Force verify_credentials to raise Exception
     monkeypatch.setattr(tr, "verify_credentials", AsyncMock(side_effect=Exception("Auth Service Down")))
-    
+
     # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-user")
@@ -7633,10 +7633,10 @@ async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeyp
 
     # Should catch exception, fail proxy check (no header), then succeed via permissive check
     result = await streamable_http_auth(scope, None, send)
-    
+
     assert result is True
     assert sent == []
-    
+
     ctx = user_context_var.get()
     assert ctx["is_authenticated"] is False
     assert ctx["teams"] == []
