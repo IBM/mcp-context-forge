@@ -30,6 +30,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from starlette.types import Scope
 
+import asyncio
+import types
+import pytest
+
+import mcpgateway.transports.streamablehttp_transport as transport
+
+
 # First-Party
 # ---------------------------------------------------------------------------
 # Import module under test - we only need the specific classes / functions
@@ -7298,3 +7305,338 @@ class TestCallToolDirectProxy:
         mock_invoke_direct.assert_not_awaited()
         # Normal mode was used instead
         mock_invoke_normal.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# list_resources & direct proxy edge cases
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_list_resources_gateway_found_not_direct_proxy_mode(monkeypatch):
+    """Test list_resources when gateway is found but not in direct_proxy mode."""
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, request_headers_var, resource_service
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cache"
+    mock_gateway.gateway_mode = "cache"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-cache"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+            mock_rs.list_server_resources = AsyncMock(return_value=[])
+            
+            # This triggers the "Gateway found but not in direct_proxy mode" log path
+            await list_resources()
+            
+            # Should fall back to cache mode
+            mock_rs.list_server_resources.assert_called_once()
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_direct_proxy_disabled_setting(monkeypatch):
+    """Test list_resources when gateway is direct_proxy but setting is disabled."""
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, request_headers_var, resource_service
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-direct"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcpgateway_direct_proxy_enabled = False
+            with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+                mock_rs.list_server_resources = AsyncMock(return_value=[])
+                
+                # This triggers the check failing on settings.mcpgateway_direct_proxy_enabled
+                await list_resources()
+                
+                # Should fall back to cache mode
+                mock_rs.list_server_resources.assert_called_once()
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_gateway_not_found_log(monkeypatch, caplog):
+    """Test list_resources logs warning when gateway ID provided but not found."""
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, request_headers_var, resource_service
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-missing"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+            mock_rs.list_server_resources = AsyncMock(return_value=[])
+            
+            with caplog.at_level("WARNING"):
+                await list_resources()
+                # Case-insensitive check or matching the exact log output
+                assert "Gateway gw-missing specified in X-Context-Forge-Gateway-Id header not found" in caplog.text
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_direct_proxy_meta_lookup_error(monkeypatch):
+    """Test list_resources in direct_proxy mode when request_context raises LookupError."""
+    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, request_headers_var, mcp_app
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-direct"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True):
+                with patch("mcpgateway.transports.streamablehttp_transport._proxy_list_resources_to_gateway") as mock_proxy:
+                    mock_proxy.return_value = []
+                    
+                    # Force LookupError when accessing request_context
+                    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError("No context")))
+                    
+                    try:
+                        await list_resources()
+                        
+                        # Verify called with meta=None
+                        mock_proxy.assert_awaited_once()
+                        args = mock_proxy.call_args[0]
+                        # signature: (gateway, request_headers, user_context, meta)
+                        assert args[3] is None
+                    finally:
+                         # Restore property (mocking cleaning handled by context but manual reset for safety)
+                         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+# ---------------------------------------------------------------------------
+# _get_request_context_or_default
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_get_request_context_no_request_object(monkeypatch, caplog):
+    """Test _get_request_context_or_default when context exists but request is None (lines 985-986)."""
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+    from unittest.mock import PropertyMock
+
+    token = server_id_var.set("default_server_id")
+    
+    mock_ctx = MagicMock()
+    mock_ctx.request = None
+    
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with caplog.at_level("WARNING"):
+                sid, headers, user = await _get_request_context_or_default()
+                
+                assert sid == "default_server_id"
+                assert "No request object found in MCP context" in caplog.text
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_stateful_success(monkeypatch):
+    """Test _get_request_context_or_default success path with server_id and auth (lines 988-1010)."""
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+    from unittest.mock import PropertyMock
+
+    token = server_id_var.set("default_server_id")
+    
+    # Use a HEX server ID because the regex enforces [a-fA-F0-9\-]+
+    valid_hex_id = "abc-123-def-456"
+    
+    mock_request = MagicMock()
+    mock_request.url.path = f"/servers/{valid_hex_id}/mcp"
+    mock_request.headers = {"authorization": "Bearer token"}
+    mock_request.cookies = {}
+    
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    mock_auth_override = AsyncMock(return_value={"user": "test_user"})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+            
+            # Verify server_id extracted from URL
+            assert sid == valid_hex_id
+            assert headers["authorization"] == "Bearer token"
+            assert user == {"user": "test_user"}
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_auth_failure(monkeypatch, caplog):
+    """Test _get_request_context_or_default handles auth exception (lines 1006-1008)."""
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+    from unittest.mock import PropertyMock
+
+    token = server_id_var.set("default_server_id")
+    
+    mock_request = MagicMock()
+    mock_request.url.path = "/mcp" # No server ID
+    mock_request.headers = {}
+    mock_request.cookies = {}
+    
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    mock_auth_override = AsyncMock(side_effect=Exception("Auth failed"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with caplog.at_level("WARNING"):
+                sid, headers, user = await _get_request_context_or_default()
+                
+                assert sid == "default_server_id"
+                assert user == {}
+                assert "Failed to recover user context" in caplog.text
+    finally:
+        server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# handle_streamable_http injection
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_injects_server_id(monkeypatch):
+    """Test handle_streamable_http injects server_id into params for local affinity (lines 1956-1960)."""
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
+    import orjson
+    
+    # Setup mocks for SessionManagerWrapper
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    # Use a HEX server ID because the regex enforces [a-fA-F0-9\-]+
+    server_id = "abc-123-def-456"
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+    
+    original_body = orjson.dumps({"jsonrpc": "2.0", "method": "test", "params": {}})
+    receive = _make_receive(original_body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+    
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"{}"
+
+    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+            with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class):
+                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+                    mock_client = AsyncMock()
+                    mock_client.post = AsyncMock(return_value=mock_response)
+                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                    mock_client.__aexit__ = AsyncMock(return_value=None)
+                    mock_client_cls.return_value = mock_client
+                    
+                    await wrapper.handle_streamable_http(scope, receive, send)
+
+                    mock_client.post.assert_called_once()
+                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    posted_json = orjson.loads(posted_content)
+                    
+                    assert "server_id" in posted_json["params"]
+                    assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# streamable_http_auth exception fallbacks
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeypatch):
+    """Test auth exception fallback when permissive mode enabled and no proxy user."""
+    from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
+
+    # Force verify_credentials to raise Exception
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(side_effect=Exception("Auth Service Down")))
+    
+    # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-user")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    scope = _make_scope("/servers/abc-123/mcp", headers=[(b"authorization", b"Bearer bad-token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    # Should catch exception, fail proxy check (no header), then succeed via permissive check
+    result = await streamable_http_auth(scope, None, send)
+    
+    assert result is True
+    assert sent == []
+    
+    ctx = user_context_var.get()
+    assert ctx["is_authenticated"] is False
+    assert ctx["teams"] == []
