@@ -3610,6 +3610,7 @@ class TestToolService:
 
             # Return an object whose scalar_one_or_none() returns the real value
             class Result:
+
                 def scalar_one_or_none(self_inner):
                     return value
 
@@ -6165,7 +6166,7 @@ class TestToolServiceTokenTeamsFiltering:
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
             mock_team_service.return_value.get_user_teams = AsyncMock()
-            _result = await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
+            await tool_service.list_server_tools(test_db, server_id="server-1", include_inactive=False, user_email="user@example.com", token_teams=["team_x"])
 
             # TeamManagementService should NOT be called since token_teams was provided
             mock_team_service.return_value.get_user_teams.assert_not_called()
@@ -6185,7 +6186,7 @@ class TestToolServiceTokenTeamsFiltering:
         tool_service.convert_tool_to_read = Mock(side_effect=[tool_read_a, tool_read_b])
 
         # Only team_a in token_teams - should only see team_a tools
-        result, _ = await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
+        await tool_service.list_tools(test_db, user_email="user@example.com", token_teams=["team_a"])
 
         assert test_db.execute.called
 
@@ -7452,6 +7453,7 @@ class TestToolServiceHelpers:
             custom_name_slug="custom",
             display_name="Custom Tool",
             gateway_id=None,
+            grpc_service_id=None,
             enabled=True,
             reachable=True,
             tags=None,
