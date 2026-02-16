@@ -7529,7 +7529,11 @@ function normalizeTabName(tabName) {
     if (!tabName || typeof tabName !== "string") {
         return "";
     }
-    return tabName.replace(/^#/, "").trim().toLowerCase().replace(/[^a-z0-9-]/g, "");
+    return tabName
+        .replace(/^#/, "")
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, "");
 }
 
 function getUiHiddenSections() {

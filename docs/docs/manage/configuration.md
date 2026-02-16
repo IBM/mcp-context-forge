@@ -247,6 +247,8 @@ DATABASE_URL=mysql+pymysql://mysql:changeme@localhost:3306/mcp
 
 ### UI Features
 
+For detailed guidance on embedding and section customization, see [Admin UI Customization](admin-ui-customization.md).
+
 | Setting                        | Description                            | Default | Options |
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
