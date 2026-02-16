@@ -1112,7 +1112,7 @@ class TestMultiWorkerSessionAffinityE2E:
             # Mock httpx.AsyncClient to simulate 401 response
             mock_response = MagicMock()
             mock_response.json.return_value = {"result": {}}
-            
+
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None
@@ -1197,7 +1197,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     "message": "Method not found"
                 }
             }
-            
+
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None
@@ -1232,7 +1232,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_response.status_code = 200
             mock_response.headers = {"content-type": "application/json"}
             mock_response.content = b'{"result": "success"}'
-            
+
             mock_client = AsyncMock()
             mock_client.__aenter__.return_value = mock_client
             mock_client.__aexit__.return_value = None
@@ -1256,7 +1256,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 mock_redis.publish.assert_called_once()
                 call_args = mock_redis.publish.call_args
                 assert call_args[0][0] == "test-response-channel"
-                
+
                 # Verify response structure
                 response_data = orjson.loads(call_args[0][1])
                 assert response_data["status"] == 200
@@ -1346,7 +1346,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_pubsub = AsyncMock()
             mock_pubsub.subscribe = AsyncMock()
             mock_pubsub.unsubscribe = AsyncMock()
-            
+
             # Simulate receiving one RPC message then stopping
             call_count = 0
             async def mock_get_message(*args, **kwargs):
@@ -1369,7 +1369,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 # Stop the loop by closing pool
                 pool._closed = True
                 return None
-            
+
             mock_pubsub.get_message = mock_get_message
 
             mock_redis = AsyncMock()
@@ -1386,7 +1386,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     # Mock _execute_forwarded_request
                     with patch.object(pool, '_execute_forwarded_request', new_callable=AsyncMock) as mock_execute:
                         mock_execute.return_value = {"result": []}
-                        
+
                         await pool.start_rpc_listener()
 
                         # Verify message was processed
@@ -1405,7 +1405,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_pubsub = AsyncMock()
             mock_pubsub.subscribe = AsyncMock()
             mock_pubsub.unsubscribe = AsyncMock()
-            
+
             # Simulate receiving one HTTP message then stopping
             call_count = 0
             async def mock_get_message(*args, **kwargs):
@@ -1429,7 +1429,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 # Stop the loop
                 pool._closed = True
                 return None
-            
+
             mock_pubsub.get_message = mock_get_message
 
             mock_redis = AsyncMock()
@@ -1461,7 +1461,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_pubsub = AsyncMock()
             mock_pubsub.subscribe = AsyncMock()
             mock_pubsub.unsubscribe = AsyncMock()
-            
+
             # Simulate receiving unknown message type
             call_count = 0
             async def mock_get_message(*args, **kwargs):
@@ -1477,7 +1477,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     }
                 pool._closed = True
                 return None
-            
+
             mock_pubsub.get_message = mock_get_message
 
             mock_redis = AsyncMock()
@@ -1505,7 +1505,7 @@ class TestMultiWorkerSessionAffinityE2E:
             mock_pubsub = AsyncMock()
             mock_pubsub.subscribe = AsyncMock()
             mock_pubsub.unsubscribe = AsyncMock()
-            
+
             # Simulate receiving message that causes processing error
             call_count = 0
             async def mock_get_message(*args, **kwargs):
@@ -1518,7 +1518,7 @@ class TestMultiWorkerSessionAffinityE2E:
                     }
                 pool._closed = True
                 return None
-            
+
             mock_pubsub.get_message = mock_get_message
 
             mock_redis = AsyncMock()
@@ -1691,7 +1691,7 @@ class TestMultiWorkerSessionAffinityE2E:
                 # Mock httpx.AsyncClient to simulate 401 response
                 mock_response = MagicMock()
                 mock_response.json.return_value = {"result": {}}
-                
+
                 mock_client = AsyncMock()
                 mock_client.__aenter__.return_value = mock_client
                 mock_client.__aexit__.return_value = None

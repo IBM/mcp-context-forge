@@ -120,7 +120,6 @@ def setup_db_execute_mock(test_db, mock_tool, mock_global_config):
     mock_scalar_tool.scalars.return_value = mock_scalar_tool
     mock_scalar_tool.all.return_value = [mock_tool] if mock_tool else []
 
-
     test_db.execute = Mock(return_value=mock_scalar_tool)
 
     # Mock db.query() for GlobalConfig cache (Issue #1715)
