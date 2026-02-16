@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Location: tests/unit/plugins/test_source_scanner/test_semgrep_runner.py
-Copyright: 2025
-SPDX-License-Identifier: Apache-2.0
-Authors: Yaser
-
+"""Location: ./tests/unit/plugins/test_source_scanner/test_semgrep_runner.py
+Copyright 2026
+SPDX-License-Identifier: Apache-2.0 
+Authors: Yasser
 Unit tests for Semgrep runner integration.
+
 Test coverage includes:
 - Initialization with various configurations
 - Command building with different rulesets and arguments
@@ -19,7 +18,7 @@ Test coverage includes:
 # Standard
 from tempfile import mkdtemp
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 # Third-Party
 import pytest
@@ -27,6 +26,7 @@ import pytest
 # First-Party
 from plugins.source_scanner.scanners.semgrep_runner import SemgrepRunner
 from plugins.source_scanner.types import Finding
+from plugins.source_scanner.utils.exec import ExecResult
 
 
 class TestSemgrepRunnerInitialization:
@@ -192,9 +192,9 @@ class TestSARIFParsing:
         findings = runner.parse_sarif_output(sarif)
 
         assert len(findings) == 3, f"Expected 3 findings, got {len(findings)}"
-        assert findings[0].rule_id == "rule.one", "First finding rule_id mismatch"
-        assert findings[1].rule_id == "rule.two", "Second finding rule_id mismatch"
-        assert findings[2].rule_id == "rule.three", "Third finding rule_id mismatch"
+        assert findings[0].rule_id == "rule.one", f"First finding rule_id mismatch"
+        assert findings[1].rule_id == "rule.two", f"Second finding rule_id mismatch"
+        assert findings[2].rule_id == "rule.three", f"Third finding rule_id mismatch"
 
     def test_parse_error_in_sarif(self) -> None:
         """Test handling error field in output."""
@@ -473,26 +473,34 @@ class TestFindingObject:
 class TestIntegration:
     """Integration tests requiring actual semgrep installation."""
 
-    def test_run_returns_list(self) -> None:
+    @pytest.mark.asyncio
+    async def test_run_returns_list(self) -> None:
         """Test run method returns a list."""
         config: dict[str, Any] = {"rulesets": ["p/security-audit"]}
         runner = SemgrepRunner(config)
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout='{"results": []}')
-            findings = runner.run("https://github.com/test/repo.git", mkdtemp())
+        with patch("plugins.source_scanner.scanners.semgrep_runner.run_command", new_callable=AsyncMock) as mock_run_command:
+            mock_run_command.side_effect = [
+                ExecResult(returncode=0, stdout="", stderr="", timed_out=False),
+                ExecResult(returncode=0, stdout='{"results": []}', stderr="", timed_out=False),
+            ]
+            findings = await runner.run("https://github.com/test/repo.git", mkdtemp())
 
             assert isinstance(findings, list), f"run() should return list, got {type(findings)}"
 
-    def test_run_returns_findings_list(self) -> None:
+    @pytest.mark.asyncio
+    async def test_run_returns_findings_list(self) -> None:
         """Test run method returns list of Finding objects."""
         config: dict[str, Any] = {"rulesets": ["p/security-audit"]}
         runner = SemgrepRunner(config)
 
         mock_output = '{"results": [{"check_id": "rule1", "severity": "INFO", "message": "Test", "path": "file.py", "start": {"line": 1}}]}'
 
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout=mock_output)
-            findings = runner.run("https://github.com/test/repo.git", mkdtemp())
+        with patch("plugins.source_scanner.scanners.semgrep_runner.run_command", new_callable=AsyncMock) as mock_run_command:
+            mock_run_command.side_effect = [
+                ExecResult(returncode=0, stdout="", stderr="", timed_out=False),
+                ExecResult(returncode=0, stdout=mock_output, stderr="", timed_out=False),
+            ]
+            findings = await runner.run("https://github.com/test/repo.git", mkdtemp())
 
             assert all(isinstance(f, Finding) for f in findings), "All items should be Finding objects"

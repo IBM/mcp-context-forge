@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Location: ./plugins/source_scanner/config.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 Authors: Xinyi, Ayo
 
@@ -97,6 +97,7 @@ class SourceScannerConfig(BaseModel):
     cache_ttl_hours: int = 168  # 1 week
 
     def model_post_init(self, __context: Any) -> None:
+        """Merge nested scanner configuration into top-level fields after validation."""
         # If user provides config.scanners.*, merge into top-level fields
         if self.scanners is not None:
             self.semgrep = self.scanners.semgrep
