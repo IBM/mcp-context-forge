@@ -360,6 +360,21 @@ plugins:
     conditions: []
     config: {}
 
+  # JSON prune helper - strip unneeded fields from tool results
+  - name: "JSONPrunePlugin"
+    kind: "plugins.json_prune.json_prune.JSONPrunePlugin"
+    description: "Strip unnecessary JSON fields from tool outputs using a whitelist"
+    version: "0.1.0"
+    author: "Mihai Criveti, Alexander Wiegand"
+    hooks: ["tool_post_invoke"]
+    tags: ["json", "prune", "optimization", "tokens"]
+    mode: "disabled"
+    priority: 149
+    conditions: []
+    config:
+      debug: false
+      webhooks: []
+
   # VirusTotal URL/Domain/IP/File checker
   - name: "VirusTotalURLCheckerPlugin"
     kind: "plugins.virus_total_checker.virus_total_checker.VirusTotalURLCheckerPlugin"
