@@ -615,6 +615,109 @@ class TestAdminServerRoutes:
         assert server_create.oauth_enabled is False
         assert server_create.oauth_config is None
 
+    @patch.object(ServerService, "register_server")
+    async def test_admin_add_server_code_execution_fields(self, mock_register_server, mock_request, mock_db, monkeypatch):
+        """Ensure code_execution server fields are parsed and forwarded from admin form."""
+        form_data = FakeForm(
+            {
+                "name": "CodeExecServer",
+                "server_type": "code_execution",
+                "stub_language": "python",
+                "skills_scope": "team:team-1",
+                "skills_require_approval": "on",
+                "mount_rules": json.dumps({"include_tags": ["prod"], "exclude_servers": ["admin-tools"]}),
+                "sandbox_policy": json.dumps({"runtime": "python", "max_execution_time_ms": 45000}),
+                "tokenization": json.dumps({"enabled": True, "types": ["email", "name"], "strategy": "bidirectional"}),
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_creation_metadata",
+            lambda *_args, **_kwargs: {
+                "created_by": "u@example.com",
+                "created_from_ip": None,
+                "created_via": "ui",
+                "created_user_agent": None,
+                "import_batch_id": None,
+                "federation_source": None,
+            },
+        )
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+
+        server_create = mock_register_server.call_args.args[1]
+        assert server_create.server_type == "code_execution"
+        assert server_create.stub_language == "python"
+        assert server_create.mount_rules.include_tags == ["prod"]
+        assert server_create.sandbox_policy.runtime == "python"
+        assert server_create.tokenization.enabled is True
+        assert server_create.skills_scope == "team:team-1"
+        assert server_create.skills_require_approval is True
+
+    async def test_admin_add_server_invalid_code_execution_json_returns_400(self, mock_request, mock_db):
+        """Invalid JSON payload in code_execution fields should fail validation."""
+        form_data = FakeForm(
+            {
+                "name": "BadCodeExec",
+                "server_type": "code_execution",
+                "mount_rules": "{bad-json}",
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 400
+
+    @patch.object(ServerService, "update_server")
+    async def test_admin_edit_server_code_execution_fields(self, mock_update_server, mock_request, mock_db, monkeypatch):
+        """Ensure edit server parses and forwards code_execution form values."""
+        server_id = str(uuid4())
+        form_data = FakeForm(
+            {
+                "id": server_id,
+                "name": "CodeExecEdit",
+                "server_type": "code_execution",
+                "stub_language": "typescript",
+                "skills_scope": "team:team-1",
+                "skills_require_approval": "on",
+                "mount_rules": json.dumps({"include_servers": ["github"]}),
+                "sandbox_policy": json.dumps({"runtime": "deno", "max_execution_time_ms": 60000}),
+                "tokenization": json.dumps({"enabled": True, "types": ["email"]}),
+            }
+        )
+        mock_request.form = AsyncMock(return_value=form_data)
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-1")
+        monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
+        monkeypatch.setattr(
+            "mcpgateway.admin.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "u@example.com",
+                "modified_from_ip": None,
+                "modified_via": "ui",
+                "modified_user_agent": None,
+            },
+        )
+
+        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        assert result.status_code == 200
+
+        server_update = mock_update_server.call_args.args[2]
+        assert server_update.server_type == "code_execution"
+        assert server_update.stub_language == "typescript"
+        assert server_update.mount_rules.include_servers == ["github"]
+        assert server_update.sandbox_policy.runtime == "deno"
+        assert server_update.tokenization.enabled is True
+        assert server_update.skills_scope == "team:team-1"
+        assert server_update.skills_require_approval is True
+
     async def test_admin_add_server_missing_required_field_returns_422(self, mock_request, mock_db):
         """Cover the KeyError handler in admin_add_server."""
         mock_request.form = AsyncMock(return_value=FakeForm({"description": "no name"}))

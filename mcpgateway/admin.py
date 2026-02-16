@@ -2282,6 +2282,42 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                 oauth_enabled = False
                 oauth_config = None
 
+        def _parse_optional_json_field(field_name: str) -> Optional[Dict[str, Any]]:
+            raw_value = form.get(field_name)
+            if raw_value is None:
+                return None
+            text = str(raw_value).strip()
+            if not text:
+                return None
+            try:
+                parsed = orjson.loads(text)
+            except orjson.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSON for '{field_name}': {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Field '{field_name}' must be a JSON object")
+            return parsed
+
+        server_type = str(form.get("server_type") or form.get("type") or "standard").strip().lower()
+        if server_type not in {"standard", "code_execution"}:
+            raise ValueError("server_type must be 'standard' or 'code_execution'")
+        stub_language_raw = str(form.get("stub_language") or "").strip().lower()
+        stub_language = stub_language_raw if stub_language_raw in {"typescript", "python"} else None
+        skills_scope_raw = str(form.get("skills_scope") or "").strip()
+        skills_scope = skills_scope_raw or None
+        skills_require_approval = form.get("skills_require_approval") == "on"
+
+        mount_rules = _parse_optional_json_field("mount_rules")
+        sandbox_policy = _parse_optional_json_field("sandbox_policy")
+        tokenization = _parse_optional_json_field("tokenization")
+
+        if server_type != "code_execution":
+            stub_language = None
+            mount_rules = None
+            sandbox_policy = None
+            tokenization = None
+            skills_scope = None
+            skills_require_approval = False
+
         server = ServerCreate(
             id=form.get("id") or None,
             name=form.get("name"),
@@ -2294,10 +2330,19 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
             visibility=visibility,
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
+            type=server_type,
+            stub_language=stub_language,
+            mount_rules=mount_rules,
+            sandbox_policy=sandbox_policy,
+            tokenization=tokenization,
+            skills_scope=skills_scope,
+            skills_require_approval=skills_require_approval,
         )
     except KeyError as e:
         # Convert KeyError to ValidationError-like response
         return ORJSONResponse(content={"message": f"Missing required field: {e}", "success": False}, status_code=422)
+    except ValueError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=400)
     try:
         user_email = get_user_email(user)
         # Determine personal team for default assignment
@@ -2456,6 +2501,49 @@ async def admin_edit_server(
                 oauth_enabled = False
                 oauth_config = None
 
+        def _parse_optional_json_field(field_name: str) -> Optional[Dict[str, Any]]:
+            raw_value = form.get(field_name)
+            if raw_value is None:
+                return None
+            text = str(raw_value).strip()
+            if not text:
+                return None
+            try:
+                parsed = orjson.loads(text)
+            except orjson.JSONDecodeError as exc:
+                raise ValueError(f"Invalid JSON for '{field_name}': {exc}") from exc
+            if not isinstance(parsed, dict):
+                raise ValueError(f"Field '{field_name}' must be a JSON object")
+            return parsed
+
+        server_type_raw = str(form.get("server_type") or form.get("type") or "").strip().lower()
+        server_type: Optional[str] = None
+        if server_type_raw:
+            if server_type_raw not in {"standard", "code_execution"}:
+                raise ValueError("server_type must be 'standard' or 'code_execution'")
+            server_type = server_type_raw
+
+        stub_language_raw = str(form.get("stub_language") or "").strip().lower()
+        stub_language: Optional[str] = stub_language_raw if stub_language_raw in {"typescript", "python"} else None
+        if form.get("stub_language") is not None and stub_language_raw and stub_language is None:
+            raise ValueError("stub_language must be 'typescript' or 'python'")
+
+        skills_scope_raw = str(form.get("skills_scope") or "").strip()
+        skills_scope = skills_scope_raw or None
+        skills_require_approval = form.get("skills_require_approval") == "on"
+
+        mount_rules = _parse_optional_json_field("mount_rules")
+        sandbox_policy = _parse_optional_json_field("sandbox_policy")
+        tokenization = _parse_optional_json_field("tokenization")
+
+        if server_type == "standard":
+            stub_language = None
+            mount_rules = None
+            sandbox_policy = None
+            tokenization = None
+            skills_scope = None
+            skills_require_approval = False
+
         server = ServerUpdate(
             id=form.get("id"),
             name=form.get("name"),
@@ -2470,6 +2558,13 @@ async def admin_edit_server(
             owner_email=user_email,
             oauth_enabled=oauth_enabled,
             oauth_config=oauth_config,
+            type=server_type,
+            stub_language=stub_language,
+            mount_rules=mount_rules,
+            sandbox_policy=sandbox_policy,
+            tokenization=tokenization,
+            skills_scope=skills_scope,
+            skills_require_approval=skills_require_approval,
         )
 
         await server_service.update_server(
