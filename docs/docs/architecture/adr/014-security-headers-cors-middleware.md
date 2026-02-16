@@ -229,12 +229,63 @@ Implemented comprehensive test coverage (42 new tests):
 - **CSP directive structure** validation
 - **HSTS behavior** testing
 
+## Subresource Integrity (SRI) Implementation
+
+**Status**: ✅ Implemented (Issue #2558)
+
+As part of the security enhancements, Subresource Integrity (SRI) has been implemented for all external CDN resources to cryptographically verify that fetched resources have not been tampered with.
+
+### Implementation Overview
+
+1. **Hash Generation**: `scripts/generate-sri-hashes.py` generates SHA-384 hashes for all CDN resources
+2. **Hash Storage**: Hashes stored in `mcpgateway/sri_hashes.json` and loaded via `load_sri_hashes()` in `admin.py`
+3. **Template Integration**: All CDN resources in templates include `integrity` and `crossorigin` attributes
+4. **CI Verification**: `scripts/verify-sri-hashes.py` validates hashes match CDN content in CI pipeline
+
+### Protected Resources
+
+All 15 external CDN resources are protected with SRI hashes:
+
+- **HTMX** (1.9.10) - Dynamic interactions
+- **Alpine.js** (3.14.1) - Reactive framework
+- **Chart.js** (4.4.1) - Data visualization
+- **Marked** (11.1.1) - Markdown parser
+- **DOMPurify** (3.0.6) - XSS sanitizer
+- **CodeMirror** (5.65.18) - Code editor (7 files: core, modes, themes)
+- **Font Awesome** (6.4.0) - Icon library
+
+### Security Benefits
+
+- **CDN Compromise Protection**: Hash mismatch blocks execution
+- **MITM Attack Prevention**: Tampered content detected
+- **Version Drift Detection**: CI catches unexpected changes
+- **Automated Verification**: Every CI run validates hashes
+
+### Usage
+
+```bash
+# Generate SRI hashes for all CDN resources
+make sri-generate
+
+# Verify hashes match current CDN content
+make sri-verify
+```
+
+### Updating CDN Libraries
+
+When updating a CDN library version:
+
+1. Update the URL in `scripts/generate-sri-hashes.py`
+2. Run `make sri-generate` to calculate new hash
+3. Update the URL in templates (admin.html, login.html, etc.)
+4. Run `make sri-verify` to confirm hash matches
+5. Commit both `sri_hashes.json` and template changes
+
 ## Future Enhancements
 
 Potential improvements for future iterations:
 
 - **CSP Nonces**: Replace 'unsafe-inline' with nonces for dynamic content
-- **Subresource Integrity**: Add SRI for external CDN resources
 - **CSP Violation Reporting**: Implement CSP violation reporting endpoint
 - **Per-Route CSP**: Different CSP policies for different endpoints
 - **Security Header Compliance**: Monitoring dashboard for header compliance
@@ -242,3 +293,5 @@ Potential improvements for future iterations:
 ## Status
 
 This security headers and CORS middleware implementation is **accepted and implemented** as of version 0.5.0, providing comprehensive security coverage while maintaining compatibility with existing functionality.
+
+**SRI Implementation**: Completed in version 1.0.0 (Issue #2558) - All external CDN resources now protected with SHA-384 integrity hashes.
