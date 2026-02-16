@@ -164,6 +164,62 @@ def test_get_statistics_returns_structure(monkeypatch):
     assert "time_range" in stats
 
 
+def test_per_decision_toggle_skips_allowed(monkeypatch):
+    """log_decision skips DB write when policy_audit_log_allowed is False for allow decisions."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_allowed", False)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_denied", True)
+
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+    result = service.log_decision(action="tools.invoke", decision="allow")
+
+    assert result is not None
+    assert result.decision == "allow"
+    # Should NOT have hit the database
+    assert len(dummy_session.added) == 0
+    assert dummy_session.committed is False
+
+
+def test_per_decision_toggle_skips_denied(monkeypatch):
+    """log_decision skips DB write when policy_audit_log_denied is False for deny decisions."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_allowed", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_denied", False)
+
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+    result = service.log_decision(action="tools.invoke", decision="deny")
+
+    assert result is not None
+    assert result.decision == "deny"
+    # Should NOT have hit the database
+    assert len(dummy_session.added) == 0
+    assert dummy_session.committed is False
+
+
+def test_per_decision_toggle_allows_when_enabled(monkeypatch):
+    """log_decision writes to DB when per-decision toggles are both True."""
+    monkeypatch.setattr(svc.settings, "policy_audit_enabled", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_allowed", True)
+    monkeypatch.setattr(svc.settings, "policy_audit_log_denied", True)
+
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.PolicyDecisionService()
+    result = service.log_decision(action="tools.invoke", decision="deny", subject_id="u1")
+
+    assert result is not None
+    assert result.decision == "deny"
+    assert len(dummy_session.added) == 1
+    assert dummy_session.committed is True
+
+
 def test_siem_processor_wiring(monkeypatch):
     """set_siem_processor attaches a processor for SIEM forwarding."""
     service = svc.PolicyDecisionService()

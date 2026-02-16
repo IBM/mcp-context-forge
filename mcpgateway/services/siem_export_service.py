@@ -16,7 +16,7 @@ Ported from mcp_servers/mcp_audit_siem.py with fixes for:
 from abc import ABC, abstractmethod
 import asyncio
 from collections import deque
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 import logging
 import os
@@ -246,7 +246,7 @@ class WebhookExporter(SIEMExporter):
         payload = {
             "events": [record.to_webhook() for record in records],
             "batch_size": len(records),
-            "timestamp": datetime.now().isoformat(),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
         try:
