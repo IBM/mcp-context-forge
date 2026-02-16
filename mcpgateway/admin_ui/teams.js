@@ -1,14 +1,14 @@
 import { AppState } from "./appState.js";
-import { DEFAULT_TEAMS_PER_PAGE } from "./constants";
+import { DEFAULT_TEAMS_PER_PAGE } from "./constants.js";
 import { escapeHtml, safeReplaceState } from "./security.js";
-import { fetchWithAuth, getAuthToken } from "./tokens";
-import { performUserSearch } from "./users";
+import { fetchWithAuth, getAuthToken } from "./tokens.js";
+import { performUserSearch } from "./users.js";
 import {
   fetchWithTimeout,
   safeGetElement,
   showErrorMessage,
   showSuccessMessage,
-} from "./utils";
+} from "./utils.js";
 
 // ============================================================================ //
 //                         TEAM SEARCH AND FILTER FUNCTIONS                     //

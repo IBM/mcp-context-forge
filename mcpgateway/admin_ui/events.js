@@ -13,24 +13,24 @@ import {
   setupBulkImportModal,
   setupTooltipsWithAlpine,
 } from "./initialization.js";
-import { closeModal } from "./modals";
+import { closeModal } from "./modals.js";
 import { initializeRealTimeMonitoring } from "./monitoring.js";
-import { initializeTagFiltering } from "./tags";
-import { hideTeamEditModal, initializeAddMembersForms, initializePasswordValidation } from "./teams";
-import { initializeTeamScopingMonitor } from "./tokens";
-import { cleanupToolTestState, loadTools } from "./tools";
+import { initializeTagFiltering } from "./tags.js";
+import { hideTeamEditModal, initializeAddMembersForms, initializePasswordValidation } from "./teams.js";
+import { initializeTeamScopingMonitor } from "./tokens.js";
+import { cleanupToolTestState, loadTools } from "./tools.js";
 import {
   hideUserEditModal,
   performUserSearch,
   registerAdminActionListeners,
-} from "./users";
+} from "./users.js";
 import {
   createMemoizedInit,
   safeGetElement,
   showErrorMessage,
   showSuccessMessage,
   updateEditToolUrl,
-} from "./utils";
+} from "./utils.js";
 
 ((Admin) => {
   // ===================================================================

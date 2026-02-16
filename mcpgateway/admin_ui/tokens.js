@@ -6,7 +6,7 @@ import {
   getCurrentTeamName,
   safeGetElement,
   showNotification,
-} from "./utils";
+} from "./utils.js";
 
 /**
  * Load tokens list from API

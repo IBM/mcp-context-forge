@@ -82,7 +82,7 @@
     }
 
     const newUrl = currentUrl.pathname + '?' + newParams.toString() + currentUrl.hash;
-    safeReplaceState({}, '', newUrl);
+    Admin.safeReplaceState({}, '', newUrl);
   },
 
   // Load page via HTMX

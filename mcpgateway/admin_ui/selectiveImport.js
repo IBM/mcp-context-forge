@@ -9,7 +9,7 @@ import { getAuthToken } from "./tokens.js";
 // SELECTIVE IMPORT FUNCTIONS
 // ===================================================================
 
-import { safeGetElement, showNotification } from "./utils";
+import { safeGetElement, showNotification } from "./utils.js";
 
 /**
  * Display import preview with selective import options

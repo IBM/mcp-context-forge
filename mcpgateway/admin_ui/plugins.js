@@ -1,4 +1,4 @@
-import { safeGetElement } from "./utils";
+import { safeGetElement } from "./utils.js";
 
 // Populate hook, tag, and author filters on page load
 export const populatePluginFilters = function () {

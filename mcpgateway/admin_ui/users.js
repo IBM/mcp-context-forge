@@ -6,9 +6,9 @@ import {
   initializeAddMembersForms,
   initializePasswordValidation,
   updateAddMembersCount,
-} from "./teams";
-import { fetchWithAuth } from "./tokens";
-import { safeGetElement } from "./utils";
+} from "./teams.js";
+import { fetchWithAuth } from "./tokens.js";
+import { safeGetElement } from "./utils.js";
 
 // ===================================================================
 // USER MANAGEMENT FUNCTIONS

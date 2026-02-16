@@ -2673,7 +2673,7 @@
           <form
             method="POST"
             id="add-server-form"
-            onreset="Admin.safeGetELement('associatedTools').selectedIndex = -1;"
+            onreset="Admin.safeGetElement('associatedTools').selectedIndex = -1;"
           >
             <div class="grid grid-cols-1 gap-7">
               <div>
@@ -3082,7 +3082,7 @@
                   name="oauth_enabled"
                   id="server-oauth-enabled"
                   class="form-checkbox h-5 w-5 text-indigo-600 dark:bg-gray-800 dark:border-gray-600"
-                  onchange="Admin.safeGetELement('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
+                  onchange="Admin.safeGetElement('server-oauth-config-section').classList.toggle('hidden', !this.checked)"
                 />
                 <label
                   for="server-oauth-enabled"
@@ -3384,7 +3384,7 @@
                         <div class="flex justify-between items-center mb-2">
                           <strong class="text-xs">Sample JSON Template:</strong>
                           <button
-                            onclick="Admin.downloadSampleJSON()"
+                            onclick="downloadSampleJSON()"
                             class="text-blue-600 hover:text-blue-800 dark:text-blue-400 text-xs underline"
                           >
                             📥 Download Sample
@@ -3492,7 +3492,7 @@
                       />
                       <div
                         id="dropdown-file-drop-zone"
-                        onclick="Admin.safeGetELement('dropdown-file-input').click()"
+                        onclick="Admin.safeGetElement('dropdown-file-input').click()"
                         class="cursor-pointer"
                       >
                         <svg
@@ -5872,7 +5872,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
             </div>
             <button
               id="create-team-btn"
-              onclick="Admin.openCreateTeamModal()"
+              onclick="openCreateTeamModal()"
               class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
             >
               <svg
@@ -6453,7 +6453,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
               </div>
               <button
                 id="tokens-clear-search"
-                onclick="clearSearch('tokens')"
+                onclick="Admin.clearSearch('tokens')"
                 class="px-2 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200 transition-colors">
                 Clear
               </button>
@@ -11670,7 +11670,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             >
               <button
                 type="button"
-                onclick="closeModal('root-details-modal')"
+                onclick="Admin.closeModal('root-details-modal')"
                 class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm dark:text-gray-300"
               >
                 Close
@@ -11737,7 +11737,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                   >
                     <button
                       type="button"
-                      onclick="closeModal('root-edit-modal')"
+                      onclick="Admin.closeModal('root-edit-modal')"
                       class="px-4 py-2 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 dark:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 dark:text-gray-300"
                     >
                       Cancel
@@ -12071,9 +12071,9 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         // Edit button: special-case for a2a-agents to call editA2AAgent
         let editOnclick;
         if (sectionType === 'a2a-agents') {
-          editOnclick = canEdit ? `onclick="editA2AAgent('${item.id}')"` : 'onclick="return false;"';
+          editOnclick = canEdit ? `onclick="Admin.editA2AAgent('${item.id}')"` : 'onclick="return false;"';
         } else {
-          editOnclick = canEdit ? `onclick="edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
+          editOnclick = canEdit ? `onclick="Admin.edit${sectionType.charAt(0).toUpperCase() + sectionType.slice(1, -1)}('${item.id}')"` : 'onclick="return false;"';
         }
         buttons += `<button ${editDisabled} ${editTitle} ${editOnclick} class="${editClass} mr-2">Edit</button>`;
 
@@ -14427,7 +14427,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
         <div
           class="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity"
           aria-hidden="true"
-          onclick="Admin.closeCreateTeamModal()"
+          onclick="closeCreateTeamModal()"
         ></div>
         <span
           class="hidden sm:inline-block sm:align-middle sm:h-screen"
@@ -14443,7 +14443,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                 Create New Team
               </h3>
               <button
-                onclick="Admin.closeCreateTeamModal()"
+                onclick="closeCreateTeamModal()"
                 class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 <svg
@@ -14581,7 +14581,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
               <div class="mt-6 flex justify-end space-x-3">
                 <button
                   type="button"
-                  onclick="Admin.closeCreateTeamModal()"
+                  onclick="closeCreateTeamModal()"
                   class="px-4 py-2 border border-gray-300 rounded-md shadow-sm bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                 >
                   Cancel

@@ -232,7 +232,7 @@
   <!-- Quick Stats Grid -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
     <!-- Virtual Servers Card -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="Admin.showTab('catalog')" onkeydown="handleKeydown(event, () => Admin.showTab('catalog'))" tabindex="0" role="button" aria-label="View Virtual Servers">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="Admin.showTab('catalog')" onkeydown="Admin.handleKeydown(event, () => Admin.showTab('catalog'))" tabindex="0" role="button" aria-label="View Virtual Servers">
       <div class="flex items-center justify-between">
         <div class="flex items-center">
           <div class="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg mr-3">
@@ -253,7 +253,7 @@
     </div>
 
     <!-- Tools Card -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="Admin.showTab('tools')" onkeydown="handleKeydown(event, () => Admin.showTab('tools'))" tabindex="0" role="button" aria-label="View Tools">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="Admin.showTab('tools')" onkeydown="Admin.handleKeydown(event, () => Admin.showTab('tools'))" tabindex="0" role="button" aria-label="View Tools">
       <div class="flex items-center justify-between">
         <div class="flex items-center">
           <div class="p-2 bg-rose-100 dark:bg-rose-900/30 rounded-lg mr-3">
@@ -275,7 +275,7 @@
     </div>
 
     <!-- Plugins Card -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="Admin.showTab('plugins')" onkeydown="handleKeydown(event, () => Admin.showTab('plugins'))" tabindex="0" role="button" aria-label="View Plugins">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow" onclick="Admin.showTab('plugins')" onkeydown="Admin.handleKeydown(event, () => Admin.showTab('plugins'))" tabindex="0" role="button" aria-label="View Plugins">
       <div class="flex items-center justify-between">
         <div class="flex items-center">
           <div class="p-2 bg-purple-100 dark:bg-purple-900/30 rounded-lg mr-3">

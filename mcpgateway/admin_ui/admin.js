@@ -54,7 +54,7 @@ Admin.logRestrictedContext = logRestrictedContext;
 import {
   editA2AAgent,
   viewA2AAgent,
-} from "./a2aAgents.js"
+} from "./a2aAgents.js";
 
 Admin.editA2AAgent = editA2AAgent;
 Admin.viewA2AAgent = viewA2AAgent;
@@ -354,7 +354,7 @@ Admin.handleSelectiveImport = handleSelectiveImport;
 import {
   viewServer,
   editServer,
-} from "./servers.js"
+} from "./servers.js";
 
 Admin.viewServer = viewServer;
 Admin.editServer = editServer;
@@ -438,6 +438,10 @@ import "./app.js";
 import "./events.js";
 
 console.log("🚀 ContextForge MCP Gateway Admin API initialized");
+
+// Backward-compatible global aliases for functions that tests and
+// inline template handlers expect on the window object.
+window.showTab = Admin.showTab;
 
 // Export the Admin namespace so Vite's IIFE can expose it as window.Admin
 export default Admin;

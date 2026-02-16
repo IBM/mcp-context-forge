@@ -1,8 +1,8 @@
 import { AppState } from "./appState.js";
 import { getSelectedGatewayIds } from "./gateway.js";
-import { openModal } from "./modals";
+import { openModal } from "./modals.js";
 import { escapeHtml, validateInputName, validateJson } from "./security.js";
-import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
+import { decodeHtml, fetchWithTimeout, getCurrentTeamId, handleFetchError, isInactiveChecked, safeGetElement, showErrorMessage } from "./utils.js";
 
 
 /**

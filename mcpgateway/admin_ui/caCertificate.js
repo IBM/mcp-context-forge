@@ -3,7 +3,7 @@
 // ============================================================================
 
 import { escapeHtml } from "./security.js";
-import { isValidBase64, safeGetElement } from "./utils";
+import { isValidBase64, safeGetElement } from "./utils.js";
 
 /**
  * Validate CA certificate file on upload (supports multiple files)

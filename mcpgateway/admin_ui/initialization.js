@@ -20,7 +20,7 @@ import {
   updateEditToolRequestTypes,
   updateRequestTypeOptions,
   updateSchemaPreview,
-} from "./formFieldHandlers";
+} from "./formFieldHandlers.js";
 import {
   handleA2AFormSubmit,
   handleEditA2AAgentFormSubmit,
@@ -34,7 +34,7 @@ import {
   handleResourceFormSubmit,
   handleServerFormSubmit,
   handleToolFormSubmit,
-} from "./formSubmitHandlers";
+} from "./formSubmitHandlers.js";
 import {
   serverSideEditPromptsSearch,
   serverSideEditResourcesSearch,
@@ -43,15 +43,15 @@ import {
   serverSideResourceSearch,
   serverSideToolSearch,
 } from "./llmChat.js";
-import { closeModal, openModal } from "./modals";
-import { initPromptSelect } from "./prompts";
-import { initResourceSelect } from "./resources";
-import { filterA2AAgentsTable, filterGatewaysTable, filterPromptsTable, filterResourcesTable, filterServerTable, filterToolsTable } from "./filters";
+import { closeModal, openModal } from "./modals.js";
+import { initPromptSelect } from "./prompts.js";
+import { initResourceSelect } from "./resources.js";
+import { filterA2AAgentsTable, filterGatewaysTable, filterPromptsTable, filterResourcesTable, filterServerTable, filterToolsTable } from "./filters.js";
 import { escapeHtml, safeSetInnerHTML } from "./security.js";
-import { ADMIN_ONLY_TABS, showTab } from "./tabs";
-import { initToolSelect } from "./tools";
-import { fetchWithTimeout, isAdminUser, safeGetElement } from "./utils";
-import { getTeamNameById } from "./tokens";
+import { ADMIN_ONLY_TABS, showTab } from "./tabs.js";
+import { initToolSelect } from "./tools.js";
+import { fetchWithTimeout, isAdminUser, safeGetElement } from "./utils.js";
+import { getTeamNameById } from "./tokens.js";
 
 // ===================================================================
 // SINGLE CONSOLIDATED INITIALIZATION SYSTEM

@@ -2,14 +2,14 @@
 // CONFIG EXPORT FUNCTIONALITY
 // ===============================================
 
-import { closeModal, openModal } from "./modals";
+import { closeModal, openModal } from "./modals.js";
 import {
   fetchWithTimeout,
   handleFetchError,
   safeGetElement,
   showErrorMessage,
   showSuccessMessage,
-} from "./utils";
+} from "./utils.js";
 
 /**
  * Global variables to store current config data

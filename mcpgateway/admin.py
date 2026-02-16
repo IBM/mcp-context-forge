@@ -238,7 +238,7 @@ def get_bundle_js_filename() -> str:
             with open(manifest_path, "r") as f:
                 manifest = orjson.loads(f.read())
                 # The key is the input path relative to the project root
-                entry_key = "mcpgateway/static/js/admin.js"
+                entry_key = "mcpgateway/admin_ui/index.js"
                 if entry_key in manifest and manifest[entry_key].get("file"):
                     _bundle_js_cache = manifest[entry_key]["file"]
                     return _bundle_js_cache

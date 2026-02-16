@@ -2,7 +2,7 @@
 // TAG FILTERING FUNCTIONALITY
 // ===============================================
 
-import { safeGetElement } from "./utils";
+import { safeGetElement } from "./utils.js";
 
 /**
  * Extract all unique tags from entities in a given entity type

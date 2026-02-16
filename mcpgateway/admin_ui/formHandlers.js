@@ -1,4 +1,4 @@
-import { isInactiveChecked } from "./utils";
+import { isInactiveChecked } from "./utils.js";
 
 // ===================================================================
 // INACTIVE ITEMS HANDLING

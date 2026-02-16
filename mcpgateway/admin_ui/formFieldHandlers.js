@@ -4,7 +4,7 @@
 
 import { AppState } from "./appState.js";
 import { validateInputName } from "./security.js";
-import { safeGetElement } from "./utils";
+import { safeGetElement } from "./utils.js";
 
 
 export const generateSchema = function () {
