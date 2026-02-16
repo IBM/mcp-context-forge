@@ -1498,7 +1498,7 @@ class EmailAuthService:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
                 if would_lose_admin:
                     if settings.protect_all_admins and not bool(disable_admin_protection):
-                        raise ValueError(f"Admin protection is enabled — cannot demote or deactivate any admin user {disable_admin_protection}")
+                        raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
                     if await self.is_last_active_admin(email):
                         raise ValueError("Cannot demote or deactivate the last remaining active admin user")
 
