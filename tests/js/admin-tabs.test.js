@@ -285,3 +285,101 @@ describe("renderGlobalSearchResults hidden section filtering", () => {
         expect(container.innerHTML).toContain("No matching results");
     });
 });
+
+describe("isTabHidden", () => {
+    test("returns true for a tab in the hidden list", () => {
+        win.UI_HIDDEN_TABS = ["prompts", "tools"];
+        expect(win.isTabHidden("prompts")).toBe(true);
+        expect(win.isTabHidden("tools")).toBe(true);
+    });
+
+    test("returns false for a tab not in the hidden list", () => {
+        win.UI_HIDDEN_TABS = ["prompts"];
+        expect(win.isTabHidden("gateways")).toBe(false);
+    });
+
+    test("returns false for empty or null input", () => {
+        win.UI_HIDDEN_TABS = ["prompts"];
+        expect(win.isTabHidden("")).toBe(false);
+        expect(win.isTabHidden(null)).toBe(false);
+    });
+
+    test("normalizes input before checking", () => {
+        win.UI_HIDDEN_TABS = ["prompts"];
+        expect(win.isTabHidden("#Prompts")).toBe(true);
+        expect(win.isTabHidden("  PROMPTS  ")).toBe(true);
+    });
+});
+
+describe("resolveTabForNavigation", () => {
+    test("returns the tab itself when visible and available", () => {
+        createTab("gateways");
+        createTab("overview");
+
+        expect(win.resolveTabForNavigation("gateways")).toBe("gateways");
+    });
+
+    test("falls back to default for hidden tab", () => {
+        createTab("gateways");
+        createTab("prompts");
+        createTab("overview");
+        win.UI_HIDDEN_TABS = ["prompts"];
+
+        expect(win.resolveTabForNavigation("prompts")).toBe("overview");
+    });
+
+    test("falls back to default for empty input", () => {
+        createTab("overview");
+        createTab("gateways");
+
+        expect(win.resolveTabForNavigation("")).toBe("overview");
+        expect(win.resolveTabForNavigation(null)).toBe("overview");
+    });
+
+    test("falls back to default for admin-only tab when non-admin", () => {
+        createTab("overview");
+        createTab("users");
+        win.IS_ADMIN = false;
+
+        expect(win.resolveTabForNavigation("users")).toBe("overview");
+    });
+
+    test("falls back to default for non-existent tab", () => {
+        createTab("overview");
+        createTab("gateways");
+
+        expect(win.resolveTabForNavigation("nonexistent")).toBe("overview");
+    });
+});
+
+describe("showTab normal navigation", () => {
+    test("shows the requested visible tab and hides others", () => {
+        const { panel: overviewPanel, link: overviewLink } = createTab("overview");
+        const { panel: gatewaysPanel, link: gatewaysLink } = createTab("gateways");
+
+        win.showTab("gateways");
+
+        expect(gatewaysPanel.classList.contains("hidden")).toBe(false);
+        expect(overviewPanel.classList.contains("hidden")).toBe(true);
+        expect(gatewaysLink.classList.contains("active")).toBe(true);
+        expect(overviewLink.classList.contains("active")).toBe(false);
+    });
+});
+
+describe("getDefaultTabName edge cases", () => {
+    test("returns gateways fallback when all tabs are hidden and no panels exist", () => {
+        // No tabs created, nothing available
+        win.UI_HIDDEN_TABS = ["overview"];
+        expect(win.getDefaultTabName()).toBe("gateways");
+    });
+
+    test("returns overview when overview panel exists but no sidebar links", () => {
+        // Create only the panel, not the sidebar link
+        const panel = doc.createElement("div");
+        panel.id = "overview-panel";
+        panel.className = "tab-panel hidden";
+        doc.body.appendChild(panel);
+
+        expect(win.getDefaultTabName()).toBe("overview");
+    });
+});
