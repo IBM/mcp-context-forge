@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Tests for secrets detection plugin regex patterns."""
 
+import os
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 
@@ -17,6 +18,9 @@ try:
 except ImportError:
     RUST_AVAILABLE = False
     rust_secret_detection = None
+    # Fail in CI if Rust plugins are required
+    if os.environ.get("REQUIRE_RUST_PLUGINS") == "1":
+        raise ImportError("Rust plugin 'secret_detection' is required in CI but not available")
 
 
 @pytest.mark.asyncio

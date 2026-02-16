@@ -10,7 +10,7 @@
 #   make bench        - Benchmark secrets_detection plugin
 #   make compare      - Run Python vs Rust performance comparison
 
-.PHONY: help build dev test clean check lint fmt bench audit doc install compare
+.PHONY: help build dev test clean check lint fmt bench audit doc install compare verify test-integration bench-compare test-all build-target
 
 # Default target
 .DEFAULT_GOAL := help
@@ -38,6 +38,11 @@ help: ## Show this help message
 build: ## Build plugin in release mode
 	@echo "$(GREEN)Building secrets_detection plugin...$(NC)"
 	maturin build --release
+
+build-target: ## Build for specific target (use TARGET=...)
+	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
+	@maturin build --release --target $(TARGET)
+	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
 
 install: ## Build and install plugin (uses maturin develop)
@@ -72,10 +77,27 @@ clippy: ## Run clippy linter
 	@echo "$(GREEN)Running clippy...$(NC)"
 	cargo clippy --all-targets --all-features -- -D warnings
 
+check-all: ## Run all checks (format, lint, test)
+	@echo "$(GREEN)Running all checks...$(NC)"
+	@$(MAKE) --no-print-directory fmt-check
+	@$(MAKE) --no-print-directory clippy
+	@$(MAKE) --no-print-directory test
+
+verify: ## Verify plugin installation
+	@echo "$(GREEN)Verifying secret_detection installation...$(NC)"
+	@python3 -c "import secret_detection; print('✅ secret_detection available')" || echo "⚠️  secret_detection not installed"
+
+test-integration: ## Run integration tests
+	@echo "$(GREEN)Running integration tests...$(NC)"
+	@cargo test --test '*' --release
+
 # Benchmarking targets
 bench: ## Run Rust benchmarks for plugin
 	@echo "$(GREEN)Running secrets_detection benchmarks...$(NC)"
 	cargo bench
+
+bench-compare: ## Alias for compare
+	@$(MAKE) --no-print-directory compare
 
 compare: install ## Run Python vs Rust performance comparison (full)
 	@echo "$(GREEN)Running performance comparison (Python vs Rust)...$(NC)"
@@ -213,7 +235,7 @@ stats: ## Show code statistics
 	@cargo tree --depth 1
 
 # All PHONY targets
-.PHONY: help build build-debug dev dev-debug install \
+.PHONY: help build build-debug build-target dev dev-debug install \
         test test-verbose test-python test-integration test-all \
         fmt fmt-check clippy \
         bench compare compare-quick compare-detailed \

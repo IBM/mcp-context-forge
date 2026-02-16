@@ -23,6 +23,14 @@ VERSION         ?= $(shell cargo metadata --format-version 1 --no-deps 2>/dev/nu
 DIST_DIR        := target
 PYTHON          ?= python3
 
+# Colors for output
+BLUE := \033[0;34m
+GREEN := \033[0;32m
+YELLOW := \033[0;33m
+RED := \033[0;31m
+NC := \033[0m # No Color
+
+# Legacy color names for compatibility
 ifeq ($(shell test -t 1 && echo tty),tty)
 C_BLUE  := \033[38;5;75m
 C_GREEN := \033[38;5;82m
@@ -40,19 +48,22 @@ endif
 # help: fmt                   - Format Rust code with rustfmt
 # help: fmt-check             - Check Rust code formatting (CI)
 # help: clippy                - Run clippy lints
-# help: check                 - Run cargo check
-.PHONY: fmt fmt-check clippy check
+# help: cargo-check           - Run cargo check
+.PHONY: fmt fmt-check clippy cargo-check build-target
 
 fmt:
-	@cargo fmt
+	@echo "$(GREEN)Formatting code...$(NC)"
+	cargo fmt
 
 fmt-check:
-	@cargo fmt -- --check
+	@echo "$(GREEN)Checking code format...$(NC)"
+	cargo fmt -- --check
 
 clippy:
-	@cargo clippy -- -D warnings
+	@echo "$(GREEN)Running clippy...$(NC)"
+	cargo clippy -- -D warnings
 
-check:
+cargo-check:
 	@cargo check
 
 # =============================================================================
@@ -66,14 +77,16 @@ check:
 .PHONY: test test-verbose test-python test-all
 
 test:
-	@cargo test
+	@echo "$(GREEN)Running pii_filter tests...$(NC)"
+	cargo test
 
 test-verbose:
-	@cargo test -- --nocapture
+	@echo "$(GREEN)Running pii_filter tests (verbose)...$(NC)"
+	cargo test -- --nocapture
 
-test-python: develop
-	@echo "$(C_BLUE)➜ Running Python tests...$(C_RESET)"
-	@cd ../.. && pytest -k pii_filter -v
+test-python: ## Run Python unit tests for plugin (requires dev install)
+	@echo "$(GREEN)Running Python unit tests...$(NC)"
+	cd ../.. && pytest -k pii_filter -v
 
 test-all: test test-python
 
@@ -88,25 +101,30 @@ test-all: test test-python
 .PHONY: build release develop install
 
 build:
-	@echo "$(C_BLUE)➜ Building debug Python extension...$(C_RESET)"
-	@maturin build
-	@echo "$(C_GREEN)Debug build complete$(C_RESET)"
+	@echo "$(GREEN)Building release Python extension...$(NC)"
+	@maturin build --release
+	@echo "$(GREEN)Release build complete$(NC)"
+
+build-target:
+	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
+	@maturin build --release --target $(TARGET)
+	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
 release:
-	@echo "$(C_BLUE)➜ Building release Python extension...$(C_RESET)"
+	@echo "$(GREEN)Building release Python extension...$(NC)"
 	@maturin build --release
-	@echo "$(C_GREEN)Release build complete$(C_RESET)"
+	@echo "$(GREEN)Release build complete$(NC)"
 	@ls -lh $(DIST_DIR)/wheels/*.whl 2>/dev/null || true
 
 develop:
-	@echo "$(C_BLUE)➜ Installing in development mode...$(C_RESET)"
+	@echo "$(GREEN)Installing in development mode...$(NC)"
 	@maturin develop --release
-	@echo "$(C_GREEN)Development install complete$(C_RESET)"
+	@echo "$(GREEN)Development install complete$(NC)"
 
 install: release
-	@echo "$(C_BLUE)➜ Installing wheel...$(C_RESET)"
-	@pip install --force-reinstall $(DIST_DIR)/wheels/*.whl
-	@echo "$(C_GREEN)Installation complete$(C_RESET)"
+	@echo "$(GREEN)Installing wheel...$(NC)"
+	@uv pip install --force-reinstall $(DIST_DIR)/wheels/*.whl
+	@echo "$(GREEN)Installation complete$(NC)"
 
 # =============================================================================
 # 📊 BENCHMARKS
@@ -115,19 +133,22 @@ install: release
 # help: bench                 - Run Criterion benchmarks
 # help: bench-baseline        - Save benchmark baseline
 # help: bench-compare         - Compare against baseline
-.PHONY: bench bench-baseline bench-compare
+.PHONY: bench bench-baseline bench-compare compare
 
 bench:
-	@echo "$(C_BLUE)➜ Running benchmarks...$(C_RESET)"
+	@echo "$(GREEN)Running benchmarks...$(NC)"
 	@cargo bench
 
 bench-baseline:
-	@echo "$(C_BLUE)➜ Saving benchmark baseline...$(C_RESET)"
+	@echo "$(GREEN)Saving benchmark baseline...$(NC)"
 	@cargo bench -- --save-baseline main
 
 bench-compare:
-	@echo "$(C_BLUE)➜ Comparing against baseline...$(C_RESET)"
+	@echo "$(GREEN)Comparing against baseline...$(NC)"
 	@cargo bench -- --baseline main
+
+compare: bench-compare
+	@echo "$(GREEN)Performance comparison complete$(NC)"
 
 # =============================================================================
 # 🧹 CLEANUP
@@ -138,14 +159,18 @@ bench-compare:
 .PHONY: clean clean-all
 
 clean:
-	@cargo clean
-	@echo "Workspace clean ✔"
+	@echo "$(YELLOW)Cleaning build artifacts...$(NC)"
+	cargo clean
+	rm -rf target/
+	rm -rf coverage/
+	find . -type f -name "*.whl" -delete
+	find . -type f -name "*.pyc" -delete
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 clean-all: clean
-	@rm -rf $(DIST_DIR)/wheels
-	@rm -rf *.egg-info
-	@find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
-	@echo "All artifacts removed ✔"
+	@echo "$(RED)Cleaning all generated files...$(NC)"
+	rm -rf ~/.cargo/registry/cache/
+	rm -rf ~/.cargo/git/db/
 
 # =============================================================================
 # 📚 DOCUMENTATION
@@ -156,24 +181,36 @@ clean-all: clean
 .PHONY: doc doc-open
 
 doc:
-	@cargo doc --no-deps
+	@echo "$(GREEN)Building documentation...$(NC)"
+	cargo doc --no-deps --document-private-items
 
-doc-open:
-	@cargo doc --no-deps --open
+doc-open: doc
+	@echo "$(GREEN)Opening documentation...$(NC)"
+	cargo doc --no-deps --document-private-items --open
 
 # =============================================================================
 # 🔧 DEVELOPMENT HELPERS
 # =============================================================================
 # help: 🔧 DEVELOPMENT HELPERS
-# help: verify                - Run all checks (fmt, clippy, test)
+# help: verify                - Verify plugin installation
+# help: check-all             - Run all checks (fmt, clippy, test)
+# help: test-integration      - Run integration tests
 # help: pre-commit            - Run pre-commit checks
-.PHONY: verify pre-commit
+.PHONY: verify check-all test-integration pre-commit
 
-verify: fmt clippy test
-	@echo "$(C_GREEN)✔ All checks passed$(C_RESET)"
+verify:
+	@echo "$(GREEN)Verifying pii_filter installation...$(NC)"
+	@python3 -c "import pii_filter; print('✅ pii_filter available')" || echo "⚠️  pii_filter not installed"
 
-pre-commit: verify
-	@echo "$(C_GREEN)✔ Ready to commit$(C_RESET)"
+check-all: fmt-check clippy test
+	@echo "$(GREEN)✔ All checks passed$(NC)"
+
+test-integration:
+	@echo "$(GREEN)Running integration tests...$(NC)"
+	@cargo test --test '*' --release
+
+pre-commit: check-all
+	@echo "$(GREEN)✔ Ready to commit$(NC)"
 
 # ---------------------------------------------------------------------------
 # Default goal
