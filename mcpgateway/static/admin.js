@@ -17725,7 +17725,10 @@ function clearSearch(entityType) {
                 tagInput.value = "";
             }
             // Keep rows visible even if HTMX reload is delayed/missed.
-            if (entityType === "catalog" && typeof filterServerTable === "function") {
+            if (
+                entityType === "catalog" &&
+                typeof filterServerTable === "function"
+            ) {
                 filterServerTable("");
             } else if (
                 entityType === "tools" &&
