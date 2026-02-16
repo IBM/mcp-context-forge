@@ -340,6 +340,62 @@ describe("toggleServerCodeExecutionSection", () => {
 });
 
 // ---------------------------------------------------------------------------
+// applyCodeExecutionFieldTemplate
+// ---------------------------------------------------------------------------
+describe("applyCodeExecutionFieldTemplate", () => {
+    const f = () => win.applyCodeExecutionFieldTemplate;
+
+    test("applies JSON template to a plain textarea", () => {
+        const field = doc.createElement("textarea");
+        field.id = "server-sandbox-policy";
+        doc.body.appendChild(field);
+
+        f()("server-sandbox-policy", "sandbox_policy");
+
+        const parsed = JSON.parse(field.value);
+        expect(parsed.runtime).toBe("deno");
+        expect(parsed.permissions.network.allow_tool_calls).toBe(true);
+    });
+
+    test("applies template to CodeMirror-backed textarea and keeps it focused", () => {
+        const field = doc.createElement("textarea");
+        field.id = "server-mount-rules";
+
+        let value = "";
+        let focused = false;
+        let cursorSet = false;
+        let refreshed = false;
+
+        field.CodeMirror = {
+            getValue: () => value,
+            setValue: (nextValue) => {
+                value = nextValue;
+            },
+            focus: () => {
+                focused = true;
+            },
+            lineCount: () => 1,
+            getLine: () => value,
+            setCursor: () => {
+                cursorSet = true;
+            },
+            refresh: () => {
+                refreshed = true;
+            },
+        };
+
+        doc.body.appendChild(field);
+        f()("server-mount-rules", "mount_rules");
+
+        const parsed = JSON.parse(value);
+        expect(parsed.include_tags).toEqual(["prod"]);
+        expect(focused).toBe(true);
+        expect(cursorSet).toBe(true);
+        expect(refreshed).toBe(true);
+    });
+});
+
+// ---------------------------------------------------------------------------
 // previewCreateVirtualServer
 // ---------------------------------------------------------------------------
 describe("previewCreateVirtualServer", () => {

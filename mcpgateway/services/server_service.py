@@ -310,6 +310,14 @@ class ServerService:
         # Coerce to safe defaults when values are missing or not of the expected type.
 
         def _coerce_optional_dict(value: Any) -> Optional[Dict[str, Any]]:
+            """Coerce model-like payloads into plain dicts when possible.
+
+            Args:
+                value: Candidate mapping or model object.
+
+            Returns:
+                A dictionary payload when conversion succeeds; otherwise ``None``.
+            """
             if value is None:
                 return None
             if isinstance(value, dict):

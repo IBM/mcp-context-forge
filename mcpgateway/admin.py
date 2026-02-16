@@ -2283,14 +2283,25 @@ async def admin_add_server(request: Request, db: Session = Depends(get_db), user
                 oauth_config = None
 
         def _parse_optional_json_field(field_name: str) -> Optional[Dict[str, Any]]:
+            """Parse an optional object-typed JSON field from form data.
+
+            Args:
+                field_name: Form field key that may contain a JSON object.
+
+            Returns:
+                Parsed dictionary value, or ``None`` for empty/unset input.
+
+            Raises:
+                ValueError: If the field value is invalid JSON or not an object.
+            """
             raw_value = form.get(field_name)
             if raw_value is None:
                 return None
-            text = str(raw_value).strip()
-            if not text:
+            json_text = str(raw_value).strip()
+            if not json_text:
                 return None
             try:
-                parsed = orjson.loads(text)
+                parsed = orjson.loads(json_text)
             except orjson.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSON for '{field_name}': {exc}") from exc
             if not isinstance(parsed, dict):
@@ -2504,14 +2515,25 @@ async def admin_edit_server(
                 oauth_config = None
 
         def _parse_optional_json_field(field_name: str) -> Optional[Dict[str, Any]]:
+            """Parse an optional object-typed JSON field from form data.
+
+            Args:
+                field_name: Form field key that may contain a JSON object.
+
+            Returns:
+                Parsed dictionary value, or ``None`` for empty/unset input.
+
+            Raises:
+                ValueError: If the field value is invalid JSON or not an object.
+            """
             raw_value = form.get(field_name)
             if raw_value is None:
                 return None
-            text = str(raw_value).strip()
-            if not text:
+            json_text = str(raw_value).strip()
+            if not json_text:
                 return None
             try:
-                parsed = orjson.loads(text)
+                parsed = orjson.loads(json_text)
             except orjson.JSONDecodeError as exc:
                 raise ValueError(f"Invalid JSON for '{field_name}': {exc}") from exc
             if not isinstance(parsed, dict):

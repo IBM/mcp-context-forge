@@ -2695,6 +2695,7 @@ class ToolService:
                     headers = payload.headers.model_dump()
 
         async def _bridge_invoke(tool_name: str, tool_args: Dict[str, Any]) -> ToolResult:
+            """Invoke non-meta tools through the regular tool execution path."""
             if tool_name in CODE_EXECUTION_META_TOOLS:
                 raise ToolInvocationError(f"Nested invocation of meta-tool '{tool_name}' is not allowed")
             # Nested calls must use regular tool invocation path and still pass RBAC, rate limit, audit hooks.

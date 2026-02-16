@@ -273,9 +273,19 @@ function toggleServerCodeExecutionSection(mode = "create") {
     if (!typeField || !section) {
         return;
     }
-    const typeValue = String(typeField.value || "").trim().toLowerCase();
+    const typeValue = String(typeField.value || "")
+        .trim()
+        .toLowerCase();
     const isCodeExecution = typeValue === "code_execution";
+    const wasHidden = section.classList.contains("hidden");
     section.classList.toggle("hidden", !isCodeExecution);
+    if (isCodeExecution && wasHidden) {
+        if (typeof window.requestAnimationFrame === "function") {
+            window.requestAnimationFrame(() => refreshEditors());
+        } else {
+            window.setTimeout(() => refreshEditors(), 0);
+        }
+    }
 }
 
 function syncServerCodeExecutionSections() {
@@ -303,7 +313,9 @@ function bindServerTypeToggle(mode = "create") {
     const sync = () => {
         // Run immediately and on next frame in case other handlers mutate the DOM.
         toggleServerCodeExecutionSection(mode);
-        window.requestAnimationFrame(() => toggleServerCodeExecutionSection(mode));
+        window.requestAnimationFrame(() =>
+            toggleServerCodeExecutionSection(mode),
+        );
     };
 
     typeField.addEventListener("change", sync);
@@ -351,18 +363,93 @@ const CODE_EXECUTION_FIELD_TEMPLATES = Object.freeze({
     ),
 });
 
+function getCodeMirrorEditorForField(fieldElement) {
+    if (!fieldElement) {
+        return null;
+    }
+    const editor = fieldElement.CodeMirror;
+    if (editor && typeof editor.getValue === "function") {
+        return editor;
+    }
+    return null;
+}
+
+function setTextareaOrEditorValue(fieldElement, nextValue) {
+    if (!fieldElement) {
+        return;
+    }
+    const normalizedValue =
+        nextValue === null || nextValue === undefined ? "" : String(nextValue);
+    const editor = getCodeMirrorEditorForField(fieldElement);
+    if (editor && typeof editor.setValue === "function") {
+        editor.setValue(normalizedValue);
+        if (typeof editor.refresh === "function") {
+            editor.refresh();
+        }
+        return;
+    }
+    fieldElement.value = normalizedValue;
+}
+
+function focusTextareaOrEditorAtEnd(fieldElement) {
+    if (!fieldElement) {
+        return;
+    }
+    const editor = getCodeMirrorEditorForField(fieldElement);
+    if (editor) {
+        if (typeof editor.focus === "function") {
+            editor.focus();
+        }
+        if (
+            typeof editor.setCursor === "function" &&
+            typeof editor.lineCount === "function" &&
+            typeof editor.getLine === "function"
+        ) {
+            const line = Math.max(editor.lineCount() - 1, 0);
+            const lineValue = editor.getLine(line) || "";
+            editor.setCursor({ line, ch: lineValue.length });
+        }
+        if (typeof editor.refresh === "function") {
+            editor.refresh();
+        }
+        return;
+    }
+    fieldElement.focus();
+    if (typeof fieldElement.setSelectionRange === "function") {
+        const end = fieldElement.value.length;
+        fieldElement.setSelectionRange(end, end);
+    }
+}
+
+function saveServerCodeExecutionEditors(mode = "create") {
+    const editorNames =
+        mode === "edit"
+            ? [
+                  "editServerMountRulesEditor",
+                  "editServerSandboxPolicyEditor",
+                  "editServerTokenizationEditor",
+              ]
+            : [
+                  "serverMountRulesEditor",
+                  "serverSandboxPolicyEditor",
+                  "serverTokenizationEditor",
+              ];
+    editorNames.forEach((editorName) => {
+        const editor = window[editorName];
+        if (editor && typeof editor.save === "function") {
+            editor.save();
+        }
+    });
+}
+
 function applyCodeExecutionFieldTemplate(fieldId, templateKey) {
     const target = safeGetElement(fieldId, true);
     const templateValue = CODE_EXECUTION_FIELD_TEMPLATES[templateKey];
     if (!target || typeof templateValue !== "string") {
         return;
     }
-    target.value = templateValue;
-    target.focus();
-    if (typeof target.setSelectionRange === "function") {
-        const end = target.value.length;
-        target.setSelectionRange(end, end);
-    }
+    setTextareaOrEditorValue(target, templateValue);
+    focusTextareaOrEditorAtEnd(target);
 }
 
 window.applyCodeExecutionFieldTemplate = applyCodeExecutionFieldTemplate;
@@ -397,7 +484,9 @@ function collectAssociationIds(
     dataAttributeName,
     windowFallbackKey,
 ) {
-    if (String(formData.get(selectAllFieldName) || "").toLowerCase() === "true") {
+    if (
+        String(formData.get(selectAllFieldName) || "").toLowerCase() === "true"
+    ) {
         const rawIds = String(formData.get(allIdsFieldName) || "[]");
         try {
             const parsed = JSON.parse(rawIds);
@@ -460,6 +549,7 @@ function collectCreateServerPreviewPayload() {
     if (!form) {
         throw new Error("Add Server form not found.");
     }
+    saveServerCodeExecutionEditors("create");
     const formData = new FormData(form);
 
     const tagsRaw = String(formData.get("tags") || "");
@@ -6341,7 +6431,10 @@ async function replayCodeExecutionRun(serverId, runId) {
         );
         await viewServer(serverId);
     } catch (error) {
-        const errorMessage = handleFetchError(error, "replay code execution run");
+        const errorMessage = handleFetchError(
+            error,
+            "replay code execution run",
+        );
         showErrorMessage(errorMessage);
     }
 }
@@ -6449,7 +6542,10 @@ async function revokeCodeExecutionSkill(serverId, skillId, skillName = "") {
         );
         if (!response.ok) {
             throw new Error(
-                await extractCodeExecutionError(response, "Failed to revoke skill."),
+                await extractCodeExecutionError(
+                    response,
+                    "Failed to revoke skill.",
+                ),
             );
         }
         showSuccessMessage(`Skill ${skillLabel} revoked.`);
@@ -7002,7 +7098,10 @@ async function viewServer(serverId) {
                     }
                     if (approvalsResp.ok) {
                         approvals = await approvalsResp.json();
-                    } else if (approvalsResp.status === 401 || approvalsResp.status === 403) {
+                    } else if (
+                        approvalsResp.status === 401 ||
+                        approvalsResp.status === 403
+                    ) {
                         approvalsAccessDenied = true;
                     }
                     if (secResp.ok) {
@@ -7016,7 +7115,8 @@ async function viewServer(serverId) {
                 }
 
                 const summary = document.createElement("p");
-                summary.className = "text-sm mt-2 text-gray-600 dark:text-gray-400";
+                summary.className =
+                    "text-sm mt-2 text-gray-600 dark:text-gray-400";
                 summary.textContent = `Runs: ${runs.length} | Active sessions: ${sessions.length} | Skills: ${skills.length} | Pending approvals: ${approvals.length} | Security events: ${securityEvents.length}`;
                 codeExecSection.appendChild(summary);
 
@@ -7025,7 +7125,8 @@ async function viewServer(serverId) {
                     runsSection.className = "mt-4";
 
                     const runsTitle = document.createElement("h4");
-                    runsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                    runsTitle.className =
+                        "text-sm font-semibold text-gray-900 dark:text-gray-100";
                     runsTitle.textContent = "Run History";
                     runsSection.appendChild(runsTitle);
 
@@ -7033,10 +7134,12 @@ async function viewServer(serverId) {
                     runsList.className = "mt-2 space-y-2";
                     runs.slice(0, 10).forEach((run) => {
                         const row = document.createElement("div");
-                        row.className = "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        row.className =
+                            "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
 
                         const details = document.createElement("div");
-                        details.className = "text-xs text-gray-700 dark:text-gray-300";
+                        details.className =
+                            "text-xs text-gray-700 dark:text-gray-300";
                         const runId = shortenCodeExecutionId(run.id);
                         const toolCalls = Array.isArray(run.tool_calls_made)
                             ? run.tool_calls_made.length
@@ -7068,12 +7171,14 @@ async function viewServer(serverId) {
                 const sessionsSection = document.createElement("div");
                 sessionsSection.className = "mt-4";
                 const sessionsTitle = document.createElement("h4");
-                sessionsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                sessionsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
                 sessionsTitle.textContent = "Active Sessions";
                 sessionsSection.appendChild(sessionsTitle);
                 if (sessions.length === 0) {
                     const emptySessions = document.createElement("p");
-                    emptySessions.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptySessions.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
                     emptySessions.textContent = "No active in-memory sessions.";
                     sessionsSection.appendChild(emptySessions);
                 } else {
@@ -7081,7 +7186,8 @@ async function viewServer(serverId) {
                     sessionsList.className = "mt-2 space-y-2";
                     sessions.slice(0, 10).forEach((session) => {
                         const item = document.createElement("div");
-                        item.className = "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        item.className =
+                            "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
                         const sessionId = shortenCodeExecutionId(
                             session.session_id,
                             10,
@@ -7096,19 +7202,22 @@ async function viewServer(serverId) {
                 const approvalsSection = document.createElement("div");
                 approvalsSection.className = "mt-4";
                 const approvalsTitle = document.createElement("h4");
-                approvalsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                approvalsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
                 approvalsTitle.textContent = "Pending Skill Approvals";
                 approvalsSection.appendChild(approvalsTitle);
 
                 if (approvalsAccessDenied) {
                     const denied = document.createElement("p");
-                    denied.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    denied.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
                     denied.textContent =
                         "Approval actions require additional permissions (skills.approve).";
                     approvalsSection.appendChild(denied);
                 } else if (approvals.length === 0) {
                     const emptyApprovals = document.createElement("p");
-                    emptyApprovals.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptyApprovals.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
                     emptyApprovals.textContent = "No pending approvals.";
                     approvalsSection.appendChild(emptyApprovals);
                 } else {
@@ -7120,7 +7229,8 @@ async function viewServer(serverId) {
                             "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
 
                         const details = document.createElement("div");
-                        details.className = "text-xs text-gray-700 dark:text-gray-300";
+                        details.className =
+                            "text-xs text-gray-700 dark:text-gray-300";
                         details.textContent = `${shortenCodeExecutionId(approval.id)} | skill=${shortenCodeExecutionId(approval.skill_id, 10)} | requested_by=${approval.requested_by || "unknown"} | requested_at=${formatCodeExecutionTimestamp(approval.requested_at)}`;
                         row.appendChild(details);
 
@@ -7157,13 +7267,15 @@ async function viewServer(serverId) {
                 const skillsSection = document.createElement("div");
                 skillsSection.className = "mt-4";
                 const skillsTitle = document.createElement("h4");
-                skillsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                skillsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
                 skillsTitle.textContent = "Skills";
                 skillsSection.appendChild(skillsTitle);
 
                 if (skills.length === 0) {
                     const emptySkills = document.createElement("p");
-                    emptySkills.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptySkills.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
                     emptySkills.textContent = "No skills registered.";
                     skillsSection.appendChild(emptySkills);
                 } else {
@@ -7174,7 +7286,8 @@ async function viewServer(serverId) {
                         row.className =
                             "flex items-center justify-between gap-2 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
                         const details = document.createElement("div");
-                        details.className = "text-xs text-gray-700 dark:text-gray-300";
+                        details.className =
+                            "text-xs text-gray-700 dark:text-gray-300";
                         details.textContent = `${skill.name || "unknown"} v${skill.version || 1} | ${skill.status || "unknown"} | owner=${skill.owner_email || "unknown"} | updated=${formatCodeExecutionTimestamp(skill.updated_at)}`;
                         row.appendChild(details);
 
@@ -7183,7 +7296,8 @@ async function viewServer(serverId) {
                             skill.is_active &&
                             skill.status !== "revoked"
                         ) {
-                            const revokeButton = document.createElement("button");
+                            const revokeButton =
+                                document.createElement("button");
                             revokeButton.type = "button";
                             revokeButton.className =
                                 "text-xs px-2 py-1 rounded bg-orange-600 text-white hover:bg-orange-700";
@@ -7207,13 +7321,15 @@ async function viewServer(serverId) {
                 const eventsSection = document.createElement("div");
                 eventsSection.className = "mt-4";
                 const eventsTitle = document.createElement("h4");
-                eventsTitle.className = "text-sm font-semibold text-gray-900 dark:text-gray-100";
+                eventsTitle.className =
+                    "text-sm font-semibold text-gray-900 dark:text-gray-100";
                 eventsTitle.textContent = "Security Events";
                 eventsSection.appendChild(eventsTitle);
 
                 if (securityEvents.length === 0) {
                     const emptyEvents = document.createElement("p");
-                    emptyEvents.className = "mt-1 text-xs text-gray-500 dark:text-gray-400";
+                    emptyEvents.className =
+                        "mt-1 text-xs text-gray-500 dark:text-gray-400";
                     emptyEvents.textContent = "No recent security events.";
                     eventsSection.appendChild(emptyEvents);
                 } else {
@@ -7221,7 +7337,8 @@ async function viewServer(serverId) {
                     eventsList.className = "mt-2 space-y-2";
                     securityEvents.slice(0, 20).forEach((event) => {
                         const item = document.createElement("div");
-                        item.className = "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
+                        item.className =
+                            "text-xs text-gray-700 dark:text-gray-300 rounded border border-gray-200 dark:border-gray-700 px-3 py-2";
                         const eventName = event.event || event.type || "event";
                         const runId = shortenCodeExecutionId(event.run_id, 8);
                         const message =
@@ -7406,8 +7523,7 @@ async function editServer(serverId) {
         }
         if (skillsRequireApprovalField) {
             skillsRequireApprovalField.checked = Boolean(
-                server.skills_require_approval ||
-                    server.skillsRequireApproval,
+                server.skills_require_approval || server.skillsRequireApproval,
             );
         }
 
@@ -7430,18 +7546,23 @@ async function editServer(serverId) {
         };
 
         if (mountRulesField) {
-            mountRulesField.value = formatJsonForTextarea(
-                server.mount_rules || server.mountRules,
+            setTextareaOrEditorValue(
+                mountRulesField,
+                formatJsonForTextarea(server.mount_rules || server.mountRules),
             );
         }
         if (sandboxPolicyField) {
-            sandboxPolicyField.value = formatJsonForTextarea(
-                server.sandbox_policy || server.sandboxPolicy,
+            setTextareaOrEditorValue(
+                sandboxPolicyField,
+                formatJsonForTextarea(
+                    server.sandbox_policy || server.sandboxPolicy,
+                ),
             );
         }
         if (tokenizationField) {
-            tokenizationField.value = formatJsonForTextarea(
-                server.tokenization,
+            setTextareaOrEditorValue(
+                tokenizationField,
+                formatJsonForTextarea(server.tokenization),
             );
         }
         toggleServerCodeExecutionSection("edit");
@@ -16178,11 +16299,12 @@ async function handleServerFormSubmit(e) {
     e.preventDefault();
 
     const form = e.target;
-    const formData = new FormData(form);
     const status = safeGetElement("serverFormError");
     const loading = safeGetElement("add-server-loading"); // Add a loading spinner if needed
 
     try {
+        saveServerCodeExecutionEditors("create");
+        const formData = new FormData(form);
         const name = formData.get("name");
 
         // Basic validation
@@ -16740,9 +16862,10 @@ async function handleEditA2AAgentFormSubmit(e) {
 async function handleEditServerFormSubmit(e) {
     e.preventDefault();
     const form = e.target;
-    const formData = new FormData(form);
 
     try {
+        saveServerCodeExecutionEditors("edit");
+        const formData = new FormData(form);
         // Validate inputs
         const name = formData.get("name");
         const nameValidation = validateInputName(name, "server");
@@ -17104,29 +17227,29 @@ function setupFormValidation() {
 
 function refreshEditors() {
     setTimeout(() => {
-        if (
-            window.headersEditor &&
-            typeof window.headersEditor.refresh === "function"
-        ) {
-            try {
-                window.headersEditor.refresh();
-                console.log("✓ Refreshed headersEditor");
-            } catch (error) {
-                console.error("Failed to refresh headersEditor:", error);
-            }
-        }
+        const editorNames = [
+            "headersEditor",
+            "schemaEditor",
+            "serverMountRulesEditor",
+            "serverSandboxPolicyEditor",
+            "serverTokenizationEditor",
+            "editServerMountRulesEditor",
+            "editServerSandboxPolicyEditor",
+            "editServerTokenizationEditor",
+        ];
 
-        if (
-            window.schemaEditor &&
-            typeof window.schemaEditor.refresh === "function"
-        ) {
-            try {
-                window.schemaEditor.refresh();
-                console.log("✓ Refreshed schemaEditor");
-            } catch (error) {
-                console.error("Failed to refresh schemaEditor:", error);
+        editorNames.forEach((editorName) => {
+            const editor = window[editorName];
+            if (!editor || typeof editor.refresh !== "function") {
+                return;
             }
-        }
+            try {
+                editor.refresh();
+                console.log(`✓ Refreshed ${editorName}`);
+            } catch (error) {
+                console.error(`Failed to refresh ${editorName}:`, error);
+            }
+        });
     }, 100);
 }
 
@@ -17417,6 +17540,36 @@ function initializeCodeMirrorEditors() {
             id: "edit-prompt-arguments",
             mode: "application/json",
             varName: "editPromptArgumentsEditor",
+        },
+        {
+            id: "server-mount-rules",
+            mode: "application/json",
+            varName: "serverMountRulesEditor",
+        },
+        {
+            id: "server-sandbox-policy",
+            mode: "application/json",
+            varName: "serverSandboxPolicyEditor",
+        },
+        {
+            id: "server-tokenization",
+            mode: "application/json",
+            varName: "serverTokenizationEditor",
+        },
+        {
+            id: "edit-server-mount-rules",
+            mode: "application/json",
+            varName: "editServerMountRulesEditor",
+        },
+        {
+            id: "edit-server-sandbox-policy",
+            mode: "application/json",
+            varName: "editServerSandboxPolicyEditor",
+        },
+        {
+            id: "edit-server-tokenization",
+            mode: "application/json",
+            varName: "editServerTokenizationEditor",
         },
     ];
 
