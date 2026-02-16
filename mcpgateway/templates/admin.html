@@ -22,6 +22,7 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/tailwindcss/tailwind.min.js"></script>
     {% else %}
+    <!-- No SRI: Tailwind JIT compiler generates dynamic content -->
     <script src="https://cdn.tailwindcss.com"></script>
     {% endif %}
     <script>
@@ -33,7 +34,11 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/htmx/htmx.min.js"></script>
     {% else %}
-    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script
+    src="https://unpkg.com/htmx.org@1.9.10/dist/htmx.min.js"
+    integrity="{{ sri_hashes.htmx }}"
+    crossorigin="anonymous">
+    </script>
     {% endif %}
     <script>
       // Configure HTMX to swap content on 4xx responses (for inline error display)
@@ -180,13 +185,41 @@
     <script src="{{ root_path }}/static/vendor/codemirror/mode/go/go.min.js"></script>
     <script src="{{ root_path }}/static/vendor/codemirror/mode/rust/rust.min.js"></script>
     {% else %}
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/mode/simple.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js"></script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.js"
+      integrity="{{ sri_hashes.codemirror_js }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/addon/mode/simple.min.js"
+      integrity="{{ sri_hashes.codemirror_addon_simple }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/javascript/javascript.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_javascript }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/python/python.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_python }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/shell/shell.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_shell }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/go/go.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_go }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/mode/rust/rust.min.js"
+      integrity="{{ sri_hashes.codemirror_mode_rust }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <!-- Alpine.js -->
     {% if ui_airgapped %}
@@ -196,7 +229,9 @@
     ></script>
     {% else %}
     <script
-      src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"
+      integrity="{{ sri_hashes.alpinejs }}"
+      crossorigin="anonymous"
       defer
     ></script>
     {% endif %}
@@ -205,7 +240,11 @@
     {% if ui_airgapped %}
     <script src="{{ root_path }}/static/vendor/chartjs/chart.umd.min.js"></script>
     {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+      integrity="{{ sri_hashes.chartjs }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     {% endif %}
     <!-- Markdown and Sanitization -->
@@ -213,8 +252,16 @@
     <script src="{{ root_path }}/static/vendor/marked/marked.min.js"></script>
     <script src="{{ root_path }}/static/vendor/dompurify/purify.min.js"></script>
     {% else %}
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/marked@11.1.1/marked.min.js"
+      integrity="{{ sri_hashes.marked }}"
+      crossorigin="anonymous">
+    </script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"
+      integrity="{{ sri_hashes.dompurify }}"
+      crossorigin="anonymous">
+    </script>
     {% endif %}
     <script src="{{ root_path }}/static/admin.js"></script>
     {% if is_admin %}
@@ -235,17 +282,26 @@
     <link
       href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/codemirror.min.css"
       rel="stylesheet"
+      integrity="{{ sri_hashes.codemirror_css }}"
+      crossorigin="anonymous"
     />
     <link
       href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.18/theme/monokai.min.css"
       rel="stylesheet"
+      integrity="{{ sri_hashes.codemirror_theme_monokai }}"
+      crossorigin="anonymous"
     />
     {% endif %}
     <!-- Font Awesome -->
     {% if ui_airgapped %}
     <link rel="stylesheet" href="{{ root_path }}/static/vendor/fontawesome/css/all.min.css" />
     {% else %}
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css"
+      integrity="{{ sri_hashes.fontawesome }}"
+      crossorigin="anonymous"
+    />
     {% endif %}
     <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
