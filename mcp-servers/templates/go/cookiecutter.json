@@ -1,0 +1,12 @@
+{
+    "project_name": "Fast Time Server",
+    "project_slug": "{{ cookiecutter.project_name|lower|replace(' ', '-') }}",
+    "module_path": "github.com/yourorg/{{ cookiecutter.project_slug }}",
+    "bin_name": "{{ cookiecutter.project_slug }}",
+    "description": "Minimal Go MCP server (stdio) with a time tool",
+    "version": "0.1.0",
+    "license": ["Apache-2.0", "MIT"],
+    "go_version": "1.23",
+    "toolchain": "go1.23.10",
+    "include_container": true
+}

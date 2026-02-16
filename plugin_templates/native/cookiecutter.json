@@ -1,0 +1,8 @@
+{
+    "plugin_name": "MyFilter",
+    "plugin_slug": "{{ cookiecutter.plugin_name|lower|replace(' ', '_')|replace('-', '_') }}",
+    "version": "0.1.0",
+    "author": "Your Name",
+    "email": "your@email.com",
+    "description": "A filter plugin"
+}
