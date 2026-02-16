@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
 # First-Party
-from mcpgateway.routers.policy_decisions_api import router, PolicyDecisionResponse
+from mcpgateway.routers.policy_decisions_api import health_router, router, PolicyDecisionResponse
 
 
 def _make_app(auth_override=True):
@@ -26,6 +26,7 @@ def _make_app(auth_override=True):
 
         app.dependency_overrides[require_admin_auth] = lambda: {"email": "admin@test.com", "is_admin": True}
     app.include_router(router)
+    app.include_router(health_router)
     return app
 
 
@@ -138,9 +139,12 @@ def test_get_statistics_returns_structure(mock_svc):
 
 @patch("mcpgateway.routers.policy_decisions_api.settings")
 def test_health_check_no_auth(mock_settings):
-    """GET /health does not require auth (no dependencies on the endpoint itself)."""
+    """GET /health works without any auth — health_router has no auth dependency."""
     mock_settings.policy_audit_enabled = True
-    app = _make_app(auth_override=True)
+
+    # Only include health_router (no auth dependency), NOT the admin router
+    app = FastAPI()
+    app.include_router(health_router)
     client = TestClient(app)
 
     response = client.get("/api/policy-decisions/health")

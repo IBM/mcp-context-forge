@@ -467,6 +467,28 @@ def _is_mutate_permission(permission: str) -> bool:
     return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
 
+def _log_policy_decision(user_context, permission, resource_type, decision_str, engines):
+    """Log a policy decision if audit is enabled."""
+    if settings.policy_audit_enabled:
+        try:
+            from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
+
+            policy_decision_service.log_decision(
+                action=permission,
+                decision=decision_str,
+                subject_id=user_context.get("email"),
+                subject_email=user_context.get("email"),
+                resource_type=resource_type,
+                ip_address=user_context.get("ip_address"),
+                user_agent=user_context.get("user_agent"),
+                request_id=user_context.get("request_id"),
+                policy_engines_used=engines,
+                severity="info" if decision_str == "allow" else "warning",
+            )
+        except Exception as audit_err:
+            logger.warning(f"Policy decision logging failed: {audit_err}")
+
+
 def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Decorator to require specific permission for accessing an endpoint.
 
@@ -598,6 +620,8 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
 
                 # If a plugin made a decision, respect it
                 if result and result.modified_payload:
+                    plugin_decision_str = "allow" if result.modified_payload.granted else "deny"
+                    _log_policy_decision(user_context, permission, resource_type, plugin_decision_str, ["plugin"])
                     if result.modified_payload.granted:
                         logger.info(f"Permission granted by plugin: user={user_context['email']}, " f"permission={permission}, reason={result.modified_payload.reason}")
                         return await func(*args, **kwargs)
@@ -639,25 +663,7 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                     )
 
             # Log policy decision if enabled
-            if settings.policy_audit_enabled:
-                try:
-                    # First-Party
-                    from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
-
-                    policy_decision_service.log_decision(
-                        action=permission,
-                        decision="allow" if granted else "deny",
-                        subject_id=user_context.get("email"),
-                        subject_email=user_context.get("email"),
-                        resource_type=resource_type,
-                        ip_address=user_context.get("ip_address"),
-                        user_agent=user_context.get("user_agent"),
-                        request_id=user_context.get("request_id"),
-                        policy_engines_used=["rbac"],
-                        severity="info" if granted else "warning",
-                    )
-                except Exception as audit_err:
-                    logger.debug(f"Policy decision logging failed: {audit_err}")
+            _log_policy_decision(user_context, permission, resource_type, "allow" if granted else "deny", ["rbac"])
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")

@@ -31,6 +31,12 @@ router = APIRouter(
     dependencies=[Depends(require_admin_auth)],
 )
 
+# Separate unauthenticated router for health endpoint
+health_router = APIRouter(
+    prefix="/api/policy-decisions",
+    tags=["Policy Decisions"],
+)
+
 
 class PolicyDecisionResponse(BaseModel):
     """Response model for policy decision."""
@@ -117,8 +123,8 @@ def query_decisions(
     min_risk_score: Optional[int] = Query(None, ge=0, le=100, description="Minimum risk score"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
-    sort_by: str = Query("timestamp", description="Column to sort by"),
-    sort_order: str = Query("desc", description="Sort order (asc/desc)"),
+    sort_by: str = Query("timestamp", pattern="^(timestamp|action|decision|severity|risk_score)$", description="Column to sort by"),
+    sort_order: str = Query("desc", pattern="^(asc|desc)$", description="Sort order (asc/desc)"),
 ):
     """Query policy decisions. Requires admin authentication."""
     try:
@@ -179,7 +185,7 @@ def get_statistics(
         raise HTTPException(status_code=500, detail="Failed to get statistics")
 
 
-@router.get(
+@health_router.get(
     "/health",
     summary="Health check",
     description="Check if policy decision logging is healthy",

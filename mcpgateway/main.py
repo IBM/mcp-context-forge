@@ -7208,9 +7208,11 @@ if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
 if settings.policy_audit_enabled:
     try:
         # First-Party
+        from mcpgateway.routers.policy_decisions_api import health_router as policy_health_router  # noqa: E402
         from mcpgateway.routers.policy_decisions_api import router as policy_decisions_router  # noqa: E402
 
         app.include_router(policy_decisions_router)
+        app.include_router(policy_health_router)
         logger.info("Policy decisions router included - policy audit enabled")
     except ImportError as e:
         logger.warning(f"Failed to import policy decisions router: {e}")

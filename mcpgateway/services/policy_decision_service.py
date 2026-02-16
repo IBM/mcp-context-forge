@@ -93,6 +93,12 @@ class PolicyDecisionService:
                 timestamp=datetime.now(timezone.utc),
             )
 
+        # Check per-decision toggles
+        if decision == "allow" and not settings.policy_audit_log_allowed:
+            return PolicyDecision(action=action, decision=decision, timestamp=datetime.now(timezone.utc))
+        if decision == "deny" and not settings.policy_audit_log_denied:
+            return PolicyDecision(action=action, decision=decision, timestamp=datetime.now(timezone.utc))
+
         close_db = False
         if db is None:
             db = SessionLocal()
@@ -153,11 +159,10 @@ class PolicyDecisionService:
                     # Standard
                     import asyncio  # pylint: disable=import-outside-toplevel
 
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        loop.create_task(self._siem_processor.add(record))
-                    else:
-                        asyncio.run(self._siem_processor.add(record))
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(self._siem_processor.add(record))
+                except RuntimeError:
+                    logger.debug("No running event loop; SIEM queuing deferred")
                 except Exception as siem_err:
                     logger.warning(f"Failed to queue policy decision to SIEM: {siem_err}")
 
@@ -265,7 +270,6 @@ class PolicyDecisionService:
 
         finally:
             if close_db:
-                db.commit()
                 db.close()
 
     def get_statistics(
@@ -321,7 +325,6 @@ class PolicyDecisionService:
 
         finally:
             if close_db:
-                db.commit()
                 db.close()
 
 
