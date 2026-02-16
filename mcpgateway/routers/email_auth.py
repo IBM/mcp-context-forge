@@ -797,14 +797,14 @@ async def update_user_deprecated(
         HTTPException: If user not found or update fails
     """
     result = await update_user_delegate(user_email, user_request, current_user_ctx, db)
-    deprecation_date = "@" + str(int(datetime(2026, 2, 24, 23, 59, 59).timestamp()))
+    deprecation_date = "@" + str(int(datetime(2026, 2, 24, 23, 59, 59, tzinfo=UTC).timestamp()))
     response.headers["Deprecation"] = deprecation_date
     response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 UTC"
     return result
 
 
 async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict, db: Session):
-    """Update user information. Common function for both update_user and update_user_depreciated.
+    """Update user information. Common function for both update_user and update_user_deprecated.
     Helps in reducing duplicate code and consistent behaviour. Move this entire code back to update_user after
     Sun, 16 Aug 2026 23:59:59 UTC.
 
