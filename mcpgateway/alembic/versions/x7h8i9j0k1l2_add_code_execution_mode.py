@@ -244,4 +244,3 @@ def downgrade() -> None:
     for col in ("skills_require_approval", "skills_scope", "tokenization", "sandbox_policy", "mount_rules", "stub_language", "server_type"):
         if col in server_columns:
             op.drop_column("servers", col)
-

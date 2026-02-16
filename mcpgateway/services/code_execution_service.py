@@ -10,15 +10,16 @@ This module powers code_execution virtual servers and their two meta-tools:
 - fs_browse: lightweight virtual filesystem browsing
 """
 
-# Standard
+# Future
 from __future__ import annotations
 
+# Standard
 import abc
 import asyncio
 from collections import defaultdict, deque
 import contextlib
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 import fnmatch
 import hashlib
 import io
@@ -40,7 +41,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import joinedload, Session
 
 try:
-    # Third-Party
+    # First-Party
     from plugins_rust import catalog_builder as rust_catalog_builder
     from plugins_rust import fs_search as rust_fs_search
     from plugins_rust import json_schema_to_stubs as rust_json_schema_to_stubs
@@ -54,7 +55,9 @@ except ImportError:
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import CodeExecutionRun, CodeExecutionSkill, Server as DbServer, SkillApproval
+from mcpgateway.db import CodeExecutionRun, CodeExecutionSkill
+from mcpgateway.db import Server as DbServer
+from mcpgateway.db import SkillApproval
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
 from mcpgateway.observability import create_span
@@ -79,7 +82,7 @@ VFS_SCHEMA_VERSION = "2026-02-01"
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){2}\d{4}\b")
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
-_CC_RE = re.compile(r"\b(?:\d[ -]*?){13,16}\b")
+_CC_RE = re.compile(r"\b(?:\d[ -]*?){13,16}\b")  # noqa: DUO138 - bounded token pattern (13-16 chars) for lightweight masking
 
 _PYTHON_DANGEROUS_PATTERNS = (
     r"(?i)\beval\s*\(",
@@ -218,6 +221,7 @@ class TokenizationContext:
             patterns.append(("CREDIT_CARD", _CC_RE))
 
         for category, pattern in patterns:
+
             def repl(match: re.Match[str]) -> str:
                 raw = match.group(0)
                 return self._tokenize_exact(raw, category)
@@ -355,16 +359,16 @@ class DenoRuntime(SandboxRuntime):
             f"const __CODEEXEC_SECRET = {json.dumps(secret)};\n"
             "const __encoder = new TextEncoder();\n"
             "async function __send(msg: any) {\n"
-            "  const line = JSON.stringify(msg) + \"\\n\";\n"
+            '  const line = JSON.stringify(msg) + "\\n";\n'
             "  await Deno.stdout.write(__encoder.encode(line));\n"
             "}\n"
             "async function* __readLines() {\n"
             "  const decoder = new TextDecoder();\n"
-            "  let buf = \"\";\n"
+            '  let buf = "";\n'
             "  for await (const chunk of Deno.stdin.readable) {\n"
             "    buf += decoder.decode(chunk);\n"
             "    while (true) {\n"
-            "      const idx = buf.indexOf(\"\\n\");\n"
+            '      const idx = buf.indexOf("\\n");\n'
             "      if (idx < 0) break;\n"
             "      const line = buf.slice(0, idx);\n"
             "      buf = buf.slice(idx + 1);\n"
@@ -382,19 +386,19 @@ class DenoRuntime(SandboxRuntime):
             "    let msg: any;\n"
             "    try { msg = JSON.parse(trimmed); } catch { continue; }\n"
             "    if (msg.secret !== __CODEEXEC_SECRET) continue;\n"
-            "    if (msg.type !== \"toolcall_response\") continue;\n"
+            '    if (msg.type !== "toolcall_response") continue;\n'
             "    const entry = __pending.get(msg.id);\n"
             "    if (!entry) continue;\n"
             "    __pending.delete(msg.id);\n"
             "    if (msg.ok) entry.resolve(msg.result);\n"
-            "    else entry.reject(new Error(String(msg.error ?? \"toolcall failed\")));\n"
+            '    else entry.reject(new Error(String(msg.error ?? "toolcall failed")));\n'
             "  }\n"
             "})();\n"
             "async function __toolcall__(a: string, b: any, c?: any): Promise<any> {\n"
-            "  let server = \"\";\n"
-            "  let tool = \"\";\n"
+            '  let server = "";\n'
+            '  let tool = "";\n'
             "  let args: Record<string, any> = {};\n"
-            "  if (c === undefined && typeof b === \"object\") {\n"
+            '  if (c === undefined && typeof b === "object") {\n'
             "    tool = String(a);\n"
             "    args = (b ?? {}) as Record<string, any>;\n"
             "  } else {\n"
@@ -404,14 +408,14 @@ class DenoRuntime(SandboxRuntime):
             "  }\n"
             "  const id = crypto.randomUUID();\n"
             "  const p = new Promise((resolve, reject) => { __pending.set(id, { resolve, reject }); });\n"
-            "  await __send({ secret: __CODEEXEC_SECRET, type: \"toolcall\", id, server, tool, args });\n"
+            '  await __send({ secret: __CODEEXEC_SECRET, type: "toolcall", id, server, tool, args });\n'
             "  return await p;\n"
             "}\n"
             "(globalThis as any).__toolcall__ = __toolcall__;\n"
             "function __makeToolProxy(server: string) {\n"
             "  return new Proxy({}, {\n"
             "    get(_t: any, prop: string | symbol) {\n"
-            "      if (typeof prop === \"symbol\") return undefined;\n"
+            '      if (typeof prop === "symbol") return undefined;\n'
             "      const tool = String(prop);\n"
             "      return async (args: Record<string, any> = {}) => __toolcall__(server, tool, args);\n"
             "    }\n"
@@ -419,7 +423,7 @@ class DenoRuntime(SandboxRuntime):
             "}\n"
             "const tools = new Proxy({}, {\n"
             "  get(_t: any, prop: string | symbol) {\n"
-            "    if (typeof prop === \"symbol\") return undefined;\n"
+            '    if (typeof prop === "symbol") return undefined;\n'
             "    const server = String(prop);\n"
             "    return __makeToolProxy(server);\n"
             "  }\n"
@@ -427,10 +431,8 @@ class DenoRuntime(SandboxRuntime):
             "(globalThis as any).tools = tools;\n"
             "const __out: string[] = [];\n"
             "const __err: string[] = [];\n"
-            "console.log = (...args: unknown[]) => { __out.push(args.map(String).join(\" \")); };\n"
-            "console.error = (...args: unknown[]) => { __err.push(args.map(String).join(\" \")); };\n"
-            + "\n".join(wrapped_lines)
-            + "\n"
+            'console.log = (...args: unknown[]) => { __out.push(args.map(String).join(" ")); };\n'
+            'console.error = (...args: unknown[]) => { __err.push(args.map(String).join(" ")); };\n' + "\n".join(wrapped_lines) + "\n"
             "(async () => {\n"
             "  let exitCode = 0;\n"
             "  try {\n"
@@ -441,9 +443,9 @@ class DenoRuntime(SandboxRuntime):
             "    if (e instanceof Error) __err.push(String(e.stack ?? e.message));\n"
             "    else __err.push(String(e));\n"
             "  }\n"
-            "  const outStr = __out.join(\"\\n\");\n"
-            "  const errStr = __err.join(\"\\n\");\n"
-            "  await __send({ secret: __CODEEXEC_SECRET, type: \"result\", output: outStr, error: errStr || null, exit_code: exitCode });\n"
+            '  const outStr = __out.join("\\n");\n'
+            '  const errStr = __err.join("\\n");\n'
+            '  await __send({ secret: __CODEEXEC_SECRET, type: "result", output: outStr, error: errStr || null, exit_code: exitCode });\n'
             "  Deno.exit(exitCode);\n"
             "})();\n"
         )
@@ -742,9 +744,7 @@ class PythonSandboxRuntime(SandboxRuntime):
             "    sys.__stdout__.write(json.dumps(req, ensure_ascii=False) + '\\n')\n"
             "    sys.__stdout__.flush()\n"
             "    return await fut\n"
-            "\n"
-            + "\n".join(user_lines)
-            + "\n\n"
+            "\n" + "\n".join(user_lines) + "\n\n"
             "async def __main() -> int:\n"
             "    stdout_capture = io.StringIO()\n"
             "    stderr_capture = io.StringIO()\n"
@@ -1450,7 +1450,11 @@ class CodeExecutionService:
         created_by: Optional[str],
     ) -> CodeExecutionSkill:
         """Create a persisted skill and optionally queue approval."""
-        current_version = db.execute(select(CodeExecutionSkill.version).where(CodeExecutionSkill.server_id == server.id, CodeExecutionSkill.name == name).order_by(CodeExecutionSkill.version.desc())).scalars().first()
+        current_version = (
+            db.execute(select(CodeExecutionSkill.version).where(CodeExecutionSkill.server_id == server.id, CodeExecutionSkill.name == name).order_by(CodeExecutionSkill.version.desc()))
+            .scalars()
+            .first()
+        )
         next_version = (current_version or 0) + 1
         requires_approval = bool(getattr(server, "skills_require_approval", False))
         status = "pending" if requires_approval else "approved"
@@ -1590,16 +1594,8 @@ class CodeExecutionService:
             token_teams=token_teams,
             language=session.language,
         )
-        digest_src = [
-            f"{tool.id}:{tool.updated_at.isoformat() if getattr(tool, 'updated_at', None) else ''}:{tool.name}"
-            for tool in mounted
-        ]
-        digest_src.extend(
-            [
-                f"skill:{skill.id}:{skill.name}:{skill.version}:{skill.updated_at.isoformat() if skill.updated_at else ''}:{skill.language}"
-                for skill in skills
-            ]
-        )
+        digest_src = [f"{tool.id}:{tool.updated_at.isoformat() if getattr(tool, 'updated_at', None) else ''}:{tool.name}" for tool in mounted]
+        digest_src.extend([f"skill:{skill.id}:{skill.name}:{skill.version}:{skill.updated_at.isoformat() if skill.updated_at else ''}:{skill.language}" for skill in skills])
         digest = hashlib.sha256("\n".join(sorted(digest_src)).encode("utf-8")).hexdigest()
         if session.content_hash == digest and session.generated_at:
             return
@@ -2055,7 +2051,7 @@ class CodeExecutionService:
             wrapped += f"    {line}\n"
 
         try:
-            exec(wrapped, globals_dict)  # noqa: S102 - executed with restricted builtins and static analyzer
+            exec(wrapped, globals_dict)  # noqa: S102,DUO105 - executed with restricted builtins and explicit sandbox controls
             user_fn = globals_dict["__user_main__"]
             with contextlib.redirect_stdout(stdout_buffer), contextlib.redirect_stderr(stderr_buffer):
                 result = await asyncio.wait_for(user_fn(), timeout=timeout_ms / 1000)
@@ -2329,14 +2325,7 @@ class CodeExecutionService:
         if not search_paths:
             search_paths = ["."]
 
-        if (
-            recursive
-            and list_files
-            and include_glob is None
-            and len(search_paths) == 1
-            and self._is_rust_acceleration_available()
-            and rust_fs_search is not None
-        ):
+        if recursive and list_files and include_glob is None and len(search_paths) == 1 and self._is_rust_acceleration_available() and rust_fs_search is not None:
             virtual_root = self._normalize_shell_path(search_paths[0])
             if virtual_root == "/tools":
                 self._enforce_fs_permission(policy=policy, operation="read", virtual_path=virtual_root)
@@ -2589,13 +2578,13 @@ class CodeExecutionService:
         return (
             "// Auto-generated by MCP Gateway code execution mode. Do not edit.\n"
             f"// Server: {server_slug}\n\n"
-            "import { type ToolResult } from \"/tools/_runtime.ts\";\n\n"
+            'import { type ToolResult } from "/tools/_runtime.ts";\n\n'
             "/**\n"
             f" * {description}\n"
             f" * @server {server_slug}\n"
             " */\n"
             f"export async function {function_name}(args: {args_type}): Promise<ToolResult<any>> {{\n"
-            f"  return __toolcall__(\"{server_slug}\", \"{function_name}\", args);\n"
+            f'  return __toolcall__("{server_slug}", "{function_name}", args);\n'
             "}\n"
         )
 
@@ -2620,8 +2609,8 @@ class CodeExecutionService:
             "from typing import Any, Dict, List, Literal\n"
             "from tools._runtime import toolcall\n\n"
             f"async def {function_name}(args: {args_type}) -> Any:\n"
-            f"    \"\"\"{description}\"\"\"\n"
-            f"    return await toolcall(\"{server_slug}\", \"{function_name}\", args)\n"
+            f'    """{description}"""\n'
+            f'    return await toolcall("{server_slug}", "{function_name}", args)\n'
         )
 
     def _schema_to_typescript_type(self, schema: Dict[str, Any]) -> str:
