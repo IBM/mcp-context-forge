@@ -1192,6 +1192,7 @@ class Settings(BaseSettings):
     siem_endpoint: str = Field(default="", description="SIEM endpoint URL (e.g. https://splunk:8088/services/collector)")
     siem_token_env: str = Field(default="SIEM_TOKEN", description="Environment variable name containing the SIEM auth token")
     siem_batch_size: int = Field(default=100, ge=1, le=10000, description="Number of records per SIEM batch")
+    siem_max_queue_size: int = Field(default=10000, ge=1, le=1000000, description="Maximum queued SIEM records before dropping oldest")
     siem_flush_interval_seconds: int = Field(default=5, ge=1, le=300, description="Seconds between SIEM batch flushes")
     siem_timeout_seconds: int = Field(default=30, ge=1, le=120, description="HTTP timeout for SIEM requests in seconds")
     siem_retry_attempts: int = Field(default=3, ge=0, le=10, description="Number of retry attempts for failed SIEM requests")

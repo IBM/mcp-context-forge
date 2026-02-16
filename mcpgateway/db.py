@@ -6165,6 +6165,11 @@ class AuditTrail(Base):
     )
 
 
+# Import extension audit models so they are always registered on Base.metadata
+# for create_all bootstrap paths (tests/fresh DBs).
+from mcpgateway.common import policy_audit as _policy_audit  # noqa: E402, F401
+
+
 if __name__ == "__main__":
     # Wait for database to be ready before initializing
     wait_for_db_ready(max_tries=int(settings.db_max_retries), interval=int(settings.db_retry_interval_ms) / 1000, sync=True)  # Converting ms to s

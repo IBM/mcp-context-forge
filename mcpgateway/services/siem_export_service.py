@@ -2,7 +2,7 @@
 """SIEM Export Service - Integration layer for audit records.
 
 Location: mcpgateway/services/siem_export_service.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Supports Splunk HEC, Elasticsearch, and generic webhooks.
@@ -87,8 +87,9 @@ class SplunkHECExporter(SIEMExporter):
 
         session = await self._get_session()
         payload = "\n".join([json.dumps(record.to_splunk_hec()) for record in records])
+        total_attempts = max(1, self.retry_attempts + 1)
 
-        for attempt in range(self.retry_attempts):
+        for attempt in range(total_attempts):
             try:
                 async with session.post(self.endpoint, data=payload) as response:
                     if response.status == 200:
@@ -101,7 +102,7 @@ class SplunkHECExporter(SIEMExporter):
                         logger.warning(f"Splunk HEC: Failed with status {response.status}: {text}")
             except Exception as e:
                 logger.warning(f"Splunk HEC: Attempt {attempt + 1} failed: {e}")
-                if attempt < self.retry_attempts - 1:
+                if attempt < total_attempts - 1:
                     await asyncio.sleep(2**attempt)
 
         return False
@@ -280,37 +281,44 @@ class WebhookExporter(SIEMExporter):
 class SIEMBatchProcessor:
     """Batches audit records and sends them to SIEM periodically."""
 
-    def __init__(self, exporter: SIEMExporter, batch_size: int, flush_interval_seconds: int):
+    def __init__(self, exporter: SIEMExporter, batch_size: int, flush_interval_seconds: int, max_queue_size: int = 10000):
         self.exporter = exporter
         self.batch_size = batch_size
         self.flush_interval_seconds = flush_interval_seconds
+        self.max_queue_size = max_queue_size
         self.queue: deque = deque()
         self._flush_task: Optional[asyncio.Task] = None
         self._running = False
+        self._stop_event = asyncio.Event()
 
     async def start(self) -> None:
         """Start the batch processor."""
         if self._running:
             return
         self._running = True
+        self._stop_event.clear()
         self._flush_task = asyncio.create_task(self._flush_loop())
 
     async def stop(self) -> None:
         """Stop the batch processor and flush remaining records."""
         self._running = False
+        self._stop_event.set()
         if self._flush_task:
-            self._flush_task.cancel()
             try:
                 await self._flush_task
-            except asyncio.CancelledError:
+            except Exception as e:
+                logger.error(f"SIEM flush task error during shutdown: {e}")
                 pass
 
-        # Flush any remaining records
-        await self._flush()
+        # Flush all remaining records before shutdown.
+        await self._flush_all()
         await self.exporter.close()
 
     async def add(self, record: PolicyDecision) -> None:
         """Add a record to the batch queue."""
+        if len(self.queue) >= self.max_queue_size:
+            self.queue.popleft()
+            logger.warning("SIEM queue full (%s); dropping oldest record", self.max_queue_size)
         self.queue.append(record)
         if len(self.queue) >= self.batch_size:
             await self._flush()
@@ -330,14 +338,26 @@ class SIEMBatchProcessor:
                 for record in reversed(batch):
                     self.queue.appendleft(record)
 
+    async def _flush_all(self) -> None:
+        """Flush all queued records, avoiding infinite loops on repeated failures."""
+        while self.queue:
+            queue_len_before = len(self.queue)
+            await self._flush()
+
+            # If nothing was drained, stop retrying to avoid hanging shutdown.
+            if len(self.queue) >= queue_len_before:
+                logger.warning("SIEM shutdown flush made no progress; %s record(s) remain queued", len(self.queue))
+                break
+
     async def _flush_loop(self) -> None:
         """Periodically flush batches."""
         while self._running:
             try:
-                await asyncio.sleep(self.flush_interval_seconds)
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.flush_interval_seconds)
+                if self._stop_event.is_set():
+                    break
+            except asyncio.TimeoutError:
                 await self._flush()
-            except asyncio.CancelledError:
-                break
             except Exception as e:
                 logger.error(f"SIEM flush loop error: {e}")
 
@@ -384,6 +404,7 @@ def create_siem_service(siem_settings) -> Optional[SIEMBatchProcessor]:
         exporter=exporter,
         batch_size=siem_settings.siem_batch_size,
         flush_interval_seconds=siem_settings.siem_flush_interval_seconds,
+        max_queue_size=siem_settings.siem_max_queue_size,
     )
     logger.info(f"SIEM export service created: type={siem_type}, endpoint={siem_settings.siem_endpoint}")
     return processor

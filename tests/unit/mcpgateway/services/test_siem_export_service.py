@@ -2,6 +2,7 @@
 """Tests for siem_export_service."""
 
 # Standard
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -42,6 +43,7 @@ class FakeSettings:
         self.siem_endpoint = kwargs.get("siem_endpoint", "https://splunk:8088/services/collector")
         self.siem_token_env = kwargs.get("siem_token_env", "SIEM_TOKEN")
         self.siem_batch_size = kwargs.get("siem_batch_size", 100)
+        self.siem_max_queue_size = kwargs.get("siem_max_queue_size", 10000)
         self.siem_flush_interval_seconds = kwargs.get("siem_flush_interval_seconds", 5)
         self.siem_timeout_seconds = kwargs.get("siem_timeout_seconds", 30)
         self.siem_retry_attempts = kwargs.get("siem_retry_attempts", 3)
@@ -81,6 +83,14 @@ def test_create_siem_service_webhook():
     processor = create_siem_service(settings)
     assert processor is not None
     assert isinstance(processor.exporter, WebhookExporter)
+
+
+def test_create_siem_service_applies_max_queue_size():
+    """Propagates max queue size into batch processor."""
+    settings = FakeSettings(siem_type="webhook", siem_max_queue_size=77)
+    processor = create_siem_service(settings)
+    assert processor is not None
+    assert processor.max_queue_size == 77
 
 
 def test_create_siem_service_unknown_type():
@@ -130,5 +140,123 @@ async def test_batch_processor_stop_flushes():
     processor.queue.append(FakeRecord("r1"))
 
     await processor.stop()
+    mock_exporter.send_batch.assert_called_once()
+    mock_exporter.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_processor_stop_flushes_all_queued_batches():
+    """Stop drains the full queue, including multiple batches."""
+    mock_exporter = AsyncMock()
+    mock_exporter.send_batch = AsyncMock(return_value=True)
+    mock_exporter.close = AsyncMock()
+
+    processor = SIEMBatchProcessor(exporter=mock_exporter, batch_size=2, flush_interval_seconds=300)
+    processor.queue.extend([FakeRecord("r1"), FakeRecord("r2"), FakeRecord("r3"), FakeRecord("r4"), FakeRecord("r5")])
+
+    await processor.stop()
+
+    assert mock_exporter.send_batch.call_count == 3
+    sent_batch_sizes = [len(call.args[0]) for call in mock_exporter.send_batch.call_args_list]
+    assert sent_batch_sizes == [2, 2, 1]
+    assert len(processor.queue) == 0
+    mock_exporter.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_processor_stop_does_not_hang_when_flush_fails():
+    """Stop exits if flush cannot make progress."""
+    mock_exporter = AsyncMock()
+    mock_exporter.send_batch = AsyncMock(return_value=False)
+    mock_exporter.close = AsyncMock()
+
+    processor = SIEMBatchProcessor(exporter=mock_exporter, batch_size=2, flush_interval_seconds=300)
+    processor.queue.extend([FakeRecord("r1"), FakeRecord("r2"), FakeRecord("r3")])
+
+    await processor.stop()
+
+    # One failed attempt, then shutdown exits via no-progress guard.
+    mock_exporter.send_batch.assert_called_once()
+    assert len(processor.queue) == 3
+    mock_exporter.close.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_processor_drops_oldest_when_queue_is_full():
+    """Queue size is bounded and oldest records are dropped when full."""
+    mock_exporter = AsyncMock()
+    mock_exporter.send_batch = AsyncMock(return_value=False)
+
+    processor = SIEMBatchProcessor(exporter=mock_exporter, batch_size=100, flush_interval_seconds=300, max_queue_size=3)
+
+    await processor.add(FakeRecord("r1"))
+    await processor.add(FakeRecord("r2"))
+    await processor.add(FakeRecord("r3"))
+    await processor.add(FakeRecord("r4"))
+
+    assert len(processor.queue) == 3
+    assert [record.id for record in processor.queue] == ["r2", "r3", "r4"]
+
+
+@pytest.mark.asyncio
+async def test_splunk_send_batch_with_zero_retries_still_attempts_once():
+    """retry_attempts=0 still performs the initial send attempt."""
+
+    class DummyResponse:
+        def __init__(self, status: int):
+            self.status = status
+
+        async def text(self):
+            return "error"
+
+    class DummyRequestContextManager:
+        def __init__(self, response):
+            self.response = response
+
+        async def __aenter__(self):
+            return self.response
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    exporter = SplunkHECExporter(endpoint="https://splunk.example/services/collector", token_env="SIEM_TOKEN", timeout_seconds=1, retry_attempts=0)
+    mock_session = MagicMock()
+    mock_session.post.return_value = DummyRequestContextManager(DummyResponse(500))
+    exporter._get_session = AsyncMock(return_value=mock_session)
+
+    success = await exporter.send_batch([FakeRecord("r1")])
+
+    assert success is False
+    mock_session.post.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_processor_stop_waits_for_in_flight_flush():
+    """Stop waits for in-flight periodic flush to complete."""
+    mock_exporter = AsyncMock()
+    mock_exporter.close = AsyncMock()
+    send_started = asyncio.Event()
+    allow_send_to_finish = asyncio.Event()
+
+    async def slow_send(_batch):
+        send_started.set()
+        await allow_send_to_finish.wait()
+        return True
+
+    mock_exporter.send_batch = AsyncMock(side_effect=slow_send)
+    processor = SIEMBatchProcessor(exporter=mock_exporter, batch_size=100, flush_interval_seconds=0.01)
+    processor.queue.append(FakeRecord("r1"))
+
+    await processor.start()
+    await asyncio.wait_for(send_started.wait(), timeout=1)
+
+    stop_task = asyncio.create_task(processor.stop())
+    await asyncio.sleep(0)
+    assert not stop_task.done()
+
+    allow_send_to_finish.set()
+    await asyncio.wait_for(stop_task, timeout=1)
+
+    assert len(processor.queue) == 0
     mock_exporter.send_batch.assert_called_once()
     mock_exporter.close.assert_called_once()

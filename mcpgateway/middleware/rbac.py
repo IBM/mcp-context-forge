@@ -467,13 +467,24 @@ def _is_mutate_permission(permission: str) -> bool:
     return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
 
+_policy_decision_service = None
+
+
+def _get_policy_decision_service():
+    """Lazy-load and cache the policy decision service singleton."""
+    global _policy_decision_service  # noqa: PLW0603
+    if _policy_decision_service is None:
+        from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
+
+        _policy_decision_service = policy_decision_service
+    return _policy_decision_service
+
+
 def _log_policy_decision(user_context, permission, resource_type, decision_str, engines):
     """Log a policy decision if audit is enabled."""
     if settings.policy_audit_enabled:
         try:
-            from mcpgateway.services.policy_decision_service import policy_decision_service  # pylint: disable=import-outside-toplevel
-
-            policy_decision_service.log_decision(
+            _get_policy_decision_service().log_decision(
                 action=permission,
                 decision=decision_str,
                 subject_id=user_context.get("email"),
@@ -486,7 +497,7 @@ def _log_policy_decision(user_context, permission, resource_type, decision_str, 
                 severity="info" if decision_str == "allow" else "warning",
             )
         except Exception as audit_err:
-            logger.warning(f"Policy decision logging failed: {audit_err}")
+            logger.warning("Policy decision logging failed: %s", audit_err)
 
 
 def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):

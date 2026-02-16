@@ -2,7 +2,7 @@
 """Policy Decision API - Authenticated endpoints.
 
 Location: mcpgateway/routers/policy_decisions_api.py
-Copyright 2025
+Copyright 2026
 SPDX-License-Identifier: Apache-2.0
 
 Provides REST API for querying policy decisions.
@@ -93,14 +93,32 @@ def _to_response(d) -> PolicyDecisionResponse:
         timestamp=d.timestamp.isoformat() if d.timestamp else "",
         request_id=d.request_id,
         gateway_node=d.gateway_node,
-        subject=({"type": d.subject_type, "id": d.subject_id, "email": d.subject_email, "roles": d.subject_roles or [], "teams": d.subject_teams or []} if d.subject_id else None),
+        subject=(
+            {
+                "type": d.subject_type,
+                "id": d.subject_id,
+                "email": d.subject_email,
+                "roles": d.subject_roles or [],
+                "teams": d.subject_teams or [],
+            }
+            if d.subject_id
+            else None
+        ),
         action=d.action,
-        resource=({"type": d.resource_type, "id": d.resource_id, "server": d.resource_server} if d.resource_id else None),
+        resource=(
+            {"type": d.resource_type, "id": d.resource_id, "server": d.resource_server}
+            if d.resource_id
+            else None
+        ),
         decision=d.decision,
         reason=d.reason,
         matching_policies=d.matching_policies or [],
         duration_ms=d.duration_ms,
-        metadata={"severity": d.severity, "risk_score": d.risk_score, "anomaly_detected": d.anomaly_detected},
+        metadata={
+            "severity": d.severity,
+            "risk_score": d.risk_score,
+            "anomaly_detected": d.anomaly_detected,
+        },
     )
 
 
@@ -146,7 +164,7 @@ def query_decisions(
         )
         return [_to_response(d) for d in decisions]
     except Exception as e:
-        logger.error(f"Failed to query decisions: {e}", exc_info=True)
+        logger.error("Failed to query decisions: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query decisions")
 
 
@@ -162,7 +180,7 @@ def query_decisions_post(query: QueryRequest):
         decisions = policy_decision_service.query_decisions(**query.model_dump(exclude_unset=True))
         return [_to_response(d) for d in decisions]
     except Exception as e:
-        logger.error(f"Failed to query decisions: {e}", exc_info=True)
+        logger.error("Failed to query decisions: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query decisions")
 
 
@@ -181,7 +199,7 @@ def get_statistics(
         stats = policy_decision_service.get_statistics(start_time=start_time, end_time=end_time)
         return StatisticsResponse(**stats)
     except Exception as e:
-        logger.error(f"Failed to get statistics: {e}", exc_info=True)
+        logger.error("Failed to get statistics: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get statistics")
 
 
