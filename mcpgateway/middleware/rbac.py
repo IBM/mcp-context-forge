@@ -313,11 +313,24 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # Get token_use from request.state (set by get_current_user)
         token_use = getattr(request.state, "token_use", None)
 
+        # Load user permissions from their roles for PolicyEngine
+        # Use fresh_db_session for short-lived database access
+        permissions = []
+        try:
+            with fresh_db_session() as db:
+                permission_service = PermissionService(db)
+                user_permissions = await permission_service.get_user_permissions(user.email, team_id=team_id)
+                permissions = list(user_permissions)
+        except Exception as e:
+            logger.error(f"Failed to load permissions for {user.email}: {e}")
+            # Continue with empty permissions rather than failing the request
+
         # Add request context for permission auditing
         return {
             "email": user.email,
             "full_name": user.full_name,
             "is_admin": user.is_admin,
+            "permissions": permissions,  # Add permissions from roles
             "ip_address": request.client.host if request.client else None,
             "user_agent": request.headers.get("user-agent"),
             "db": None,  # Session closed; use endpoint's db param instead
