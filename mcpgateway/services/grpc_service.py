@@ -39,13 +39,14 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import EmailTeam
 from mcpgateway.db import GrpcService as DbGrpcService
+from mcpgateway.db import server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, server_tool_association
+from mcpgateway.db import ToolMetric
 from mcpgateway.schemas import GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
-from mcpgateway.utils.create_slug import slugify
-from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.team_management_service import TeamManagementService
+from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.pagination import unified_paginate
 
 # Initialize logging
