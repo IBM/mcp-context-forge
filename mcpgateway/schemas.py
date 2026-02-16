@@ -5260,6 +5260,58 @@ class EmailLoginRequest(BaseModel):
     password: str = Field(..., min_length=1, description="User's password")
 
 
+class LdapLoginRequest(BaseModel):
+    """Request schema for LDAP bind login.
+
+    Attributes:
+        username: LDAP username (uid or sAMAccountName)
+        password: LDAP password
+
+    Examples:
+        >>> request = LdapLoginRequest(username="alice", password="secret123")
+        >>> request.username
+        'alice'
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    username: str = Field(..., min_length=1, max_length=255, description="LDAP username (uid or sAMAccountName)")
+    password: str = Field(..., min_length=1, description="LDAP password")
+
+
+class LdapSyncResponse(BaseModel):
+    """Response schema for LDAP directory sync.
+
+    Examples:
+        >>> resp = LdapSyncResponse(users_synced=5, groups_synced=2, users_removed=0, groups_removed=0)
+        >>> resp.users_synced
+        5
+    """
+
+    users_synced: int = Field(default=0, description="Number of users synced from LDAP")
+    groups_synced: int = Field(default=0, description="Number of groups synced from LDAP")
+    users_removed: int = Field(default=0, description="Number of orphan users removed")
+    groups_removed: int = Field(default=0, description="Number of orphan groups removed")
+    errors: List[str] = Field(default_factory=list, description="Non-fatal errors during sync")
+
+
+class LdapStatusResponse(BaseModel):
+    """Response schema for LDAP connection status.
+
+    Examples:
+        >>> resp = LdapStatusResponse(connected=True, server_uri="ldap://localhost:389", base_dn="dc=example,dc=org")
+        >>> resp.connected
+        True
+    """
+
+    connected: bool = Field(description="Whether the LDAP server is reachable")
+    server_uri: str = Field(description="Configured LDAP server URI")
+    base_dn: str = Field(description="Configured base DN")
+    sync_enabled: bool = Field(default=False, description="Whether periodic sync is enabled")
+    last_sync_at: Optional[str] = Field(default=None, description="Timestamp of last successful sync")
+    error: Optional[str] = Field(default=None, description="Connection error message if any")
+
+
 class PublicRegistrationRequest(BaseModel):
     """Public self-registration request — minimal fields, password required.
 
