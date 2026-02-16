@@ -131,6 +131,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
+from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -930,6 +931,53 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     team_service = TeamManagementService(db)
     user_teams = await team_service.get_user_teams(user_email)
     return [t.id for t in user_teams]
+
+
+def _is_explicit_token_team_scope(user: Any) -> bool:
+    """Return whether the auth context carries explicit token team scope.
+
+    Tokens with ``token_teams`` present and not ``None`` are scope-constrained
+    (including public-only tokens with ``[]``). ``None`` denotes admin bypass.
+    """
+    if not isinstance(user, dict):
+        return False
+    return "token_teams" in user and user.get("token_teams") is not None
+
+
+def _owner_access_condition(owner_column, team_column, *, user_email: str, team_ids: list[str], user: Any):
+    """Build owner visibility predicate honoring token team scoping.
+
+    For explicit token scopes, owner visibility is constrained to token teams.
+    For legacy/session contexts without explicit scope (or admin bypass), keep
+    existing owner visibility semantics.
+    """
+    if _is_explicit_token_team_scope(user):
+        if not team_ids:
+            return false()
+        return and_(owner_column == user_email, team_column.in_(team_ids))
+    return owner_column == user_email
+
+
+async def _has_permission(
+    *,
+    db: Session,
+    user: dict,
+    permission: str,
+    team_id: Optional[str] = None,
+    allow_admin_bypass: bool = False,
+    check_any_team: bool = False,
+) -> bool:
+    """Check a permission for the current user context."""
+    permission_service = PermissionService(db)
+    return await permission_service.check_permission(
+        user_email=get_user_email(user),
+        permission=permission,
+        team_id=team_id,
+        ip_address=user.get("ip_address"),
+        user_agent=user.get("user_agent"),
+        allow_admin_bypass=allow_admin_bypass,
+        check_any_team=check_any_team,
+    )
 
 
 def _normalize_search_query(query: Optional[str]) -> str:
@@ -1809,9 +1857,7 @@ async def admin_servers_partial_html(
     user_email = get_user_email(user)
 
     # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     # Build base query with eager loading to avoid N+1 queries
     query = select(DbServer).options(
@@ -1845,7 +1891,7 @@ async def admin_servers_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbServer.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbServer.owner_email, DbServer.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
         access_conditions.append(DbServer.visibility == "public")
@@ -7266,9 +7312,7 @@ async def admin_tools_partial_html(
     LOGGER.debug(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     # Build query with eager loading for email_team to avoid N+1 queries
     query = select(DbTool).options(joinedload(DbTool.email_team))
@@ -7317,7 +7361,7 @@ async def admin_tools_partial_html(
         access_conditions = []
 
         # 1. User's personal tools (owner_email matches)
-        access_conditions.append(DbTool.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
 
         # 2. Team tools where user is member
         if team_ids:
@@ -7486,10 +7530,7 @@ async def admin_tool_ops_partial(
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"Tool ops partial request - team_id: {team_id}, page: {page}")
-
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbTool).options(joinedload(DbTool.email_team))
 
@@ -7524,7 +7565,7 @@ async def admin_tool_ops_partial(
             query = query.where(false())
     else:
         access_conditions = []
-        access_conditions.append(DbTool.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
         access_conditions.append(DbTool.visibility == "public")
@@ -7604,9 +7645,7 @@ async def admin_get_all_tool_ids(
     user_email = get_user_email(user)
 
     # Build base query
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [team.id for team in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbTool.id)
 
@@ -7648,7 +7687,7 @@ async def admin_get_all_tool_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbTool.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
         access_conditions.append(DbTool.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
@@ -7743,7 +7782,7 @@ async def admin_search_tools(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbTool.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
         access_conditions.append(DbTool.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
@@ -7845,9 +7884,7 @@ async def admin_prompts_partial_html(
     user_email = get_user_email(user)
 
     # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
     query = select(DbPrompt)
@@ -7891,7 +7928,7 @@ async def admin_prompts_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbPrompt.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbPrompt.owner_email, DbPrompt.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
         access_conditions.append(DbPrompt.visibility == "public")
@@ -8070,9 +8107,7 @@ async def admin_gateways_partial_html(
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
     # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
     query = select(DbGateway).options(joinedload(DbGateway.email_team))
@@ -8100,7 +8135,7 @@ async def admin_gateways_partial_html(
     else:
         # All Teams view: apply standard access conditions
         access_conditions = []
-        access_conditions.append(DbGateway.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbGateway.owner_email, DbGateway.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
         access_conditions.append(DbGateway.visibility == "public")
@@ -8237,9 +8272,7 @@ async def admin_get_all_gateways_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbGateway.id)
 
@@ -8264,7 +8297,7 @@ async def admin_get_all_gateways_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbGateway.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbGateway.owner_email, DbGateway.team_id, user_email=user_email, team_ids=team_ids, user=user))
         access_conditions.append(DbGateway.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
@@ -8337,7 +8370,7 @@ async def admin_search_gateways(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbGateway.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbGateway.owner_email, DbGateway.team_id, user_email=user_email, team_ids=team_ids, user=user))
         access_conditions.append(DbGateway.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
@@ -8407,9 +8440,7 @@ async def admin_get_all_server_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbServer.id)
 
@@ -8436,7 +8467,7 @@ async def admin_get_all_server_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbServer.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbServer.owner_email, DbServer.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
         access_conditions.append(DbServer.visibility == "public")
@@ -8511,7 +8542,7 @@ async def admin_search_servers(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbServer.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbServer.owner_email, DbServer.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
         access_conditions.append(DbServer.visibility == "public")
@@ -8608,9 +8639,7 @@ async def admin_resources_partial_html(
     user_email = get_user_email(user)
 
     # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
     query = select(DbResource)
@@ -8657,7 +8686,7 @@ async def admin_resources_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbResource.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbResource.owner_email, DbResource.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
         access_conditions.append(DbResource.visibility == "public")
@@ -8812,9 +8841,7 @@ async def admin_get_all_prompt_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbPrompt.id)
 
@@ -8857,7 +8884,7 @@ async def admin_get_all_prompt_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbPrompt.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbPrompt.owner_email, DbPrompt.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
         access_conditions.append(DbPrompt.visibility == "public")
@@ -8894,9 +8921,7 @@ async def admin_get_all_resource_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbResource.id)
 
@@ -8939,7 +8964,7 @@ async def admin_get_all_resource_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbResource.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbResource.owner_email, DbResource.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
         access_conditions.append(DbResource.visibility == "public")
@@ -9032,7 +9057,7 @@ async def admin_search_resources(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbResource.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbResource.owner_email, DbResource.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
         access_conditions.append(DbResource.visibility == "public")
@@ -9152,7 +9177,7 @@ async def admin_search_prompts(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbPrompt.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbPrompt.owner_email, DbPrompt.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
         access_conditions.append(DbPrompt.visibility == "public")
@@ -9499,9 +9524,7 @@ async def admin_a2a_partial_html(
     user_email = get_user_email(user)
 
     # Team scoping
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
     query = select(DbA2AAgent)
@@ -9532,7 +9555,7 @@ async def admin_a2a_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbA2AAgent.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbA2AAgent.owner_email, DbA2AAgent.team_id, user_email=user_email, team_ids=team_ids, user=user))
         if team_ids:
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
         access_conditions.append(DbA2AAgent.visibility == "public")
@@ -9685,9 +9708,7 @@ async def admin_get_all_agent_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    team_ids = [t.id for t in user_teams]
+    team_ids = await _get_user_team_ids(user, db)
 
     query = select(DbA2AAgent.id)
 
@@ -9712,7 +9733,7 @@ async def admin_get_all_agent_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbA2AAgent.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbA2AAgent.owner_email, DbA2AAgent.team_id, user_email=user_email, team_ids=team_ids, user=user))
         access_conditions.append(DbA2AAgent.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
@@ -9785,7 +9806,7 @@ async def admin_search_a2a_agents(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(DbA2AAgent.owner_email == user_email)
+        access_conditions.append(_owner_access_condition(DbA2AAgent.owner_email, DbA2AAgent.team_id, user_email=user_email, team_ids=team_ids, user=user))
         access_conditions.append(DbA2AAgent.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
@@ -9878,6 +9899,7 @@ async def admin_unified_search(
     tag_groups = _parse_tag_filter_groups(normalized_tags)
 
     supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users"]
+    default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams"]
     selected_entity_types: list[str] = []
     if normalized_entity_types:
         for raw_entity_type in normalized_entity_types.split(","):
@@ -9889,7 +9911,15 @@ async def admin_unified_search(
             if candidate in supported_entity_types and candidate not in selected_entity_types:
                 selected_entity_types.append(candidate)
     else:
-        selected_entity_types = supported_entity_types.copy()
+        selected_entity_types = default_entity_types.copy()
+
+    users_explicitly_requested = bool(normalized_entity_types and "users" in selected_entity_types)
+    if "users" in selected_entity_types:
+        can_search_users = await _has_permission(db=db, user=user, permission="admin.user_management")
+        if not can_search_users:
+            selected_entity_types = [entity_type for entity_type in selected_entity_types if entity_type != "users"]
+            if users_explicitly_requested and not selected_entity_types:
+                raise HTTPException(status_code=403, detail="Insufficient permissions. Required: admin.user_management")
 
     if not selected_entity_types:
         raise HTTPException(status_code=400, detail="No valid entity_types requested")

@@ -43,6 +43,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     _get_user_team_roles,
     _normalize_team_id,
     _normalize_search_query,
+    _owner_access_condition,
     _parse_tag_filter_groups,
     _read_request_json,
     _render_user_card_html,
@@ -366,6 +367,7 @@ def allow_permission(monkeypatch):
     mock_perm_service = MagicMock()
     mock_perm_service.check_permission = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+    monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.plugins.framework.get_plugin_manager", lambda: None)
     return mock_perm_service
 
@@ -8604,6 +8606,54 @@ async def test_get_user_team_ids_admin_bypass_falls_back_to_db(monkeypatch, mock
     mock_team_service.get_user_teams.assert_called_once_with("user@example.com")
 
 
+def test_owner_access_condition_public_only_token_blocks_owner_override():
+    # Third-Party
+    import sqlalchemy as sa
+
+    predicate = _owner_access_condition(
+        sa.column("owner_email"),
+        sa.column("team_id"),
+        user_email="owner@example.com",
+        team_ids=[],
+        user={"email": "owner@example.com", "token_teams": []},
+    )
+    sql = str(predicate.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "false" in sql or "0 = 1" in sql
+
+
+def test_owner_access_condition_team_scoped_token_constrains_owner_to_token_teams():
+    # Third-Party
+    import sqlalchemy as sa
+
+    predicate = _owner_access_condition(
+        sa.column("owner_email"),
+        sa.column("team_id"),
+        user_email="owner@example.com",
+        team_ids=["team-1"],
+        user={"email": "owner@example.com", "token_teams": ["team-1"]},
+    )
+    sql = str(predicate.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "owner_email" in sql
+    assert "team_id" in sql
+    assert "team-1" in sql
+
+
+def test_owner_access_condition_legacy_context_keeps_owner_access():
+    # Third-Party
+    import sqlalchemy as sa
+
+    predicate = _owner_access_condition(
+        sa.column("owner_email"),
+        sa.column("team_id"),
+        user_email="owner@example.com",
+        team_ids=[],
+        user={"email": "owner@example.com"},
+    )
+    sql = str(predicate.compile(compile_kwargs={"literal_binds": True})).lower()
+    assert "owner_email" in sql
+    assert "team_id" not in sql
+
+
 def test_parse_tag_filter_groups_respects_max_groups():
     # 25 groups should be capped at _TAG_MAX_GROUPS (20)
     tags = ",".join(f"tag{i}" for i in range(25))
@@ -8713,6 +8763,7 @@ async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, all
     result = await admin_unified_search(
         q="core",
         tags=None,
+        entity_types="servers,gateways,tools,resources,prompts,agents,teams,users",
         include_inactive=False,
         limit=5,
         gateway_id=None,
@@ -8726,6 +8777,80 @@ async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, all
     assert any(item["entity_type"] == "tools" for item in result["items"])
     assert result["results"]["teams"][0]["id"] == "team-1"
     assert result["results"]["users"][0]["id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_default_excludes_users(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", AsyncMock(return_value={"tools": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_resources", AsyncMock(return_value={"resources": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_prompts", AsyncMock(return_value={"prompts": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
+    monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
+    users_search = AsyncMock(return_value={"users": [{"id": "user-1"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_users", users_search)
+
+    result = await admin_unified_search(
+        q="core",
+        tags=None,
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert "users" not in result["entity_types"]
+    assert "users" not in result["results"]
+    users_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_users_only_requires_admin_user_management(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin._has_permission", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin_unified_search(
+            q="core",
+            tags=None,
+            entity_types="users",
+            include_inactive=False,
+            limit=5,
+            gateway_id=None,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db},
+        )
+
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_drops_users_when_not_permitted(monkeypatch, mock_db, allow_permission):
+    monkeypatch.setattr("mcpgateway.admin._has_permission", AsyncMock(return_value=False))
+    tools_search = AsyncMock(return_value={"tools": [{"id": "tool-1", "name": "Tool 1"}], "count": 1})
+    users_search = AsyncMock(return_value={"users": [{"id": "user-1"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_tools", tools_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_users", users_search)
+
+    result = await admin_unified_search(
+        q="core",
+        tags=None,
+        entity_types="tools,users",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["tools"]
+    assert "users" not in result["results"]
+    assert result["results"]["tools"][0]["id"] == "tool-1"
+    users_search.assert_not_called()
 
 
 @pytest.mark.asyncio

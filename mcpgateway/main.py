@@ -1600,7 +1600,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         logger.info(f"Platform admin bootstrap authentication for {username}")
                         # Allow platform admin through - they have implicit admin privileges
                     else:
-                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
+                        return self._error_response(request, root_path, 401, "User not found")
                 else:
                     # User exists in DB - check active status
                     if not user.is_active:
