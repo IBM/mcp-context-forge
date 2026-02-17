@@ -66,7 +66,7 @@ class TestTeamsRouter:
     @pytest.fixture
     def mock_user_context(self, mock_db):
         """Create mock user context with permissions."""
-        return {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "db": mock_db, "permissions": ["teams.create", "teams.read", "teams.update", "teams.delete"]}
+        return {"email": "test@example.com", "full_name": "Test User", "is_admin": False, "db": mock_db, "permissions": ["*"]}
 
     @pytest.fixture
     def mock_admin_context(self, mock_db):
@@ -568,14 +568,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import list_team_members
 
-            result = await list_team_members(
-                team_id=team_id,
-                cursor=None,
-                limit=None,
-                include_pagination=False,
-                current_user=mock_user_context,
-                db=mock_db
-            )
+            result = await list_team_members(team_id=team_id, cursor=None, limit=None, include_pagination=False, current_user=mock_user_context, db=mock_db)
 
             assert isinstance(result, list)
             assert len(result) == 1

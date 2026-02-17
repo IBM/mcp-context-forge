@@ -38,7 +38,7 @@ def _allow_permissions(monkeypatch):
 async def test_admin_export_configuration_success():
     request = MagicMock()
     mock_db = MagicMock()
-    user = {"email": "admin@example.com", "username": "admin"}
+    user = {"email": "admin@example.com", "username": "admin", "permissions": ["*"]}
 
     with patch.object(admin, "export_service") as mock_export:
         mock_export.export_configuration = AsyncMock(return_value={"ok": True})
@@ -51,7 +51,7 @@ async def test_admin_export_configuration_success():
 async def test_admin_export_selective_success():
     request = _make_json_request({"entity_selections": {"tools": ["t1"]}, "include_dependencies": False})
     mock_db = MagicMock()
-    user = {"email": "admin@example.com", "username": "admin"}
+    user = {"email": "admin@example.com", "username": "admin", "permissions": ["*"]}
 
     with patch.object(admin, "export_service") as mock_export:
         mock_export.export_selective = AsyncMock(return_value={"tools": ["t1"]})
@@ -64,7 +64,7 @@ async def test_admin_export_selective_success():
 async def test_admin_import_preview_missing_data():
     request = _make_json_request({})
     with pytest.raises(HTTPException) as exc:
-        await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
+        await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin", "permissions": ["*"]})
     assert exc.value.status_code == 500
 
 
@@ -73,7 +73,7 @@ async def test_admin_import_preview_success():
     request = _make_json_request({"data": {"tools": []}})
     with patch.object(admin, "import_service") as mock_import:
         mock_import.preview_import = AsyncMock(return_value={"summary": {"total_items": 0}})
-        response = await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
+        response = await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin", "permissions": ["*"]})
         assert b"preview" in response.body
 
 
@@ -81,7 +81,7 @@ async def test_admin_import_preview_success():
 async def test_admin_import_configuration_invalid_conflict_strategy():
     request = _make_json_request({"import_data": {"tools": []}, "conflict_strategy": "nope"})
     with pytest.raises(HTTPException) as exc:
-        await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
+        await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin", "permissions": ["*"]})
     assert exc.value.status_code == 500
 
 
@@ -94,7 +94,7 @@ async def test_admin_import_configuration_success():
     request = _make_json_request({"import_data": {"tools": []}, "conflict_strategy": "update"})
     with patch.object(admin, "import_service") as mock_import:
         mock_import.import_configuration = AsyncMock(return_value=_Status())
-        response = await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
+        response = await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin", "permissions": ["*"]})
         assert b"status" in response.body
 
 
@@ -104,5 +104,5 @@ async def test_admin_import_configuration_error():
     with patch.object(admin, "import_service") as mock_import:
         mock_import.import_configuration = AsyncMock(side_effect=ImportServiceError("boom"))
         with pytest.raises(HTTPException) as exc:
-            await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
+            await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin", "permissions": ["*"]})
         assert exc.value.status_code == 400

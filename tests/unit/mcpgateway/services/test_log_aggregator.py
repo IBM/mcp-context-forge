@@ -245,6 +245,12 @@ class TestComputeStatsPostgresql:
 
 
 class TestAggregatePerformanceMetrics:
+    @pytest.fixture(autouse=True)
+    def enable_aggregation(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "metrics_aggregation_enabled", True)
+
     """Tests for aggregate_performance_metrics method."""
 
     def test_aggregate_disabled(self):
@@ -435,6 +441,12 @@ class TestResolveWindowBounds:
 
 
 class TestAggregateAllComponentsBatch:
+    @pytest.fixture(autouse=True)
+    def enable_aggregation(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "metrics_aggregation_enabled", True)
+
     """Tests for aggregate_all_components_batch method."""
 
     def test_batch_returns_empty_when_disabled(self):
@@ -809,6 +821,12 @@ class TestAggregateCustomWindowsFallback:
 
 
 class TestAggregatePerformanceMetricsAdditional:
+    @pytest.fixture(autouse=True)
+    def enable_aggregation(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "metrics_aggregation_enabled", True)
+
     """Tests for aggregate_performance_metrics and related helpers."""
 
     def test_aggregate_performance_metrics_success(self):
@@ -967,6 +985,12 @@ class TestAggregatePerformanceMetricsAdditional:
 
 
 class TestBackfillAndSingleton:
+    @pytest.fixture(autouse=True)
+    def enable_aggregation(self, monkeypatch):
+        from mcpgateway.config import settings
+
+        monkeypatch.setattr(settings, "metrics_aggregation_enabled", True)
+
     """Tests for backfill and singleton creation."""
 
     def test_backfill_returns_zero_when_disabled_or_invalid(self):

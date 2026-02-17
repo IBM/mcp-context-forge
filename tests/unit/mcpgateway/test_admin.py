@@ -449,7 +449,13 @@ class TestAdminServerRoutes:
         )
 
         # Test with include_inactive=False
-        result = await admin_list_servers(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_servers(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert "data" in result
         assert "pagination" in result
@@ -464,14 +470,22 @@ class TestAdminServerRoutes:
         mock_server.model_dump.return_value = {"id": 123, "name": "Numeric ID Server"}
         mock_get_server.return_value = mock_server
 
-        result = await admin_get_server(123, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_server(
+            123,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result["id"] == 123
 
         # Test with generic exception
         mock_get_server.side_effect = RuntimeError("Database connection lost")
 
         with pytest.raises(RuntimeError) as excinfo:
-            await admin_get_server("error-id", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_server(
+                "error-id",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert "Database connection lost" in str(excinfo.value)
 
     @patch.object(ServerService, "register_server")
@@ -481,7 +495,11 @@ class TestAdminServerRoutes:
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
         mock_register_server.side_effect = CoreValidationError.from_exception_data("ServerCreate", error_details)
 
-        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -492,7 +510,11 @@ class TestAdminServerRoutes:
         # Simulate database integrity error
         mock_register_server.side_effect = IntegrityError("Duplicate entry", params={}, orig=Exception("Duplicate key value"))
 
-        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
@@ -511,7 +533,11 @@ class TestAdminServerRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Should still succeed
         # assert isinstance(result, RedirectResponse)
@@ -556,7 +582,11 @@ class TestAdminServerRoutes:
             },
         )
 
-        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -605,7 +635,11 @@ class TestAdminServerRoutes:
             },
         )
 
-        result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 200
 
         server_create = mock_register_server.call_args.args[1]
@@ -618,7 +652,11 @@ class TestAdminServerRoutes:
     async def test_admin_add_server_missing_required_field_returns_422(self, mock_request, mock_db):
         """Cover the KeyError handler in admin_add_server."""
         mock_request.form = AsyncMock(return_value=FakeForm({"description": "no name"}))
-        response = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, JSONResponse)
         assert response.status_code == 422
 
@@ -643,7 +681,11 @@ class TestAdminServerRoutes:
             },
         )
 
-        response = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_add_server(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, JSONResponse)
         assert response.status_code == 422
 
@@ -653,7 +695,12 @@ class TestAdminServerRoutes:
         # Set custom root path
         mock_request.scope = {"root_path": "/api/v1"}
 
-        result = await admin_edit_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code in (200, 409, 422, 500)
@@ -695,7 +742,12 @@ class TestAdminServerRoutes:
         }
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(
+            server_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -740,7 +792,12 @@ class TestAdminServerRoutes:
         }
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(
+            server_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -784,7 +841,12 @@ class TestAdminServerRoutes:
         }
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(
+            server_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
@@ -830,7 +892,12 @@ class TestAdminServerRoutes:
         mock_server_read.model_dump.return_value = {"id": server_id, "name": "Server_Edit_SelectAll"}
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(
+            server_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -873,7 +940,12 @@ class TestAdminServerRoutes:
         mock_server_read.model_dump.return_value = {"id": server_id, "name": "Server_Edit_SelectAll_BadJSON"}
         mock_update_server.return_value = mock_server_read
 
-        result = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_server(
+            server_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 200
 
         server_update = mock_update_server.call_args[0][2]
@@ -909,7 +981,12 @@ class TestAdminServerRoutes:
 
         for exc, expected in cases:
             mock_update_server.side_effect = exc
-            response = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_edit_server(
+                server_id,
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(response, JSONResponse)
             assert response.status_code == expected
 
@@ -929,7 +1006,12 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
 
         mock_update_server.side_effect = TypeError("boom")  # not explicitly handled above
-        response = await admin_edit_server(server_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_server(
+            server_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, JSONResponse)
         assert response.status_code == 500
 
@@ -940,7 +1022,12 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_server_state(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         mock_set_state.assert_called_once_with(mock_db, "server-1", True, user_email="test-user")
         assert isinstance(result, RedirectResponse)
@@ -954,7 +1041,12 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_server_state(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
@@ -968,7 +1060,12 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_server_state(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         mock_set_state.assert_called_once_with(mock_db, "server-1", False, user_email="test-user")
         assert isinstance(result, RedirectResponse)
@@ -983,7 +1080,12 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
         mock_toggle_status.side_effect = Exception("Toggle operation failed")
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_server_state(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -998,7 +1100,12 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
         mock_set_state.side_effect = PermissionError("Only the owner can activate the Server")
 
-        result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_server_state(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -1017,7 +1124,12 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
 
         mock_set_state.side_effect = ServerLockConflictError("locked")
-        result = await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_server_state(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         location = unquote(result.headers["location"])
@@ -1031,7 +1143,12 @@ class TestAdminServerRoutes:
         form_data = FakeForm({"is_inactive_checked": "TRUE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_delete_server(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert "include_inactive=true" in result.headers["location"]
 
@@ -1039,7 +1156,12 @@ class TestAdminServerRoutes:
         form_data = FakeForm({"is_inactive_checked": "TrUe"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_delete_server(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert "include_inactive=true" in result.headers["location"]
 
@@ -1049,7 +1171,12 @@ class TestAdminServerRoutes:
         mock_request.scope = {"root_path": ""}
         mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
 
-        response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_delete_server(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         assert response.headers["location"] == "/admin#catalog"
@@ -1070,7 +1197,12 @@ class TestAdminServerRoutes:
 
         for exc, expected_msg in cases:
             mock_delete_server.side_effect = exc
-            response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_delete_server(
+                "server-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
@@ -1084,7 +1216,12 @@ class TestAdminServerRoutes:
         mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
         mock_delete_server.side_effect = PermissionError("nope")
 
-        response = await admin_delete_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_delete_server(
+            "server-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         location = unquote(response.headers["location"])
@@ -1109,7 +1246,13 @@ class TestAdminToolRoutes:
         )
 
         # Call the function with explicit pagination params
-        result = await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_tools(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Expect structure with 'data' key and empty list
         assert isinstance(result, dict)
@@ -1120,7 +1263,13 @@ class TestAdminToolRoutes:
         mock_tool_service.list_tools = AsyncMock(side_effect=RuntimeError("Service unavailable"))
 
         with pytest.raises(RuntimeError):
-            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_list_tools(
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                db=mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
     @patch.object(ToolService, "get_tool")
     async def test_admin_get_tool_various_exceptions(self, mock_get_tool, mock_db):
@@ -1129,14 +1278,22 @@ class TestAdminToolRoutes:
         mock_get_tool.side_effect = ToolNotFoundError("Tool not found")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_tool("missing-tool", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_tool(
+                "missing-tool",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert excinfo.value.status_code == 404
 
         # Test with generic exception
         mock_get_tool.side_effect = ValueError("Invalid tool ID format")
 
         with pytest.raises(ValueError):
-            await admin_get_tool("bad-id", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_tool(
+                "bad-id",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
     @patch.object(ToolService, "get_tool")
     async def test_admin_get_tool_success(self, mock_get_tool, mock_db):
@@ -1145,7 +1302,11 @@ class TestAdminToolRoutes:
         tool.model_dump.return_value = {"id": "tool-1"}
         mock_get_tool.return_value = tool
 
-        result = await admin_get_tool("tool-1", mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_tool(
+            "tool-1",
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result["id"] == "tool-1"
         tool.model_dump.assert_called_once_with(by_alias=True)
 
@@ -1165,7 +1326,11 @@ class TestAdminToolRoutes:
 
         # Should handle JSON decode error
         with pytest.raises(json.JSONDecodeError):
-            await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_add_tool(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
     @patch.object(ToolService, "register_tool")
     async def test_admin_add_tool_with_tool_error(self, mock_register_tool, mock_request, mock_db):
@@ -1183,7 +1348,11 @@ class TestAdminToolRoutes:
 
         mock_request.form = AsyncMock(return_value=mock_form)
 
-        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -1202,7 +1371,11 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -1224,7 +1397,11 @@ class TestAdminToolRoutes:
         form_data = FakeForm({"name": "Tool_MCP_Default", "url": "http://example.com", "integrationType": "MCP", "headers": "{}", "input_schema": "{}"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_register_tool.side_effect = None
-        resp = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(resp, JSONResponse)
         # Manual MCP tool creation is rejected by ToolCreate validators, but we still want
         # to exercise the request_type defaulting branch for integrationType == "MCP".
@@ -1233,7 +1410,11 @@ class TestAdminToolRoutes:
         # Unknown integrationType -> default request_type branch executes, then validation should fail (422)
         form_data = FakeForm({"name": "Tool_Unknown_Default", "url": "http://example.com", "integrationType": "WEIRD", "headers": "{}", "input_schema": "{}"})
         mock_request.form = AsyncMock(return_value=form_data)
-        resp = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(resp, JSONResponse)
         assert resp.status_code == 422
 
@@ -1241,17 +1422,29 @@ class TestAdminToolRoutes:
         form_data = FakeForm({"name": "Tool_Conflict", "url": "http://example.com", "integrationType": "REST", "requestType": "GET", "headers": "{}", "input_schema": "{}"})
         mock_request.form = AsyncMock(return_value=form_data)
         mock_register_tool.side_effect = IntegrityError("stmt", {}, Exception("orig"))
-        resp = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 409
 
         # ToolNameConflictError -> 409
         mock_register_tool.side_effect = ToolNameConflictError("conflict")
-        resp = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 409
 
         # Unexpected exception -> 500
         mock_register_tool.side_effect = RuntimeError("boom")
-        resp = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_tool(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 500
 
     @patch.object(ToolService, "update_tool")
@@ -1271,31 +1464,56 @@ class TestAdminToolRoutes:
             )
         )
         mock_update_tool.side_effect = IntegrityError("Integrity constraint", {}, Exception("Duplicate key"))
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert result.status_code == 409
 
         # ToolError should return 500 with JSON body
         mock_update_tool.side_effect = ToolError("Tool configuration error")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 500
         assert b"Tool configuration error" in result.body
 
         # PermissionError should return 403
         mock_update_tool.side_effect = PermissionError("nope")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 403
 
         # ToolNameConflictError should return 409
         from mcpgateway.services.tool_service import ToolNameConflictError
 
         mock_update_tool.side_effect = ToolNameConflictError("conflict")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 409
 
         # Generic Exception should return 500 with JSON body
         mock_update_tool.side_effect = Exception("Unexpected error")
-        result = await admin_edit_tool(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert result.status_code == 500
         assert b"Unexpected error" in result.body
@@ -1318,7 +1536,12 @@ class TestAdminToolRoutes:
             )
         )
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            "tool-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
 
@@ -1343,7 +1566,12 @@ class TestAdminToolRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_tool("tool-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_tool(
+            "tool-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Validate response type and content
         assert isinstance(result, JSONResponse)
@@ -1367,21 +1595,36 @@ class TestAdminToolRoutes:
         form_data = FakeForm({"activate": "false"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_tool_state(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_tool_state(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_tool_state(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
 
     @patch.object(ToolService, "set_tool_state")
@@ -1403,7 +1646,12 @@ class TestAdminToolRoutes:
 
         for exc, expected_msg in cases:
             mock_toggle_status.side_effect = exc
-            response = await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_set_tool_state(
+                tool_id,
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
@@ -1417,14 +1665,24 @@ class TestAdminToolRoutes:
 
         # Success path with include_inactive=true
         mock_toggle_status.side_effect = None
-        response = await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_set_tool_state(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         assert response.headers["location"] == "/root/admin/?include_inactive=true#tools"
 
         # Error path with include_inactive=true
         mock_toggle_status.side_effect = PermissionError("nope")
-        response = await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_set_tool_state(
+            tool_id,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         assert "include_inactive=true" in response.headers["location"]
@@ -1460,7 +1718,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -1495,7 +1757,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -1518,7 +1784,11 @@ class TestAdminBulkImportRoutes:
 
         with patch.object(ToolService, "register_tool") as mock_register:
             mock_register.return_value = None
-            result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_import_tools(
+                request=mock_request,
+                db=mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             result_data = json.loads(result.body)
 
             assert result.status_code == 200
@@ -1535,7 +1805,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=[])
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -1548,7 +1822,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value={"name": "tool", "url": "http://example.com"})
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -1563,7 +1841,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 413
@@ -1580,7 +1862,11 @@ class TestAdminBulkImportRoutes:
 
         with patch.object(ToolService, "register_tool") as mock_register:
             mock_register.return_value = None
-            result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_import_tools(
+                request=mock_request,
+                db=mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             result_data = json.loads(result.body)
 
             assert result.status_code == 200
@@ -1604,7 +1890,11 @@ class TestAdminBulkImportRoutes:
             lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
         )
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 200
         assert data["success"] is True
@@ -1622,7 +1912,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "multipart/form-data"}
         mock_request.form = AsyncMock(return_value=FakeForm({"tools_file": upload}))
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 422
         assert data["success"] is False
@@ -1633,7 +1927,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(side_effect=json.JSONDecodeError("Invalid", "", 0))
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -1646,7 +1944,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -1659,7 +1961,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/x-www-form-urlencoded"}
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 422
@@ -1676,7 +1982,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "application/json"}
         mock_request.json = AsyncMock(return_value=tools_data)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         result_data = json.loads(result.body)
 
         assert result.status_code == 200
@@ -1697,7 +2007,11 @@ class TestAdminBulkImportRoutes:
         """Cover the feature-flag guard that blocks bulk imports when disabled."""
         monkeypatch.setattr(settings, "mcpgateway_bulk_import_enabled", False)
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_import_tools(
+                request=mock_request,
+                db=mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert excinfo.value.status_code == 403
 
     async def test_bulk_import_form_read_failure_returns_422(self, mock_request, mock_db, monkeypatch):
@@ -1706,7 +2020,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "multipart/form-data"}
         mock_request.form = AsyncMock(side_effect=RuntimeError("bad form"))
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 422
         assert "Invalid form data" in data["message"]
@@ -1717,7 +2035,11 @@ class TestAdminBulkImportRoutes:
         mock_request.headers = {"content-type": "multipart/form-data"}
         mock_request.form = AsyncMock(return_value=FakeForm({"tools_file": "not-an-upload-file"}))
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 422
         assert "Invalid file upload" in data["message"]
@@ -1748,7 +2070,11 @@ class TestAdminBulkImportRoutes:
             },
         )
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 200
         assert data["failed_count"] == 1
@@ -1766,7 +2092,11 @@ class TestAdminBulkImportRoutes:
 
         monkeypatch.setattr("mcpgateway.admin.ErrorFormatter.format_validation_error", _boom)
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 200
         assert data["failed_count"] == 1
@@ -1784,7 +2114,11 @@ class TestAdminBulkImportRoutes:
         )
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_import_tools(
+                request=mock_request,
+                db=mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert excinfo.value.status_code == 401
 
     async def test_bulk_import_outer_exception_returns_500(self, mock_request, mock_db, monkeypatch):
@@ -1798,7 +2132,11 @@ class TestAdminBulkImportRoutes:
             lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("boom")),
         )
 
-        result = await admin_import_tools(request=mock_request, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_import_tools(
+            request=mock_request,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         data = json.loads(result.body)
         assert result.status_code == 500
         assert data["success"] is False
@@ -1839,7 +2177,13 @@ class TestAdminResourceRoutes:
             return_value={"data": [resource_read], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_resources(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_resources(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert "data" in result
         assert len(result["data"]) == 1
@@ -1856,7 +2200,11 @@ class TestAdminResourceRoutes:
 
         mock_read_resource.side_effect = IOError("Cannot read resource content")
 
-        result = await admin_get_resource("1", mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_resource(
+            "1",
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert result["resource"]["id"] == 1
         mock_read_resource.assert_not_called()
@@ -1866,12 +2214,20 @@ class TestAdminResourceRoutes:
         """Cover ResourceNotFoundError translation and generic exception path in admin_get_resource."""
         mock_get_resource.side_effect = ResourceNotFoundError("missing")
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_resource("missing-res", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_resource(
+                "missing-res",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert excinfo.value.status_code == 404
 
         mock_get_resource.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_resource("res-1", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_resource(
+                "res-1",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
     @patch.object(ResourceService, "register_resource")
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
@@ -1881,7 +2237,11 @@ class TestAdminResourceRoutes:
 
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_resource(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200
@@ -1897,14 +2257,22 @@ class TestAdminResourceRoutes:
         # Test IntegrityError
         mock_register_resource.side_effect = IntegrityError("URI already exists", params={}, orig=Exception("Duplicate key"))
 
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_resource(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 409
 
         # Test generic exception
         mock_register_resource.side_effect = Exception("Generic error")
 
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_resource(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
 
@@ -1930,11 +2298,19 @@ class TestAdminResourceRoutes:
 
         error_details = [InitErrorDetails(type="missing", loc=("uri",), input={})]
         mock_register_resource.side_effect = ValidationError.from_exception_data("test", error_details)
-        resp = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_resource(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 422
 
         mock_register_resource.side_effect = ResourceURIConflictError("conflict")
-        resp = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_resource(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 409
 
     @patch.object(ResourceService, "update_resource")
@@ -1943,7 +2319,12 @@ class TestAdminResourceRoutes:
         # URI with encoded special characters (valid)
         uri = "/test/resource%3Fparam%3Dvalue%26other%3D123"
 
-        result = await admin_edit_resource(uri, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_resource(
+            uri,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         if isinstance(result, JSONResponse):
@@ -1966,35 +2347,70 @@ class TestAdminResourceRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_update_resource.side_effect = PermissionError("nope")
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource(
+            "res-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 403
 
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
         mock_update_resource.side_effect = ValidationError.from_exception_data("test", error_details)
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource(
+            "res-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 422
 
         mock_update_resource.side_effect = IntegrityError("stmt", {}, Exception("constraint"))
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource(
+            "res-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 409
 
         mock_update_resource.side_effect = ResourceURIConflictError("conflict")
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource(
+            "res-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 409
 
         mock_update_resource.side_effect = Exception("boom")
-        response = await admin_edit_resource("res-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_resource(
+            "res-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 500
 
     @patch.object(ResourceService, "set_resource_state")
     async def test_admin_set_resource_state_numeric_id(self, mock_toggle_status, mock_request, mock_db):
         """Test setting resource state with numeric ID."""
         # Test with integer ID
-        await admin_set_resource_state(123, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_resource_state(
+            123,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, 123, True, user_email="test-user")
 
         # Test with string number
-        await admin_set_resource_state("456", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_resource_state(
+            "456",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, "456", True, user_email="test-user")
 
 
@@ -2031,7 +2447,13 @@ class TestAdminPromptRoutes:
             return_value={"data": [mock_prompt], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_prompts(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_prompts(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert "data" in result
         assert "pagination" in result
@@ -2068,7 +2490,11 @@ class TestAdminPromptRoutes:
             },
         }
 
-        result = await admin_get_prompt("test-prompt", mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_prompt(
+            "test-prompt",
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert result["name"] == "test-prompt"
         assert "metrics" in result
@@ -2078,12 +2504,20 @@ class TestAdminPromptRoutes:
         """Cover PromptNotFoundError translation and generic exception path in admin_get_prompt."""
         mock_get_prompt_details.side_effect = PromptNotFoundError("missing")
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_prompt("missing-prompt", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_prompt(
+                "missing-prompt",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert excinfo.value.status_code == 404
 
         mock_get_prompt_details.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_prompt("p1", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_prompt(
+                "p1",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
     @patch.object(PromptService, "register_prompt")
     async def test_admin_add_prompt_with_empty_arguments(self, mock_register_prompt, mock_request, mock_db):
@@ -2098,7 +2532,11 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_register_prompt.return_value = MagicMock()
-        result = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         # Should be a JSONResponse with 200 (success) or 422 (validation error)
         assert isinstance(result, JSONResponse)
         if result.status_code == 200:
@@ -2118,7 +2556,11 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
         mock_register_prompt.return_value = MagicMock()
-        result = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         if result.status_code == 200:
             assert b"success" in result.body.lower() or b"prompt" in result.body.lower()
@@ -2138,7 +2580,11 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
         assert b"json" in result.body.lower() or b"decode" in result.body.lower() or b"invalid" in result.body.lower() or b"expecting value" in result.body.lower()
@@ -2162,19 +2608,35 @@ class TestAdminPromptRoutes:
         error_details = [InitErrorDetails(type="missing", loc=("name",), input={})]
 
         mock_register_prompt.side_effect = ValidationError.from_exception_data("test", error_details)
-        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 422
 
         mock_register_prompt.side_effect = IntegrityError("stmt", {}, Exception("orig"))
-        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 409
 
         mock_register_prompt.side_effect = PromptNameConflictError("conflict")
-        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 409
 
         mock_register_prompt.side_effect = RuntimeError("boom")
-        resp = await admin_add_prompt(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        resp = await admin_add_prompt(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert resp.status_code == 500
 
     @patch.object(PromptService, "update_prompt")
@@ -2190,7 +2652,12 @@ class TestAdminPromptRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_edit_prompt("old-prompt-name", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_prompt(
+            "old-prompt-name",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Accept JSONResponse with 200 (success), 409 (conflict), 422 (validation), else 500
         assert isinstance(result, JSONResponse)
@@ -2225,35 +2692,70 @@ class TestAdminPromptRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         mock_update_prompt.side_effect = PermissionError("nope")
-        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_prompt(
+            "p1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 403
 
         error_details = [InitErrorDetails(type="missing", loc=("template",), input={})]
         mock_update_prompt.side_effect = ValidationError.from_exception_data("test", error_details)
-        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_prompt(
+            "p1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 422
 
         mock_update_prompt.side_effect = IntegrityError("stmt", {}, Exception("constraint"))
-        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_prompt(
+            "p1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 409
 
         mock_update_prompt.side_effect = PromptNameConflictError("conflict")
-        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_prompt(
+            "p1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 409
 
         mock_update_prompt.side_effect = Exception("boom")
-        response = await admin_edit_prompt("p1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_prompt(
+            "p1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 500
 
     @patch.object(PromptService, "set_prompt_state")
     async def test_admin_set_prompt_state_edge_cases(self, mock_toggle_status, mock_request, mock_db):
         """Test setting prompt state with edge cases."""
         # Test with string ID that looks like number
-        await admin_set_prompt_state("123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_prompt_state(
+            "123",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, "123", True, user_email="test-user")
 
         # Test with negative number
-        await admin_set_prompt_state(-1, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        await admin_set_prompt_state(
+            -1,
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         mock_toggle_status.assert_called_with(mock_db, -1, True, user_email="test-user")
 
 
@@ -2299,7 +2801,13 @@ class TestAdminGatewayRoutes:
             return_value={"data": [mock_gateway], "pagination": PaginationMeta(page=1, per_page=50, total_items=1, total_pages=1, has_next=False, has_prev=False), "links": None}
         )
 
-        result = await admin_list_gateways(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_gateways(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert "data" in result
         assert result["data"][0]["authType"] == "bearer"  # Using camelCase as per by_alias=True
@@ -2319,7 +2827,11 @@ class TestAdminGatewayRoutes:
             }
             mock_get_gateway.return_value = mock_gateway
 
-            result = await admin_get_gateway(f"gateway-{transport}", mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_get_gateway(
+                f"gateway-{transport}",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert result["transport"] == transport
 
     @patch.object(GatewayService, "get_gateway")
@@ -2327,12 +2839,20 @@ class TestAdminGatewayRoutes:
         """Cover not-found translation and generic exception logging in admin_get_gateway."""
         mock_get_gateway.side_effect = GatewayNotFoundError("missing")
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_gateway("missing-gw", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_gateway(
+                "missing-gw",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
         assert excinfo.value.status_code == 404
 
         mock_get_gateway.side_effect = RuntimeError("boom")
         with pytest.raises(RuntimeError):
-            await admin_get_gateway("gw-1", mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_get_gateway(
+                "gw-1",
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
     @patch.object(GatewayService, "register_gateway")
     async def test_admin_add_gateway_valid_auth_types(self, mock_register_gateway, mock_request, mock_db):
@@ -2368,7 +2888,11 @@ class TestAdminGatewayRoutes:
             form_data = FakeForm({"name": f"Gateway_{auth_config.get('auth_type', 'none')}", "url": "http://example.com", **auth_config})
             mock_request.form = AsyncMock(return_value=form_data)
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -2385,7 +2909,11 @@ class TestAdminGatewayRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -2394,7 +2922,11 @@ class TestAdminGatewayRoutes:
         """Test adding gateway with connection error."""
         mock_register_gateway.side_effect = GatewayConnectionError("Cannot connect to gateway")
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 502
@@ -2410,7 +2942,11 @@ class TestAdminGatewayRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -2428,7 +2964,12 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         # Should handle validation in GatewayUpdate
-        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_gateway(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         body = json.loads(result.body.decode())
         assert isinstance(result, JSONResponse)
         assert result.status_code in (400, 422)
@@ -2450,11 +2991,21 @@ class TestAdminGatewayRoutes:
         mock_toggle_status.side_effect = side_effect
 
         # First call should fail
-        result1 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result1 = await admin_set_gateway_state(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result1, RedirectResponse)
 
         # Second call should succeed
-        result2 = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result2 = await admin_set_gateway_state(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result2, RedirectResponse)
 
     @pytest.mark.asyncio
@@ -2462,7 +3013,12 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
         monkeypatch.setattr("mcpgateway.admin.gateway_service.set_gateway_state", AsyncMock(side_effect=PermissionError("nope")))
 
-        response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_set_gateway_state(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
         assert "error=nope" in response.headers["location"]
@@ -2472,7 +3028,12 @@ class TestAdminGatewayRoutes:
         mock_request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
         monkeypatch.setattr("mcpgateway.admin.gateway_service.set_gateway_state", AsyncMock(return_value=None))
 
-        response = await admin_set_gateway_state("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_set_gateway_state(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert "include_inactive=true" in response.headers["location"]
 
@@ -2491,7 +3052,10 @@ class TestAdminRootRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
+        await admin_add_root(
+            mock_request,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         mock_add_root.assert_called_once_with("/test/root-with-dashes_and_underscores", "Special-Root_Name")
 
@@ -2506,7 +3070,10 @@ class TestAdminRootRoutes:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
+        await admin_add_root(
+            mock_request,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         mock_add_root.assert_called_once_with("/nameless/root", None)
 
@@ -2528,7 +3095,10 @@ class TestAdminRootRoutes:
 
         for exc, expected_msg in cases:
             mock_add_root.side_effect = exc
-            response = await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
+            response = await admin_add_root(
+                mock_request,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
@@ -2540,7 +3110,10 @@ class TestAdminRootRoutes:
         mock_request.scope = {"root_path": ""}
         mock_request.form = AsyncMock(return_value=FakeForm({"uri": ""}))
 
-        response = await admin_add_root(mock_request, user={"email": "test-user", "db": mock_db})
+        response = await admin_add_root(
+            mock_request,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         assert "Invalid input. Please try again." in unquote(response.headers["location"])
@@ -2552,7 +3125,11 @@ class TestAdminRootRoutes:
 
         # Should raise the exception (not caught in the admin route)
         with pytest.raises(Exception) as excinfo:
-            await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
+            await admin_delete_root(
+                "/test/root",
+                mock_request,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
         assert "Root is in use" in str(excinfo.value)
 
@@ -2562,7 +3139,11 @@ class TestAdminRootRoutes:
         mock_request.scope = {"root_path": "/root"}
         mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
 
-        response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
+        response = await admin_delete_root(
+            "/test/root",
+            mock_request,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         assert response.headers["location"] == "/root/admin/?include_inactive=true#roots"
@@ -2573,7 +3154,11 @@ class TestAdminRootRoutes:
         mock_request.scope = {"root_path": "/root"}
         mock_request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
 
-        response = await admin_delete_root("/test/root", mock_request, user={"email": "test-user", "db": mock_db})
+        response = await admin_delete_root(
+            "/test/root",
+            mock_request,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 303
         assert response.headers["location"] == "/root/admin#roots"
@@ -2626,7 +3211,15 @@ class TestAdminMetricsRoutes:
         mock_server_top.return_value = []
         mock_prompt_top.return_value = []
 
-        result = await get_aggregated_metrics(mock_db, _user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+        result = await get_aggregated_metrics(
+            mock_db,
+            _user={
+                "email": "test-user@example.com",
+                "is_admin": True,
+                "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                "db": mock_db,
+            },
+        )
 
         assert result["tools"].total_executions == 0
         assert result["resources"].total_executions == 100
@@ -2651,7 +3244,15 @@ class TestAdminMetricsRoutes:
 
         # Should raise the exception
         with pytest.raises(Exception) as excinfo:
-            await admin_reset_metrics(mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_reset_metrics(
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert "Resource metrics locked" in str(excinfo.value)
 
@@ -2666,7 +3267,14 @@ class TestAdminMetricsRoutes:
         mock_server_reset.return_value = None
         mock_prompt_reset.return_value = None
 
-        result = await admin_reset_metrics(mock_db, user={"email": "test-user@example.com", "db": mock_db})
+        result = await admin_reset_metrics(
+            mock_db,
+            user={
+                "email": "test-user@example.com",
+                "db": mock_db,
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
+        )
         assert result["success"] is True
         assert "metrics reset" in result["message"].lower()
         mock_server_reset.assert_awaited_once_with(mock_db)
@@ -2702,7 +3310,12 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                result = await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
+                result = await admin_test_gateway(
+                    request,
+                    team_id=None,
+                    user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                    db=mock_db,
+                )
 
                 assert result.status_code == 200
                 mock_client.request.assert_called_once()
@@ -2742,7 +3355,12 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
+                await admin_test_gateway(
+                    request,
+                    team_id=None,
+                    user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                    db=mock_db,
+                )
 
                 call_args = mock_client.request.call_args
                 assert call_args[1]["url"] == expected_url
@@ -2769,7 +3387,12 @@ class TestAdminGatewayTestRoute:
             mock_client_class.return_value = mock_client
 
             mock_db = MagicMock()
-            result = await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
+            result = await admin_test_gateway(
+                request,
+                team_id=None,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                db=mock_db,
+            )
 
             assert result.status_code == 502
             assert "Request timed out" in str(result.body)
@@ -2807,7 +3430,12 @@ class TestAdminGatewayTestRoute:
                 mock_client_class.return_value = mock_client
 
                 mock_db = MagicMock()
-                result = await admin_test_gateway(request, team_id=None, user={"email": "test-user", "db": mock_db}, db=mock_db)
+                result = await admin_test_gateway(
+                    request,
+                    team_id=None,
+                    user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                    db=mock_db,
+                )
 
                 assert result.status_code == 200
                 assert result.body["details"] == response_text
@@ -3071,7 +3699,7 @@ class TestAdminUIRoute:
                 team_id=None,
                 include_inactive=False,
                 db=mock_db,
-                user={"email": "admin", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"]},
+                user={"email": "admin", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"]},
             )
 
             # Check that the page still rendered
@@ -3108,7 +3736,7 @@ class TestAdminUIRoute:
                 team_id=None,
                 include_inactive=True,
                 db=mock_db,
-                user={"email": "admin", "db": mock_db},
+                user={"email": "admin", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
             )
 
             # Check template was called with correct context
@@ -3146,7 +3774,7 @@ class TestAdminUIRoute:
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin", "db": mock_db},
+            user={"email": "admin", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         # Verify response is an HTMLResponse
@@ -3623,7 +4251,7 @@ class TestAdminUIRoute:
             team_id="not-a-team",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -3663,7 +4291,7 @@ class TestAdminUIRoute:
             team_id="team-1",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -3730,7 +4358,7 @@ class TestAdminUIRoute:
             team_id="team-1",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
         context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
@@ -3744,7 +4372,7 @@ class TestAdminUIRoute:
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
     @patch.object(ServerService, "list_servers", new_callable=AsyncMock)
@@ -3784,7 +4412,7 @@ class TestAdminUIRoute:
             team_id="team-1",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -3835,7 +4463,7 @@ class TestAdminUIRoute:
             team_id="team-1",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
         context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
@@ -3938,7 +4566,10 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = mock_config
 
         # First-Party
-        result = await get_global_passthrough_headers(db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await get_global_passthrough_headers(
+            db=mock_db,
+            _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, GlobalConfigRead)
         assert result.passthrough_headers == ["X-Custom-Header", "X-Auth-Token"]
@@ -3950,7 +4581,10 @@ class TestGlobalConfigurationEndpoints:
         mock_db.query.return_value.first.return_value = None
 
         # First-Party
-        result = await get_global_passthrough_headers(db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await get_global_passthrough_headers(
+            db=mock_db,
+            _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, GlobalConfigRead)
         assert result.passthrough_headers == []
@@ -3964,7 +4598,12 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-New-Header"])
 
         # First-Party
-        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await update_global_passthrough_headers(
+            request=mock_request,
+            config_update=config_update,
+            db=mock_db,
+            _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Should create new config
         mock_db.add.assert_called_once()
@@ -3983,7 +4622,12 @@ class TestGlobalConfigurationEndpoints:
         config_update = GlobalConfigUpdate(passthrough_headers=["X-Updated-Header"])
 
         # First-Party
-        result = await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+        result = await update_global_passthrough_headers(
+            request=mock_request,
+            config_update=config_update,
+            db=mock_db,
+            _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Should update existing config
         assert mock_config.passthrough_headers == ["X-Updated-Header"]
@@ -4001,7 +4645,12 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+            await update_global_passthrough_headers(
+                request=mock_request,
+                config_update=config_update,
+                db=mock_db,
+                _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
         assert excinfo.value.status_code == 409
         assert "Passthrough headers conflict" in str(excinfo.value.detail)
@@ -4017,7 +4666,12 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+            await update_global_passthrough_headers(
+                request=mock_request,
+                config_update=config_update,
+                db=mock_db,
+                _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
         assert excinfo.value.status_code == 422
         assert "Invalid passthrough headers format" in str(excinfo.value.detail)
@@ -4033,7 +4687,12 @@ class TestGlobalConfigurationEndpoints:
 
         # First-Party
         with pytest.raises(HTTPException) as excinfo:
-            await update_global_passthrough_headers(request=mock_request, config_update=config_update, db=mock_db, _user={"email": "test-user", "db": mock_db})
+            await update_global_passthrough_headers(
+                request=mock_request,
+                config_update=config_update,
+                db=mock_db,
+                _user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
         assert excinfo.value.status_code == 500
         assert "Custom error" in str(excinfo.value.detail)
@@ -4053,7 +4712,12 @@ class TestA2AAgentManagement:
         mock_agent.model_dump.return_value = {"id": "agent-1", "name": "Test Agent", "description": "Test A2A agent", "is_active": True}
         mock_list_agents.return_value = [mock_agent]
 
-        result = await admin_list_a2a_agents(False, [], mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_a2a_agents(
+            False,
+            [],
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert len(result) == 1
         assert result[0]["name"] == "Test Agent"
@@ -4065,7 +4729,13 @@ class TestA2AAgentManagement:
         """Test listing A2A agents when A2A is disabled."""
         # First-Party
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_list_a2a_agents(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, dict)
         assert "data" in result
@@ -4081,7 +4751,11 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_a2a_agent(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -4104,7 +4778,11 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_a2a_agent(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422  # matches your ValidationError handler
@@ -4122,7 +4800,11 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_a2a_agent(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         # Third-Party
         from starlette.responses import JSONResponse
@@ -4143,7 +4825,12 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_a2a_agent_state(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -4166,7 +4853,12 @@ class TestA2AAgentManagement:
 
         for exc, expected_msg in cases:
             mock_toggle_status.side_effect = exc
-            response = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_set_a2a_agent_state(
+                "agent-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
@@ -4178,7 +4870,12 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         mock_request.scope = {"root_path": "/root"}
 
-        result = await admin_set_a2a_agent_state("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_set_a2a_agent_state(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/root/admin#a2a-agents"
@@ -4192,7 +4889,12 @@ class TestA2AAgentManagement:
         mock_request.form = AsyncMock(return_value=form_data)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_delete_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
@@ -4215,7 +4917,12 @@ class TestA2AAgentManagement:
 
         for exc, expected_msg in cases:
             mock_delete_agent.side_effect = exc
-            response = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_delete_a2a_agent(
+                "agent-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(response, RedirectResponse)
             assert response.status_code == 303
             assert expected_msg in unquote(response.headers["location"])
@@ -4227,7 +4934,12 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         mock_request.scope = {"root_path": ""}
 
-        result = await admin_delete_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_delete_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
         assert result.headers["location"] == "/admin#a2a-agents"
@@ -4248,7 +4960,12 @@ class TestA2AAgentManagement:
         form_data = FakeForm({"test_message": "Hello, test!"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -4262,7 +4979,12 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 403
         body = json.loads(result.body)
         assert body["success"] is False
@@ -4276,7 +4998,12 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(side_effect=RuntimeError("boom")), raising=True)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 200
         params = service.invoke_agent.call_args.args[2]
         assert "Hello from MCP Gateway Admin UI test!" in params["params"]["message"]["parts"][0]["text"]
@@ -4290,7 +5017,12 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "hi"}), raising=True)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 200
         params = service.invoke_agent.call_args.args[2]
         assert params["query"] == "hi"
@@ -4305,7 +5037,12 @@ class TestA2AAgentManagement:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_a2a_enabled", True, raising=False)
         monkeypatch.setattr("mcpgateway.admin._read_request_json", AsyncMock(return_value={"query": "hi"}), raising=True)
 
-        result = await admin_test_a2a_agent("agent-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_test_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result.status_code == 500
         body = json.loads(result.body)
         assert body["success"] is False
@@ -4326,7 +5063,13 @@ class TestExportImportEndpoints:
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_export_logs(export_format="json", level=None, start_time=None, end_time=None, user={"email": "test-user", "db": mock_db})
+        result = await admin_export_logs(
+            export_format="json",
+            level=None,
+            start_time=None,
+            end_time=None,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -4345,7 +5088,13 @@ class TestExportImportEndpoints:
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_export_logs(export_format="csv", level=None, start_time=None, end_time=None, user={"email": "test-user", "db": mock_db})
+        result = await admin_export_logs(
+            export_format="csv",
+            level=None,
+            start_time=None,
+            end_time=None,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "text/csv"
@@ -4357,7 +5106,18 @@ class TestExportImportEndpoints:
         # First-Party
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_logs(export_format="xml", level=None, start_time=None, end_time=None, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_export_logs(
+                export_format="xml",
+                level=None,
+                start_time=None,
+                end_time=None,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert excinfo.value.status_code == 400
         assert "Invalid format: xml" in str(excinfo.value.detail)
@@ -4371,7 +5131,13 @@ class TestExportImportEndpoints:
         mock_export_config.return_value = {"version": "1.0", "servers": [], "tools": [], "resources": [], "prompts": []}
 
         result = await admin_export_configuration(
-            include_inactive=False, include_dependencies=True, types="servers,tools", exclude_types="", tags="", db=mock_db, user={"email": "test-user", "db": mock_db}
+            include_inactive=False,
+            include_dependencies=True,
+            types="servers,tools",
+            exclude_types="",
+            tags="",
+            db=mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert isinstance(result, StreamingResponse)
@@ -4388,7 +5154,15 @@ class TestExportImportEndpoints:
         mock_export_config.side_effect = ExportError("Export failed")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_export_configuration(include_inactive=False, include_dependencies=True, types="", exclude_types="", tags="", db=mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_export_configuration(
+                include_inactive=False,
+                include_dependencies=True,
+                types="",
+                exclude_types="",
+                tags="",
+                db=mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
         assert excinfo.value.status_code == 500
         assert "Export failed" in str(excinfo.value.detail)
@@ -4403,7 +5177,11 @@ class TestExportImportEndpoints:
         form_data = FakeForm({"entity_selections": json.dumps({"servers": ["server-1"], "tools": ["tool-1", "tool-2"]}), "include_dependencies": "true"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_export_selective(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_export_selective(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, StreamingResponse)
         assert result.media_type == "application/json"
@@ -4427,7 +5205,14 @@ class TestLoggingEndpoints:
         mock_storage.get_total_count.return_value = 1
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_get_logs(level=None, start_time=None, end_time=None, limit=50, offset=0, user={"email": "test-user", "db": mock_db})
+        result = await admin_get_logs(
+            level=None,
+            start_time=None,
+            end_time=None,
+            limit=50,
+            offset=0,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, dict)
         assert "logs" in result
@@ -4447,7 +5232,11 @@ class TestLoggingEndpoints:
         mock_storage.get_logs.return_value = [mock_log_entry]
         mock_get_storage.return_value = mock_storage
 
-        result = await admin_stream_logs(request=MagicMock(), level=None, user={"email": "test-user", "db": mock_db})
+        result = await admin_stream_logs(
+            request=MagicMock(),
+            level=None,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, list)
         assert len(result) == 1
@@ -4466,7 +5255,10 @@ class TestLoggingEndpoints:
         # Mock file exists and reading
         with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.stat") as mock_stat, patch("builtins.open", mock_open(read_data=b"test log content")):
             mock_stat.return_value.st_size = 16
-            result = await admin_get_log_file(filename=None, user={"email": "test-user", "db": mock_db})
+            result = await admin_get_log_file(
+                filename=None,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             assert isinstance(result, Response)
             assert result.media_type == "application/octet-stream"
@@ -4482,7 +5274,15 @@ class TestLoggingEndpoints:
         mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_get_log_file(
+                filename=None,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert excinfo.value.status_code == 404
         assert "File logging is not enabled" in str(excinfo.value.detail)
@@ -4511,7 +5311,11 @@ class TestOAuthFunctionality:
             mock_encryption.encrypt_secret_async = AsyncMock(return_value="encrypted-secret")
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -4529,7 +5333,11 @@ class TestOAuthFunctionality:
         form_data = FakeForm({"name": "Invalid_OAuth_Gateway", "url": "https://example.com", "oauth_config": "invalid-json{"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         # Should still succeed but oauth_config will be None due to JSON error
@@ -4547,7 +5355,11 @@ class TestOAuthFunctionality:
         form_data = FakeForm({"name": "No_OAuth_Gateway", "url": "https://example.com", "oauth_config": "None"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -4572,7 +5384,12 @@ class TestOAuthFunctionality:
             mock_encryption.encrypt_secret_async = AsyncMock(return_value="encrypted-edit-secret")
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_edit_gateway(
+                "gateway-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             assert isinstance(result, JSONResponse)
             body = json.loads(result.body)
@@ -4601,7 +5418,12 @@ class TestOAuthFunctionality:
             mock_encryption.encrypt_secret_async = AsyncMock()
             mock_get_encryption.return_value = mock_encryption
 
-            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_edit_gateway(
+                "gateway-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             assert isinstance(result, JSONResponse)
 
@@ -4631,7 +5453,12 @@ class TestOAuthFunctionality:
         )
 
         mock_update_gateway.return_value = None
-        response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        response = await admin_edit_gateway(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, JSONResponse)
         assert response.status_code == 200
 
@@ -4676,7 +5503,11 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4724,7 +5555,11 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4762,7 +5597,11 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4792,7 +5631,11 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4833,7 +5676,12 @@ class TestOAuthFunctionality:
             mock_get_encryption.return_value = mock_encryption
             mock_meta.return_value = {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1}
 
-            result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_edit_gateway(
+                "gateway-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4863,7 +5711,12 @@ class TestOAuthFunctionality:
             lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
         )
 
-        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_gateway(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -4895,7 +5748,12 @@ class TestOAuthFunctionality:
             lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None, "version": 1},
         )
 
-        result = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_edit_gateway(
+            "gateway-1",
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 200
 
@@ -4929,7 +5787,11 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4961,7 +5823,11 @@ class TestOAuthFunctionality:
                 "federation_source": None,
             }
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             assert result.status_code == 200
 
@@ -4982,7 +5848,11 @@ class TestOAuthFunctionality:
         form_data = FakeForm({"name": "Gateway_With_CA", "url": "https://example.com", "ca_certificate": "CERT"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
         body = json.loads(result.body)
@@ -5017,7 +5887,11 @@ class TestOAuthFunctionality:
 
         for exc, expected in cases:
             mock_register_gateway.side_effect = exc
-            response = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert response.status_code == expected
 
     @patch.object(GatewayService, "update_gateway")
@@ -5047,7 +5921,12 @@ class TestOAuthFunctionality:
 
         for exc, expected in cases:
             mock_update_gateway.side_effect = exc
-            response = await admin_edit_gateway("gateway-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            response = await admin_edit_gateway(
+                "gateway-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert response.status_code == expected
 
 
@@ -5062,7 +5941,11 @@ class TestPassthroughHeadersParsing:
         form_data = FakeForm({"name": "Gateway_With_Headers", "url": "https://example.com", "passthrough_headers": json.dumps(passthrough_headers)})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -5079,7 +5962,11 @@ class TestPassthroughHeadersParsing:
         form_data = FakeForm({"name": "Gateway_With_CSV_Headers", "url": "https://example.com", "passthrough_headers": "X-Header-1, X-Header-2 , X-Header-3"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -5103,7 +5990,11 @@ class TestPassthroughHeadersParsing:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -5129,7 +6020,11 @@ class TestErrorHandlingPaths:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -5145,7 +6040,11 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Runtime_Error_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -5161,7 +6060,11 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Value_Error_Gateway", "url": "invalid-url"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 422
@@ -5177,7 +6080,11 @@ class TestErrorHandlingPaths:
         form_data = FakeForm({"name": "Exception_Gateway", "url": "https://example.com"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_gateway(
+            mock_request,
+            mock_db,
+            user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert isinstance(result, JSONResponse)
         assert result.status_code == 500
@@ -5203,7 +6110,11 @@ class TestErrorHandlingPaths:
         with patch("mcpgateway.admin.GatewayCreate") as mock_gateway_create:
             mock_gateway_create.side_effect = validation_error
 
-            result = await admin_add_gateway(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_gateway(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             assert isinstance(result, JSONResponse)
             assert result.status_code == 422
@@ -5230,7 +6141,16 @@ class TestImportConfigurationEndpoints:
         request_body = {"import_data": import_data, "conflict_strategy": "update", "dry_run": False, "selected_entities": {"servers": True, "tools": True}}
         mock_request.json = AsyncMock(return_value=request_body)
 
-        result = await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+        result = await admin_import_configuration(
+            mock_request,
+            mock_db,
+            user={
+                "email": "test-user@example.com",
+                "is_admin": True,
+                "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                "db": mock_db,
+            },
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -5247,7 +6167,16 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_import_configuration(
+                mock_request,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert excinfo.value.status_code == 500
         assert "Import failed" in str(excinfo.value.detail)
@@ -5260,7 +6189,16 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_import_configuration(
+                mock_request,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert excinfo.value.status_code == 500
         assert "Import failed" in str(excinfo.value.detail)
@@ -5276,7 +6214,16 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_import_configuration(mock_request, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_import_configuration(
+                mock_request,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert excinfo.value.status_code == 400
         assert "Import validation failed" in str(excinfo.value.detail)
@@ -5294,7 +6241,14 @@ class TestImportConfigurationEndpoints:
         mock_request.json = AsyncMock(return_value=request_body)
 
         # User as dict instead of string - need email and db keys for RBAC
-        user_dict = {"email": "dict-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db, "username": "dict-user", "token": "jwt-token"}
+        user_dict = {
+            "email": "dict-user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+            "username": "dict-user",
+            "token": "jwt-token",
+        }
 
         result = await admin_import_configuration(mock_request, mock_db, user=user_dict)
 
@@ -5313,7 +6267,15 @@ class TestImportConfigurationEndpoints:
         mock_status.to_dict.return_value = {"import_id": "import-123", "status": "in_progress", "progress": {"total": 10, "completed": 5, "errors": 0}}
         mock_get_status.return_value = mock_status
 
-        result = await admin_get_import_status("import-123", user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+        result = await admin_get_import_status(
+            "import-123",
+            user={
+                "email": "test-user@example.com",
+                "is_admin": True,
+                "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                "db": mock_db,
+            },
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -5329,7 +6291,15 @@ class TestImportConfigurationEndpoints:
         mock_get_status.return_value = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_import_status("nonexistent", user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_get_import_status(
+                "nonexistent",
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
 
         assert excinfo.value.status_code == 404
         assert "Import nonexistent not found" in str(excinfo.value.detail)
@@ -5345,7 +6315,14 @@ class TestImportConfigurationEndpoints:
         mock_status2.to_dict.return_value = {"import_id": "import-2", "status": "failed"}
         mock_list_statuses.return_value = [mock_status1, mock_status2]
 
-        result = await admin_list_import_statuses(user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+        result = await admin_list_import_statuses(
+            user={
+                "email": "test-user@example.com",
+                "is_admin": True,
+                "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                "db": mock_db,
+            }
+        )
 
         assert isinstance(result, JSONResponse)
         body = json.loads(result.body)
@@ -5380,7 +6357,7 @@ class TestAdminUIMainEndpoint:
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin", "db": mock_db},
+            user={"email": "admin", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         # Check template was called with correct context (no a2a_agents)
@@ -5436,7 +6413,12 @@ class TestEdgeCasesAndErrorHandling:
 
         # Test with toggle operations which use boolean parsing
         with patch.object(ServerService, "set_server_state", new_callable=AsyncMock) as mock_toggle:
-            await admin_set_server_state("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            await admin_set_server_state(
+                "server-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             # Check how the value was parsed
             if form_field == "activate":
@@ -5465,7 +6447,11 @@ class TestEdgeCasesAndErrorHandling:
             mock_request.form = AsyncMock(return_value=form_data)
 
             with patch.object(ToolService, "register_tool", new_callable=AsyncMock) as mock_register:
-                result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+                result = await admin_add_tool(
+                    mock_request,
+                    mock_db,
+                    user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+                )
 
                 # Should succeed
                 assert isinstance(result, JSONResponse)
@@ -5489,7 +6475,11 @@ class TestEdgeCasesAndErrorHandling:
         mock_request.form = AsyncMock(return_value=form_data)
 
         with patch.object(ResourceService, "register_resource", new_callable=AsyncMock) as mock_register:
-            result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_resource(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             assert isinstance(result, JSONResponse)
 
@@ -5506,7 +6496,12 @@ class TestEdgeCasesAndErrorHandling:
             mock_update.side_effect = IntegrityError("Concurrent modification detected", params={}, orig=Exception("Version mismatch"))
 
             # Should handle gracefully
-            result = await admin_edit_server("server-1", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_edit_server(
+                "server-1",
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
             if isinstance(result, JSONResponse):
                 assert result.status_code in (200, 409, 422, 500)
@@ -5527,7 +6522,11 @@ class TestEdgeCasesAndErrorHandling:
         mock_request.form = AsyncMock(return_value=form_data)
 
         with patch.object(ToolService, "register_tool", new_callable=AsyncMock):
-            result = await admin_add_tool(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_tool(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
             assert isinstance(result, JSONResponse)
 
     @pytest.mark.parametrize(
@@ -5547,7 +6546,11 @@ class TestEdgeCasesAndErrorHandling:
         with patch.object(ServerService, "register_server", new_callable=AsyncMock) as mock_register:
             mock_register.side_effect = exception_type
 
-            result = await admin_add_server(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+            result = await admin_add_server(
+                mock_request,
+                mock_db,
+                user={"email": "test-user", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+            )
 
             print(f"\nException: {exception_type.__name__ if hasattr(exception_type, '__name__') else exception_type}")
             print(f"Result Type: {type(result)}")
@@ -5568,21 +6571,57 @@ class TestEdgeCasesAndErrorHandling:
                 MagicMock(name="Tool1", execution_count=10),
                 MagicMock(name="Tool2", execution_count=5),
             ]
-            result = await admin_metrics_partial_html(mock_request, "tools", 1, 10, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            result = await admin_metrics_partial_html(
+                mock_request,
+                "tools",
+                1,
+                10,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
     async def test_admin_metrics_partial_html_invalid_entity(self, mock_request, mock_db):
         """Test admin metrics partial HTML endpoint with invalid entity type."""
         with pytest.raises(HTTPException) as exc_info:
-            await admin_metrics_partial_html(mock_request, "invalid", 1, 10, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            await admin_metrics_partial_html(
+                mock_request,
+                "invalid",
+                1,
+                10,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 400
 
     async def test_admin_metrics_partial_html_resources(self, mock_request, mock_db):
         """Test admin metrics partial HTML endpoint for resources."""
         with patch("mcpgateway.services.resource_service.ResourceService.get_top_resources", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = []
-            result = await admin_metrics_partial_html(mock_request, "resources", 1, 10, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            result = await admin_metrics_partial_html(
+                mock_request,
+                "resources",
+                1,
+                10,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
@@ -5590,7 +6629,18 @@ class TestEdgeCasesAndErrorHandling:
         """Cover the servers branch in admin_metrics_partial_html."""
         with patch("mcpgateway.services.server_service.ServerService.get_top_servers", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = []
-            result = await admin_metrics_partial_html(mock_request, "servers", 1, 10, mock_db, user={"email": "test-user@example.com", "db": mock_db})
+            result = await admin_metrics_partial_html(
+                mock_request,
+                "servers",
+                1,
+                10,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
@@ -5598,7 +6648,19 @@ class TestEdgeCasesAndErrorHandling:
         """Test admin metrics partial HTML endpoint with pagination."""
         with patch("mcpgateway.services.prompt_service.PromptService.get_top_prompts", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = [MagicMock(name=f"Prompt{i}") for i in range(25)]
-            result = await admin_metrics_partial_html(mock_request, "prompts", 2, 10, mock_db, user={"email": "test-user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+            result = await admin_metrics_partial_html(
+                mock_request,
+                "prompts",
+                2,
+                10,
+                mock_db,
+                user={
+                    "email": "test-user@example.com",
+                    "is_admin": True,
+                    "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
             assert isinstance(result, HTMLResponse)
             assert result.status_code == 200
 
@@ -5606,7 +6668,19 @@ class TestEdgeCasesAndErrorHandling:
 @pytest.mark.asyncio
 async def test_admin_list_teams_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "Email authentication is disabled" in response.body.decode()
 
@@ -5617,7 +6691,19 @@ async def test_admin_list_teams_user_not_found(monkeypatch, mock_request, mock_d
     auth_service = MagicMock()
     auth_service.get_user_by_email = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
-    response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "User not found" in response.body.decode()
 
@@ -5630,7 +6716,20 @@ async def test_admin_list_teams_unified(monkeypatch, mock_request, mock_db, allo
     auth_service.get_user_by_email = AsyncMock(return_value=current_user)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
     monkeypatch.setattr("mcpgateway.admin._generate_unified_teams_view", AsyncMock(return_value=HTMLResponse("ok")))
-    response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db}, unified=True)
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+        unified=True,
+    )
     assert isinstance(response, HTMLResponse)
     assert response.body.decode() == "ok"
 
@@ -5654,7 +6753,19 @@ async def test_admin_list_teams_admin_view(monkeypatch, mock_request, mock_db, a
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-1": 3})
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_list_teams(request=mock_request, page=1, per_page=5, q="t", db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q="t",
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert team.member_count == 3
 
@@ -5672,7 +6783,19 @@ async def test_admin_list_teams_non_admin_view(monkeypatch, mock_request, mock_d
     team_service.get_member_counts_batch_cached = AsyncMock(return_value={"t1": 1, "t2": 2})
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
 
 
@@ -5683,7 +6806,14 @@ async def test_admin_list_teams_exception_returns_error_html(monkeypatch, mock_r
     auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_list_teams(request=mock_request, page=1, per_page=5, q=None, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_list_teams(
+        request=mock_request,
+        page=1,
+        per_page=5,
+        q=None,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert "Error loading teams" in response.body.decode()
 
@@ -5691,7 +6821,16 @@ async def test_admin_list_teams_exception_returns_error_html(monkeypatch, mock_r
 @pytest.mark.asyncio
 async def test_admin_create_team_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_create_team(request=mock_request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_create_team(
+        request=mock_request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
 
@@ -5702,7 +6841,16 @@ async def test_admin_create_team_missing_name(monkeypatch, mock_db, allow_permis
     request = MagicMock(spec=Request)
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"name": ""}))
-    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_create_team(
+        request=request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
 
@@ -5718,7 +6866,16 @@ async def test_admin_create_team_success(monkeypatch, mock_db, allow_permission)
     team_service.create_team = AsyncMock(return_value=team)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_create_team(
+        request=request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 201
     assert response.body.decode() == ""
@@ -5734,7 +6891,16 @@ async def test_admin_create_team_integrity_error(monkeypatch, mock_db, allow_per
     team_service.create_team = AsyncMock(side_effect=IntegrityError("stmt", "params", "UNIQUE constraint failed: email_teams.slug"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_create_team(
+        request=request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "already exists" in response.body.decode()
@@ -5752,7 +6918,11 @@ async def test_admin_create_team_validation_error_message_cleaned(monkeypatch, m
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_create_team(
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     body = response.body.decode()
@@ -5772,7 +6942,11 @@ async def test_admin_create_team_integrity_error_non_unique(monkeypatch, mock_db
     team_service.create_team = AsyncMock(side_effect=IntegrityError("stmt", "params", "other constraint"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_create_team(
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Database error:" in response.body.decode()
@@ -5790,7 +6964,11 @@ async def test_admin_create_team_unexpected_exception(monkeypatch, mock_db, allo
     team_service.create_team = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_create_team(request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_create_team(
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Error creating team" in response.body.decode()
@@ -5799,7 +6977,19 @@ async def test_admin_create_team_unexpected_exception(monkeypatch, mock_db, allo
 @pytest.mark.asyncio
 async def test_admin_view_team_members_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_view_team_members(
+        "team-1",
+        mock_request,
+        page=1,
+        per_page=10,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
 
@@ -5812,7 +7002,19 @@ async def test_admin_view_team_members_success(monkeypatch, mock_request, mock_d
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_view_team_members(
+        "team-1",
+        mock_request,
+        page=1,
+        per_page=10,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "Team Members" in response.body.decode()
 
@@ -5824,7 +7026,14 @@ async def test_admin_view_team_members_team_not_found(monkeypatch, mock_request,
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_view_team_members(
+        "team-1",
+        mock_request,
+        page=1,
+        per_page=10,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
 
 
@@ -5835,7 +7044,14 @@ async def test_admin_view_team_members_exception(monkeypatch, mock_request, mock
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_view_team_members("team-1", mock_request, page=1, per_page=10, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_view_team_members(
+        "team-1",
+        mock_request,
+        page=1,
+        per_page=10,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     assert "error loading members" in response.body.decode().lower()
 
@@ -5848,7 +7064,17 @@ async def test_admin_add_team_members_view_not_owner(monkeypatch, mock_request, 
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_add_team_members_view(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
 
@@ -5862,7 +7088,17 @@ async def test_admin_add_team_members_view_success(monkeypatch, mock_request, mo
     team_service.get_team_members = AsyncMock(return_value=[(SimpleNamespace(email="a@example.com"), SimpleNamespace())])
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_add_team_members_view(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "Select Users to Add" in response.body.decode()
 
@@ -5870,7 +7106,12 @@ async def test_admin_add_team_members_view_success(monkeypatch, mock_request, mo
 @pytest.mark.asyncio
 async def test_admin_add_team_members_view_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_add_team_members_view(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -5881,7 +7122,12 @@ async def test_admin_add_team_members_view_team_not_found(monkeypatch, mock_requ
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_add_team_members_view(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
 
 
@@ -5892,7 +7138,12 @@ async def test_admin_add_team_members_view_exception(monkeypatch, mock_request, 
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_add_team_members_view("team-1", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_add_team_members_view(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     assert "error loading add members view" in response.body.decode().lower()
 
@@ -5903,7 +7154,17 @@ async def test_admin_get_team_edit_success(monkeypatch, mock_request, mock_db, a
     team_service = MagicMock()
     team_service.get_team_by_id = AsyncMock(return_value=SimpleNamespace(id="team-1", name="Team One", slug="team-one", description="Desc", visibility="private"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
-    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_get_team_edit(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        _user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "Edit Team" in response.body.decode()
 
@@ -5911,7 +7172,12 @@ async def test_admin_get_team_edit_success(monkeypatch, mock_request, mock_db, a
 @pytest.mark.asyncio
 async def test_admin_get_team_edit_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    response = await admin_get_team_edit(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        _user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -5922,7 +7188,12 @@ async def test_admin_get_team_edit_team_not_found(monkeypatch, mock_request, moc
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    response = await admin_get_team_edit(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        _user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
 
 
@@ -5933,7 +7204,12 @@ async def test_admin_get_team_edit_exception(monkeypatch, mock_request, mock_db,
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_get_team_edit("team-1", mock_request, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    response = await admin_get_team_edit(
+        "team-1",
+        mock_request,
+        db=mock_db,
+        _user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     assert "error loading team" in response.body.decode().lower()
 
@@ -5949,7 +7225,17 @@ async def test_admin_update_team_missing_name_htmx(monkeypatch, mock_db, allow_p
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert response.headers["HX-Retarget"] == "#edit-team-error"
@@ -5969,7 +7255,12 @@ async def test_admin_update_team_dangerous_js_pattern_htmx(monkeypatch, mock_db,
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert response.headers["HX-Retarget"] == "#edit-team-error"
@@ -5988,7 +7279,17 @@ async def test_admin_update_team_success(monkeypatch, mock_db, allow_permission)
     team_service.update_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
 
@@ -6000,7 +7301,12 @@ async def test_admin_update_team_email_auth_disabled(monkeypatch, mock_db, allow
     request.scope = {"root_path": "/root"}
     request.headers = {}
     request.form = AsyncMock(return_value=FakeForm({"name": "Team One"}))
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
 
@@ -6017,7 +7323,12 @@ async def test_admin_update_team_missing_name_redirect(monkeypatch, mock_db, all
     team_service = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "error=Team%20name%20is%20required" in response.headers["location"]
@@ -6034,7 +7345,12 @@ async def test_admin_update_team_invalid_characters_htmx_and_redirect(monkeypatc
     htmx_request.scope = {"root_path": "/root"}
     htmx_request.headers = {"HX-Request": "true"}
     htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Bad!"}))
-    response = await admin_update_team("team-1", request=htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=htmx_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert response.headers["HX-Retarget"] == "#edit-team-error"
@@ -6044,7 +7360,12 @@ async def test_admin_update_team_invalid_characters_htmx_and_redirect(monkeypatc
     non_htmx_request.scope = {"root_path": "/root"}
     non_htmx_request.headers = {}
     non_htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Bad!"}))
-    response = await admin_update_team("team-1", request=non_htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=non_htmx_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "error=Team%20name%20contains%20invalid%20characters" in response.headers["location"]
@@ -6065,7 +7386,12 @@ async def test_admin_update_team_description_dangerous_pattern_redirect(monkeypa
     team_service.update_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "Team%20description%20contains%20script%20patterns" in response.headers["location"]
@@ -6084,7 +7410,12 @@ async def test_admin_update_team_success_redirect(monkeypatch, mock_db, allow_pe
     team_service.update_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert response.headers["location"].endswith("/admin/#teams")
@@ -6102,7 +7433,12 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     htmx_request.scope = {"root_path": "/root"}
     htmx_request.headers = {"HX-Request": "true"}
     htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
-    response = await admin_update_team("team-1", request=htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=htmx_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "Error updating team" in response.body.decode()
@@ -6111,7 +7447,12 @@ async def test_admin_update_team_exception_htmx_and_redirect(monkeypatch, mock_d
     non_htmx_request.scope = {"root_path": "/root"}
     non_htmx_request.headers = {}
     non_htmx_request.form = AsyncMock(return_value=FakeForm({"name": "Team One", "description": "Desc", "visibility": "private"}))
-    response = await admin_update_team("team-1", request=non_htmx_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_update_team(
+        "team-1",
+        request=non_htmx_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "Error%20updating%20team" in response.headers["location"]
@@ -6129,7 +7470,17 @@ async def test_admin_add_team_members_private_not_owner(monkeypatch, mock_db, al
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={
+            "email": "owner@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
 
@@ -6180,7 +7531,17 @@ async def test_admin_add_team_members_full_flow(monkeypatch, mock_db, allow_perm
     auth_service.get_user_by_email = AsyncMock(side_effect=get_user)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={
+            "email": "owner@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
     assert "Added" in body and "Updated" in body and "Removed" in body
@@ -6194,7 +7555,12 @@ async def test_admin_add_team_members_email_auth_disabled(monkeypatch, mock_db, 
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
     request.form = AsyncMock(return_value=FakeForm({}))
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 403
 
@@ -6210,7 +7576,12 @@ async def test_admin_add_team_members_team_not_found(monkeypatch, mock_db, allow
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 404
 
@@ -6226,7 +7597,12 @@ async def test_admin_add_team_members_exception(monkeypatch, mock_db, allow_perm
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error adding member" in response.body.decode().lower()
 
@@ -6242,7 +7618,12 @@ async def test_admin_add_team_members_no_users_selected(monkeypatch, mock_db, al
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 400
     assert "No users selected" in response.body.decode()
@@ -6262,7 +7643,12 @@ async def test_admin_add_team_members_single_user_spaces_no_changes(monkeypatch,
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert "No changes made" in response.body.decode()
 
@@ -6293,7 +7679,12 @@ async def test_admin_add_team_members_last_owner_role_change_and_member_exceptio
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="ok@example.com"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
     assert "cannot change role of last owner" in body
@@ -6331,7 +7722,12 @@ async def test_admin_add_team_members_removal_constraints_and_removal_exception(
     auth_service.get_user_by_email = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
     assert "cannot remove yourself" in body
@@ -6356,7 +7752,12 @@ async def test_admin_add_team_members_more_than_five_errors(monkeypatch, mock_db
     auth_service.get_user_by_email = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_add_team_members("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_add_team_members(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert "... and 1 more" in response.body.decode()
 
@@ -6373,7 +7774,17 @@ async def test_admin_update_team_member_role_success(monkeypatch, mock_db, allow
     team_service.update_member_role = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={
+            "email": "owner@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert response.headers.get("HX-Trigger") is not None
 
@@ -6382,7 +7793,12 @@ async def test_admin_update_team_member_role_success(monkeypatch, mock_db, allow
 async def test_admin_update_team_member_role_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -6395,7 +7811,12 @@ async def test_admin_update_team_member_role_team_not_found(monkeypatch, mock_db
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
 
 
@@ -6409,7 +7830,12 @@ async def test_admin_update_team_member_role_not_owner(monkeypatch, mock_db, all
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "member@example.com", "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "member@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -6425,7 +7851,12 @@ async def test_admin_update_team_member_role_requires_user_email(monkeypatch, mo
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
 
 
@@ -6440,7 +7871,12 @@ async def test_admin_update_team_member_role_requires_role(monkeypatch, mock_db,
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "role is required" in response.body.decode().lower()
 
@@ -6457,7 +7893,12 @@ async def test_admin_update_team_member_role_exception(monkeypatch, mock_db, all
     team_service.update_member_role = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_update_team_member_role("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_update_team_member_role(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error updating role" in response.body.decode().lower()
 
@@ -6474,7 +7915,17 @@ async def test_admin_remove_team_member_success(monkeypatch, mock_db, allow_perm
     team_service.remove_member_from_team = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={
+            "email": "owner@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "removed successfully" in response.body.decode()
 
@@ -6483,7 +7934,12 @@ async def test_admin_remove_team_member_success(monkeypatch, mock_db, allow_perm
 async def test_admin_remove_team_member_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -6497,7 +7953,12 @@ async def test_admin_remove_team_member_team_not_found(monkeypatch, mock_db, all
     team_service.get_team_by_id = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
 
 
@@ -6512,7 +7973,12 @@ async def test_admin_remove_team_member_not_owner(monkeypatch, mock_db, allow_pe
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "member@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "member@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -6528,7 +7994,12 @@ async def test_admin_remove_team_member_requires_user_email(monkeypatch, mock_db
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
 
 
@@ -6544,7 +8015,12 @@ async def test_admin_remove_team_member_failed_to_remove(monkeypatch, mock_db, a
     team_service.remove_member_from_team = AsyncMock(return_value=False)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "failed to remove member" in response.body.decode().lower()
 
@@ -6561,7 +8037,12 @@ async def test_admin_remove_team_member_value_error(monkeypatch, mock_db, allow_
     team_service.remove_member_from_team = AsyncMock(side_effect=ValueError("last owner"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "last owner" in response.body.decode().lower()
 
@@ -6576,7 +8057,12 @@ async def test_admin_remove_team_member_exception(monkeypatch, mock_db, allow_pe
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_remove_team_member("team-1", request=request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_remove_team_member(
+        "team-1",
+        request=request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error removing member" in response.body.decode().lower()
 
@@ -6590,7 +8076,17 @@ async def test_admin_delete_team_success(monkeypatch, mock_db, allow_permission)
     team_service.delete_team = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_delete_team(
+        "team-1",
+        request,
+        db=mock_db,
+        user={
+            "email": "owner@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "deleted successfully" in response.body.decode()
 
@@ -6599,7 +8095,12 @@ async def test_admin_delete_team_success(monkeypatch, mock_db, allow_permission)
 async def test_admin_delete_team_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
-    response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_delete_team(
+        "team-1",
+        request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -6612,7 +8113,12 @@ async def test_admin_delete_team_exception(monkeypatch, mock_db, allow_permissio
     team_service.delete_team = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_delete_team("team-1", request, db=mock_db, user={"email": "owner@example.com", "db": mock_db})
+    response = await admin_delete_team(
+        "team-1",
+        request,
+        db=mock_db,
+        user={"email": "owner@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error deleting team" in response.body.decode().lower()
 
@@ -6649,7 +8155,12 @@ async def test_admin_teams_partial_html_controls_admin(monkeypatch, mock_request
         q="team",
         relationship=None,
         db=mock_db,
-        user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -6681,7 +8192,12 @@ async def test_admin_teams_partial_html_selector_public(monkeypatch, mock_reques
         q="public",
         relationship="public",
         db=mock_db,
-        user={"email": "u@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "u@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -6722,7 +8238,7 @@ async def test_admin_teams_partial_html_relationship_filters_and_query_params(mo
             q="team",
             relationship=relationship,
             db=mock_db,
-            user={"email": "u@example.com", "db": mock_db},
+            user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -6770,7 +8286,7 @@ async def test_admin_teams_partial_html_admin_relationship_none(monkeypatch, moc
         q=None,
         relationship=None,
         db=mock_db,
-        user={"email": "u@example.com", "db": mock_db},
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -6790,7 +8306,18 @@ async def test_admin_list_users_json(monkeypatch, mock_db, allow_permission):
     auth_service.list_users = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False)]))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_list_users(request=request, page=1, per_page=50, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_list_users(
+        request=request,
+        page=1,
+        per_page=50,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 200
     payload = json.loads(response.body)
     assert payload["users"][0]["email"] == "a@example.com"
@@ -6816,7 +8343,18 @@ async def test_admin_list_users_standard(monkeypatch, mock_db, allow_permission)
     )
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_list_users(request=request, page=1, per_page=50, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_list_users(
+        request=request,
+        page=1,
+        per_page=50,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 200
     payload = json.loads(response.body)
     assert payload["data"][0]["is_admin"] is True
@@ -6831,7 +8369,13 @@ async def test_admin_list_users_email_auth_disabled_returns_message(monkeypatch,
     request.query_params = {}
     request.scope = {"root_path": ""}
 
-    response = await admin_list_users(request=request, page=1, per_page=50, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_list_users(
+        request=request,
+        page=1,
+        per_page=50,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert "Email authentication is disabled" in response.body.decode()
 
@@ -6843,7 +8387,11 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
     auth_service = MagicMock()
     auth_service.list_users = AsyncMock(
         return_value=SimpleNamespace(
-            data=[SimpleNamespace(email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)],
+            data=[
+                SimpleNamespace(
+                    email=current_user_email, full_name="Owner", is_active=True, is_admin=True, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False
+                )
+            ],
             pagination=SimpleNamespace(model_dump=lambda: {"page": 1}),
         )
     )
@@ -6861,7 +8409,12 @@ async def test_admin_users_partial_html_selector(monkeypatch, mock_request, mock
         render="selector",
         team_id="team-1",
         db=mock_db,
-        user={"email": current_user_email, "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": current_user_email,
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -6886,7 +8439,12 @@ async def test_admin_users_partial_html_controls(monkeypatch, mock_request, mock
         render="controls",
         team_id=None,
         db=mock_db,
-        user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -6901,7 +8459,7 @@ async def test_admin_users_partial_html_email_auth_disabled(monkeypatch, mock_re
         render=None,
         team_id=None,
         db=mock_db,
-        user={"email": "admin@example.com", "db": mock_db},
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert response.status_code == 200
     assert "email authentication is disabled" in response.body.decode().lower()
@@ -6938,7 +8496,7 @@ async def test_admin_users_partial_html_selector_team_members_fetch_exception(mo
         render="selector",
         team_id="team-1",
         db=mock_db,
-        user={"email": current_user_email, "db": mock_db},
+        user={"email": current_user_email, "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     assert team_service.get_team_members.await_count == 1
@@ -6971,7 +8529,7 @@ async def test_admin_users_partial_html_default_render(monkeypatch, mock_request
         render=None,
         team_id=None,
         db=mock_db,
-        user={"email": "admin@example.com", "db": mock_db},
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
@@ -6993,7 +8551,7 @@ async def test_admin_users_partial_html_exception(monkeypatch, mock_request, moc
         render=None,
         team_id=None,
         db=mock_db,
-        user={"email": "admin@example.com", "db": mock_db},
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert response.status_code == 200
     assert "error loading users" in response.body.decode().lower()
@@ -7006,7 +8564,17 @@ async def test_admin_search_users(monkeypatch, mock_db, allow_permission):
     auth_service.list_users = AsyncMock(return_value=SimpleNamespace(data=[SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False)]))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    result = await admin_search_users(q="a", limit=5, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await admin_search_users(
+        q="a",
+        limit=5,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert result["count"] == 1
     assert result["users"][0]["email"] == "a@example.com"
 
@@ -7014,7 +8582,12 @@ async def test_admin_search_users(monkeypatch, mock_db, allow_permission):
 @pytest.mark.asyncio
 async def test_admin_search_users_empty_query(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
-    result = await admin_search_users(q="   ", limit=5, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    result = await admin_search_users(
+        q="   ",
+        limit=5,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["users"] == []
     assert result["count"] == 0
 
@@ -7022,7 +8595,12 @@ async def test_admin_search_users_empty_query(monkeypatch, mock_db, allow_permis
 @pytest.mark.asyncio
 async def test_admin_search_users_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    result = await admin_search_users(q="a", limit=5, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    result = await admin_search_users(
+        q="a",
+        limit=5,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["users"] == []
     assert result["count"] == 0
 
@@ -7033,7 +8611,16 @@ async def test_admin_create_user_password_invalid(monkeypatch, mock_db, allow_pe
     request.form = AsyncMock(return_value=FakeForm({"email": "a@example.com", "password": "short"}))
     monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (False, "too weak"))
 
-    response = await admin_create_user(request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_create_user(
+        request=request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "Password validation failed" in response.body.decode()
 
@@ -7048,7 +8635,16 @@ async def test_admin_create_user_success(monkeypatch, mock_db, allow_permission)
     auth_service.create_user = AsyncMock(return_value=SimpleNamespace(email="a@example.com", password_change_required=False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_create_user(request=request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_create_user(
+        request=request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 201
     assert response.headers.get("HX-Trigger") == "userCreated"
 
@@ -7069,7 +8665,11 @@ async def test_admin_create_user_default_password_forces_password_change(monkeyp
     auth_service.create_user = AsyncMock(return_value=new_user)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_create_user(request=request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_create_user(
+        request=request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 201
     assert new_user.password_change_required is True
     mock_db.commit.assert_called()
@@ -7085,7 +8685,11 @@ async def test_admin_create_user_exception(monkeypatch, mock_db, allow_permissio
     auth_service.create_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_create_user(request=request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_create_user(
+        request=request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error creating user" in response.body.decode().lower()
 
@@ -7097,7 +8701,17 @@ async def test_admin_get_user_edit_success(monkeypatch, mock_request, mock_db, a
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_get_user_edit(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert "Edit User" in response.body.decode()
 
@@ -7109,7 +8723,12 @@ async def test_admin_get_user_edit_exception(monkeypatch, mock_request, mock_db,
     auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     assert "error loading user" in response.body.decode().lower()
 
@@ -7124,7 +8743,17 @@ async def test_admin_update_user_password_mismatch(monkeypatch, mock_db, allow_p
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=True))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "Passwords do not match" in response.body.decode()
 
@@ -7140,7 +8769,17 @@ async def test_admin_update_user_last_admin_block(monkeypatch, mock_db, allow_pe
     auth_service.is_last_active_admin = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "last remaining admin" in response.body.decode()
 
@@ -7158,7 +8797,17 @@ async def test_admin_update_user_success(monkeypatch, mock_db, allow_permission)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
     monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda pw: (True, ""))
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 200
     assert response.headers.get("HX-Trigger") is not None
 
@@ -7167,7 +8816,12 @@ async def test_admin_update_user_success(monkeypatch, mock_db, allow_permission)
 async def test_admin_update_user_email_auth_disabled(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
     request = MagicMock(spec=Request)
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -7183,7 +8837,12 @@ async def test_admin_update_user_password_invalid(monkeypatch, mock_db, allow_pe
     auth_service.update_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "password validation failed" in response.body.decode().lower()
 
@@ -7199,7 +8858,12 @@ async def test_admin_update_user_exception(monkeypatch, mock_db, allow_permissio
     auth_service.update_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error updating user" in response.body.decode().lower()
 
@@ -7213,7 +8877,12 @@ async def test_admin_get_user_edit_hides_admin_checkbox_when_editing_self(monkey
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # User editing themselves (same email)
-    response = await admin_get_user_edit("admin%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit(
+        "admin%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
     assert "Edit User" in body
@@ -7230,7 +8899,12 @@ async def test_admin_get_user_edit_shows_admin_checkbox_when_editing_other(monke
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # Admin editing another user (different email)
-    response = await admin_get_user_edit("other%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit(
+        "other%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
     assert "Edit User" in body
@@ -7248,7 +8922,12 @@ async def test_admin_get_user_edit_case_insensitive_self_check(monkeypatch, mock
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # User with different case should still be recognized as self
-    response = await admin_get_user_edit("admin%40example.com", mock_request, db=mock_db, _user={"email": "ADMIN@EXAMPLE.COM", "db": mock_db})
+    response = await admin_get_user_edit(
+        "admin%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={"email": "ADMIN@EXAMPLE.COM", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
     # Administrator checkbox should NOT be present (case-insensitive match)
@@ -7269,7 +8948,12 @@ async def test_admin_update_user_self_demotion_blocked(monkeypatch, mock_db, all
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # Self-edit should succeed with admin status preserved
-    response = await admin_update_user("admin%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "admin%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     # Verify update_user was called with is_admin=True (preserved from DB)
     auth_service.update_user.assert_called_once()
@@ -7290,7 +8974,12 @@ async def test_admin_update_user_self_demotion_case_insensitive(monkeypatch, moc
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # Self-edit with different case should still preserve admin status
-    response = await admin_update_user("admin%40example.com", request=request, db=mock_db, _user={"email": "ADMIN@EXAMPLE.COM", "db": mock_db})
+    response = await admin_update_user(
+        "admin%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "ADMIN@EXAMPLE.COM", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     auth_service.update_user.assert_called_once()
     call_kwargs = auth_service.update_user.call_args[1]
@@ -7312,7 +9001,12 @@ async def test_admin_update_user_can_demote_others(monkeypatch, mock_db, allow_p
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # Admin demoting another user (should succeed)
-    response = await admin_update_user("other%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "other%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     assert response.headers.get("HX-Trigger") is not None
 
@@ -7331,7 +9025,12 @@ async def test_admin_update_user_self_can_update_other_fields(monkeypatch, mock_
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     # User updating their own name; admin status preserved from DB
-    response = await admin_update_user("admin%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "admin%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     assert response.headers.get("HX-Trigger") is not None
     # Verify admin status was preserved
@@ -7350,14 +9049,29 @@ async def test_admin_activate_user_success(monkeypatch, mock_request, mock_db, a
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_activate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_activate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
 
 
 @pytest.mark.asyncio
 async def test_admin_activate_user_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_activate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_activate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -7368,7 +9082,12 @@ async def test_admin_activate_user_exception(monkeypatch, mock_request, mock_db,
     auth_service.activate_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_activate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_activate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error activating user" in response.body.decode().lower()
 
@@ -7376,7 +9095,17 @@ async def test_admin_activate_user_exception(monkeypatch, mock_request, mock_db,
 @pytest.mark.asyncio
 async def test_admin_deactivate_user_self_block(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
-    response = await admin_deactivate_user("admin%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_deactivate_user(
+        "admin%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "Cannot deactivate your own account" in response.body.decode()
 
@@ -7384,7 +9113,12 @@ async def test_admin_deactivate_user_self_block(monkeypatch, mock_request, mock_
 @pytest.mark.asyncio
 async def test_admin_deactivate_user_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_deactivate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_deactivate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -7395,7 +9129,17 @@ async def test_admin_deactivate_user_last_admin_block(monkeypatch, mock_request,
     auth_service.is_last_active_admin = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_deactivate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_deactivate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "last remaining admin" in response.body.decode()
 
@@ -7413,7 +9157,17 @@ async def test_admin_deactivate_user_success(monkeypatch, mock_request, mock_db,
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_deactivate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_deactivate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
 
 
@@ -7425,7 +9179,12 @@ async def test_admin_deactivate_user_exception(monkeypatch, mock_request, mock_d
     auth_service.deactivate_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_deactivate_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_deactivate_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error deactivating user" in response.body.decode().lower()
 
@@ -7433,7 +9192,17 @@ async def test_admin_deactivate_user_exception(monkeypatch, mock_request, mock_d
 @pytest.mark.asyncio
 async def test_admin_delete_user_self_block(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
-    response = await admin_delete_user("admin%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_delete_user(
+        "admin%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "Cannot delete your own account" in response.body.decode()
 
@@ -7441,7 +9210,12 @@ async def test_admin_delete_user_self_block(monkeypatch, mock_request, mock_db, 
 @pytest.mark.asyncio
 async def test_admin_delete_user_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_delete_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -7452,7 +9226,17 @@ async def test_admin_delete_user_last_admin_block(monkeypatch, mock_request, moc
     auth_service.is_last_active_admin = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_delete_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 400
     assert "last remaining admin" in response.body.decode()
 
@@ -7465,7 +9249,17 @@ async def test_admin_delete_user_success(monkeypatch, mock_request, mock_db, all
     auth_service.delete_user = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_delete_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert response.status_code == 200
 
 
@@ -7477,7 +9271,12 @@ async def test_admin_delete_user_exception(monkeypatch, mock_request, mock_db, a
     auth_service.delete_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_delete_user("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_delete_user(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error deleting user" in response.body.decode().lower()
 
@@ -7492,14 +9291,29 @@ async def test_admin_force_password_change_success(monkeypatch, mock_request, mo
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await admin_force_password_change(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
 
 
 @pytest.mark.asyncio
 async def test_admin_force_password_change_email_auth_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_force_password_change(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
 
 
@@ -7510,7 +9324,12 @@ async def test_admin_force_password_change_user_not_found(monkeypatch, mock_requ
     auth_service.get_user_by_email = AsyncMock(return_value=None)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_force_password_change(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
 
 
@@ -7521,7 +9340,12 @@ async def test_admin_force_password_change_exception(monkeypatch, mock_request, 
     auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_force_password_change(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "error forcing password change" in response.body.decode().lower()
 
@@ -7675,7 +9499,16 @@ async def test_get_overview_partial_renders(monkeypatch, mock_request, mock_db):
     # Ensure at least one metric lacks avg_response_time so the avg_time None branch is covered.
     monkeypatch.setattr("mcpgateway.admin.ResourceService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": None}))
 
-    response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    response = await get_overview_partial(
+        mock_request,
+        db=mock_db,
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert isinstance(response, HTMLResponse)
     assert mock_request.app.state.templates.TemplateResponse.called
 
@@ -7735,7 +9568,11 @@ async def test_get_overview_partial_a2a_plugin_manager_redis(monkeypatch, mock_r
     monkeypatch.setattr("mcpgateway.admin.PromptService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.3}))
     monkeypatch.setattr("mcpgateway.admin.ResourceService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.2}))
 
-    response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await get_overview_partial(
+        mock_request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     plugin_service.set_plugin_manager.assert_called_once_with(mock_request.app.state.plugin_manager)
 
@@ -7791,7 +9628,11 @@ async def test_get_overview_partial_redis_check_exception(monkeypatch, mock_requ
     monkeypatch.setattr("mcpgateway.admin.PromptService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.3}))
     monkeypatch.setattr("mcpgateway.admin.ResourceService", lambda: StubService({"total_executions": 1, "successful_executions": 1, "avg_response_time": 0.2}))
 
-    response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await get_overview_partial(
+        mock_request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
 
 
@@ -7828,7 +9669,11 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
     monkeypatch.setattr("mcpgateway.admin.version_module.REDIS_AVAILABLE", False)
     monkeypatch.setattr("mcpgateway.admin.version_module.START_TIME", 0)
 
-    response = await get_overview_partial(mock_request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await get_overview_partial(
+        mock_request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert response.status_code == 500
     assert "Error loading overview" in response.body.decode()
@@ -7836,7 +9681,15 @@ async def test_get_overview_partial_error_returns_html(monkeypatch, mock_request
 
 @pytest.mark.asyncio
 async def test_get_configuration_settings_masks_sensitive(mock_db, allow_permission):
-    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await get_configuration_settings(
+        _db=mock_db,
+        _user={
+            "email": "admin@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert "Basic Settings" in result["groups"]
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == settings.masked_auth_value
 
@@ -7845,14 +9698,20 @@ async def test_get_configuration_settings_masks_sensitive(mock_db, allow_permiss
 async def test_get_configuration_settings_masks_sensitive_plain_string(monkeypatch, mock_db, allow_permission):
     """Cover masking branch for non-SecretStr sensitive values."""
     monkeypatch.setattr(settings, "basic_auth_password", "plain-text")
-    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_configuration_settings(
+        _db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == settings.masked_auth_value
 
 
 @pytest.mark.asyncio
 async def test_get_configuration_settings_does_not_mask_empty_sensitive_values(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "basic_auth_password", "")
-    result = await get_configuration_settings(_db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_configuration_settings(
+        _db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["groups"]["Authentication & Security"]["basic_auth_password"] == ""
 
 
@@ -7878,7 +9737,12 @@ async def test_admin_servers_partial_html_renders(monkeypatch, mock_request, moc
         render=render,
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -7905,7 +9769,7 @@ async def test_admin_servers_partial_html_all_teams_view(monkeypatch, mock_reque
         render=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -7929,7 +9793,12 @@ async def test_admin_servers_partial_html_team_filter_denied(monkeypatch, mock_r
         render="controls",
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -7957,7 +9826,7 @@ async def test_admin_servers_partial_html_include_inactive_query_param(monkeypat
         render="controls",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     context = mock_request.app.state.templates.TemplateResponse.call_args[0][2]
@@ -7988,7 +9857,7 @@ async def test_admin_servers_partial_html_propagates_search_and_tags_to_paginati
         render="controls",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
@@ -8019,7 +9888,7 @@ async def test_admin_servers_partial_html_conversion_error_is_logged_and_skipped
         render=None,
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     assert server_service.convert_server_to_read.called
@@ -8048,7 +9917,12 @@ async def test_admin_tools_partial_html_renders(monkeypatch, mock_request, mock_
         gateway_id="gw-1, null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8077,7 +9951,12 @@ async def test_admin_tools_partial_html_propagates_search_and_tags_to_pagination
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db, "is_admin": True},
+        user={
+            "email": "user@example.com",
+            "db": mock_db,
+            "is_admin": True,
+            "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+        },
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
@@ -8111,7 +9990,7 @@ async def test_admin_tools_partial_html_gateway_filters_and_access_conditions(mo
         gateway_id="null",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8125,7 +10004,7 @@ async def test_admin_tools_partial_html_gateway_filters_and_access_conditions(mo
         gateway_id="gw-1",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8153,7 +10032,7 @@ async def test_admin_tools_partial_html_team_filter_denied_and_convert_error(mon
         gateway_id=None,
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8179,7 +10058,12 @@ async def test_admin_tool_ops_partial_html(monkeypatch, mock_request, mock_db):
         gateway_id="gw-1",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8206,7 +10090,7 @@ async def test_admin_tool_ops_partial_html_all_teams_view(monkeypatch, mock_requ
         gateway_id="gw-1",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8234,7 +10118,7 @@ async def test_admin_tool_ops_partial_html_gateway_filters(monkeypatch, mock_req
         gateway_id="gw-1,null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8246,7 +10130,7 @@ async def test_admin_tool_ops_partial_html_gateway_filters(monkeypatch, mock_req
         gateway_id="null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8268,7 +10152,7 @@ async def test_admin_tool_ops_partial_html_team_filter_denied(monkeypatch, mock_
         gateway_id="gw-1",
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8297,7 +10181,12 @@ async def test_admin_prompts_partial_html_renders(monkeypatch, mock_request, moc
         gateway_id="gw-1",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8326,7 +10215,7 @@ async def test_admin_prompts_partial_html_propagates_search_and_tags_to_paginati
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
@@ -8359,7 +10248,7 @@ async def test_admin_prompts_partial_html_all_teams_view(monkeypatch, mock_reque
         gateway_id="gw-1",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8388,7 +10277,7 @@ async def test_admin_prompts_partial_html_gateway_filters_include_inactive_and_c
         gateway_id="gw-1,null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8401,7 +10290,7 @@ async def test_admin_prompts_partial_html_gateway_filters_include_inactive_and_c
         gateway_id="null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8414,7 +10303,7 @@ async def test_admin_prompts_partial_html_gateway_filters_include_inactive_and_c
         gateway_id="gw-1",
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8443,7 +10332,12 @@ async def test_admin_resources_partial_html_renders(monkeypatch, mock_request, m
         gateway_id="null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8472,7 +10366,7 @@ async def test_admin_resources_partial_html_propagates_search_and_tags_to_pagina
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
@@ -8503,7 +10397,12 @@ async def test_admin_gateways_partial_html_renders(monkeypatch, mock_request, mo
         render=render,
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8531,7 +10430,7 @@ async def test_admin_gateways_partial_html_propagates_search_and_tags_to_paginat
         render="controls",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
@@ -8562,7 +10461,7 @@ async def test_admin_gateways_partial_html_all_teams_view_and_convert_error(monk
         render=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8584,7 +10483,7 @@ async def test_admin_gateways_partial_html_team_filter_denied(monkeypatch, mock_
         render="controls",
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8613,7 +10512,7 @@ async def test_admin_resources_partial_html_all_teams_view(monkeypatch, mock_req
         gateway_id="gw-1",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8642,7 +10541,7 @@ async def test_admin_resources_partial_html_gateway_filters_include_inactive_and
         gateway_id="gw-1,null",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8655,7 +10554,7 @@ async def test_admin_resources_partial_html_gateway_filters_include_inactive_and
         gateway_id=None,
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8668,7 +10567,7 @@ async def test_admin_resources_partial_html_gateway_filters_include_inactive_and
         gateway_id="gw-1",
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8697,7 +10596,12 @@ async def test_admin_a2a_partial_html_renders(monkeypatch, mock_request, mock_db
         gateway_id="gw-1",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8726,7 +10630,7 @@ async def test_admin_a2a_partial_html_propagates_search_and_tags_to_pagination(m
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
     _args, kwargs = paginate_mock.call_args
@@ -8759,7 +10663,7 @@ async def test_admin_a2a_partial_html_all_teams_view(monkeypatch, mock_request, 
         gateway_id="gw-1",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8788,7 +10692,7 @@ async def test_admin_a2a_partial_html_include_inactive_convert_error_and_denied_
         gateway_id="gw-1",
         team_id="team-1",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8801,7 +10705,7 @@ async def test_admin_a2a_partial_html_include_inactive_convert_error_and_denied_
         gateway_id="gw-1",
         team_id="team-x",
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, HTMLResponse)
 
@@ -8810,13 +10714,38 @@ async def test_admin_a2a_partial_html_include_inactive_convert_error_and_denied_
 async def test_admin_search_servers_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="srv-1", name="Server 1", description="Desc")]
-    result = await admin_search_servers(q="server", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await admin_search_servers(
+        q="server",
+        include_inactive=False,
+        limit=5,
+        team_id=None,
+        db=mock_db,
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert result["count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_admin_search_tools_empty_query(mock_db):
-    result = await admin_search_tools(q=" ", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await admin_search_tools(
+        q=" ",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert result["count"] == 0
 
 
@@ -8831,7 +10760,12 @@ async def test_admin_search_tools_returns_matches(monkeypatch, mock_db):
         gateway_id="gw-1,null",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert result["count"] == 1
 
@@ -8847,7 +10781,12 @@ async def test_admin_search_resources_returns_matches(monkeypatch, mock_db):
         gateway_id="null",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert result["count"] == 1
 
@@ -8863,7 +10802,12 @@ async def test_admin_search_prompts_returns_matches(monkeypatch, mock_db):
         gateway_id="gw-1",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert result["count"] == 1
 
@@ -8872,7 +10816,19 @@ async def test_admin_search_prompts_returns_matches(monkeypatch, mock_db):
 async def test_admin_search_gateways_returns_matches(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="gw-1", name="Gateway 1", url="https://gw", description="Desc")]
-    result = await admin_search_gateways(q="gate", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await admin_search_gateways(
+        q="gate",
+        include_inactive=False,
+        limit=5,
+        team_id=None,
+        db=mock_db,
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert result["count"] == 1
 
 
@@ -8880,7 +10836,17 @@ async def test_admin_search_gateways_returns_matches(monkeypatch, mock_db):
 async def test_admin_get_all_server_ids(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
     mock_db.execute.return_value.all.return_value = [("srv-1",), ("srv-2",)]
-    result = await admin_get_all_server_ids(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await admin_get_all_server_ids(
+        include_inactive=False,
+        team_id=None,
+        db=mock_db,
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert result["count"] == 2
 
 
@@ -8893,7 +10859,12 @@ async def test_admin_get_all_tool_ids(monkeypatch, mock_db):
         gateway_id="gw-1,null",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert result["count"] == 2
 
@@ -8907,7 +10878,12 @@ async def test_admin_get_all_prompt_ids(monkeypatch, mock_db):
         gateway_id="null",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert result["count"] == 2
 
@@ -8921,7 +10897,12 @@ async def test_admin_get_all_resource_ids(monkeypatch, mock_db):
         gateway_id="null",
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db},
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
     )
     assert result["count"] == 2
 
@@ -8930,7 +10911,17 @@ async def test_admin_get_all_resource_ids(monkeypatch, mock_db):
 async def test_admin_get_all_gateways_ids(monkeypatch, mock_db):
     setup_team_service(monkeypatch, [])
     mock_db.execute.return_value.all.return_value = [("gw-1",), ("gw-2",)]
-    result = await admin_get_all_gateways_ids(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "is_admin": True, "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*"], "db": mock_db})
+    result = await admin_get_all_gateways_ids(
+        include_inactive=False,
+        team_id=None,
+        db=mock_db,
+        user={
+            "email": "user@example.com",
+            "is_admin": True,
+            "permissions": ["admin.*", "servers.*", "tools.*", "resources.*", "prompts.*", "a2a.*", "teams.*", "gateways.*", "tags.*", "tokens.*"],
+            "db": mock_db,
+        },
+    )
     assert result["count"] == 2
 
 
@@ -8940,15 +10931,30 @@ async def test_admin_get_all_gateways_ids_team_filters(monkeypatch, mock_db):
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [("gw-1",)]
-    result = await admin_get_all_gateways_ids(include_inactive=False, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_gateways_ids(
+        include_inactive=False,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_get_all_gateways_ids(include_inactive=False, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_gateways_ids(
+        include_inactive=False,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [("gw-1",)]
-    result = await admin_get_all_gateways_ids(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_gateways_ids(
+        include_inactive=False,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
 
@@ -8958,15 +10964,30 @@ async def test_admin_get_all_server_ids_team_filters(monkeypatch, mock_db):
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [("srv-1",)]
-    result = await admin_get_all_server_ids(include_inactive=False, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_server_ids(
+        include_inactive=False,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_get_all_server_ids(include_inactive=False, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_server_ids(
+        include_inactive=False,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [("srv-1",)]
-    result = await admin_get_all_server_ids(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_server_ids(
+        include_inactive=False,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
 
@@ -8976,19 +10997,43 @@ async def test_admin_get_all_tool_ids_gateway_and_team_filters(monkeypatch, mock
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [("tool-1",)]
-    result = await admin_get_all_tool_ids(include_inactive=False, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_tool_ids(
+        include_inactive=False,
+        gateway_id="null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [("tool-2",)]
-    result = await admin_get_all_tool_ids(include_inactive=False, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_tool_ids(
+        include_inactive=False,
+        gateway_id="gw-1",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [("tool-3",)]
-    result = await admin_get_all_tool_ids(include_inactive=False, gateway_id=None, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_tool_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_get_all_tool_ids(include_inactive=False, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_tool_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
 
@@ -8998,19 +11043,43 @@ async def test_admin_get_all_prompt_ids_gateway_and_team_filters(monkeypatch, mo
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [("prompt-1",)]
-    result = await admin_get_all_prompt_ids(include_inactive=False, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_prompt_ids(
+        include_inactive=False,
+        gateway_id="gw-1,null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [("prompt-2",)]
-    result = await admin_get_all_prompt_ids(include_inactive=False, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_prompt_ids(
+        include_inactive=False,
+        gateway_id="gw-1",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [("prompt-3",)]
-    result = await admin_get_all_prompt_ids(include_inactive=False, gateway_id=None, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_prompt_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_get_all_prompt_ids(include_inactive=False, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_prompt_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
 
@@ -9020,19 +11089,43 @@ async def test_admin_get_all_resource_ids_gateway_and_team_filters(monkeypatch, 
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [("res-1",)]
-    result = await admin_get_all_resource_ids(include_inactive=False, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_resource_ids(
+        include_inactive=False,
+        gateway_id="gw-1,null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [("res-2",)]
-    result = await admin_get_all_resource_ids(include_inactive=False, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_resource_ids(
+        include_inactive=False,
+        gateway_id="gw-1",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [("res-3",)]
-    result = await admin_get_all_resource_ids(include_inactive=False, gateway_id=None, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_resource_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_get_all_resource_ids(include_inactive=False, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_all_resource_ids(
+        include_inactive=False,
+        gateway_id=None,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
 
@@ -9040,19 +11133,47 @@ async def test_admin_get_all_resource_ids_gateway_and_team_filters(monkeypatch, 
 async def test_admin_search_servers_empty_query_and_team_filters(monkeypatch, mock_db):
     """Cover server search empty-query short-circuit and team membership branches."""
     setup_team_service(monkeypatch, ["team-1"])
-    empty = await admin_search_servers(q=" ", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    empty = await admin_search_servers(
+        q=" ",
+        include_inactive=False,
+        limit=5,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert empty["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="srv-1", name="Server 1", description="Desc")]
-    result = await admin_search_servers(q="srv", include_inactive=False, limit=5, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_servers(
+        q="srv",
+        include_inactive=False,
+        limit=5,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_search_servers(q="srv", include_inactive=False, limit=5, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_servers(
+        q="srv",
+        include_inactive=False,
+        limit=5,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="srv-1", name="Server 1", description="Desc")]
-    result = await admin_search_servers(q="srv", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_servers(
+        q="srv",
+        include_inactive=False,
+        limit=5,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
 
@@ -9062,19 +11183,51 @@ async def test_admin_search_tools_gateway_and_team_filters(monkeypatch, mock_db)
     setup_team_service(monkeypatch, ["team-1"])
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-1", original_name="Tool 1", display_name="Tool 1", custom_name=None, description="Desc")]
-    result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_tools(
+        q="tool",
+        include_inactive=False,
+        limit=5,
+        gateway_id="null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-2", original_name="Tool 2", display_name="Tool 2", custom_name=None, description="Desc")]
-    result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_tools(
+        q="tool",
+        include_inactive=False,
+        limit=5,
+        gateway_id="gw-1",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="tool-3", original_name="Tool 3", display_name="Tool 3", custom_name=None, description="Desc")]
-    result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id=None, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_tools(
+        q="tool",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_search_tools(q="tool", include_inactive=False, limit=5, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_tools(
+        q="tool",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
 
@@ -9082,23 +11235,63 @@ async def test_admin_search_tools_gateway_and_team_filters(monkeypatch, mock_db)
 async def test_admin_search_resources_empty_query_and_team_filters(monkeypatch, mock_db):
     """Cover resource search empty-query short-circuit, gateway filters, and team membership branches."""
     setup_team_service(monkeypatch, ["team-1"])
-    empty = await admin_search_resources(q=" ", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    empty = await admin_search_resources(
+        q=" ",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert empty["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="res-1", name="Resource 1", description="Desc")]
-    result = await admin_search_resources(q="res", include_inactive=False, limit=5, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_resources(
+        q="res",
+        include_inactive=False,
+        limit=5,
+        gateway_id="gw-1,null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="res-2", name="Resource 2", description="Desc")]
-    result = await admin_search_resources(q="res", include_inactive=False, limit=5, gateway_id="gw-1", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_resources(
+        q="res",
+        include_inactive=False,
+        limit=5,
+        gateway_id="gw-1",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="res-3", name="Resource 3", description="Desc")]
-    result = await admin_search_resources(q="res", include_inactive=False, limit=5, gateway_id=None, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_resources(
+        q="res",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_search_resources(q="res", include_inactive=False, limit=5, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_resources(
+        q="res",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
 
@@ -9106,23 +11299,63 @@ async def test_admin_search_resources_empty_query_and_team_filters(monkeypatch, 
 async def test_admin_search_prompts_empty_query_and_team_filters(monkeypatch, mock_db):
     """Cover prompt search empty-query short-circuit, gateway filters, and team membership branches."""
     setup_team_service(monkeypatch, ["team-1"])
-    empty = await admin_search_prompts(q=" ", include_inactive=False, limit=5, gateway_id=None, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    empty = await admin_search_prompts(
+        q=" ",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert empty["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-1", original_name="Prompt 1", display_name="Prompt 1", description="Desc")]
-    result = await admin_search_prompts(q="prompt", include_inactive=False, limit=5, gateway_id="gw-1,null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_prompts(
+        q="prompt",
+        include_inactive=False,
+        limit=5,
+        gateway_id="gw-1,null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-2", original_name="Prompt 2", display_name="Prompt 2", description="Desc")]
-    result = await admin_search_prompts(q="prompt", include_inactive=False, limit=5, gateway_id="null", team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_prompts(
+        q="prompt",
+        include_inactive=False,
+        limit=5,
+        gateway_id="null",
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="prompt-3", original_name="Prompt 3", display_name="Prompt 3", description="Desc")]
-    result = await admin_search_prompts(q="prompt", include_inactive=False, limit=5, gateway_id=None, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_prompts(
+        q="prompt",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_search_prompts(q="prompt", include_inactive=False, limit=5, gateway_id=None, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_prompts(
+        q="prompt",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
 
@@ -9130,19 +11363,47 @@ async def test_admin_search_prompts_empty_query_and_team_filters(monkeypatch, mo
 async def test_admin_search_gateways_empty_query_and_team_filters(monkeypatch, mock_db):
     """Cover gateway search empty-query short-circuit and team membership branches."""
     setup_team_service(monkeypatch, ["team-1"])
-    empty = await admin_search_gateways(q=" ", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    empty = await admin_search_gateways(
+        q=" ",
+        include_inactive=False,
+        limit=5,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert empty["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="gw-1", name="Gateway 1", url="https://gw", description="Desc")]
-    result = await admin_search_gateways(q="gate", include_inactive=False, limit=5, team_id="team-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_gateways(
+        q="gate",
+        include_inactive=False,
+        limit=5,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
     mock_db.execute.return_value.all.return_value = []
-    result = await admin_search_gateways(q="gate", include_inactive=False, limit=5, team_id="team-x", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_gateways(
+        q="gate",
+        include_inactive=False,
+        limit=5,
+        team_id="team-x",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 0
 
     mock_db.execute.return_value.all.return_value = [SimpleNamespace(id="gw-1", name="Gateway 1", url="https://gw", description="Desc")]
-    result = await admin_search_gateways(q="gate", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_search_gateways(
+        q="gate",
+        include_inactive=False,
+        limit=5,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["count"] == 1
 
 
@@ -9249,7 +11510,7 @@ def test_owner_access_condition_public_only_token_blocks_owner_override():
         sa.column("team_id"),
         user_email="owner@example.com",
         team_ids=[],
-        user={"email": "owner@example.com", "token_teams": []},
+        user={"email": "owner@example.com", "token_teams": [], "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     sql = str(predicate.compile(compile_kwargs={"literal_binds": True})).lower()
     assert "false" in sql or "0 = 1" in sql
@@ -9264,7 +11525,11 @@ def test_owner_access_condition_team_scoped_token_constrains_owner_to_token_team
         sa.column("team_id"),
         user_email="owner@example.com",
         team_ids=["team-1"],
-        user={"email": "owner@example.com", "token_teams": ["team-1"]},
+        user={
+            "email": "owner@example.com",
+            "token_teams": ["team-1"],
+            "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+        },
     )
     sql = str(predicate.compile(compile_kwargs={"literal_binds": True})).lower()
     assert "owner_email" in sql
@@ -9281,7 +11546,7 @@ def test_owner_access_condition_legacy_context_keeps_owner_access():
         sa.column("team_id"),
         user_email="owner@example.com",
         team_ids=[],
-        user={"email": "owner@example.com"},
+        user={"email": "owner@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
     )
     sql = str(predicate.compile(compile_kwargs={"literal_binds": True})).lower()
     assert "owner_email" in sql
@@ -9348,7 +11613,7 @@ async def test_admin_search_tools_supports_tags_without_query(monkeypatch, mock_
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert result["count"] == 1
     assert result["tools"][0]["id"] == "tool-1"
@@ -9365,7 +11630,7 @@ async def test_admin_search_endpoints_support_tags_without_query(monkeypatch, mo
     result.all.return_value = []
     mock_db.execute.return_value = result
 
-    user = {"email": "user@example.com", "db": mock_db}
+    user = {"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
 
     gateways = await admin_search_gateways(q=" ", tags="t1", include_inactive=False, limit=5, team_id=None, db=mock_db, user=user)
     assert gateways["count"] == 0
@@ -9403,7 +11668,7 @@ async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, all
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert result["count"] == 8
@@ -9433,7 +11698,7 @@ async def test_admin_unified_search_default_excludes_users(monkeypatch, mock_db,
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert "users" not in result["entity_types"]
@@ -9455,7 +11720,7 @@ async def test_admin_unified_search_users_only_requires_admin_user_management(mo
             gateway_id=None,
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
     assert excinfo.value.status_code == 403
@@ -9478,7 +11743,7 @@ async def test_admin_unified_search_drops_users_when_not_permitted(monkeypatch, 
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert result["entity_types"] == ["tools"]
@@ -9501,7 +11766,7 @@ async def test_admin_unified_search_accepts_legacy_team_search_list_shape(monkey
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert result["entity_types"] == ["teams", "tools"]
@@ -9524,7 +11789,7 @@ async def test_admin_unified_search_entity_types_parses_a2a_alias(monkeypatch, m
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     # a2a should map to agents and de-duplicate with explicit "agents"
@@ -9545,7 +11810,7 @@ async def test_admin_unified_search_invalid_entity_types_returns_400(mock_db, al
             gateway_id=None,
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
     assert excinfo.value.status_code == 400
 
@@ -9564,7 +11829,7 @@ async def test_admin_unified_search_clamps_limit_per_type_and_handles_forbidden_
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert result["entity_types"] == ["servers"]
@@ -9587,7 +11852,7 @@ async def test_admin_unified_search_propagates_non_auth_http_exceptions(monkeypa
             gateway_id=None,
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
     assert excinfo.value.status_code == 500
@@ -9603,7 +11868,7 @@ async def test_admin_unified_search_empty_query_and_tags_returns_empty(mock_db, 
         gateway_id=None,
         team_id=None,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert result["count"] == 0
@@ -9675,7 +11940,10 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = True
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(
+            filename=None,
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         assert result["total"] >= 2
         types = {entry["type"] for entry in result["files"]}
@@ -9698,7 +11966,14 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.Path.glob", _boom, raising=True)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(
+                filename=None,
+                user={
+                    "email": "admin@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 500
 
     @patch("mcpgateway.admin.settings")
@@ -9713,7 +11988,10 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(
+            filename=None,
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         types = {entry["type"] for entry in result["files"]}
         assert "main" in types
         assert "storage" in types
@@ -9731,20 +12009,44 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        response = await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_log_file(
+            filename="app.log",
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(
+                filename="../secret.log",
+                user={
+                    "email": "admin@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 400
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="missing.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(
+                filename="missing.log",
+                user={
+                    "email": "admin@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 404
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(
+                filename="random.txt",
+                user={
+                    "email": "admin@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 403
 
     @patch("mcpgateway.admin.settings")
@@ -9760,7 +12062,14 @@ class TestAdminAdditionalCoverage:
 
         with patch("mcpgateway.admin.FileResponse", side_effect=FileNotFoundError("gone")):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(
+                    filename="app.log",
+                    user={
+                        "email": "admin@example.com",
+                        "db": mock_db,
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
+                )
         assert excinfo.value.status_code == 404
 
     @patch("mcpgateway.admin.settings")
@@ -9776,7 +12085,14 @@ class TestAdminAdditionalCoverage:
 
         with patch("mcpgateway.admin.FileResponse", side_effect=RuntimeError("boom")):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(
+                    filename="app.log",
+                    user={
+                        "email": "admin@example.com",
+                        "db": mock_db,
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    },
+                )
         assert excinfo.value.status_code == 500
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):
@@ -9803,7 +12119,11 @@ class TestAdminAdditionalCoverage:
             level=None,
             start_time=None,
             end_time=None,
-            user={"email": "test-user@example.com", "db": mock_db},
+            user={
+                "email": "test-user@example.com",
+                "db": mock_db,
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
         )
         assert json_response.media_type == "application/json"
         assert b"Tool One" in json_response.body
@@ -9813,7 +12133,11 @@ class TestAdminAdditionalCoverage:
             level=None,
             start_time=None,
             end_time=None,
-            user={"email": "test-user@example.com", "db": mock_db},
+            user={
+                "email": "test-user@example.com",
+                "db": mock_db,
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
         )
         assert csv_response.media_type == "text/csv"
         assert b"timestamp,level,entity_type" in csv_response.body
@@ -9826,7 +12150,11 @@ class TestAdminAdditionalCoverage:
                 level=None,
                 start_time=None,
                 end_time=None,
-                user={"email": "test-user@example.com", "db": mock_db},
+                user={
+                    "email": "test-user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert excinfo.value.status_code == 400
 
@@ -9837,7 +12165,11 @@ class TestAdminAdditionalCoverage:
                 level=None,
                 start_time=None,
                 end_time=None,
-                user={"email": "test-user@example.com", "db": mock_db},
+                user={
+                    "email": "test-user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert excinfo.value.status_code == 503
 
@@ -9851,7 +12183,11 @@ class TestAdminAdditionalCoverage:
                 level=None,
                 start_time="not-a-time",
                 end_time=None,
-                user={"email": "test-user@example.com", "db": mock_db},
+                user={
+                    "email": "test-user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert excinfo.value.status_code == 400
 
@@ -9861,7 +12197,11 @@ class TestAdminAdditionalCoverage:
                 level=None,
                 start_time=None,
                 end_time="not-a-time",
-                user={"email": "test-user@example.com", "db": mock_db},
+                user={
+                    "email": "test-user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert excinfo.value.status_code == 400
 
@@ -9871,7 +12211,11 @@ class TestAdminAdditionalCoverage:
                 level="badlevel",
                 start_time=None,
                 end_time=None,
-                user={"email": "test-user@example.com", "db": mock_db},
+                user={
+                    "email": "test-user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert excinfo.value.status_code == 400
 
@@ -9902,7 +12246,11 @@ class TestAdminAdditionalCoverage:
         form_data = FakeForm({"name": "Agent One", "endpoint_url": "http://example.com/agent"})
         mock_request.form = AsyncMock(return_value=form_data)
 
-        response = await admin_add_a2a_agent(mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_add_a2a_agent(
+            mock_request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 200
         mock_service.register_agent.assert_called_once()
 
@@ -9935,7 +12283,12 @@ class TestAdminAdditionalCoverage:
         )
         mock_request.form = AsyncMock(return_value=form_data)
 
-        response = await admin_edit_a2a_agent("agent-1", mock_request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_edit_a2a_agent(
+            "agent-1",
+            mock_request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 200
         mock_service.update_agent.assert_called_once()
 
@@ -9949,7 +12302,14 @@ class TestAdminAdditionalCoverage:
         result.all.return_value = [SimpleNamespace(id="agent-1", name="Agent", endpoint_url="http://a2a", description="Test agent")]
         mock_db.execute.return_value = result
 
-        response = await admin_search_a2a_agents(q="agent", include_inactive=False, limit=5, team_id="team-1", db=mock_db, user={"email": "user@example.com"})
+        response = await admin_search_a2a_agents(
+            q="agent",
+            include_inactive=False,
+            limit=5,
+            team_id="team-1",
+            db=mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert response["count"] == 1
         assert response["agents"][0]["name"] == "Agent"
 
@@ -9963,7 +12323,14 @@ class TestAdminAdditionalCoverage:
         result.all.return_value = [SimpleNamespace(id="agent-1", name="Agent", endpoint_url="http://a2a", description="Test agent")]
         mock_db.execute.return_value = result
 
-        response = await admin_search_a2a_agents(q="agent", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com"})
+        response = await admin_search_a2a_agents(
+            q="agent",
+            include_inactive=False,
+            limit=5,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert response["count"] == 1
 
     async def test_admin_search_a2a_agents_empty_query_short_circuit(self, monkeypatch, mock_db):
@@ -9972,7 +12339,14 @@ class TestAdminAdditionalCoverage:
         team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-        response = await admin_search_a2a_agents(q=" ", include_inactive=False, limit=5, team_id=None, db=mock_db, user={"email": "user@example.com"})
+        response = await admin_search_a2a_agents(
+            q=" ",
+            include_inactive=False,
+            limit=5,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert response["agents"] == []
         assert response["count"] == 0
 
@@ -9986,13 +12360,25 @@ class TestAdminAdditionalCoverage:
         result.all.return_value = []
         mock_db.execute.return_value = result
 
-        response = await admin_search_a2a_agents(q="agent", include_inactive=False, limit=5, team_id="team-x", db=mock_db, user={"email": "user@example.com"})
+        response = await admin_search_a2a_agents(
+            q="agent",
+            include_inactive=False,
+            limit=5,
+            team_id="team-x",
+            db=mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert response["count"] == 0
 
     async def test_admin_get_user_edit_disabled_and_not_found(self, monkeypatch, mock_request, mock_db, allow_permission):
         """Cover disabled email auth and user-not-found branches."""
         monkeypatch.setattr(settings, "email_auth_enabled", False)
-        response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_user_edit(
+            "a%40example.com",
+            mock_request,
+            db=mock_db,
+            _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 403
 
         monkeypatch.setattr(settings, "email_auth_enabled", True)
@@ -10000,7 +12386,12 @@ class TestAdminAdditionalCoverage:
         auth_service.get_user_by_email = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-        response = await admin_get_user_edit("missing%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_user_edit(
+            "missing%40example.com",
+            mock_request,
+            db=mock_db,
+            _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 404
 
     async def test_admin_list_a2a_agents_enabled(self, monkeypatch, mock_db):
@@ -10016,7 +12407,13 @@ class TestAdminAdditionalCoverage:
         service.list_agents = AsyncMock(return_value={"data": [agent], "pagination": pagination, "links": links})
         monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
 
-        result = await admin_list_a2a_agents(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com"})
+        result = await admin_list_a2a_agents(
+            page=1,
+            per_page=50,
+            include_inactive=False,
+            db=mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["data"][0]["id"] == "agent-1"
         assert result["pagination"]["page"] == 1
 
@@ -10027,14 +12424,24 @@ class TestAdminAdditionalCoverage:
         storage.get_stats.return_value = {"total_logs": 1}
         monkeypatch.setattr("mcpgateway.admin.logging_service", MagicMock(get_storage=MagicMock(return_value=storage)))
 
-        result = await admin_get_logs(level=None, start_time=None, end_time=None, user={"email": "user@example.com", "db": mock_db})
+        result = await admin_get_logs(
+            level=None,
+            start_time=None,
+            end_time=None,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result["total"] == 1
         assert result["logs"][0]["message"] == "Test log"
 
     async def test_admin_get_logs_invalid_inputs(self, monkeypatch, mock_db):
         """Cover missing storage and invalid parsing branches."""
         monkeypatch.setattr("mcpgateway.admin.logging_service", MagicMock(get_storage=MagicMock(return_value=None)))
-        result = await admin_get_logs(level=None, start_time=None, end_time=None, user={"email": "user@example.com", "db": mock_db})
+        result = await admin_get_logs(
+            level=None,
+            start_time=None,
+            end_time=None,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert result["logs"] == []
 
         storage = MagicMock()
@@ -10043,15 +12450,42 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.logging_service", MagicMock(get_storage=MagicMock(return_value=storage)))
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_logs(level=None, start_time="not-a-time", end_time=None, user={"email": "user@example.com", "db": mock_db})
+            await admin_get_logs(
+                level=None,
+                start_time="not-a-time",
+                end_time=None,
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 400
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_logs(level=None, start_time=None, end_time="not-a-time", user={"email": "user@example.com", "db": mock_db})
+            await admin_get_logs(
+                level=None,
+                start_time=None,
+                end_time="not-a-time",
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 400
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_logs(level="badlevel", start_time=None, end_time=None, user={"email": "user@example.com", "db": mock_db})
+            await admin_get_logs(
+                level="badlevel",
+                start_time=None,
+                end_time=None,
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == 400
 
     async def test_admin_stream_logs_filters(self, monkeypatch, mock_db):
@@ -10067,7 +12501,12 @@ class TestAdminAdditionalCoverage:
 
         request = MagicMock(spec=Request)
         request.is_disconnected = AsyncMock(return_value=False)
-        response = await admin_stream_logs(request=request, entity_type="tool", level="info", user={"email": "user@example.com", "db": mock_db})
+        response = await admin_stream_logs(
+            request=request,
+            entity_type="tool",
+            level="info",
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, StreamingResponse)
 
         assert response.media_type == "text/event-stream"
@@ -10088,7 +12527,11 @@ class TestAdminAdditionalCoverage:
         request = MagicMock(spec=Request)
         request.is_disconnected = AsyncMock(return_value=False)
 
-        response = await admin_stream_logs(request=request, level="info", user={"email": "user@example.com", "db": mock_db})
+        response = await admin_stream_logs(
+            request=request,
+            level="info",
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert isinstance(response, StreamingResponse)
 
         chunks = []
@@ -10102,7 +12545,15 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.logging_service", MagicMock(get_storage=MagicMock(return_value=None)))
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc:
-            await admin_stream_logs(request=request, level=None, user={"email": "user@example.com", "db": mock_db})
+            await admin_stream_logs(
+                request=request,
+                level=None,
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert exc.value.status_code == 503
 
     async def test_admin_stream_logs_invalid_level_raises_400(self, monkeypatch, mock_db, allow_permission):
@@ -10112,7 +12563,15 @@ class TestAdminAdditionalCoverage:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc:
-            await admin_stream_logs(request=request, level="not-a-level", user={"email": "user@example.com", "db": mock_db})
+            await admin_stream_logs(
+                request=request,
+                level="not-a-level",
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert exc.value.status_code == 400
 
     async def test_admin_stream_logs_disconnect_breaks(self, monkeypatch, mock_db, allow_permission):
@@ -10126,7 +12585,12 @@ class TestAdminAdditionalCoverage:
 
         request = MagicMock(spec=Request)
         request.is_disconnected = AsyncMock(return_value=True)
-        response = await admin_stream_logs(request=request, entity_type=None, level=None, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_stream_logs(
+            request=request,
+            entity_type=None,
+            level=None,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks == []
@@ -10149,7 +12613,13 @@ class TestAdminAdditionalCoverage:
 
         request = MagicMock(spec=Request)
         request.is_disconnected = AsyncMock(return_value=False)
-        response = await admin_stream_logs(request=request, entity_type=entity_type, entity_id=entity_id, level=None, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_stream_logs(
+            request=request,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            level=None,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks == []
@@ -10166,7 +12636,11 @@ class TestAdminAdditionalCoverage:
 
         request = MagicMock(spec=Request)
         request.is_disconnected = AsyncMock(return_value=False)
-        response = await admin_stream_logs(request=request, level=None, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_stream_logs(
+            request=request,
+            level=None,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
 
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks
@@ -10186,7 +12660,11 @@ class TestAdminAdditionalCoverage:
             request,
             types="tools",
             db=mock_db,
-            user={"email": "tester@example.com", "username": "tester"},
+            user={
+                "email": "tester@example.com",
+                "username": "tester",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
         )
         assert response.media_type == "application/json"
         assert b"tools" in response.body
@@ -10206,7 +12684,11 @@ class TestAdminAdditionalCoverage:
             exclude_types="servers, prompts",
             tags="alpha, beta",
             db=mock_db,
-            user={"email": "tester@example.com", "username": "tester"},
+            user={
+                "email": "tester@example.com",
+                "username": "tester",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
         )
 
         call_kwargs = export_service.export_configuration.call_args.kwargs
@@ -10226,7 +12708,11 @@ class TestAdminAdditionalCoverage:
         response = await admin_export_selective(
             request,
             db=mock_db,
-            user={"email": "tester@example.com", "username": "tester"},
+            user={
+                "email": "tester@example.com",
+                "username": "tester",
+                "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+            },
         )
         assert response.media_type == "application/json"
         assert b"tool-1" in response.body
@@ -10245,7 +12731,11 @@ class TestAdminAdditionalCoverage:
                 request,
                 types="tools",
                 db=mock_db,
-                user={"email": "tester@example.com", "username": "tester"},
+                user={
+                    "email": "tester@example.com",
+                    "username": "tester",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert exc.value.status_code == 400
 
@@ -10255,7 +12745,11 @@ class TestAdminAdditionalCoverage:
                 request,
                 types="tools",
                 db=mock_db,
-                user={"email": "tester@example.com", "username": "tester"},
+                user={
+                    "email": "tester@example.com",
+                    "username": "tester",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert exc.value.status_code == 500
 
@@ -10273,7 +12767,11 @@ class TestAdminAdditionalCoverage:
             await admin_export_selective(
                 request,
                 db=mock_db,
-                user={"email": "tester@example.com", "username": "tester"},
+                user={
+                    "email": "tester@example.com",
+                    "username": "tester",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert exc.value.status_code == 400
 
@@ -10282,7 +12780,11 @@ class TestAdminAdditionalCoverage:
             await admin_export_selective(
                 request,
                 db=mock_db,
-                user={"email": "tester@example.com", "username": "tester"},
+                user={
+                    "email": "tester@example.com",
+                    "username": "tester",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
             )
         assert exc.value.status_code == 500
 
@@ -10299,24 +12801,32 @@ async def test_cache_invalidation_endpoints(monkeypatch, mock_db, allow_permissi
     cache.stats.return_value = {"hits": 1}
     monkeypatch.setattr("mcpgateway.admin.global_config_cache", cache)
 
-    result = await _unwrap(invalidate_passthrough_headers_cache)(_user={"email": "user@example.com", "db": mock_db})
+    result = await _unwrap(invalidate_passthrough_headers_cache)(
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
+    )
     assert result["status"] == "invalidated"
     assert result["cache_stats"]["hits"] == 1
     assert cache.invalidate.called
 
-    stats = await _unwrap(get_passthrough_headers_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
+    stats = await _unwrap(get_passthrough_headers_cache_stats)(
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
+    )
     assert stats["hits"] == 1
 
     a2a_cache = MagicMock()
     a2a_cache.stats.return_value = {"hits": 2}
     monkeypatch.setattr("mcpgateway.admin.a2a_stats_cache", a2a_cache)
 
-    result = await _unwrap(invalidate_a2a_stats_cache)(_user={"email": "user@example.com", "db": mock_db})
+    result = await _unwrap(invalidate_a2a_stats_cache)(
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
+    )
     assert result["status"] == "invalidated"
     assert result["cache_stats"]["hits"] == 2
     assert a2a_cache.invalidate.called
 
-    stats = await _unwrap(get_a2a_stats_cache_stats)(_user={"email": "user@example.com", "db": mock_db})
+    stats = await _unwrap(get_a2a_stats_cache_stats)(
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
+    )
     assert stats["hits"] == 2
 
 
@@ -10326,19 +12836,28 @@ async def test_get_mcp_session_pool_metrics_paths(monkeypatch, mock_db, allow_pe
     request.client = SimpleNamespace(host="10.0.0.1")
 
     monkeypatch.setattr(settings, "mcp_session_pool_enabled", False)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(
+        request=request,
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["enabled"] is False
 
     monkeypatch.setattr(settings, "mcp_session_pool_enabled", True)
     pool = MagicMock()
     pool.get_metrics.return_value = {"hits": 1, "misses": 0}
     monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: pool)
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(
+        request=request,
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["enabled"] is True
     assert result["hits"] == 1
 
     monkeypatch.setattr("mcpgateway.admin.get_mcp_session_pool", lambda: (_ for _ in ()).throw(RuntimeError("not ready")))
-    result = await get_mcp_session_pool_metrics(request=request, _user={"email": "user@example.com", "db": mock_db})
+    result = await get_mcp_session_pool_metrics(
+        request=request,
+        _user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["enabled"] is True
     assert result["message"] == "Pool not yet initialized"
 
@@ -10386,12 +12905,20 @@ async def test_get_system_stats_htmx_and_json(monkeypatch, mock_db, allow_permis
     templates.TemplateResponse.return_value = HTMLResponse("ok")
     request.app = SimpleNamespace(state=SimpleNamespace(templates=templates))
 
-    response = await get_system_stats(request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await get_system_stats(
+        request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert templates.TemplateResponse.called
 
     request.headers = {}
-    response = await get_system_stats(request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await get_system_stats(
+        request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
 
 
@@ -10407,7 +12934,11 @@ async def test_get_system_stats_exception_raises_http_500(monkeypatch, mock_db, 
     request.scope = {"root_path": ""}
 
     with pytest.raises(HTTPException) as excinfo:
-        await get_system_stats(request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await get_system_stats(
+            request,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -10427,7 +12958,7 @@ async def test_admin_generate_support_bundle(monkeypatch, tmp_path, mock_db, all
         include_logs=False,
         include_env=False,
         include_system=False,
-        user={"email": "user@example.com", "db": mock_db},
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
     assert isinstance(response, FileResponse)
     assert response.media_type == "application/zip"
@@ -10448,7 +12979,7 @@ async def test_admin_generate_support_bundle_exception_raises_http_500(monkeypat
             include_logs=False,
             include_env=False,
             include_system=False,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
     assert excinfo.value.status_code == 500
 
@@ -10458,7 +12989,12 @@ async def test_admin_grpc_endpoints_disabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", False)
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
     with pytest.raises(HTTPException) as excinfo:
-        await admin_list_grpc_services(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_list_grpc_services(
+            include_inactive=False,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
 
@@ -10476,13 +13012,45 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
     update = GrpcServiceUpdate(name="grpc-service-updated")
 
     coros = [
-        admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_get_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_update_grpc_service("svc-1", update, request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_set_grpc_service_state("svc-1", activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_reflect_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_get_grpc_methods("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_delete_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
+        admin_create_grpc_service(
+            service,
+            request,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
+        admin_get_grpc_service(
+            "svc-1",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
+        admin_update_grpc_service(
+            "svc-1",
+            update,
+            request,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
+        admin_set_grpc_service_state(
+            "svc-1",
+            activate=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
+        admin_reflect_grpc_service(
+            "svc-1",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
+        admin_get_grpc_methods(
+            "svc-1",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
+        admin_delete_grpc_service(
+            "svc-1",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        ),
     ]
 
     for c in coros:
@@ -10519,8 +13087,20 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
-    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
+    metadata.extract_creation_metadata = MagicMock(
+        return_value={
+            "created_by": "user@example.com",
+            "created_from_ip": "1.1.1.1",
+            "created_via": "ui",
+            "created_user_agent": "test/1.0",
+            "import_batch_id": None,
+            "federation_source": None,
+            "version": 1,
+        }
+    )
+    metadata.extract_modification_metadata = MagicMock(
+        return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1}
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10530,32 +13110,71 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     service = GrpcServiceCreate(name="grpc-service", target="localhost:50051")
     update = GrpcServiceUpdate(name="grpc-service-updated")
 
-    result = await admin_list_grpc_services(page=1, per_page=50, include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_list_grpc_services(
+        page=1,
+        per_page=50,
+        include_inactive=False,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert "data" in result
     assert len(result["data"]) == 1
     assert result["data"][0]["id"] == "svc-1"
     assert "pagination" in result
 
-    response = await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_create_grpc_service(
+        service,
+        request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
     assert response.status_code == 201
 
-    result = await admin_get_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_grpc_service(
+        "svc-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result.enabled is True
 
-    response = await admin_update_grpc_service("svc-1", update, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_update_grpc_service(
+        "svc-1",
+        update,
+        request,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
 
-    response = await admin_set_grpc_service_state("svc-1", activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_set_grpc_service_state(
+        "svc-1",
+        activate=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
 
-    response = await admin_reflect_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_reflect_grpc_service(
+        "svc-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
 
-    response = await admin_get_grpc_methods("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_get_grpc_methods(
+        "svc-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
 
-    response = await admin_delete_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_grpc_service(
+        "svc-1",
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 204
 
 
@@ -10571,7 +13190,9 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_modification_metadata = MagicMock(return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1})
+    metadata.extract_modification_metadata = MagicMock(
+        return_value={"modified_by": "user@example.com", "modified_from_ip": "1.1.1.1", "modified_via": "ui", "modified_user_agent": "test/1.0", "version": 1}
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10589,7 +13210,17 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     for exc, status_code in cases:
         mgr.update_service = AsyncMock(side_effect=exc)
         with pytest.raises(HTTPException) as excinfo:
-            await admin_update_grpc_service("svc-1", update, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+            await admin_update_grpc_service(
+                "svc-1",
+                update,
+                request,
+                db=mock_db,
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == status_code
 
 
@@ -10605,7 +13236,17 @@ async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     metadata = MagicMock()
-    metadata.extract_creation_metadata = MagicMock(return_value={"created_by": "user@example.com", "created_from_ip": "1.1.1.1", "created_via": "ui", "created_user_agent": "test/1.0", "import_batch_id": None, "federation_source": None, "version": 1})
+    metadata.extract_creation_metadata = MagicMock(
+        return_value={
+            "created_by": "user@example.com",
+            "created_from_ip": "1.1.1.1",
+            "created_via": "ui",
+            "created_user_agent": "test/1.0",
+            "import_batch_id": None,
+            "federation_source": None,
+            "version": 1,
+        }
+    )
     monkeypatch.setattr("mcpgateway.admin.MetadataCapture", metadata)
 
     request = MagicMock(spec=Request)
@@ -10621,7 +13262,16 @@ async def test_admin_create_grpc_service_error_handlers(monkeypatch, mock_db):
     for exc, status_code in cases:
         mgr.register_service = AsyncMock(side_effect=exc)
         with pytest.raises(HTTPException) as excinfo:
-            await admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+            await admin_create_grpc_service(
+                service,
+                request,
+                db=mock_db,
+                user={
+                    "email": "user@example.com",
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
         assert excinfo.value.status_code == status_code
 
 
@@ -10638,7 +13288,11 @@ async def test_admin_get_grpc_service_not_found(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_get_grpc_service("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_get_grpc_service(
+            "svc-missing",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
 
@@ -10657,15 +13311,28 @@ async def test_admin_grpc_state_delete_methods_not_found(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_set_grpc_service_state("svc-missing", activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_set_grpc_service_state(
+            "svc-missing",
+            activate=None,
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_delete_grpc_service("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_delete_grpc_service(
+            "svc-missing",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_get_grpc_methods("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_get_grpc_methods(
+            "svc-missing",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
 
@@ -10682,12 +13349,20 @@ async def test_admin_reflect_grpc_service_error_handlers(monkeypatch, mock_db):
 
     mgr.reflect_service = AsyncMock(side_effect=admin_mod.GrpcServiceNotFoundError("missing"))
     with pytest.raises(HTTPException) as excinfo:
-        await admin_reflect_grpc_service("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_reflect_grpc_service(
+            "svc-missing",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
     mgr.reflect_service = AsyncMock(side_effect=admin_mod.GrpcServiceError("boom"))
     with pytest.raises(HTTPException) as excinfo:
-        await admin_reflect_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_reflect_grpc_service(
+            "svc-1",
+            db=mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -10714,7 +13389,7 @@ async def test_admin_teams_partial_html_user_not_found(monkeypatch, mock_request
         q=None,
         relationship=None,
         db=mock_db,
-        user={"email": "u@example.com", "db": mock_db},
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert isinstance(response, HTMLResponse)
@@ -10751,7 +13426,7 @@ async def test_admin_teams_partial_html_enriched_non_admin(monkeypatch, mock_req
         q=None,
         relationship=None,
         db=mock_db,
-        user={"email": "u@example.com", "db": mock_db},
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert isinstance(response, HTMLResponse)
@@ -10766,7 +13441,14 @@ async def test_admin_teams_partial_html_enriched_non_admin(monkeypatch, mock_req
 @pytest.mark.asyncio
 async def test_admin_team_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_team_members_partial_html("team-1", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(
+        "team-1",
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert "Email authentication is disabled" in response.body.decode()
 
@@ -10785,7 +13467,14 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
     team_service.count_team_owners.return_value = 1
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
@@ -10795,7 +13484,14 @@ async def test_admin_team_members_partial_html_success(monkeypatch, mock_request
 async def test_admin_team_members_partial_html_invalid_team_id(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
-    response = await admin_team_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(
+        "not-a-uuid",
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
 
@@ -10810,7 +13506,14 @@ async def test_admin_team_members_partial_html_team_not_found(monkeypatch, mock_
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
 
@@ -10826,7 +13529,14 @@ async def test_admin_team_members_partial_html_not_owner(monkeypatch, mock_reque
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -10838,7 +13548,14 @@ async def test_admin_team_members_partial_html_exception(monkeypatch, mock_reque
     team_service.get_team_by_id = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_members_partial_html(str(uuid4()), request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_members_partial_html(
+        str(uuid4()),
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     assert "error loading members" in response.body.decode().lower()
 
@@ -10858,7 +13575,14 @@ async def test_admin_team_non_members_partial_html_success(monkeypatch, mock_req
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     assert template_call[0][1] == "team_users_selector.html"
@@ -10867,7 +13591,14 @@ async def test_admin_team_non_members_partial_html_success(monkeypatch, mock_req
 @pytest.mark.asyncio
 async def test_admin_team_non_members_partial_html_disabled(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", False)
-    response = await admin_team_non_members_partial_html("team-1", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(
+        "team-1",
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     assert "email authentication is disabled" in response.body.decode().lower()
 
@@ -10878,7 +13609,14 @@ async def test_admin_team_non_members_partial_html_invalid_team_id(monkeypatch, 
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: MagicMock())
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
-    response = await admin_team_non_members_partial_html("not-a-uuid", request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(
+        "not-a-uuid",
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert "invalid team id" in response.body.decode().lower()
 
@@ -10897,7 +13635,14 @@ async def test_admin_team_non_members_partial_html_team_not_found(monkeypatch, m
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 404
     assert "team not found" in response.body.decode().lower()
 
@@ -10917,7 +13662,14 @@ async def test_admin_team_non_members_partial_html_not_owner(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="member")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
     assert "only team owners" in response.body.decode().lower()
 
@@ -10937,7 +13689,14 @@ async def test_admin_team_non_members_partial_html_exception(monkeypatch, mock_r
     team_service.get_user_role_in_team = AsyncMock(return_value="owner")
     monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: team_service)
 
-    response = await admin_team_non_members_partial_html(team_id, request=mock_request, page=1, per_page=5, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await admin_team_non_members_partial_html(
+        team_id,
+        request=mock_request,
+        page=1,
+        per_page=5,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     assert "error loading non-members" in response.body.decode().lower()
 
@@ -10955,7 +13714,12 @@ async def test_admin_get_user_edit_with_password_requirements(monkeypatch, mock_
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     assert "Password Requirements" in response.body.decode()
 
@@ -10968,7 +13732,12 @@ async def test_admin_get_user_edit_has_error_display(monkeypatch, mock_request, 
     auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", full_name="A", is_admin=False))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_get_user_edit("a%40example.com", mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_get_user_edit(
+        "a%40example.com",
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     body = response.body.decode()
 
@@ -10992,7 +13761,12 @@ async def test_admin_update_user_errors_include_retarget_header(monkeypatch, moc
     auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("Test error"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
-    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await admin_update_user(
+        "a%40example.com",
+        request=request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 400
     assert response.headers.get("HX-Retarget") == "#edit-user-error", "Generic error should include HX-Retarget header"
 
@@ -11004,7 +13778,12 @@ async def test_admin_update_user_errors_include_retarget_header(monkeypatch, moc
     auth_service2.is_last_active_admin = AsyncMock(return_value=True)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service2)
 
-    response2 = await admin_update_user("a%40example.com", request=request2, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response2 = await admin_update_user(
+        "a%40example.com",
+        request=request2,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response2.status_code == 400
     assert "last remaining admin" in response2.body.decode()
     assert response2.headers.get("HX-Retarget") == "#edit-user-error", "Admin protection error should include HX-Retarget header"
@@ -11077,15 +13856,28 @@ async def test_list_plugins_and_stats(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr("mcpgateway.admin.get_plugin_service", lambda: plugin_service)
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *args, **kwargs: structured_logger)
 
-    response = await list_plugins(mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await list_plugins(
+        mock_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.total == 2
     assert response.enabled_count == 1
     assert response.disabled_count == 1
 
-    filtered = await list_plugins(mock_request, search="alpha", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    filtered = await list_plugins(
+        mock_request,
+        search="alpha",
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert filtered.total == 1
 
-    stats = await get_plugin_stats(mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    stats = await get_plugin_stats(
+        mock_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert stats.total_plugins == 2
     assert stats.enabled_plugins == 1
 
@@ -11102,7 +13894,11 @@ async def test_list_plugins_exception(monkeypatch, mock_request, mock_db, allow_
     monkeypatch.setattr("mcpgateway.admin.get_plugin_service", lambda: plugin_service)
 
     with pytest.raises(HTTPException) as excinfo:
-        await list_plugins(mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+        await list_plugins(
+            mock_request,
+            db=mock_db,
+            user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -11118,7 +13914,11 @@ async def test_get_plugin_stats_exception(monkeypatch, mock_request, mock_db, al
     monkeypatch.setattr("mcpgateway.admin.get_plugin_service", lambda: plugin_service)
 
     with pytest.raises(HTTPException) as excinfo:
-        await get_plugin_stats(mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+        await get_plugin_stats(
+            mock_request,
+            db=mock_db,
+            user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -11155,11 +13955,21 @@ async def test_get_plugin_details_success_and_not_found(monkeypatch, mock_reques
     monkeypatch.setattr("mcpgateway.admin.get_structured_logger", lambda *args, **kwargs: structured_logger)
     monkeypatch.setattr("mcpgateway.admin.get_audit_trail_service", lambda: audit_service)
 
-    detail = await get_plugin_details("alpha", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    detail = await get_plugin_details(
+        "alpha",
+        mock_request,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert detail.name == "alpha"
 
     with pytest.raises(HTTPException) as excinfo:
-        await get_plugin_details("missing", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+        await get_plugin_details(
+            "missing",
+            mock_request,
+            db=mock_db,
+            user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
 
@@ -11197,7 +14007,12 @@ async def test_get_plugin_details_exception(monkeypatch, mock_request, mock_db, 
     monkeypatch.setattr("mcpgateway.admin.get_audit_trail_service", lambda: audit_service)
 
     with pytest.raises(HTTPException) as excinfo:
-        await get_plugin_details("alpha", mock_request, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+        await get_plugin_details(
+            "alpha",
+            mock_request,
+            db=mock_db,
+            user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -11215,7 +14030,15 @@ async def test_catalog_partial(monkeypatch, mock_request, mock_db):
     mock_get_catalog = AsyncMock(side_effect=[response_page, response_all])
     monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", mock_get_catalog)
 
-    response = await catalog_partial(mock_request, category="Dev", auth_type="api_key", search=None, page=1, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+    response = await catalog_partial(
+        mock_request,
+        category="Dev",
+        auth_type="api_key",
+        search=None,
+        page=1,
+        db=mock_db,
+        _user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     stats = template_call[0][2]["stats"]
@@ -11227,7 +14050,15 @@ async def test_catalog_partial(monkeypatch, mock_request, mock_db):
 async def test_catalog_partial_disabled_raises_404(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_catalog_enabled", False)
     with pytest.raises(HTTPException) as excinfo:
-        await catalog_partial(mock_request, category=None, auth_type=None, search=None, page=1, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
+        await catalog_partial(
+            mock_request,
+            category=None,
+            auth_type=None,
+            search=None,
+            page=1,
+            db=mock_db,
+            _user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
 
@@ -11262,7 +14093,7 @@ async def test_get_observability_traces_with_filters(monkeypatch, mock_request, 
         name_search="trace",
         attribute_search="attr",
         tool_name="tool",
-        _user={"email": "admin@example.com", "db": mock_db},
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
     )
 
     assert isinstance(response, HTMLResponse)
@@ -11285,7 +14116,12 @@ async def test_get_top_slow_endpoints(monkeypatch, mock_db):
     mock_db.query.return_value = _mock_top_query_result(row)
     monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
 
-    result = await get_top_slow_endpoints(request=MagicMock(), hours=1, limit=5, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_top_slow_endpoints(
+        request=MagicMock(),
+        hours=1,
+        limit=5,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["endpoints"][0]["avg_duration_ms"] == 12.34
 
 
@@ -11295,7 +14131,12 @@ async def test_get_top_volume_endpoints(monkeypatch, mock_db):
     mock_db.query.return_value = _mock_top_query_result(row)
     monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
 
-    result = await get_top_volume_endpoints(request=MagicMock(), hours=1, limit=5, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_top_volume_endpoints(
+        request=MagicMock(),
+        hours=1,
+        limit=5,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["endpoints"][0]["avg_duration_ms"] == 0
 
 
@@ -11305,7 +14146,12 @@ async def test_get_top_error_endpoints(monkeypatch, mock_db):
     mock_db.query.return_value = _mock_top_query_result(row)
     monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_db]))
 
-    result = await get_top_error_endpoints(request=MagicMock(), hours=1, limit=5, _user={"email": "admin@example.com", "db": mock_db})
+    result = await get_top_error_endpoints(
+        request=MagicMock(),
+        hours=1,
+        limit=5,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result["endpoints"][0]["error_rate"] == 50.0
 
 
@@ -11567,12 +14413,22 @@ async def test_admin_test_gateway_json_and_text(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 200
     assert response.body == {"message": "ok"}
 
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClientText())
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.body.get("details") == "plain text"
 
 
@@ -11586,7 +14442,12 @@ async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 401
 
 
@@ -11600,7 +14461,12 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     # Satisfy RBAC wrapper ("email" key must exist) while still exercising admin_test_gateway's missing-email branch.
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 401
     assert "authentication required" in (response.body.get("error") or "").lower()
 
@@ -11643,7 +14509,12 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 200
     assert captured["headers"]["Authorization"] == "Bearer tok"
 
@@ -11659,7 +14530,12 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 500
     assert "token retrieval failed" in (response.body.get("error") or "").lower()
 
@@ -11702,7 +14578,12 @@ async def test_admin_test_gateway_oauth_client_credentials_success(monkeypatch, 
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 200
     assert captured["headers"]["Authorization"] == "Bearer tok"
 
@@ -11733,7 +14614,12 @@ async def test_admin_test_gateway_oauth_client_credentials_token_error(monkeypat
     monkeypatch.setattr("mcpgateway.admin.ResilientHttpClient", lambda **_kwargs: MockClient())
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 502
 
 
@@ -11783,7 +14669,12 @@ async def test_admin_test_gateway_form_urlencoded_body_handling(monkeypatch, moc
         body=body,
         content_type="application/x-www-form-urlencoded",
     )
-    response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
+    response = await admin_test_gateway(
+        request,
+        None,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        db=mock_db,
+    )
     assert response.status_code == 200
     assert captured["headers"]["Content-Type"] == "application/x-www-form-urlencoded"
     assert captured["data"] == expected_data
@@ -11799,7 +14690,12 @@ async def test_admin_list_tags(monkeypatch, mock_db):
     tag_service.get_all_tags = AsyncMock(return_value=[tag])
     monkeypatch.setattr("mcpgateway.admin.TagService", lambda: tag_service)
 
-    result = await admin_list_tags(entity_types="tools,resources", include_entities=True, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    result = await admin_list_tags(
+        entity_types="tools,resources",
+        include_entities=True,
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert result[0]["name"] == "alpha"
     assert result[0]["entities"][0]["id"] == "tool-1"
 
@@ -11812,7 +14708,12 @@ async def test_admin_list_tags_exception_raises_http_500(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.TagService", lambda: tag_service)
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_list_tags(entity_types=None, include_entities=False, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+        await admin_list_tags(
+            entity_types=None,
+            include_entities=False,
+            db=mock_db,
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -11831,7 +14732,11 @@ async def test_get_gateways_section(monkeypatch, mock_db):
     gateway_service.list_gateways = AsyncMock(return_value=([gateway_a, gateway_b, GatewayModel()], None))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
-    response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await get_gateways_section(
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     payload = response.body.decode()
     assert "gateways" in payload
 
@@ -11843,7 +14748,11 @@ async def test_get_gateways_section_exception_returns_500(monkeypatch, mock_db, 
     gateway_service.list_gateways = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
-    response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    response = await get_gateways_section(
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -11853,7 +14762,11 @@ async def test_get_gateways_section_exception_returns_500(monkeypatch, mock_db, 
 async def test_get_performance_stats_paths(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "mcpgateway_performance_tracking", False)
     mock_request.headers = {"hx-request": "true"}
-    response = await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await get_performance_stats(
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
 
     monkeypatch.setattr(settings, "mcpgateway_performance_tracking", True)
@@ -11871,11 +14784,19 @@ async def test_get_performance_stats_paths(monkeypatch, mock_request, mock_db, a
     monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: service)
 
     mock_request.headers = {"hx-request": "true"}
-    response = await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await get_performance_stats(
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, HTMLResponse)
 
     mock_request.headers = {}
-    response = await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+    response = await get_performance_stats(
+        mock_request,
+        db=mock_db,
+        _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.media_type == "application/json"
 
 
@@ -11885,7 +14806,11 @@ async def test_get_performance_stats_disabled_non_htmx_raises_404(monkeypatch, m
     monkeypatch.setattr(settings, "mcpgateway_performance_tracking", False)
     mock_request.headers = {}
     with pytest.raises(HTTPException) as excinfo:
-        await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+        await get_performance_stats(
+            mock_request,
+            db=mock_db,
+            _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 404
 
 
@@ -11900,7 +14825,11 @@ async def test_get_performance_stats_exception_raises_500(monkeypatch, mock_requ
 
     mock_request.headers = {}
     with pytest.raises(HTTPException) as excinfo:
-        await get_performance_stats(mock_request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+        await get_performance_stats(
+            mock_request,
+            db=mock_db,
+            _user={"email": "admin@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
     assert excinfo.value.status_code == 500
 
 
@@ -11911,7 +14840,12 @@ async def test_admin_delete_tool_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "true"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool(
+        "tool-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#tools"
     mock_delete.assert_called_once_with(mock_db, "tool-1", user_email="user@example.com", purge_metrics=True)
@@ -11925,7 +14859,12 @@ async def test_admin_delete_tool_success_include_inactive(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool(
+        "tool-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin/?include_inactive=true#tools"
 
@@ -11938,7 +14877,12 @@ async def test_admin_delete_tool_permission_error(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool(
+        "tool-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     location = response.headers["location"]
     assert "error=" in location
     assert "include_inactive=true" in location
@@ -11953,7 +14897,12 @@ async def test_admin_delete_tool_generic_exception_error_redirect(mock_delete, m
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("tool-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_tool(
+        "tool-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "/root/admin/?" in response.headers["location"]
@@ -11967,7 +14916,12 @@ async def test_admin_delete_gateway_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_gateway(
+        "gateway-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#gateways"
     mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com")
@@ -11989,7 +14943,12 @@ async def test_admin_delete_gateway_error_handlers(mock_delete, mock_db):
 
     for exc, expected_msg in cases:
         mock_delete.side_effect = exc
-        response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_delete_gateway(
+            "gateway-1",
+            request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -12002,7 +14961,12 @@ async def test_admin_delete_gateway_success_inactive_checked_redirect(mock_delet
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_gateway(
+        "gateway-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#gateways"
@@ -12017,7 +14981,12 @@ async def test_admin_delete_gateway_error_inactive_checked_redirect(mock_delete,
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_gateway(
+        "gateway-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
@@ -12031,7 +15000,12 @@ async def test_admin_delete_resource_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "true"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_resource(
+        "res-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     mock_delete.assert_called_once_with(mock_db, "res-1", user_email="user@example.com", purge_metrics=True)
@@ -12045,7 +15019,12 @@ async def test_admin_delete_resource_success_inactive_unchecked_redirect(mock_de
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_resource(
+        "res-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#resources"
     mock_delete.assert_called_once_with(mock_db, "res-1", user_email="user@example.com", purge_metrics=False)
@@ -12067,7 +15046,12 @@ async def test_admin_delete_resource_error_handlers(mock_delete, mock_db):
 
     for exc, expected_msg in cases:
         mock_delete.side_effect = exc
-        response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_delete_resource(
+            "res-1",
+            request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -12081,7 +15065,12 @@ async def test_admin_delete_resource_error_inactive_checked_redirect(mock_delete
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "false"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_resource("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_resource(
+        "res-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -12094,7 +15083,12 @@ async def test_admin_delete_prompt_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_prompt(
+        "prompt-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#prompts"
     mock_delete.assert_called_once_with(mock_db, "prompt-1", user_email="user@example.com", purge_metrics=False)
@@ -12108,7 +15102,12 @@ async def test_admin_delete_prompt_success_inactive_checked_redirect(mock_delete
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "false"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_prompt(
+        "prompt-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#prompts"
 
@@ -12129,7 +15128,12 @@ async def test_admin_delete_prompt_error_handlers(mock_delete, mock_db):
 
     for exc, expected_msg in cases:
         mock_delete.side_effect = exc
-        response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_delete_prompt(
+            "prompt-1",
+            request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -12143,7 +15147,12 @@ async def test_admin_delete_prompt_error_inactive_checked_redirect(mock_delete, 
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "true", "purge_metrics": "false"}))
     request.scope = {"root_path": ""}
 
-    response = await admin_delete_prompt("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_prompt(
+        "prompt-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -12165,7 +15174,12 @@ async def test_admin_set_resource_state_error_handlers(mock_set_state, mock_db):
 
     for exc, expected_msg in cases:
         mock_set_state.side_effect = exc
-        response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_set_resource_state(
+            "res-1",
+            request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -12178,7 +15192,12 @@ async def test_admin_set_resource_state_success_inactive_checked_redirect(mock_s
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_set_resource_state(
+        "res-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#resources"
 
@@ -12192,7 +15211,12 @@ async def test_admin_set_resource_state_error_inactive_checked_redirect(mock_set
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_resource_state("res-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_set_resource_state(
+        "res-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -12214,7 +15238,12 @@ async def test_admin_set_prompt_state_error_handlers(mock_set_state, mock_db):
 
     for exc, expected_msg in cases:
         mock_set_state.side_effect = exc
-        response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+        response = await admin_set_prompt_state(
+            "prompt-1",
+            request,
+            mock_db,
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+        )
         assert response.status_code == 303
         assert expected_msg in unquote(response.headers["location"])
 
@@ -12227,7 +15256,12 @@ async def test_admin_set_prompt_state_success_inactive_checked_redirect(mock_set
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_set_prompt_state(
+        "prompt-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 303
     assert response.headers["location"] == "/admin/?include_inactive=true#prompts"
 
@@ -12241,7 +15275,12 @@ async def test_admin_set_prompt_state_error_inactive_checked_redirect(mock_set_s
     request.scope = {"root_path": ""}
     request.form = AsyncMock(return_value=FakeForm({"activate": "true", "is_inactive_checked": "true"}))
 
-    response = await admin_set_prompt_state("prompt-1", request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_set_prompt_state(
+        "prompt-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 303
     assert "include_inactive=true" in response.headers["location"]
     assert "error=" in response.headers["location"]
@@ -12250,7 +15289,11 @@ async def test_admin_set_prompt_state_error_inactive_checked_redirect(mock_set_s
 @pytest.mark.asyncio
 async def test_admin_test_resource_success(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.resource_service.read_resource", AsyncMock(return_value={"hello": "world"}))
-    result = await admin_test_resource("resource://example/demo", mock_db, user={"email": "user@example.com"})
+    result = await admin_test_resource(
+        "resource://example/demo",
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert result["content"] == {"hello": "world"}
 
 
@@ -12258,7 +15301,11 @@ async def test_admin_test_resource_success(monkeypatch, mock_db):
 async def test_admin_test_resource_not_found(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.resource_service.read_resource", AsyncMock(side_effect=ResourceNotFoundError("Not found")))
     with pytest.raises(HTTPException) as exc:
-        await admin_test_resource("resource://missing", mock_db, user={"email": "user@example.com"})
+        await admin_test_resource(
+            "resource://missing",
+            mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
     assert exc.value.status_code == 404
 
 
@@ -12267,7 +15314,11 @@ async def test_admin_test_resource_generic_exception_is_reraised(monkeypatch, mo
     """Cover generic exception branch in admin_test_resource."""
     monkeypatch.setattr("mcpgateway.admin.resource_service.read_resource", AsyncMock(side_effect=RuntimeError("boom")))
     with pytest.raises(RuntimeError):
-        await admin_test_resource("resource://example/demo", mock_db, user={"email": "user@example.com"})
+        await admin_test_resource(
+            "resource://example/demo",
+            mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
 
 
 @pytest.mark.asyncio
@@ -12275,7 +15326,12 @@ async def test_admin_get_all_agent_ids_team_filter(monkeypatch, mock_db):
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [("a1",), ("a2",)]
 
-    result = await admin_get_all_agent_ids(include_inactive=False, team_id="team-1", db=mock_db, user={"email": "u@example.com"})
+    result = await admin_get_all_agent_ids(
+        include_inactive=False,
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert result["count"] == 2
 
 
@@ -12284,7 +15340,12 @@ async def test_admin_get_all_agent_ids_invalid_team(monkeypatch, mock_db):
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = []
 
-    result = await admin_get_all_agent_ids(include_inactive=False, team_id="team-2", db=mock_db, user={"email": "u@example.com"})
+    result = await admin_get_all_agent_ids(
+        include_inactive=False,
+        team_id="team-2",
+        db=mock_db,
+        user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert result["count"] == 0
 
 
@@ -12294,7 +15355,12 @@ async def test_admin_get_all_agent_ids_all_teams_view(monkeypatch, mock_db):
     setup_team_service(monkeypatch, ["team-1"])
     mock_db.execute.return_value.all.return_value = [("a1",)]
 
-    result = await admin_get_all_agent_ids(include_inactive=False, team_id=None, db=mock_db, user={"email": "u@example.com"})
+    result = await admin_get_all_agent_ids(
+        include_inactive=False,
+        team_id=None,
+        db=mock_db,
+        user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert result["count"] == 1
 
 
@@ -12306,7 +15372,11 @@ async def test_admin_get_agent_success(monkeypatch, mock_db):
     service.get_agent = AsyncMock(return_value=agent)
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
 
-    result = await admin_get_agent("agent-1", mock_db, user={"email": "u@example.com"})
+    result = await admin_get_agent(
+        "agent-1",
+        mock_db,
+        user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert result["id"] == "agent-1"
 
 
@@ -12316,7 +15386,11 @@ async def test_admin_get_agent_not_found(monkeypatch, mock_db):
     service.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("Agent not found"))
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
     with pytest.raises(HTTPException) as exc:
-        await admin_get_agent("missing", mock_db, user={"email": "u@example.com"})
+        await admin_get_agent(
+            "missing",
+            mock_db,
+            user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
     assert exc.value.status_code == 404
 
 
@@ -12328,7 +15402,11 @@ async def test_admin_get_agent_generic_exception_is_reraised(monkeypatch, mock_d
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
 
     with pytest.raises(RuntimeError):
-        await admin_get_agent("agent-1", mock_db, user={"email": "u@example.com"})
+        await admin_get_agent(
+            "agent-1",
+            mock_db,
+            user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
 
 
 @pytest.mark.asyncio
@@ -12346,7 +15424,11 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
             visibility="public",
         )
     ]
-    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await get_resources_section(
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
@@ -12357,7 +15439,11 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
 async def test_get_resources_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_resources_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_resources_section(team_id="team-1", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await get_resources_section(
+        team_id="team-1",
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -12378,7 +15464,11 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="team",
         )
     ]
-    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await get_prompts_section(
+        team_id="team-2",
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
@@ -12389,7 +15479,11 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
 async def test_get_prompts_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_prompts_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_prompts_section(team_id="team-2", db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await get_prompts_section(
+        team_id="team-2",
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -12409,7 +15503,12 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="private",
         )
     ]
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await get_servers_section(
+        team_id="team-3",
+        include_inactive=True,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
@@ -12420,7 +15519,12 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
 async def test_get_servers_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_servers_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    response = await get_servers_section(
+        team_id="team-3",
+        include_inactive=True,
+        db=mock_db,
+        user={"email": "u@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -12439,7 +15543,11 @@ async def test_get_plugins_partial_success(monkeypatch):
     plugin_service.get_plugin_statistics = AsyncMock(return_value={"total": 0})
     monkeypatch.setattr("mcpgateway.admin.get_plugin_service", lambda: plugin_service)
 
-    response = await get_plugins_partial(request=request, db=MagicMock(), user={"email": "u@example.com"})
+    response = await get_plugins_partial(
+        request=request,
+        db=MagicMock(),
+        user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert isinstance(response, HTMLResponse)
 
 
@@ -12455,7 +15563,11 @@ async def test_get_plugins_partial_error(monkeypatch):
     plugin_service.get_all_plugins.side_effect = Exception("plugin boom")
     monkeypatch.setattr("mcpgateway.admin.get_plugin_service", lambda: plugin_service)
 
-    response = await get_plugins_partial(request=request, db=MagicMock(), user={"email": "u@example.com"})
+    response = await get_plugins_partial(
+        request=request,
+        db=MagicMock(),
+        user={"email": "u@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 500
 
 
@@ -12499,7 +15611,7 @@ async def test_observability_query_crud(monkeypatch, allow_permission):
         yield db
 
     monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
-    user = {"email": "user@example.com", "db": db}
+    user = {"email": "user@example.com", "db": db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
 
     result = await list_observability_queries(request=MagicMock(spec=Request), user=user)
     assert result[0]["id"] == 1
@@ -12531,7 +15643,7 @@ async def test_observability_query_not_found(monkeypatch, allow_permission):
         yield db
 
     monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
-    user = {"email": "user@example.com", "db": db}
+    user = {"email": "user@example.com", "db": db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
 
     with pytest.raises(HTTPException) as exc:
         await get_observability_query(request=MagicMock(spec=Request), query_id=99, user=user)
@@ -12555,7 +15667,7 @@ async def test_update_and_track_observability_query_error_paths(monkeypatch, all
         yield db
 
     monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
-    user = {"email": "user@example.com", "db": db}
+    user = {"email": "user@example.com", "db": db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
 
     db.query.return_value = EmptyQuery()
     db.commit = MagicMock()
@@ -12615,7 +15727,7 @@ async def test_get_performance_endpoints(monkeypatch, allow_permission):
 
     monkeypatch.setattr("mcpgateway.admin.get_db", _get_db)
     monkeypatch.setattr("mcpgateway.admin._get_span_entity_performance", lambda **_kwargs: [{"name": "x"}])
-    user = {"email": "u@example.com", "db": db}
+    user = {"email": "u@example.com", "db": db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
     request = MagicMock(spec=Request)
 
     result = await get_tool_performance(request=request, hours=24, limit=5, _user=user)
@@ -12634,7 +15746,11 @@ async def test_admin_add_a2a_agent_disabled_features(monkeypatch, mock_db, allow
     monkeypatch.setattr("mcpgateway.admin.a2a_service", None)
     monkeypatch.setattr(settings, "mcpgateway_a2a_enabled", True)
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 403
     payload = json.loads(response.body)
     assert payload["success"] is False
@@ -12664,7 +15780,11 @@ async def test_admin_add_a2a_agent_oauth_config_parse_error(monkeypatch, mock_db
     log_error = MagicMock()
     monkeypatch.setattr("mcpgateway.admin.LOGGER.error", log_error, raising=True)
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     assert log_error.called
     agent_data = service.register_agent.call_args.args[1]
@@ -12703,7 +15823,11 @@ async def test_admin_add_a2a_agent_oauth_auto_detect(monkeypatch, mock_db):
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -12751,7 +15875,11 @@ async def test_admin_add_a2a_agent_oauth_assembled_from_form_fields(monkeypatch,
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -12790,7 +15918,11 @@ async def test_admin_add_a2a_agent_oauth_assembled_minimal_fields_covers_false_b
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -12828,7 +15960,11 @@ async def test_admin_add_a2a_agent_oauth_scopes_parse_empty_and_missing_client_i
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -12864,7 +16000,11 @@ async def test_admin_add_a2a_agent_oauth_config_without_client_secret(monkeypatc
         lambda *_args, **_kwargs: {"created_by": "u", "created_from_ip": None, "created_via": "ui", "created_user_agent": None, "import_batch_id": None, "federation_source": None},
     )
 
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
+    )
     assert response.status_code == 200
     agent_data = service.register_agent.call_args.args[1]
     assert agent_data.auth_type == "oauth"
@@ -12891,15 +16031,27 @@ async def test_admin_add_a2a_agent_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.a2a_service", service)
 
     service.register_agent = AsyncMock(side_effect=A2AAgentError("boom"))
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 500
 
     service.register_agent = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("constraint")))
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 409
 
     service.register_agent = AsyncMock(side_effect=Exception("unknown"))
-    response = await admin_add_a2a_agent(request, mock_db, user={"email": "user@example.com"})
+    response = await admin_add_a2a_agent(
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 500
 
 
@@ -12944,7 +16096,12 @@ async def test_admin_edit_a2a_agent_parses_fields(monkeypatch, mock_db):
         "mcpgateway.admin.MetadataCapture.extract_modification_metadata", lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None}
     )
 
-    response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_edit_a2a_agent(
+        "agent-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
     assert agent_update.passthrough_headers is None
@@ -12985,7 +16142,12 @@ async def test_admin_edit_a2a_agent_oauth_config_invalid_json(monkeypatch, mock_
         "mcpgateway.admin.MetadataCapture.extract_modification_metadata", lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None}
     )
 
-    response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_edit_a2a_agent(
+        "agent-1",
+        request,
+        mock_db,
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+    )
     assert response.status_code == 200
     agent_update = service.update_agent.call_args.kwargs["agent_data"]
     assert agent_update.oauth_config is None
@@ -13024,7 +16186,12 @@ async def test_admin_edit_a2a_agent_error_handlers(monkeypatch, mock_db):
             lambda *_args, **_kwargs: {"modified_by": "u", "modified_from_ip": None, "modified_via": "ui", "modified_user_agent": None},
         )
 
-        response = await admin_edit_a2a_agent("agent-1", request, mock_db, user={"email": "user@example.com"})
+        response = await admin_edit_a2a_agent(
+            "agent-1",
+            request,
+            mock_db,
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert response.status_code == expected_status
 
 
@@ -13505,7 +16672,12 @@ class TestTeamJoinRequests:
     async def test_admin_leave_team_email_auth_disabled(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13519,7 +16691,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "Successfully left the team" in result.body.decode()
 
@@ -13531,7 +16708,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 404
 
     @pytest.mark.asyncio
@@ -13544,7 +16726,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "Cannot leave your personal team" in result.body.decode()
 
@@ -13558,7 +16745,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "not a member" in result.body.decode().lower()
 
@@ -13573,7 +16765,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "failed to leave team" in result.body.decode().lower()
 
@@ -13585,7 +16782,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_leave_team("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_leave_team(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "error leaving team" in result.body.decode().lower()
 
@@ -13593,7 +16795,12 @@ class TestTeamJoinRequests:
     async def test_admin_create_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
         request = MagicMock(spec=Request)
-        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_create_join_request(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13606,7 +16813,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_create_join_request(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "public teams" in result.body.decode().lower()
 
@@ -13620,7 +16832,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_create_join_request(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "already a member" in result.body.decode().lower()
 
@@ -13633,7 +16850,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.form = AsyncMock(return_value={})
-        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_create_join_request(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "error creating join request" in result.body.decode().lower()
 
@@ -13651,7 +16873,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.form = AsyncMock(return_value={"message": "Please add me"})
-        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_create_join_request(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 201
         assert "Join request submitted" in result.body.decode()
 
@@ -13667,7 +16894,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
         request = MagicMock(spec=Request)
-        result = await admin_create_join_request("team-1", request, mock_db, user={"email": "user@test.com"})
+        result = await admin_create_join_request(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "already have a pending request" in result.body.decode()
 
@@ -13678,7 +16910,12 @@ class TestTeamJoinRequests:
         ts.cancel_join_request = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        result = await admin_cancel_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "Request to Join" in result.body.decode()
 
@@ -13689,13 +16926,23 @@ class TestTeamJoinRequests:
         ts.cancel_join_request = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        result = await admin_cancel_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
 
     @pytest.mark.asyncio
     async def test_admin_cancel_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        result = await admin_cancel_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13705,7 +16952,12 @@ class TestTeamJoinRequests:
         ts.cancel_join_request = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_cancel_join_request("team-1", "req-1", mock_db, user={"email": "user@test.com"})
+        result = await admin_cancel_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "error canceling join request" in result.body.decode().lower()
 
@@ -13722,7 +16974,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
-        result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
+        result = await admin_list_join_requests(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "a@b.com" in result.body.decode()
 
@@ -13738,7 +16995,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
-        result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
+        result = await admin_list_join_requests(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "No pending join requests" in result.body.decode()
 
@@ -13747,7 +17009,12 @@ class TestTeamJoinRequests:
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
-        result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
+        result = await admin_list_join_requests(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13759,7 +17026,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
-        result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
+        result = await admin_list_join_requests(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 404
 
     @pytest.mark.asyncio
@@ -13773,7 +17045,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
-        result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "member@test.com"})
+        result = await admin_list_join_requests(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "member@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13788,7 +17065,12 @@ class TestTeamJoinRequests:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
-        result = await admin_list_join_requests("team-1", request, mock_db, user={"email": "owner@test.com"})
+        result = await admin_list_join_requests(
+            "team-1",
+            request,
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "error loading join requests" in result.body.decode().lower()
 
@@ -13801,7 +17083,12 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(return_value=member)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "approved" in result.body.decode().lower()
 
@@ -13812,13 +17099,23 @@ class TestTeamJoinRequests:
         ts.get_user_role_in_team = AsyncMock(return_value="member")
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "member@test.com"})
+        result = await admin_approve_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "member@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
     async def test_admin_approve_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13829,7 +17126,12 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(return_value=None)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 404
 
     @pytest.mark.asyncio
@@ -13840,7 +17142,12 @@ class TestTeamJoinRequests:
         ts.approve_join_request = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_approve_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_approve_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "error approving join request" in result.body.decode().lower()
 
@@ -13852,7 +17159,12 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(return_value=True)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "rejected" in result.body.decode().lower()
 
@@ -13864,13 +17176,23 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 404
 
     @pytest.mark.asyncio
     async def test_admin_reject_join_request_email_auth_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", False, raising=False)
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 403
 
     @pytest.mark.asyncio
@@ -13881,7 +17203,12 @@ class TestTeamJoinRequests:
         ts.reject_join_request = AsyncMock(side_effect=RuntimeError("boom"))
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_reject_join_request("team-1", "req-1", mock_db, user={"email": "owner@test.com"})
+        result = await admin_reject_join_request(
+            "team-1",
+            "req-1",
+            mock_db,
+            user={"email": "owner@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 400
         assert "error rejecting join request" in result.body.decode().lower()
 
@@ -13905,7 +17232,13 @@ class TestTeamLookups:
         ts.get_all_team_ids = AsyncMock(return_value=["id-1", "id-2"])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "admin@test.com"})
+        result = await admin_get_all_team_ids(
+            include_inactive=False,
+            visibility=None,
+            q=None,
+            db=mock_db,
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["count"] == 2
         assert result["team_ids"] == ["id-1", "id-2"]
 
@@ -13921,7 +17254,13 @@ class TestTeamLookups:
         ts.get_user_teams = AsyncMock(return_value=[team1])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "user@test.com"})
+        result = await admin_get_all_team_ids(
+            include_inactive=False,
+            visibility=None,
+            q=None,
+            db=mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["count"] == 1
 
     @pytest.mark.asyncio
@@ -13940,7 +17279,13 @@ class TestTeamLookups:
         ts.get_user_teams = AsyncMock(return_value=[team1, team2, team3])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility="public", q="zzz", db=mock_db, user={"email": "user@test.com"})
+        result = await admin_get_all_team_ids(
+            include_inactive=False,
+            visibility="public",
+            q="zzz",
+            db=mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["team_ids"] == ["t3"]
         assert result["count"] == 1
 
@@ -13951,7 +17296,13 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
-        result = await admin_get_all_team_ids(include_inactive=False, visibility=None, q=None, db=mock_db, user={"email": "ghost@test.com"})
+        result = await admin_get_all_team_ids(
+            include_inactive=False,
+            visibility=None,
+            q=None,
+            db=mock_db,
+            user={"email": "ghost@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result == {"team_ids": [], "count": 0}
 
     @pytest.mark.asyncio
@@ -13966,7 +17317,14 @@ class TestTeamLookups:
         ts.list_teams = AsyncMock(return_value={"data": [team]})
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_search_teams(q="Alpha", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "admin@test.com"})
+        result = await admin_search_teams(
+            q="Alpha",
+            include_inactive=False,
+            limit=10,
+            visibility=None,
+            db=mock_db,
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert len(result) == 1
         assert result[0]["name"] == "Alpha"
 
@@ -13985,7 +17343,14 @@ class TestTeamLookups:
         ts.get_user_teams = AsyncMock(return_value=[team1, team2, team3])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_search_teams(q="zzz", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
+        result = await admin_search_teams(
+            q="zzz",
+            include_inactive=False,
+            limit=10,
+            visibility="public",
+            db=mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert [t["id"] for t in result] == ["t3"]
 
     @pytest.mark.asyncio
@@ -14000,7 +17365,14 @@ class TestTeamLookups:
         ts.get_user_teams = AsyncMock(return_value=[team1])
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: ts)
 
-        result = await admin_search_teams(q="engineering", include_inactive=False, limit=10, visibility="public", db=mock_db, user={"email": "user@test.com"})
+        result = await admin_search_teams(
+            q="engineering",
+            include_inactive=False,
+            limit=10,
+            visibility="public",
+            db=mock_db,
+            user={"email": "user@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert len(result) == 1
         assert result[0]["id"] == "t1"
 
@@ -14011,7 +17383,14 @@ class TestTeamLookups:
         monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth)
         monkeypatch.setattr("mcpgateway.admin.TeamManagementService", lambda db: MagicMock())
 
-        result = await admin_search_teams(q="test", include_inactive=False, limit=10, visibility=None, db=mock_db, user={"email": "ghost@test.com"})
+        result = await admin_search_teams(
+            q="test",
+            include_inactive=False,
+            limit=10,
+            visibility=None,
+            db=mock_db,
+            user={"email": "ghost@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result == []
 
 
@@ -14028,7 +17407,10 @@ class TestRootManagement:
         root = SimpleNamespace(uri="file:///test", name="TestRoot")
         monkeypatch.setattr("mcpgateway.admin.root_service.get_root_by_uri", AsyncMock(return_value=root))
 
-        result = await admin_export_root(uri="file:///test", user={"email": "admin@test.com"})
+        result = await admin_export_root(
+            uri="file:///test",
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
         assert "application/json" in result.media_type
         body = json.loads(result.body)
@@ -14040,7 +17422,10 @@ class TestRootManagement:
         monkeypatch.setattr("mcpgateway.admin.root_service.get_root_by_uri", AsyncMock(side_effect=RootServiceNotFoundError("not found")))
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_export_root(uri="file:///missing", user={"email": "admin@test.com"})
+            await admin_export_root(
+                uri="file:///missing",
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14048,7 +17433,10 @@ class TestRootManagement:
         monkeypatch.setattr("mcpgateway.admin.root_service.get_root_by_uri", AsyncMock(side_effect=RuntimeError("boom")))
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_export_root(uri="file:///test", user={"email": "admin@test.com"})
+            await admin_export_root(
+                uri="file:///test",
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         assert exc_info.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -14057,7 +17445,10 @@ class TestRootManagement:
         root.model_dump.return_value = {"uri": "file:///test", "name": "TestRoot"}
         monkeypatch.setattr("mcpgateway.admin.root_service.get_root_by_uri", AsyncMock(return_value=root))
 
-        result = await admin_get_root(uri="file:///test", user={"email": "admin@test.com"})
+        result = await admin_get_root(
+            uri="file:///test",
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["uri"] == "file:///test"
 
     @pytest.mark.asyncio
@@ -14065,7 +17456,10 @@ class TestRootManagement:
         monkeypatch.setattr("mcpgateway.admin.root_service.get_root_by_uri", AsyncMock(side_effect=RootServiceNotFoundError("missing")))
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_get_root(uri="file:///missing", user={"email": "admin@test.com"})
+            await admin_get_root(
+                uri="file:///missing",
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14073,7 +17467,10 @@ class TestRootManagement:
         monkeypatch.setattr("mcpgateway.admin.root_service.get_root_by_uri", AsyncMock(side_effect=RuntimeError("boom")))
 
         with pytest.raises(RuntimeError):
-            await admin_get_root(uri="file:///test", user={"email": "admin@test.com"})
+            await admin_get_root(
+                uri="file:///test",
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
 
     @pytest.mark.asyncio
     async def test_admin_update_root_success(self, monkeypatch, allow_permission):
@@ -14083,7 +17480,11 @@ class TestRootManagement:
         request.scope = {"root_path": ""}
         request.form = AsyncMock(return_value=FakeForm({"name": "Updated", "is_inactive_checked": "false"}))
 
-        result = await admin_update_root("file:///test", request, user={"email": "admin@test.com"})
+        result = await admin_update_root(
+            "file:///test",
+            request,
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
 
@@ -14095,7 +17496,11 @@ class TestRootManagement:
         request.scope = {"root_path": ""}
         request.form = AsyncMock(return_value=FakeForm({"name": "Updated", "is_inactive_checked": "true"}))
 
-        result = await admin_update_root("file:///test", request, user={"email": "admin@test.com"})
+        result = await admin_update_root(
+            "file:///test",
+            request,
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert isinstance(result, RedirectResponse)
         assert "include_inactive=true" in str(result.headers.get("location", "")) or result.status_code == 303
 
@@ -14108,7 +17513,11 @@ class TestRootManagement:
         request.form = AsyncMock(return_value=FakeForm({"name": "Updated", "is_inactive_checked": "false"}))
 
         with pytest.raises(HTTPException) as exc_info:
-            await admin_update_root("file:///missing", request, user={"email": "admin@test.com"})
+            await admin_update_root(
+                "file:///missing",
+                request,
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14120,7 +17529,11 @@ class TestRootManagement:
         request.form = AsyncMock(return_value=FakeForm({"name": "Updated", "is_inactive_checked": "false"}))
 
         with pytest.raises(RuntimeError):
-            await admin_update_root("file:///test", request, user={"email": "admin@test.com"})
+            await admin_update_root(
+                "file:///test",
+                request,
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
 
 
 # ============================================================================ #
@@ -14136,7 +17549,15 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", False, raising=False)
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await list_catalog_servers(request, db=mock_db, _user={"email": "admin@test.com"})
+            await list_catalog_servers(
+                request,
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14146,7 +17567,12 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", AsyncMock(return_value=mock_result))
 
         request = MagicMock(spec=Request)
-        result = await list_catalog_servers(request, tags=[], db=mock_db, _user={"email": "admin@test.com"})
+        result = await list_catalog_servers(
+            request,
+            tags=[],
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result == mock_result
 
     @pytest.mark.asyncio
@@ -14154,7 +17580,16 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", False, raising=False)
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+            await register_catalog_server(
+                "srv-1",
+                request,
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14165,7 +17600,12 @@ class TestCatalogEndpoints:
 
         request = MagicMock(spec=Request)
         request.headers = {}
-        result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+        result = await register_catalog_server(
+            "srv-1",
+            request,
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result == reg_result
 
     @pytest.mark.asyncio
@@ -14176,7 +17616,12 @@ class TestCatalogEndpoints:
 
         request = MagicMock(spec=Request)
         request.headers = {"HX-Request": "true"}
-        result = await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+        result = await register_catalog_server(
+            "srv-1",
+            request,
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert isinstance(result, HTMLResponse)
         assert "Registered Successfully" in result.body.decode()
 
@@ -14184,7 +17629,15 @@ class TestCatalogEndpoints:
     async def test_check_catalog_server_status_disabled(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", False, raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            await check_catalog_server_status("srv-1", _db=mock_db, _user={"email": "admin@test.com"})
+            await check_catalog_server_status(
+                "srv-1",
+                _db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14193,7 +17646,11 @@ class TestCatalogEndpoints:
         status = SimpleNamespace(available=True, response_time=0.1)
         monkeypatch.setattr("mcpgateway.admin.catalog_service.check_server_availability", AsyncMock(return_value=status))
 
-        result = await check_catalog_server_status("srv-1", _db=mock_db, _user={"email": "admin@test.com"})
+        result = await check_catalog_server_status(
+            "srv-1",
+            _db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.available is True
 
     @pytest.mark.asyncio
@@ -14204,7 +17661,15 @@ class TestCatalogEndpoints:
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
         with pytest.raises(HTTPException) as exc_info:
-            await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+            await bulk_register_catalog_servers(
+                req,
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14217,7 +17682,11 @@ class TestCatalogEndpoints:
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
-        result = await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+        result = await bulk_register_catalog_servers(
+            req,
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result == bulk_result
 
 
@@ -14237,7 +17706,11 @@ class TestObservability:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Obs</html>")
 
-        result = await get_observability_partial(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        result = await get_observability_partial(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         assert isinstance(result, HTMLResponse)
         request.app.state.templates.TemplateResponse.assert_called_once()
 
@@ -14249,7 +17722,11 @@ class TestObservability:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Metrics</html>")
 
-        result = await get_observability_metrics_partial(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        result = await get_observability_metrics_partial(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         assert isinstance(result, HTMLResponse)
 
     @pytest.mark.asyncio
@@ -14272,7 +17749,12 @@ class TestObservability:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Stats</html>")
 
-        result = await get_observability_stats(request, hours=24, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_observability_stats(
+            request,
+            hours=24,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert isinstance(result, HTMLResponse)
 
     @pytest.mark.asyncio
@@ -14290,7 +17772,12 @@ class TestObservability:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Detail</html>")
 
-        result = await get_observability_trace_detail(request, trace_id="abc-123", _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_observability_trace_detail(
+            request,
+            trace_id="abc-123",
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert isinstance(result, HTMLResponse)
 
     @pytest.mark.asyncio
@@ -14303,7 +17790,16 @@ class TestObservability:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await get_observability_trace_detail(request, trace_id="missing", _user={"email": "admin@test.com"}, db=mock_session)
+            await get_observability_trace_detail(
+                request,
+                trace_id="missing",
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+                db=mock_session,
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14327,7 +17823,7 @@ class TestObservability:
         monkeypatch.setattr("mcpgateway.admin.ObservabilitySavedQuery", lambda **kw: mock_query)
 
         request = MagicMock(spec=Request)
-        user = {"email": "admin@test.com"}
+        user = {"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
         result = await save_observability_query(request, name="test-query", description="desc", filter_config={"status": "error"}, is_shared=False, user=user, db=mock_session)
         assert result["name"] == "test-query"
 
@@ -14351,7 +17847,7 @@ class TestObservability:
         monkeypatch.setattr("mcpgateway.admin.ObservabilitySavedQuery", lambda **kw: mock_query)
 
         request = MagicMock(spec=Request)
-        user = {"email": "admin@test.com"}
+        user = {"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
         with pytest.raises(HTTPException) as exc_info:
             await save_observability_query(request, name="test-query", description="desc", filter_config={"status": "error"}, is_shared=False, user=user, db=mock_session)
         assert exc_info.value.status_code == 400
@@ -14368,7 +17864,7 @@ class TestObservability:
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
-        user = {"email": "admin@test.com"}
+        user = {"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
         result = await delete_observability_query(request, query_id=1, user=user, db=mock_session)
         assert result is None  # 204 no content
 
@@ -14381,7 +17877,7 @@ class TestObservability:
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
-        user = {"email": "admin@test.com"}
+        user = {"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
         with pytest.raises(HTTPException) as exc_info:
             await delete_observability_query(request, query_id=999, user=user, db=mock_session)
         assert exc_info.value.status_code == 404
@@ -14399,7 +17895,14 @@ class TestPerformanceEndpoints:
     async def test_get_performance_system_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_performance_tracking", False, raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            await get_performance_system(db=mock_db, _user={"email": "admin@test.com"})
+            await get_performance_system(
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14411,14 +17914,24 @@ class TestPerformanceEndpoints:
         mock_service.get_system_metrics.return_value = mock_metrics
         monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: mock_service)
 
-        result = await get_performance_system(db=mock_db, _user={"email": "admin@test.com"})
+        result = await get_performance_system(
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["cpu"] == 30.0
 
     @pytest.mark.asyncio
     async def test_get_performance_workers_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_performance_tracking", False, raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            await get_performance_workers(db=mock_db, _user={"email": "admin@test.com"})
+            await get_performance_workers(
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14430,7 +17943,10 @@ class TestPerformanceEndpoints:
         mock_service.get_worker_metrics.return_value = [mock_worker]
         monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: mock_service)
 
-        result = await get_performance_workers(db=mock_db, _user={"email": "admin@test.com"})
+        result = await get_performance_workers(
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert len(result) == 1
         assert result[0]["pid"] == 1234
 
@@ -14438,7 +17954,14 @@ class TestPerformanceEndpoints:
     async def test_get_performance_requests_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_performance_tracking", False, raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            await get_performance_requests(db=mock_db, _user={"email": "admin@test.com"})
+            await get_performance_requests(
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14450,14 +17973,24 @@ class TestPerformanceEndpoints:
         mock_service.get_request_metrics.return_value = mock_metrics
         monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: mock_service)
 
-        result = await get_performance_requests(db=mock_db, _user={"email": "admin@test.com"})
+        result = await get_performance_requests(
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["total"] == 1000
 
     @pytest.mark.asyncio
     async def test_get_performance_cache_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_performance_tracking", False, raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            await get_performance_cache(db=mock_db, _user={"email": "admin@test.com"})
+            await get_performance_cache(
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14469,14 +18002,24 @@ class TestPerformanceEndpoints:
         mock_service.get_cache_metrics = AsyncMock(return_value=mock_metrics)
         monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: mock_service)
 
-        result = await get_performance_cache(db=mock_db, _user={"email": "admin@test.com"})
+        result = await get_performance_cache(
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result["hits"] == 500
 
     @pytest.mark.asyncio
     async def test_get_performance_history_disabled(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_performance_tracking", False, raising=False)
         with pytest.raises(HTTPException) as exc_info:
-            await get_performance_history(db=mock_db, _user={"email": "admin@test.com"})
+            await get_performance_history(
+                db=mock_db,
+                _user={
+                    "email": "admin@test.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -14488,7 +18031,12 @@ class TestPerformanceEndpoints:
         mock_service.get_history = AsyncMock(return_value=mock_history)
         monkeypatch.setattr("mcpgateway.admin.get_performance_service", lambda db: mock_service)
 
-        result = await get_performance_history(period_type="hourly", hours=24, db=mock_db, _user={"email": "admin@test.com"})
+        result = await get_performance_history(
+            period_type="hourly",
+            hours=24,
+            db=mock_db,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert "periods" in result
 
 
@@ -14512,7 +18060,11 @@ class TestMaintenanceMisc:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Maintenance</html>")
 
-        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        result = await get_maintenance_partial(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         assert isinstance(result, HTMLResponse)
         request.app.state.templates.TemplateResponse.assert_called_once()
 
@@ -14528,7 +18080,11 @@ class TestMaintenanceMisc:
         )
 
         request = MagicMock(spec=Request)
-        result = await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
+        result = await admin_import_preview(
+            request,
+            db=mock_db,
+            user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+        )
         assert result.status_code == 200
 
     @pytest.mark.asyncio
@@ -14540,7 +18096,11 @@ class TestMaintenanceMisc:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
+            await admin_import_preview(
+                request,
+                db=mock_db,
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         # Inner HTTPException(400) is caught by outer except → re-raised as 500
         assert exc_info.value.status_code == 500
 
@@ -14553,7 +18113,11 @@ class TestMaintenanceMisc:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
+            await admin_import_preview(
+                request,
+                db=mock_db,
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         # ValueError → HTTPException(400) → caught by outer except → 500
         assert exc_info.value.status_code == 500
 
@@ -14573,7 +18137,11 @@ class TestMaintenanceMisc:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await admin_import_preview(request, db=mock_db, user={"email": "admin@test.com"})
+            await admin_import_preview(
+                request,
+                db=mock_db,
+                user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            )
         assert exc_info.value.status_code == 400
 
     def test_render_user_card_html_active_admin(self):
@@ -14659,7 +18227,11 @@ class TestMaintenanceMisc:
         mock_tool_service.subscribe_events = MagicMock(return_value=AsyncMock().__aiter__())
         monkeypatch.setattr("mcpgateway.admin.ToolService", lambda: mock_tool_service)
 
-        result = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        result = await admin_events(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         assert isinstance(result, StreamingResponse)
 
     @pytest.mark.asyncio
@@ -14682,7 +18254,11 @@ class TestMaintenanceMisc:
         monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
         monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
 
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        response = await admin_events(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         assert isinstance(response, StreamingResponse)
 
         chunks = []
@@ -14710,7 +18286,11 @@ class TestMaintenanceMisc:
         monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: bad_events())
         monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
 
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        response = await admin_events(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks
 
@@ -14737,7 +18317,11 @@ class TestMaintenanceMisc:
 
         monkeypatch.setattr("mcpgateway.admin.asyncio.wait_for", fake_wait_for, raising=True)
 
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        response = await admin_events(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks
         first = chunks[0].decode() if isinstance(chunks[0], (bytes, bytearray)) else chunks[0]
@@ -14765,7 +18349,11 @@ class TestMaintenanceMisc:
 
         monkeypatch.setattr("mcpgateway.admin.asyncio.wait_for", fake_wait_for, raising=True)
 
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        response = await admin_events(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         with pytest.raises(asyncio.CancelledError):
             async for _ in response.body_iterator:
                 pass
@@ -14790,7 +18378,11 @@ class TestMaintenanceMisc:
         monkeypatch.setattr("mcpgateway.admin.gateway_service.subscribe_events", lambda: gw_events())
         monkeypatch.setattr("mcpgateway.admin.tool_service.subscribe_events", lambda: tool_events())
 
-        response = await admin_events(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        response = await admin_events(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=mock_db,
+        )
         chunks = [chunk async for chunk in response.body_iterator]
         assert chunks == []
         assert logger.error.called
@@ -14917,7 +18509,13 @@ class TestToolUsageErrorsChains:
         row = SimpleNamespace(tool_name="my_tool", count=10)
         session = _make_obs_session(monkeypatch, [row])
         request = MagicMock(spec=Request)
-        result = await get_tool_usage(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
+        result = await get_tool_usage(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=session,
+        )
         assert result["total_invocations"] == 10
         assert result["tools"][0]["tool_name"] == "my_tool"
 
@@ -14925,7 +18523,13 @@ class TestToolUsageErrorsChains:
     async def test_get_tool_usage_empty(self, monkeypatch, allow_permission):
         session = _make_obs_session(monkeypatch, [])
         request = MagicMock(spec=Request)
-        result = await get_tool_usage(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
+        result = await get_tool_usage(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=session,
+        )
         assert result["total_invocations"] == 0
         assert result["tools"] == []
 
@@ -14934,7 +18538,13 @@ class TestToolUsageErrorsChains:
         row = SimpleNamespace(tool_name="bad_tool", total_count=100, error_count=5)
         session = _make_obs_session(monkeypatch, [row])
         request = MagicMock(spec=Request)
-        result = await get_tool_errors(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
+        result = await get_tool_errors(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=session,
+        )
         assert result["tools"][0]["tool_name"] == "bad_tool"
         assert result["tools"][0]["error_rate"] == 5.0
 
@@ -14942,7 +18552,13 @@ class TestToolUsageErrorsChains:
     async def test_get_tool_errors_empty(self, monkeypatch, allow_permission):
         session = _make_obs_session(monkeypatch, [])
         request = MagicMock(spec=Request)
-        result = await get_tool_errors(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
+        result = await get_tool_errors(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=session,
+        )
         assert result["tools"] == []
 
     @pytest.mark.asyncio
@@ -14961,7 +18577,13 @@ class TestToolUsageErrorsChains:
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
-        result = await get_tool_chains(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_tool_chains(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["total_traces_with_tools"] == 1
         assert len(result["chains"]) == 1
         assert result["chains"][0]["chain"] == "toolA -> toolB"
@@ -14978,7 +18600,13 @@ class TestToolUsageErrorsChains:
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
-        result = await get_tool_chains(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_tool_chains(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["chains"] == []
 
 
@@ -14990,7 +18618,13 @@ class TestPromptResourceUsageErrors:
         row = SimpleNamespace(prompt_id="p1", count=5)
         session = _make_obs_session(monkeypatch, [row])
         request = MagicMock(spec=Request)
-        result = await get_prompt_usage(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
+        result = await get_prompt_usage(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=session,
+        )
         assert result["total_renders"] == 5
         assert result["prompts"][0]["prompt_id"] == "p1"
 
@@ -15007,7 +18641,12 @@ class TestPromptResourceUsageErrors:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
-        result = await get_prompts_errors(hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_prompts_errors(
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["prompts"][0]["prompt_id"] == "p1"
         assert result["prompts"][0]["error_rate"] == 4.0
 
@@ -15016,7 +18655,13 @@ class TestPromptResourceUsageErrors:
         row = SimpleNamespace(resource_uri="r1", count=8)
         session = _make_obs_session(monkeypatch, [row])
         request = MagicMock(spec=Request)
-        result = await get_resource_usage(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=session)
+        result = await get_resource_usage(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=session,
+        )
         assert result["total_fetches"] == 8
         assert result["resources"][0]["resource_uri"] == "r1"
 
@@ -15033,7 +18678,12 @@ class TestPromptResourceUsageErrors:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
-        result = await get_resources_errors(hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_resources_errors(
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["resources"][0]["resource_uri"] == "r1"
         assert result["resources"][0]["error_rate"] == 10.0
 
@@ -15073,7 +18723,16 @@ class TestObservabilityExceptionHandlers:
 
         request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as excinfo:
-            await endpoint(request, _user={"email": "admin@test.com", "db": session}, db=session, **kwargs)
+            await endpoint(
+                request,
+                _user={
+                    "email": "admin@test.com",
+                    "db": session,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+                db=session,
+                **kwargs,
+            )
         assert excinfo.value.status_code == 500
 
 
@@ -15122,7 +18781,13 @@ class TestLatencyPercentiles:
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
-        result = await get_latency_percentiles(request, hours=24, interval_minutes=60, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_latency_percentiles(
+            request,
+            hours=24,
+            interval_minutes=60,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
 
     @pytest.mark.asyncio
@@ -15137,7 +18802,13 @@ class TestLatencyPercentiles:
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
 
         request = MagicMock(spec=Request)
-        result = await get_latency_percentiles(request, hours=24, interval_minutes=60, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_latency_percentiles(
+            request,
+            hours=24,
+            interval_minutes=60,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"timestamps": [], "p50": [], "p90": [], "p95": [], "p99": []}
 
 
@@ -15190,7 +18861,13 @@ class TestTimeseriesMetrics:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_timeseries_metrics(request, hours=24, interval_minutes=60, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_timeseries_metrics(
+            request,
+            hours=24,
+            interval_minutes=60,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
 
     @pytest.mark.asyncio
@@ -15204,7 +18881,13 @@ class TestTimeseriesMetrics:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_timeseries_metrics(request, hours=24, interval_minutes=60, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_timeseries_metrics(
+            request,
+            hours=24,
+            interval_minutes=60,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"timestamps": [], "request_count": [], "success_count": [], "error_count": [], "error_rate": []}
 
 
@@ -15270,7 +18953,14 @@ class TestLatencyHeatmap:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_latency_heatmap(request, hours=24, time_buckets=10, latency_buckets=5, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_latency_heatmap(
+            request,
+            hours=24,
+            time_buckets=10,
+            latency_buckets=5,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"time_labels": [], "latency_labels": [], "data": []}
 
     @pytest.mark.asyncio
@@ -15285,7 +18975,14 @@ class TestLatencyHeatmap:
         monkeypatch.setattr("mcpgateway.admin._get_latency_heatmap_postgresql", lambda *_args, **_kwargs: {"ok": True})
 
         request = MagicMock(spec=Request)
-        result = await get_latency_heatmap(request, hours=24, time_buckets=10, latency_buckets=5, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_latency_heatmap(
+            request,
+            hours=24,
+            time_buckets=10,
+            latency_buckets=5,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"ok": True}
 
 
@@ -15300,7 +18997,13 @@ class TestTopEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_top_slow_endpoints(request, hours=24, limit=10, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_top_slow_endpoints(
+            request,
+            hours=24,
+            limit=10,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"endpoints": []}
 
     @pytest.mark.asyncio
@@ -15317,7 +19020,13 @@ class TestTopEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_top_slow_endpoints(request, hours=24, limit=10, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_top_slow_endpoints(
+            request,
+            hours=24,
+            limit=10,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert len(result["endpoints"]) == 1
         ep = result["endpoints"][0]
         assert ep["endpoint"] == "GET /api/tools"
@@ -15332,7 +19041,13 @@ class TestTopEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_top_volume_endpoints(request, hours=24, limit=10, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_top_volume_endpoints(
+            request,
+            hours=24,
+            limit=10,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"endpoints": []}
 
     @pytest.mark.asyncio
@@ -15348,7 +19063,13 @@ class TestTopEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_top_volume_endpoints(request, hours=24, limit=10, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_top_volume_endpoints(
+            request,
+            hours=24,
+            limit=10,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert len(result["endpoints"]) == 1
         assert result["endpoints"][0]["count"] == 1000
 
@@ -15360,7 +19081,13 @@ class TestTopEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_top_error_endpoints(request, hours=24, limit=10, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_top_error_endpoints(
+            request,
+            hours=24,
+            limit=10,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result == {"endpoints": []}
 
     @pytest.mark.asyncio
@@ -15376,7 +19103,13 @@ class TestTopEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_top_error_endpoints(request, hours=24, limit=10, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_top_error_endpoints(
+            request,
+            hours=24,
+            limit=10,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert len(result["endpoints"]) == 1
         ep = result["endpoints"][0]
         assert ep["error_count"] == 25
@@ -15410,7 +19143,7 @@ class TestObservabilityTraces:
             name_search=None,
             attribute_search=None,
             tool_name=None,
-            _user={"email": "admin@test.com"},
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
             db=mock_session,
         )
         assert result == template_resp
@@ -15443,7 +19176,7 @@ class TestObservabilityTraces:
             name_search=None,
             attribute_search=None,
             tool_name=None,
-            _user={"email": "admin@test.com"},
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
             db=mock_session,
         )
         assert result == template_resp
@@ -15458,7 +19191,11 @@ class TestObservabilityPartials:
         request.scope = {"root_path": ""}
         template_resp = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = template_resp
-        result = await get_tools_partial(request, _user={"email": "admin@test.com"}, _db=MagicMock())
+        result = await get_tools_partial(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=MagicMock(),
+        )
         assert result == template_resp
 
     @pytest.mark.asyncio
@@ -15467,7 +19204,11 @@ class TestObservabilityPartials:
         request.scope = {"root_path": ""}
         template_resp = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = template_resp
-        result = await get_prompts_partial(request, _user={"email": "admin@test.com"}, _db=MagicMock())
+        result = await get_prompts_partial(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=MagicMock(),
+        )
         assert result == template_resp
 
     @pytest.mark.asyncio
@@ -15476,7 +19217,11 @@ class TestObservabilityPartials:
         request.scope = {"root_path": ""}
         template_resp = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = template_resp
-        result = await get_resources_partial(request, _user={"email": "admin@test.com"}, _db=MagicMock())
+        result = await get_resources_partial(
+            request,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            _db=MagicMock(),
+        )
         assert result == template_resp
 
 
@@ -15492,7 +19237,13 @@ class TestToolPromptResourcePerformanceEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_tool_performance(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_tool_performance(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["tools"] == []
         assert result["time_range_hours"] == 24
 
@@ -15505,7 +19256,13 @@ class TestToolPromptResourcePerformanceEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_prompt_performance(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_prompt_performance(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["prompts"] == []
         assert result["time_range_hours"] == 24
 
@@ -15518,7 +19275,13 @@ class TestToolPromptResourcePerformanceEndpoints:
         mock_session.close = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
         request = MagicMock(spec=Request)
-        result = await get_resource_performance(request, hours=24, limit=20, _user={"email": "admin@test.com"}, db=mock_session)
+        result = await get_resource_performance(
+            request,
+            hours=24,
+            limit=20,
+            _user={"email": "admin@test.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"], "db": mock_db},
+            db=mock_session,
+        )
         assert result["resources"] == []
         assert result["time_range_hours"] == 24
 
@@ -15814,7 +19577,16 @@ class TestAdminGetToolPassesTeamRoles:
             patch.object(ToolService, "get_tool", new_callable=AsyncMock, return_value=tool_read) as mock_get,
             patch("mcpgateway.admin._get_user_team_roles", return_value={"team-1": "owner"}) as mock_roles,
         ):
-            await admin_get_tool("tool-1", mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_get_tool(
+                "tool-1",
+                mock_db,
+                user={
+                    "email": "user@example.com",
+                    "is_admin": False,
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_get.assert_called_once()
@@ -15835,7 +19607,18 @@ class TestAdminGetToolPassesTeamRoles:
         )
 
         with patch("mcpgateway.admin.tool_service", mock_tool_svc), patch("mcpgateway.admin._get_user_team_roles", return_value={"team-2": "member"}) as mock_roles:
-            await admin_list_tools(page=1, per_page=50, include_inactive=False, db=mock_db, user={"email": "user@example.com", "is_admin": False, "db": mock_db})
+            await admin_list_tools(
+                page=1,
+                per_page=50,
+                include_inactive=False,
+                db=mock_db,
+                user={
+                    "email": "user@example.com",
+                    "is_admin": False,
+                    "db": mock_db,
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                },
+            )
 
             mock_roles.assert_called_once_with(mock_db, "user@example.com")
             mock_tool_svc.list_tools.assert_called_once()
@@ -15979,7 +19762,7 @@ class TestAdminTokensPartialHtml:
             render=None,
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16026,7 +19809,7 @@ class TestAdminTokensPartialHtml:
             render=None,
             team_id="team-1",
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16073,7 +19856,7 @@ class TestAdminTokensPartialHtml:
             render=None,
             team_id="team-abc",
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16125,7 +19908,7 @@ class TestAdminTokensPartialHtml:
             render=None,
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16153,7 +19936,7 @@ class TestAdminTokensPartialHtml:
             render="controls",
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16205,7 +19988,7 @@ class TestAdminTokensPartialHtml:
             render=None,
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16258,7 +20041,7 @@ class TestAdminTokensPartialHtml:
             render=None,
             team_id="team-1",
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16305,7 +20088,7 @@ class TestAdminTokensSearch:
             include_inactive=False,
             limit=10,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert len(result) == 1
@@ -16353,7 +20136,7 @@ class TestAdminTokensSearch:
             include_inactive=True,
             limit=10,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert len(result) == 1
@@ -16414,7 +20197,7 @@ class TestAdminTokensSearch:
             include_inactive=False,
             limit=10,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert len(result) == 2
@@ -16437,7 +20220,7 @@ class TestAdminTokensSearch:
             include_inactive=False,
             limit=10,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert len(result) == 0
@@ -16478,7 +20261,7 @@ class TestAdminTokensSearch:
             include_inactive=False,
             limit=10,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert len(result) == 1
@@ -16523,7 +20306,7 @@ class TestAdminTokensSearch:
             limit=10,
             team_id="team-abc",
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         # Verify the query was built with team_id filter
@@ -16570,7 +20353,7 @@ class TestAdminTokensSearch:
             limit=10,
             team_id="team-xyz",
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
 
         assert len(result) == 1
@@ -16628,7 +20411,7 @@ class TestAdminTokensPartialSearch:
             q="Production",
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16658,7 +20441,7 @@ class TestAdminTokensPartialSearch:
             q="NonExistent",
             team_id=None,
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16706,7 +20489,7 @@ class TestAdminTokensPartialSearch:
             q="Team",
             team_id="team-123",
             db=mock_db,
-            user={"email": "user@example.com", "db": mock_db},
+            user={"email": "user@example.com", "db": mock_db, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]},
         )
         assert isinstance(response, HTMLResponse)
 
@@ -16942,7 +20725,16 @@ class TestAdminTokensPartialSearch:
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = False
-            response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+            response = await admin_mod.admin_unlock_user(
+                "user%40example.com",
+                request,
+                db=mock_db,
+                user={
+                    "email": "admin@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                    "db": mock_db,
+                },
+            )
             assert response.status_code == 403
 
         unlocked_user = SimpleNamespace(
@@ -16962,7 +20754,16 @@ class TestAdminTokensPartialSearch:
                 mock_service = mock_service_cls.return_value
                 mock_service.unlock_user_account = AsyncMock(return_value=unlocked_user)
                 mock_service.count_active_admin_users = AsyncMock(return_value=2)
-                response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+                response = await admin_mod.admin_unlock_user(
+                    "user%40example.com",
+                    request,
+                    db=mock_db,
+                    user={
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                        "db": mock_db,
+                    },
+                )
                 assert response.status_code == 200
                 assert "user@example.com" in response.body.decode()
 
@@ -16970,12 +20771,30 @@ class TestAdminTokensPartialSearch:
             mock_settings.email_auth_enabled = True
             with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
                 mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=ValueError("missing user"))
-                response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+                response = await admin_mod.admin_unlock_user(
+                    "user%40example.com",
+                    request,
+                    db=mock_db,
+                    user={
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                        "db": mock_db,
+                    },
+                )
                 assert response.status_code == 404
 
         with patch("mcpgateway.admin.settings") as mock_settings:
             mock_settings.email_auth_enabled = True
             with patch("mcpgateway.admin.EmailAuthService") as mock_service_cls:
                 mock_service_cls.return_value.unlock_user_account = AsyncMock(side_effect=RuntimeError("boom"))
-                response = await admin_mod.admin_unlock_user("user%40example.com", request, db=mock_db, user={"email": "admin@example.com"})
+                response = await admin_mod.admin_unlock_user(
+                    "user%40example.com",
+                    request,
+                    db=mock_db,
+                    user={
+                        "email": "admin@example.com",
+                        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+                        "db": mock_db,
+                    },
+                )
                 assert response.status_code == 400
