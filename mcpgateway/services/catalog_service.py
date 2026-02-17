@@ -76,6 +76,15 @@ class CatalogService:
 
             content = await asyncio.to_thread(catalog_path.read_text, encoding="utf-8")
             catalog_data = yaml.safe_load(content)
+            if not isinstance(catalog_data, dict):
+                catalog_data = {"catalog_servers": []}
+
+            catalog_data.setdefault("catalog_servers", [])
+
+            # Merge optional remote catalogs for runtime federation.
+            remote_urls = getattr(settings, "runtime_catalog_remote_urls", []) or []
+            if remote_urls:
+                catalog_data = await self._merge_remote_catalogs(catalog_data, remote_urls)
 
             # Update cache
             self._catalog_cache = catalog_data
@@ -87,6 +96,75 @@ class CatalogService:
         except Exception as e:
             logger.error(f"Failed to load catalog: {e}")
             return {"catalog_servers": [], "categories": [], "auth_types": []}
+
+    async def _merge_remote_catalogs(self, catalog_data: Dict[str, Any], remote_urls: list[str]) -> Dict[str, Any]:
+        """Merge remote catalog entries into local catalog data.
+
+        Args:
+            catalog_data: Local catalog payload.
+            remote_urls: Remote catalog source URLs.
+
+        Returns:
+            Dict[str, Any]: Catalog payload with merged remote entries.
+        """
+        merged = dict(catalog_data)
+        merged_servers = list(catalog_data.get("catalog_servers", []))
+        seen_ids = {server.get("id") for server in merged_servers if isinstance(server, dict)}
+
+        for url in remote_urls:
+            try:
+                remote_data = await self._fetch_remote_catalog(url)
+                for server in remote_data.get("catalog_servers", []):
+                    if not isinstance(server, dict):
+                        continue
+                    server_id = server.get("id")
+                    if server_id in seen_ids:
+                        continue
+                    merged_servers.append(server)
+                    if server_id:
+                        seen_ids.add(server_id)
+            except Exception as exc:  # pragma: no cover - remote catalogs are optional and environment-dependent.
+                logger.warning("Failed to merge remote catalog '%s': %s", url, exc)
+
+        merged["catalog_servers"] = merged_servers
+        return merged
+
+    async def _fetch_remote_catalog(self, url: str) -> Dict[str, Any]:
+        """Fetch remote catalog payload from URL.
+
+        Args:
+            url: Remote catalog URL.
+
+        Returns:
+            Dict[str, Any]: Normalized catalog payload.
+
+        Raises:
+            ValueError: If payload shape is unsupported.
+        """
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        timeout = float(getattr(settings, "runtime_catalog_remote_timeout_seconds", 15))
+        client = await get_http_client()
+        response = await client.get(url, timeout=timeout, follow_redirects=True)
+        response.raise_for_status()
+
+        # Support YAML and JSON payloads.
+        content_type = response.headers.get("content-type", "").lower()
+        text = response.text
+        if "json" in content_type:
+            payload = response.json()
+        else:
+            payload = yaml.safe_load(text)
+
+        if isinstance(payload, list):
+            return {"catalog_servers": payload}
+        if isinstance(payload, dict):
+            if "catalog_servers" in payload:
+                return payload
+            if "servers" in payload and isinstance(payload["servers"], list):
+                return {"catalog_servers": payload["servers"]}
+        raise ValueError(f"Unsupported remote catalog payload from {url}")
 
     def _get_registry_cache(self):
         """Get registry cache instance lazily.
@@ -121,8 +199,11 @@ class CatalogService:
                 provider=request.provider,
                 search=request.search,
                 tags=sorted(request.tags) if request.tags else None,
+                supported_backends=sorted(request.supported_backends) if request.supported_backends else None,
+                source_type=request.source_type,
                 show_registered_only=request.show_registered_only,
                 show_available_only=request.show_available_only,
+                show_deprecated=request.show_deprecated,
                 offset=request.offset,
                 limit=request.limit,
             )
@@ -165,13 +246,33 @@ class CatalogService:
         # Convert to CatalogServer objects and mark registered ones
         catalog_servers = []
         for server_data in servers:
-            server = CatalogServer(**server_data)
+            if not isinstance(server_data, dict):
+                continue
+            normalized = dict(server_data)
+            source = normalized.get("source") if isinstance(normalized.get("source"), dict) else None
+            source_type = normalized.get("source_type") or (source.get("type") if source else None)
+            normalized["source_type"] = source_type
+
+            supported_backends = normalized.get("supported_backends")
+            if not isinstance(supported_backends, list):
+                if source_type == "compose":
+                    supported_backends = ["docker"]
+                elif source_type in {"docker", "github"}:
+                    supported_backends = ["docker", "ibm_code_engine"]
+                else:
+                    supported_backends = []
+            normalized["supported_backends"] = supported_backends
+            normalized.setdefault("requires_approval", False)
+            normalized.setdefault("featured", False)
+            normalized.setdefault("deprecated", False)
+
+            server = CatalogServer(**normalized)
             server.is_registered = server.url in registered_urls
             # Mark servers that are registered but disabled due to OAuth config needed
             server.requires_oauth_config = server.url in oauth_disabled_urls
             # Set availability based on registration status (registered servers are assumed available)
             # Individual health checks can be done via the /status endpoint
-            server.is_available = server.is_registered or server_data.get("is_available", True)
+            server.is_available = server.is_registered or normalized.get("is_available", True)
             catalog_servers.append(server)
 
         # Apply filters
@@ -193,6 +294,17 @@ class CatalogService:
         if request.tags:
             filtered = [s for s in filtered if any(tag in s.tags for tag in request.tags)]
 
+        if request.source_type:
+            source_type_filter = request.source_type.lower()
+            filtered = [s for s in filtered if (s.source_type or "").lower() == source_type_filter]
+
+        if request.supported_backends:
+            required_backends = {backend.lower() for backend in request.supported_backends}
+            filtered = [s for s in filtered if any(backend.lower() in required_backends for backend in s.supported_backends)]
+
+        if not request.show_deprecated:
+            filtered = [s for s in filtered if not s.deprecated]
+
         if request.show_registered_only:
             filtered = [s for s in filtered if s.is_registered]
 
@@ -210,8 +322,19 @@ class CatalogService:
         all_auth_types = sorted(set(s.auth_type for s in catalog_servers))
         all_providers = sorted(set(s.provider for s in catalog_servers))
         all_tags = sorted(set(tag for s in catalog_servers for tag in s.tags))
+        all_backends = sorted({backend for s in catalog_servers for backend in s.supported_backends})
+        all_source_types = sorted({s.source_type for s in catalog_servers if s.source_type})
 
-        response = CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
+        response = CatalogListResponse(
+            servers=paginated,
+            total=total,
+            categories=all_categories,
+            auth_types=all_auth_types,
+            providers=all_providers,
+            all_tags=all_tags,
+            supported_backends=all_backends,
+            source_types=all_source_types,
+        )
 
         # Store in cache
         if cache:

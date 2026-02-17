@@ -7268,6 +7268,19 @@ if settings.email_auth_enabled:
 else:
     logger.info("RBAC router not included - Email auth disabled")
 
+# Include runtime router if secure runtime feature is enabled
+if settings.mcpgateway_runtime_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.runtime_router import runtime_router
+
+        app.include_router(runtime_router)
+        logger.info("Runtime router included - secure runtime deployment API enabled")
+    except ImportError as e:
+        logger.error(f"Runtime router not available: {e}")
+else:
+    logger.info("Runtime router not included - secure runtime feature disabled")
+
 # Include OAuth router
 try:
     # First-Party

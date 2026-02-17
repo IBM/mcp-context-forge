@@ -20,6 +20,7 @@ Whether you're self-hosting, running in the cloud, or deploying to Kubernetes, t
 | Page | Description |
 |------|-------------|
 | [Configuration](configuration.md) | **Complete configuration reference** - databases, environment variables, and deployment settings |
+| [Secure Runtime](runtime.md) | Runtime deployment operations for catalog-backed servers (Docker / IBM Code Engine) |
 | [Password Management](password-management.md) | Password reset, account unlock, API recovery, and emergency lockout procedures |
 | [Scaling Guide](scale.md) | 📈 **Production Scaling** - Horizontal/vertical scaling, Kubernetes HPA, connection pooling, and performance tuning |
 | [Performance Tuning](tuning.md) | Optimize Gunicorn workers, database connections, and container resources |

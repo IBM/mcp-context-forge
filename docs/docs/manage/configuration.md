@@ -613,7 +613,34 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `MCPGATEWAY_CATALOG_FILE`           | Path to catalog configuration file               | `mcp-catalog.yml`  | string  |
 | `MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK` | Automatically health check catalog servers    | `true`             | bool    |
 | `MCPGATEWAY_CATALOG_CACHE_TTL`      | Catalog cache TTL in seconds                     | `3600`             | int > 0 |
-| `MCPGATEWAY_CATALOG_PAGE_SIZE`      | Number of catalog servers per page               | `12`               | int > 0 |
+| `MCPGATEWAY_CATALOG_PAGE_SIZE`      | Number of catalog servers per page               | `100`              | int > 0 |
+
+### Secure MCP Runtime
+
+See [Secure Runtime Operations](runtime.md) for API usage and deployment flows.
+
+| Setting | Description | Default | Options |
+| ------- | ----------- | ------- | ------- |
+| `MCPGATEWAY_RUNTIME_ENABLED` | Enable secure runtime API (`/runtimes`) | `false` | bool |
+| `RUNTIME_DEFAULT_BACKEND` | Default deployment backend | `docker` | `docker`, `ibm_code_engine` |
+| `RUNTIME_DOCKER_ENABLED` | Enable Docker runtime backend | `true` | bool |
+| `RUNTIME_DOCKER_BINARY` | Docker CLI binary path | `docker` | string |
+| `RUNTIME_DOCKER_SOCKET` | Docker socket path | `/var/run/docker.sock` | path |
+| `RUNTIME_DOCKER_NETWORK` | Default Docker network for runtime containers | (empty) | string |
+| `RUNTIME_DOCKER_ALLOWED_REGISTRIES` | Allowlisted image registries for runtime deployment | `["docker.io","ghcr.io"]` | JSON array / CSV |
+| `RUNTIME_IBM_CODE_ENGINE_ENABLED` | Enable IBM Code Engine backend | `false` | bool |
+| `RUNTIME_IBM_CODE_ENGINE_BINARY` | IBM Cloud CLI binary path | `ibmcloud` | string |
+| `RUNTIME_IBM_CODE_ENGINE_REGION` | IBM Code Engine region | (empty) | string |
+| `RUNTIME_IBM_CODE_ENGINE_PROJECT` | IBM Code Engine project name | (empty) | string |
+| `RUNTIME_IBM_CODE_ENGINE_REGISTRY_SECRET` | Registry secret used for CE deployments | (empty) | string |
+| `RUNTIME_CATALOG_REMOTE_URLS` | Remote catalog URLs merged into local catalog | `[]` | JSON array / CSV |
+| `RUNTIME_CATALOG_REMOTE_TIMEOUT_SECONDS` | Timeout for remote catalog fetch | `15` | int 1-120 |
+| `RUNTIME_APPROVAL_ENABLED` | Enable runtime deployment approvals | `false` | bool |
+| `RUNTIME_APPROVAL_REQUIRED_SOURCE_TYPES` | Source types requiring approval | `["github"]` | JSON array / CSV |
+| `RUNTIME_APPROVAL_REGISTRY_ALLOWLIST` | Registry prefixes that bypass approval checks | `["docker.io/library","docker.io/mcp"]` | JSON array / CSV |
+| `RUNTIME_APPROVAL_REQUIRED_GUARDRAILS_PROFILES` | Guardrail profiles requiring approval | `["unrestricted"]` | JSON array / CSV |
+| `RUNTIME_APPROVERS` | Approver users/groups for runtime requests | `[]` | JSON array / CSV |
+| `RUNTIME_APPROVAL_TIMEOUT_HOURS` | Approval request expiration window | `48` | int 1-168 |
 
 ### Security
 
@@ -1206,6 +1233,8 @@ spec:
 - [Docker Compose Deployment](../deployment/compose.md)
 - [Local Development Setup](../deployment/local.md)
 - [Kubernetes Deployment](../deployment/kubernetes.md)
+- [Secure Runtime](runtime.md)
+- [MCP Server Catalog](catalog.md)
 - [Backup & Restore](backup.md)
 - [Logging Configuration](logging.md)
 - [SSO Configuration](sso.md)

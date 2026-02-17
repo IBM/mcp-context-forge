@@ -291,3 +291,20 @@ def test_register_catalog_server_htmx_retry_button_attributes(client):
     assert "hx-on::before-request" in html_content
     assert "hx-on::response-error" in html_content
     assert "HX-Trigger-After-Swap" not in response.headers
+
+
+def test_catalog_partial_source_type_filter_passed_to_service(client):
+    """Test /admin/mcp-registry/partial forwards source_type filter into CatalogListRequest."""
+    response_page = MagicMock(servers=[], total=0, categories=[], auth_types=[], providers=[])
+    response_all = MagicMock(servers=[], total=0, categories=[], auth_types=[], providers=[])
+    mock_get_catalog = AsyncMock(side_effect=[response_page, response_all])
+
+    with patch("mcpgateway.admin.catalog_service.get_catalog_servers", new=mock_get_catalog), patch("mcpgateway.admin.settings") as mock_settings:
+        mock_settings.mcpgateway_catalog_enabled = True
+        mock_settings.mcpgateway_catalog_page_size = 20
+
+        response = client.get("/admin/mcp-registry/partial?source_type=compose")
+
+    assert response.status_code == 200
+    first_request = mock_get_catalog.await_args_list[0].args[0]
+    assert first_request.source_type == "compose"

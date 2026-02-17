@@ -1,6 +1,7 @@
 nav:
   - index.md
   - configuration.md
+  - runtime.md
   - password-management.md
   - troubleshooting.md
   - api-usage.md

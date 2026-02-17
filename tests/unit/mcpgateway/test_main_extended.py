@@ -5003,6 +5003,80 @@ class TestRemainingCoverageGaps:
         info = await mod.root_info()
         assert info["ui_enabled"] is False
 
+    async def test_module_level_runtime_router_included_when_enabled(self, monkeypatch):
+        """Cover runtime router include path in module-level wiring."""
+        from types import ModuleType
+
+        from fastapi import APIRouter
+
+        runtime_router_module = ModuleType("mcpgateway.routers.runtime_router")
+        runtime_router = APIRouter()
+
+        @runtime_router.get("/__runtime_router_test__")
+        async def _runtime_probe():  # pragma: no cover - route body is not invoked, only registration is asserted.
+            return {"ok": True}
+
+        runtime_router_module.runtime_router = runtime_router
+        monkeypatch.setitem(sys.modules, "mcpgateway.routers.runtime_router", runtime_router_module)
+
+        overrides = {
+            "environment": "production",
+            "allowed_origins": [],
+            "compression_enabled": False,
+            "validation_middleware_enabled": False,
+            "email_auth_enabled": False,
+            "security_logging_enabled": False,
+            "observability_enabled": False,
+            "db_query_log_enabled": False,
+            "structured_logging_enabled": False,
+            "mcpgateway_a2a_enabled": False,
+            "mcpgateway_tool_cancellation_enabled": False,
+            "mcpgateway_admin_api_enabled": False,
+            "mcpgateway_ui_enabled": False,
+            "llmchat_enabled": False,
+            "toolops_enabled": False,
+            "mcpgateway_runtime_enabled": True,
+        }
+
+        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, env={"PLUGINS_ENABLED": "false"})
+        await asyncio.sleep(0)
+        assert any(getattr(route, "path", "") == "/__runtime_router_test__" for route in mod.app.routes)
+
+    async def test_module_level_runtime_router_import_error_when_enabled(self, monkeypatch):
+        """Cover runtime router ImportError handling branch in module-level wiring."""
+        force_error = {
+            "mcpgateway.routers.runtime_router",
+            "mcpgateway.routers.oauth_router",
+            "mcpgateway.routers.reverse_proxy",
+            "mcpgateway.routers.llmchat_router",
+            "mcpgateway.routers.llm_admin_router",
+            "mcpgateway.routers.llm_config_router",
+            "mcpgateway.routers.llm_proxy_router",
+            "mcpgateway.routers.toolops_router",
+        }
+        overrides = {
+            "environment": "production",
+            "allowed_origins": [],
+            "compression_enabled": False,
+            "validation_middleware_enabled": False,
+            "email_auth_enabled": False,
+            "security_logging_enabled": False,
+            "observability_enabled": False,
+            "db_query_log_enabled": False,
+            "structured_logging_enabled": False,
+            "mcpgateway_a2a_enabled": False,
+            "mcpgateway_tool_cancellation_enabled": False,
+            "mcpgateway_admin_api_enabled": False,
+            "mcpgateway_ui_enabled": False,
+            "llmchat_enabled": False,
+            "toolops_enabled": False,
+            "mcpgateway_runtime_enabled": True,
+        }
+
+        mod = _import_fresh_main_module(monkeypatch, overrides=overrides, env={"PLUGINS_ENABLED": "false"}, force_import_error=force_error)
+        await asyncio.sleep(0)
+        assert all(getattr(route, "path", "") != "/runtimes" for route in mod.app.routes)
+
     def test_jsonpath_modifier_defaults_when_jsonpath_missing(self):
         # jsonpath_modifier(None/""/0) should fall back to default "$[*]".
         assert jsonpath_modifier([{"a": 1}], jsonpath="") == {"a": 1}
