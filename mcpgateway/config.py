@@ -625,6 +625,7 @@ class Settings(BaseSettings):
 
     # Secure MCP Runtime
     mcpgateway_runtime_enabled: bool = Field(default=False, description="Enable secure runtime deployment APIs")
+    runtime_platform_admin_only: bool = Field(default=True, description="Restrict runtime APIs to platform administrators")
     runtime_default_backend: str = Field(default="docker", description="Default runtime backend")
 
     # Docker backend configuration

@@ -622,6 +622,12 @@
               "description": "Enable secure runtime deployment API",
               "default": "false"
             },
+            "RUNTIME_PLATFORM_ADMIN_ONLY": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Restrict runtime APIs to platform administrators",
+              "default": "true"
+            },
             "RUNTIME_DEFAULT_BACKEND": {
               "type": "string",
               "enum": ["docker", "ibm_code_engine"],

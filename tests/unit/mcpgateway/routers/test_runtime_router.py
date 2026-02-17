@@ -26,12 +26,15 @@ from mcpgateway.routers.runtime_router import (
     list_runtime_approvals,
     list_runtime_backends,
     list_runtimes,
+    require_runtime_access,
+    runtime_router,
     reject_runtime_request,
     runtime_logs,
     start_runtime,
     stop_runtime,
     update_guardrail_profile,
 )
+from mcpgateway.config import settings
 from mcpgateway.runtime_schemas import (
     RuntimeApprovalDecisionRequest,
     RuntimeApprovalRead,
@@ -108,6 +111,36 @@ def _profile_read(name: str = "standard") -> RuntimeGuardrailProfileRead:
         created_at=now,
         updated_at=now,
     )
+
+
+@pytest.mark.asyncio
+async def test_require_runtime_access_allows_platform_admin(mock_user):
+    with patch.object(settings, "runtime_platform_admin_only", True):
+        assert await require_runtime_access(user=mock_user) is None
+
+
+@pytest.mark.asyncio
+async def test_require_runtime_access_denies_non_admin_when_restricted(mock_db):
+    non_admin = {"email": "developer@example.com", "is_admin": False, "permissions": ["servers.read"], "db": mock_db, "auth_method": "jwt"}
+
+    with patch.object(settings, "runtime_platform_admin_only", True):
+        with pytest.raises(HTTPException) as exc_info:
+            await require_runtime_access(user=non_admin)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "Runtime API is restricted to platform administrators"
+
+
+@pytest.mark.asyncio
+async def test_require_runtime_access_allows_non_admin_when_rbac_mode(mock_db):
+    non_admin = {"email": "developer@example.com", "is_admin": False, "permissions": ["servers.read"], "db": mock_db, "auth_method": "jwt"}
+
+    with patch.object(settings, "runtime_platform_admin_only", False):
+        assert await require_runtime_access(user=non_admin) is None
+
+
+def test_runtime_router_applies_runtime_access_dependency():
+    assert any(route_dependency.dependency is require_runtime_access for route_dependency in runtime_router.dependencies)
 
 
 @pytest.mark.asyncio

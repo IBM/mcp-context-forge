@@ -622,6 +622,7 @@ See [Secure Runtime Operations](runtime.md) for API usage and deployment flows.
 | Setting | Description | Default | Options |
 | ------- | ----------- | ------- | ------- |
 | `MCPGATEWAY_RUNTIME_ENABLED` | Enable secure runtime API (`/runtimes`) | `false` | bool |
+| `RUNTIME_PLATFORM_ADMIN_ONLY` | Restrict runtime API access to platform administrators | `true` | bool |
 | `RUNTIME_DEFAULT_BACKEND` | Default deployment backend | `docker` | `docker`, `ibm_code_engine` |
 | `RUNTIME_DOCKER_ENABLED` | Enable Docker runtime backend | `true` | bool |
 | `RUNTIME_DOCKER_BINARY` | Docker CLI binary path | `docker` | string |

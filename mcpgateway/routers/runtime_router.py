@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.runtime_schemas import (
@@ -34,7 +35,34 @@ from mcpgateway.services.runtime_service import RuntimeService
 logger = logging.getLogger(__name__)
 runtime_service = RuntimeService()
 
-runtime_router = APIRouter(prefix="/runtimes", tags=["runtime"])
+
+async def require_runtime_access(user=Depends(get_current_user_with_permissions)) -> None:
+    """Enforce runtime API access policy.
+
+    Runtime APIs are platform-admin-only by default for defense-in-depth.
+    Operators can set ``RUNTIME_PLATFORM_ADMIN_ONLY=false`` to use the
+    existing route-level RBAC permissions instead.
+
+    Args:
+        user: Authenticated user context.
+
+    Raises:
+        HTTPException: If runtime access is restricted to platform admins and
+            the requester is not a platform admin.
+    """
+    if not settings.runtime_platform_admin_only:
+        return
+
+    if user.get("is_admin", False):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Runtime API is restricted to platform administrators",
+    )
+
+
+runtime_router = APIRouter(prefix="/runtimes", tags=["runtime"], dependencies=[Depends(require_runtime_access)])
 
 
 def _raise_runtime_http_error(exc: RuntimeBackendError) -> None:
