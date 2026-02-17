@@ -176,7 +176,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                     raise HTTPException(
                         status_code=status.HTTP_302_FOUND,
                         detail="Authentication required",
-                        headers={"Location": f"{settings.app_root_path}/admin/login"},
+                        headers={"Location": f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/login"},
                     )
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
@@ -209,7 +209,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                 raise HTTPException(
                     status_code=status.HTTP_302_FOUND,
                     detail="Authentication required",
-                    headers={"Location": f"{settings.app_root_path}/admin/login"},
+                    headers={"Location": f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/login"},
                 )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -256,7 +256,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     accept_header = request.headers.get("accept", "")
     is_htmx = request.headers.get("hx-request") == "true"
     referer = request.headers.get("referer", "")
-    is_admin_ui_request = "/admin" in referer
+    is_admin_ui_request = settings.mcpgateway_ui_base_path in referer
     is_browser_request = "text/html" in accept_header or is_htmx or is_admin_ui_request
 
     # SECURITY: Reject cookie-only authentication for API requests
@@ -271,7 +271,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     if not token:
         # For browser requests (HTML Accept header or HTMX), redirect to login
         if is_browser_request:
-            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
+            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/login"})
 
         # If auth is disabled, return the stock admin user
         if not settings.auth_required:
@@ -336,7 +336,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         accept_header = request.headers.get("accept", "")
         is_htmx = request.headers.get("hx-request") == "true"
         if "text/html" in accept_header or is_htmx:
-            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}/admin/login"})
+            raise HTTPException(status_code=status.HTTP_302_FOUND, detail="Authentication required", headers={"Location": f"{settings.app_root_path}{settings.mcpgateway_ui_base_path}/login"})
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid authentication credentials")
 

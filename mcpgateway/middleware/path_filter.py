@@ -33,16 +33,30 @@ logger = logging.getLogger(__name__)
 # Observability: exact matches + "/static/" prefix + allowlist
 # NOTE: /healthz is included for translate.py compatibility (gateway uses /health, /ready)
 # See: mcpgateway/translate.py, mcpgateway/config.py:observability_include_paths/observability_exclude_paths
-OBSERVABILITY_SKIP_EXACT: FrozenSet[str] = frozenset(
-    [
-        "/health",
-        "/healthz",  # translate.py only, kept for compatibility
-        "/ready",
-        "/metrics",
-        "/admin/events",
-    ]
-)
-OBSERVABILITY_SKIP_PREFIXES: Tuple[str, ...] = ("/static/", "/admin/observability/")
+
+def _get_observability_skip_exact() -> FrozenSet[str]:
+    """Get observability skip exact paths, using configurable UI base path."""
+    ui_base = settings.mcpgateway_ui_base_path
+    return frozenset(
+        [
+            "/health",
+            "/healthz",  # translate.py only, kept for compatibility
+            "/ready",
+            "/metrics",
+            f"{ui_base}/events",
+        ]
+    )
+
+
+def _get_observability_skip_prefixes() -> Tuple[str, ...]:
+    """Get observability skip prefixes, using configurable UI base path."""
+    ui_base = settings.mcpgateway_ui_base_path
+    return ("/static/", f"{ui_base}/observability/")
+
+
+# Legacy constants for backward compatibility - use functions for dynamic values
+OBSERVABILITY_SKIP_EXACT: FrozenSet[str] = _get_observability_skip_exact()
+OBSERVABILITY_SKIP_PREFIXES: Tuple[str, ...] = _get_observability_skip_prefixes()
 
 # AuthContext: exact matches + "/static/" prefix (preserves pre-allowlist behavior)
 AUTH_CONTEXT_SKIP_EXACT: FrozenSet[str] = frozenset(

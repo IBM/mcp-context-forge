@@ -962,7 +962,9 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
+# Create router with configurable UI base path (default: /ui)
+# Note: The prefix is set at import time from settings.mcpgateway_ui_base_path
+admin_router = APIRouter(prefix=settings.mcpgateway_ui_base_path, tags=["Admin UI"])
 
 ####################
 # Admin UI Routes  #
@@ -3393,7 +3395,7 @@ async def admin_ui(
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
         scope_root_path = request.scope.get("root_path", "") or ""
-        ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
+        ui_cookie_path = f"{scope_root_path}{settings.mcpgateway_ui_base_path}" if scope_root_path else settings.mcpgateway_ui_base_path
         use_secure = (settings.environment == "production") or settings.secure_cookies
         samesite = settings.cookie_samesite
         if cookie_action == "set":

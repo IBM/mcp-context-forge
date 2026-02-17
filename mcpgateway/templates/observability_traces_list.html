@@ -1,7 +1,7 @@
 <!-- htmlhint doctype-first:false -->
 {% if traces %}
     {% for trace in traces %}
-    <tr hx-get="{{ root_path }}/admin/observability/trace/{{ trace.trace_id }}"
+    <tr hx-get="{{ root_path }}{{ ui_base_path }}/observability/trace/{{ trace.trace_id }}"
         hx-target="#trace-detail-content"
         hx-trigger="click"
         @click="selectedTrace = '{{ trace.trace_id }}'">

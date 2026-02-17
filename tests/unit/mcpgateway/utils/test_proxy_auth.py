@@ -41,6 +41,7 @@ class TestProxyAuthentication:
             proxy_user_header = "X-Authenticated-User"
             require_token_expiration = False
             docs_allow_basic_auth = False
+            mcpgateway_ui_base_path = "/ui"
 
         return MockSettings()
 
@@ -201,6 +202,7 @@ class TestRBACProxyAuthentication:
             docs_allow_basic_auth = False
             platform_admin_email = "admin@example.com"
             app_root_path = ""
+            mcpgateway_ui_base_path = "/ui"
 
         return MockSettings()
 
@@ -335,7 +337,7 @@ class TestRBACProxyAuthentication:
             with pytest.raises(HTTPException) as exc_info:
                 await rbac.get_current_user_with_permissions(mock_request, None, None)
             assert exc_info.value.status_code == 302
-            assert "/admin/login" in exc_info.value.headers.get("Location", "")
+            assert "/ui/login" in exc_info.value.headers.get("Location", "")
 
     @pytest.mark.asyncio
     async def test_rbac_proxy_auth_looks_up_admin_status(self, mock_settings, mock_request, mock_db):

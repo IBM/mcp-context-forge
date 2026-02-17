@@ -517,9 +517,9 @@ class TestHealthAndInfrastructure:
 
         # Check if UI is enabled
         if settings.mcpgateway_ui_enabled:
-            # When UI is enabled, should redirect to admin with trailing slash
+            # When UI is enabled, should redirect to UI base path with trailing slash
             assert response.status_code == 303
-            assert response.headers["location"] == f"{settings.app_root_path}/admin/"
+            assert response.headers["location"] == f"{settings.app_root_path}/ui/"
         else:
             # When UI is disabled, should return API info
             assert response.status_code == 200

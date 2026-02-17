@@ -477,6 +477,12 @@ class TestDocsAuthMiddleware:
 class TestAdminAuthMiddleware:
     """Cover AdminAuthMiddleware branches."""
 
+    @pytest.fixture(autouse=True)
+    def setup_admin_base_path(self, monkeypatch):
+        """Set UI base path to /admin for backward-compatible test paths."""
+        monkeypatch.setattr(settings, "mcpgateway_ui_base_path", "/admin")
+        monkeypatch.setattr(AdminAuthMiddleware, "UI_BASE_PATH", "/admin")
+
     @pytest.mark.asyncio
     async def test_admin_auth_bypasses_when_auth_disabled(self, monkeypatch):
         middleware = AdminAuthMiddleware(None)
@@ -2487,9 +2493,9 @@ class TestUtilityFunctions:
 
         # The behavior depends on whether UI was enabled when app was imported
         if response.status_code == 303:
-            # UI enabled: redirects to /admin/
+            # UI enabled: redirects to /ui/
             location = response.headers.get("location", "")
-            assert "/admin/" in location
+            assert "/ui/" in location
         elif response.status_code == 200:
             # Could be JSON (UI disabled) or HTML (followed redirect to admin)
             content_type = response.headers.get("content-type", "")

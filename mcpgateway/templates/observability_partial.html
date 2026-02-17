@@ -62,7 +62,7 @@ if (!window.getChartDefaults) {
         console.log('Loading metrics view for the first time...');
 
         try {
-            const response = await fetch('{{ root_path }}/admin/observability/metrics/partial');
+            const response = await fetch('{{ root_path }}{{ ui_base_path }}/observability/metrics/partial');
             if (response.ok) {
                 // Check if still on metrics view before rendering
                 if (this.viewMode !== 'metrics') {
@@ -132,7 +132,7 @@ if (!window.getChartDefaults) {
         console.log('Loading tools view for the first time...');
 
         try {
-            const response = await fetch('{{ root_path }}/admin/observability/tools/partial');
+            const response = await fetch('{{ root_path }}{{ ui_base_path }}/observability/tools/partial');
             if (response.ok) {
                 // Check if still on tools view before rendering
                 if (this.viewMode !== 'tools') {
@@ -202,7 +202,7 @@ if (!window.getChartDefaults) {
         console.log('Loading prompts view for the first time...');
 
         try {
-            const response = await fetch('{{ root_path }}/admin/observability/prompts/partial');
+            const response = await fetch('{{ root_path }}{{ ui_base_path }}/observability/prompts/partial');
             if (response.ok) {
                 // Check if still on prompts view before rendering
                 if (this.viewMode !== 'prompts') {
@@ -272,7 +272,7 @@ if (!window.getChartDefaults) {
         console.log('Loading resources view for the first time...');
 
         try {
-            const response = await fetch('{{ root_path }}/admin/observability/resources/partial');
+            const response = await fetch('{{ root_path }}{{ ui_base_path }}/observability/resources/partial');
             if (response.ok) {
                 // Check if still on resources view before rendering
                 if (this.viewMode !== 'resources') {
@@ -326,7 +326,7 @@ if (!window.getChartDefaults) {
         }
     },
     refreshTraces() {
-        let url = `{{ root_path }}/admin/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
+        let url = `{{ root_path }}{{ ui_base_path }}/observability/traces?time_range=${this.timeRange}&status_filter=${this.statusFilter}&limit=50`;
         if (this.minDuration) url += `&min_duration=${this.minDuration}`;
         if (this.maxDuration) url += `&max_duration=${this.maxDuration}`;
         if (this.httpMethod) url += `&http_method=${this.httpMethod}`;
@@ -337,7 +337,7 @@ if (!window.getChartDefaults) {
         htmx.ajax('GET', url, {target: '#traces-list', swap: 'innerHTML'});
     },
     refreshStats() {
-        htmx.ajax('GET', '{{ root_path }}/admin/observability/stats', {target: '#stats-container', swap: 'innerHTML'});
+        htmx.ajax('GET', '{{ root_path }}{{ ui_base_path }}/observability/stats', {target: '#stats-container', swap: 'innerHTML'});
     },
     startPolling() {
         this.refreshTraces();
@@ -356,7 +356,7 @@ if (!window.getChartDefaults) {
     },
     async loadSavedQueries() {
         try {
-            const response = await fetch('{{ root_path }}/admin/observability/queries');
+            const response = await fetch('{{ root_path }}{{ ui_base_path }}/observability/queries');
             if (response.ok) {
                 this.savedQueries = await response.json();
             }
@@ -367,7 +367,7 @@ if (!window.getChartDefaults) {
     async applySavedQuery() {
         if (!this.selectedQueryId) return;
         try {
-            const response = await fetch(`{{ root_path }}/admin/observability/queries/${this.selectedQueryId}`);
+            const response = await fetch(`{{ root_path }}{{ ui_base_path }}/observability/queries/${this.selectedQueryId}`);
             if (response.ok) {
                 const query = await response.json();
                 const config = query.filter_config;
@@ -382,7 +382,7 @@ if (!window.getChartDefaults) {
                 this.attributeSearch = config.attributeSearch || '';
                 this.applyFilters();
                 // Track usage
-                await fetch(`{{ root_path }}/admin/observability/queries/${this.selectedQueryId}/use`, { method: 'POST' });
+                await fetch(`{{ root_path }}{{ ui_base_path }}/observability/queries/${this.selectedQueryId}/use`, { method: 'POST' });
             }
         } catch (e) {
             console.error('Failed to apply saved query:', e);
@@ -407,7 +407,7 @@ if (!window.getChartDefaults) {
             return;
         }
         try {
-            const response = await fetch('{{ root_path }}/admin/observability/queries', {
+            const response = await fetch('{{ root_path }}{{ ui_base_path }}/observability/queries', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -435,7 +435,7 @@ if (!window.getChartDefaults) {
     async deleteSavedQuery(queryId) {
         if (!confirm('Are you sure you want to delete this saved query?')) return;
         try {
-            const response = await fetch(`{{ root_path }}/admin/observability/queries/${queryId}`, { method: 'DELETE' });
+            const response = await fetch(`{{ root_path }}{{ ui_base_path }}/observability/queries/${queryId}`, { method: 'DELETE' });
             if (response.ok) {
                 await this.loadSavedQueries();
                 if (this.selectedQueryId == queryId) {

@@ -22,7 +22,7 @@
 <!-- Infinite scroll trigger element -->
 <div
   id="servers-scroll-trigger-{{ pagination.page }}"
-  hx-get="{{ root_path }}/admin/servers/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if gateway_id %}&gateway_id={{ gateway_id }}{% endif %}"
+  hx-get="{{ root_path }}{{ ui_base_path }}/servers/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if gateway_id %}&gateway_id={{ gateway_id }}{% endif %}"
   hx-trigger="intersect once"
   hx-swap="outerHTML"
   class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
