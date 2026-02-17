@@ -1233,6 +1233,37 @@ networks:
     driver: bridge
 ```
 
+### Method 4: Secure Runtime Deployment (Admin UI / API)
+
+Use the runtime control plane to deploy the image directly from MCP Gateway:
+
+```bash
+# Required feature flags
+export MCPGATEWAY_RUNTIME_ENABLED=true
+export RUNTIME_DOCKER_ENABLED=true
+export RUNTIME_DEFAULT_BACKEND=docker
+```
+
+Then open `/admin#runtime` and deploy:
+
+- source type: `docker`
+- image: `ghcr.io/ibm/fast-time-server:0.8.0`
+
+Optional API checks:
+
+```bash
+curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  http://localhost:4444/runtimes
+
+curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  "http://localhost:4444/runtimes/<runtime_id>/logs?tail=200"
+
+curl -X DELETE -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  http://localhost:4444/runtimes/<runtime_id>
+```
+
+See [Secure MCP Runtime](../../../manage/runtime.md) for approvals, guardrails, and catalog-backed runtime flows.
+
 ## Development
 
 ### Building from Source
