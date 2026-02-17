@@ -435,7 +435,7 @@ async def test_admin_login_handler_paths(monkeypatch):
     user.password_change_required = False
     monkeypatch.setattr(admin.settings, "password_change_enforcement_enabled", False)
     response = await admin.admin_login_handler(request, mock_db)
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/ui")
 
 
 @pytest.mark.asyncio
@@ -506,7 +506,7 @@ async def test_admin_logout_keycloak_redirect(monkeypatch):
     params = parse_qs(parsed.query)
     assert parsed.path.endswith("/realms/mcp-gateway/protocol/openid-connect/logout")
     assert params["client_id"] == ["mcp-gateway-admin"]
-    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/admin/login"]
+    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/ui/login"]
     assert "jwt_token=" in response.headers.get("set-cookie", "")
 
 
@@ -600,7 +600,7 @@ async def test_admin_logout_keycloak_without_absolute_login_url_falls_back(monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/ui/login"
 
 
 @pytest.mark.asyncio
@@ -638,7 +638,7 @@ async def test_admin_logout_verify_jwt_failure_falls_back_to_local_when_keycloak
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/ui/login"
 
 
 @pytest.mark.asyncio
@@ -658,7 +658,7 @@ async def test_admin_logout_without_auth_provider_falls_back_to_local_redirect(m
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/ui/login"
 
 
 @pytest.mark.asyncio
@@ -682,7 +682,7 @@ async def test_admin_logout_keycloak_uses_app_domain_fallback_for_login_url(monk
     assert response.status_code == 303
     location = response.headers["location"]
     params = parse_qs(urlparse(location).query)
-    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/admin/login"]
+    assert params["post_logout_redirect_uri"] == ["http://localhost:4444/root/ui/login"]
 
 
 @pytest.mark.asyncio
@@ -700,7 +700,7 @@ async def test_admin_logout_keycloak_disabled_falls_back_to_local_redirect(monke
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/ui/login"
 
 
 @pytest.mark.asyncio
@@ -720,7 +720,7 @@ async def test_admin_logout_keycloak_missing_realm_falls_back_to_local_redirect(
 
     assert isinstance(response, RedirectResponse)
     assert response.status_code == 303
-    assert response.headers["location"] == "/root/admin/login"
+    assert response.headers["location"] == "/root/ui/login"
 
 
 @pytest.mark.asyncio
@@ -913,7 +913,7 @@ async def test_change_password_required_handler(monkeypatch):
     with patch("sqlalchemy.inspect", return_value=SimpleNamespace(transient=False, detached=False)):
         response = await admin.change_password_required_handler(request, mock_db)
 
-    assert response.headers["location"].endswith("/root/admin")
+    assert response.headers["location"].endswith("/root/ui")
     assert set_cookie.called
 
 
