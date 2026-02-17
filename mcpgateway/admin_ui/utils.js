@@ -123,7 +123,7 @@ export function safeSetValue(id, val) {
   if (el) {
     el.value = val;
   }
-};
+}
 
 // Check for inactive items
 export function isInactiveChecked(type) {
@@ -543,9 +543,7 @@ export const truncateText = function (text, maxLength) {
   if (!text) {
     return "";
   }
-  return text.length > maxLength
-    ? text.substring(0, maxLength) + "..."
-    : text;
+  return text.length > maxLength ? text.substring(0, maxLength) + "..." : text;
 };
 
 /**
@@ -554,11 +552,63 @@ export const truncateText = function (text, maxLength) {
  * @param {string} html - The HTML-encoded string
  * @returns {string} Decoded string
  */
-export const decodeHtml = function(html) {
+export const decodeHtml = function (html) {
   if (html === null || html === undefined) {
     return "";
   }
   const txt = document.createElement("textarea");
   txt.innerHTML = html;
   return txt.value;
+};
+
+// Helper function to get pagination parameters from URL (namespaced per table)
+export const getPaginationParams = function (tableName) {
+  const urlParams = new URLSearchParams(window.location.search);
+  const prefix = tableName + "_";
+  return {
+    page: Math.max(1, parseInt(urlParams.get(prefix + "page"), 10) || 1),
+    perPage: Math.max(1, parseInt(urlParams.get(prefix + "size"), 10) || 10),
+    includeInactive: urlParams.get(prefix + "inactive"),
+  };
+};
+
+// Helper function to build table URL with pagination params (namespaced per table)
+// URL state takes precedence over checkbox state for shareability
+export const buildTableUrl = function (tableName, baseUrl, additionalParams = {}) {
+  const params = getPaginationParams(tableName);
+  const urlParams = new URLSearchParams(window.location.search);
+  const prefix = tableName + "_";
+  const url = new URL(baseUrl, window.location.origin);
+  url.searchParams.set("page", params.page);
+  url.searchParams.set("per_page", params.perPage);
+
+  // Add additional parameters, but URL state takes precedence for include_inactive
+  for (const [key, value] of Object.entries(additionalParams)) {
+    if (key === "include_inactive" && params.includeInactive !== null) {
+      // URL state overrides checkbox state for shareability
+      url.searchParams.set("include_inactive", params.includeInactive);
+    } else if (value !== null && value !== undefined && value !== "") {
+      url.searchParams.set(key, value);
+    }
+  }
+
+  // If include_inactive wasn't in additionalParams but is in URL, still use it
+  if (
+    !Object.hasOwn(additionalParams, "include_inactive") &&
+    params.includeInactive !== null
+  ) {
+    url.searchParams.set("include_inactive", params.includeInactive);
+  }
+
+  // Preserve namespaced search state for shareable URLs
+  const namespacedQuery = urlParams.get(prefix + "q");
+  const namespacedTags = urlParams.get(prefix + "tags");
+  if (namespacedQuery) {
+    url.searchParams.set("q", namespacedQuery);
+  }
+  if (namespacedTags) {
+    url.searchParams.set("tags", namespacedTags);
+  }
+
+  return url.pathname + url.search;
 }
