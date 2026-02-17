@@ -2468,10 +2468,6 @@ async def list_servers(
     # Determine final team ID
     team_id = team_id or token_team_id
 
-    # Determine final token teams if team_id is provided thru path param
-    if team_id and token_teams:
-        token_teams = [id for id in token_teams if id == team_id]
-
     # SECURITY: token_teams is normalized in auth.py:
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
     # - []: public-only (missing teams or explicit empty) - sees only public
@@ -3609,10 +3605,6 @@ async def list_tools(
     # Empty-team tokens should filter by public + owned, not by personal team
     if not is_empty_team_token:
         team_id = team_id or token_team_id
-
-    # Determine final token teams if team_id is provided thru path param
-    if team_id and token_teams:
-        token_teams = [id for id in token_teams if id == team_id]
 
     # Use unified list_tools() with token-based team filtering
     # Always apply visibility filtering based on token scope
@@ -5116,10 +5108,6 @@ async def list_gateways(
 
     # Determine final team ID
     team_id = team_id or token_team_id
-
-    # Determine final token teams if team_id is provided thru path param
-    if team_id and token_teams:
-        token_teams = [id for id in token_teams if id == team_id]
 
     # SECURITY: token_teams is normalized in auth.py:
     # - None: admin bypass (is_admin=true with explicit null teams) - sees ALL resources
