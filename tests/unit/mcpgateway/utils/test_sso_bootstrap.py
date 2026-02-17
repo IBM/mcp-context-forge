@@ -51,6 +51,9 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_entra_tenant_id="tenant-id",
         sso_entra_groups_claim="groups",
         sso_entra_role_mappings={"admin": "Admin"},
+        sso_entra_graph_api_enabled=False,
+        sso_entra_graph_api_timeout=42,
+        sso_entra_graph_api_max_groups=777,
         sso_keycloak_enabled=True,
         sso_keycloak_base_url="https://keycloak.example.com",
         sso_keycloak_public_base_url="https://login.example.com",
@@ -96,6 +99,13 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
     provider_ids = {provider["id"] for provider in providers}
 
     assert {"github", "google", "ibm_verify", "okta", "entra", "keycloak", "authentik"} <= provider_ids
+
+    entra_provider = next(provider for provider in providers if provider["id"] == "entra")
+    entra_metadata = entra_provider["provider_metadata"]
+    assert entra_provider["scope"] == "openid profile email User.Read"
+    assert entra_metadata["graph_api_enabled"] is False
+    assert entra_metadata["graph_api_timeout"] == 42
+    assert entra_metadata["graph_api_max_groups"] == 777
 
     keycloak_provider = next(provider for provider in providers if provider["id"] == "keycloak")
     metadata = keycloak_provider["provider_metadata"]

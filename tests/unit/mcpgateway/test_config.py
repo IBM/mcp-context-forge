@@ -56,6 +56,30 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_empty.sso_entra_admin_groups == []
 
 
+def test_sso_entra_graph_fallback_settings_defaults_and_overrides():
+    """Graph fallback settings should expose sane defaults and accept overrides."""
+    defaults = Settings(_env_file=None)
+    assert defaults.sso_entra_graph_api_enabled is True
+    assert defaults.sso_entra_graph_api_timeout == 10
+    assert defaults.sso_entra_graph_api_max_groups == 0
+
+    custom = Settings(sso_entra_graph_api_enabled=False, sso_entra_graph_api_timeout=25, sso_entra_graph_api_max_groups=500, _env_file=None)
+    assert custom.sso_entra_graph_api_enabled is False
+    assert custom.sso_entra_graph_api_timeout == 25
+    assert custom.sso_entra_graph_api_max_groups == 500
+
+
+def test_sso_entra_graph_timeout_and_max_groups_validation():
+    """Graph fallback timeout and max_groups should enforce configured bounds."""
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        Settings(sso_entra_graph_api_timeout=0, _env_file=None)
+
+    with pytest.raises(ValidationError):
+        Settings(sso_entra_graph_api_max_groups=-1, _env_file=None)
+
+
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #

@@ -212,6 +212,9 @@ SSO_ENTRA_GROUPS_CLAIM=groups
 # Optional: Default role for users without group mappings (default: None - no role)
 # SSO_ENTRA_DEFAULT_ROLE=viewer
 SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+SSO_ENTRA_GRAPH_API_ENABLED=true
+SSO_ENTRA_GRAPH_API_TIMEOUT=10
+SSO_ENTRA_GRAPH_API_MAX_GROUPS=0  # 0 = unlimited
 
 # Admin Groups (Object IDs or App Role names)
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
@@ -499,6 +502,9 @@ Add these environment variables to your `.env` file:
 SSO_ENTRA_GROUPS_CLAIM=groups
 SSO_ENTRA_DEFAULT_ROLE=viewer
 SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+SSO_ENTRA_GRAPH_API_ENABLED=true
+SSO_ENTRA_GRAPH_API_TIMEOUT=10
+SSO_ENTRA_GRAPH_API_MAX_GROUPS=0
 
 # Admin Groups (grants platform_admin role)
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678"]
@@ -514,6 +520,10 @@ SSO_ENTRA_ROLE_MAPPINGS={"e5f6g7h8-1234-5678-90ab-cdef12345678":"developer","i9j
 - `SSO_ENTRA_ROLE_MAPPINGS`: Map group IDs to role names
 - `SSO_ENTRA_DEFAULT_ROLE`: Role assigned if no groups match (default: None - no automatic role assignment)
 - `SSO_ENTRA_SYNC_ROLES_ON_LOGIN`: Sync roles on each login (default: true)
+- `SSO_ENTRA_GRAPH_API_ENABLED`: Use Graph fallback when token has groups overage (default: true)
+- `SSO_ENTRA_GRAPH_API_TIMEOUT`: Timeout in seconds for Graph fallback call (default: 10)
+- `SSO_ENTRA_GRAPH_API_MAX_GROUPS`: Maximum Graph-fetched groups retained (default: 0 = unlimited)
+- Graph fallback endpoint `/me/getMemberObjects` requires delegated `User.Read` permission in Entra app registration
 
 **Security Note:** `SSO_ENTRA_DEFAULT_ROLE` defaults to `None` (not "viewer") to prevent automatic access grants. Set this explicitly only if you want all EntraID users to receive a default role when they don't match any group mappings.
 

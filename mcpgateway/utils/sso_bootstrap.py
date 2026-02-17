@@ -210,13 +210,16 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "token_url": f"{base_url}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/oidc/userinfo",
                 "issuer": f"{base_url}/v2.0",
-                "scope": "openid profile email",
+                "scope": "openid profile email User.Read",
                 "trusted_domains": settings.sso_trusted_domains,
                 "auto_create_users": settings.sso_auto_create_users,
                 "team_mapping": {},
                 "provider_metadata": {
                     "groups_claim": settings.sso_entra_groups_claim,
                     "role_mappings": settings.sso_entra_role_mappings,
+                    "graph_api_enabled": getattr(settings, "sso_entra_graph_api_enabled", True),
+                    "graph_api_timeout": getattr(settings, "sso_entra_graph_api_timeout", 10),
+                    "graph_api_max_groups": getattr(settings, "sso_entra_graph_api_max_groups", 0),
                 },
             }
         )

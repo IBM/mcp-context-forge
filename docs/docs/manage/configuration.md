@@ -552,6 +552,14 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_ENTRA_CLIENT_ID`         | Microsoft Entra ID client ID                     | (none)                | string  |
 | `SSO_ENTRA_CLIENT_SECRET`     | Microsoft Entra ID client secret                 | (none)                | string  |
 | `SSO_ENTRA_TENANT_ID`         | Microsoft Entra ID tenant ID                     | (none)                | string  |
+| `SSO_ENTRA_GROUPS_CLAIM`      | JWT claim for Entra groups/roles                | `groups`              | string  |
+| `SSO_ENTRA_ADMIN_GROUPS`      | Groups granting `platform_admin`                | `[]`                  | JSON array |
+| `SSO_ENTRA_ROLE_MAPPINGS`     | Map Entra groups to Context Forge roles         | `{}`                  | JSON object |
+| `SSO_ENTRA_DEFAULT_ROLE`      | Default role when no mapping matches            | (none)                | string/null |
+| `SSO_ENTRA_SYNC_ROLES_ON_LOGIN` | Synchronize mapped roles on every login       | `true`                | bool    |
+| `SSO_ENTRA_GRAPH_API_ENABLED` | Enable Graph API fallback for groups overage    | `true`                | bool    |
+| `SSO_ENTRA_GRAPH_API_TIMEOUT` | Timeout (seconds) for Graph fallback request    | `10`                  | int     |
+| `SSO_ENTRA_GRAPH_API_MAX_GROUPS` | Maximum groups retained from Graph fallback (`0` = unlimited) | `0` | int |
 
 **Generic OIDC Provider (Auth0, Authentik, etc.):**
 

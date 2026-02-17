@@ -12,6 +12,7 @@ This feature enables automatic role assignment for Microsoft EntraID (formerly A
 - ✅ Automatic role synchronization on login
 - ✅ Platform admin assignment via admin groups
 - ✅ Default role assignment for users without group mappings
+- ✅ Automatic Microsoft Graph fallback for groups overage claims
 - ✅ Consistent with Keycloak implementation pattern
 
 ## Architecture
@@ -49,6 +50,9 @@ Context Forge includes a comprehensive RBAC system with the following default ro
    - `sso_entra_role_mappings`: Map groups to roles
    - `sso_entra_default_role`: Default role for unmapped users
    - `sso_entra_sync_roles_on_login`: Sync roles on each login
+   - `sso_entra_graph_api_enabled`: Enable Graph fallback on overage
+   - `sso_entra_graph_api_timeout`: Timeout for Graph fallback request
+   - `sso_entra_graph_api_max_groups`: Optional cap on Graph-fetched groups
 
 2. **Token Parsing** (`_get_user_info()` and `_decode_jwt_claims()`)
 
@@ -140,6 +144,9 @@ SSO_ENTRA_TENANT_ID=your-tenant-id
 SSO_ENTRA_GROUPS_CLAIM=groups  # or "roles" for app roles
 SSO_ENTRA_DEFAULT_ROLE=viewer
 SSO_ENTRA_SYNC_ROLES_ON_LOGIN=true
+SSO_ENTRA_GRAPH_API_ENABLED=true
+SSO_ENTRA_GRAPH_API_TIMEOUT=10
+SSO_ENTRA_GRAPH_API_MAX_GROUPS=0  # 0 = unlimited
 
 # Admin Groups (Object IDs or App Role names)
 SSO_ENTRA_ADMIN_GROUPS=["a1b2c3d4-1234-5678-90ab-cdef12345678","Admin"]
@@ -155,6 +162,9 @@ You can also configure role mappings in the SSO provider metadata:
 ```json
 {
   "groups_claim": "roles",
+  "graph_api_enabled": true,
+  "graph_api_timeout": 10,
+  "graph_api_max_groups": 0,
   "role_mappings": {
     "Admin": "platform_admin",
     "Developer": "developer",
@@ -292,18 +302,27 @@ EntraID can return groups in different formats:
 
 EntraID has a token size limit (~200 groups). When a user belongs to more groups than can fit in the token, EntraID returns a "group overage" indicator (`_claim_names`/`_claim_sources`) instead of the actual groups array.
 
-**Context Forge detects this condition and logs a warning:**
+**Context Forge behavior on overage:**
+1. Detects the overage claim in the ID token
+2. Calls `POST https://graph.microsoft.com/v1.0/me/getMemberObjects`
+3. Uses returned group IDs for admin checks and RBAC mappings
+4. Logs retrieval details (`Retrieved {count} groups from Graph API for {user}`)
+
+If Graph fallback fails, login still succeeds with safe defaults (no group-based elevation).
+
+**Example warning log:**
 ```
 Group overage detected for user user@example.com - token contains too many groups (>200).
-Role mapping may be incomplete. Consider using App Roles or Azure group filtering.
+Attempting Microsoft Graph fallback to resolve complete group membership.
 ```
 
-**Solutions for group overage:**
+**Recommended settings:**
 
-1. **Use App Roles** (Recommended) - App roles are always included in the token and not subject to overage limits
-2. **Azure group filtering** - In Azure Portal → App Registration → Token Configuration, filter groups to only include specific security groups
-3. **Claims transformation** - Use Azure claims mapping policies to reduce group claims
-4. **Direct group assignment** - Assign groups directly to the application instead of user-level membership
+1. `SSO_ENTRA_GRAPH_API_ENABLED=true` (default)
+2. `SSO_ENTRA_GRAPH_API_TIMEOUT=10` (adjust for network latency)
+3. `SSO_ENTRA_GRAPH_API_MAX_GROUPS=0` for unlimited (or set a cap for large tenants)
+4. Ensure delegated `User.Read` permission is granted to the app (required for `/me/getMemberObjects`)
+5. Continue using App Roles for clean semantic mapping when possible
 
 **Reference:** [Microsoft Groups Overage Claim](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#groups-overage-claim)
 
@@ -387,14 +406,17 @@ User belongs to more than ~200 security groups. EntraID cannot fit all groups in
 
 **Solutions:**
 
-1. **Use App Roles** (Recommended) - Not subject to token size limits
-2. **Configure group filtering** - In Azure Portal, limit which groups are included in the token
-3. **Assign groups to the application** - Use application-assigned groups instead of user memberships
+1. Ensure `SSO_ENTRA_GRAPH_API_ENABLED=true`
+2. Increase `SSO_ENTRA_GRAPH_API_TIMEOUT` if calls are timing out
+3. Raise or disable `SSO_ENTRA_GRAPH_API_MAX_GROUPS` if group lists are being truncated
+4. Use App Roles for stable semantic mappings where possible
 
 **Debug:**
 ```bash
 # Check for overage warnings in logs
 grep "Group overage detected" /var/log/mcpgateway.log
+# Verify Graph fallback retrieval
+grep "Retrieved .* groups from Graph API" /var/log/mcpgateway.log
 ```
 
 See [Token Size Considerations](#token-size-considerations) for detailed solutions.
@@ -438,7 +460,10 @@ If you previously used only the `is_admin` flag:
 | `sso_entra_admin_groups` | list[str] | [] | Groups granting platform_admin |
 | `sso_entra_role_mappings` | dict[str,str] | {} | Map groups to roles |
 | `sso_entra_default_role` | str | None | Default role for unmapped users (None = no automatic role) |
-| `sso_entra_sync_roles_on_login` | bool | true | Sync roles on each login |
+| `sso_entra_sync_roles_on_login` | bool | true | Synchronize mapped roles at every login |
+| `sso_entra_graph_api_enabled` | bool | true | Enable Microsoft Graph fallback for overage claims |
+| `sso_entra_graph_api_timeout` | int | 10 | Timeout (seconds) for Graph fallback request |
+| `sso_entra_graph_api_max_groups` | int | 0 | Max Graph groups retained (`0` = unlimited) |
 
 ### Methods
 

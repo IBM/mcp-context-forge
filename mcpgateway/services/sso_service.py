@@ -143,6 +143,136 @@ class SSOService:
             logger.warning(f"Failed to decode JWT claims: {e}")
             return None
 
+    def _resolve_entra_graph_fallback_settings(self, provider_metadata: Optional[Dict[str, Any]]) -> Tuple[bool, int, int]:
+        """Resolve Entra Graph fallback settings with provider metadata override.
+
+        Args:
+            provider_metadata: Optional provider metadata from DB/config.
+
+        Returns:
+            Tuple of (enabled, timeout_seconds, max_groups).
+        """
+        metadata = provider_metadata or {}
+        enabled = settings.sso_entra_graph_api_enabled
+        timeout = settings.sso_entra_graph_api_timeout
+        max_groups = settings.sso_entra_graph_api_max_groups
+
+        if "graph_api_enabled" in metadata:
+            metadata_enabled = metadata.get("graph_api_enabled")
+            if isinstance(metadata_enabled, bool):
+                enabled = metadata_enabled
+            elif isinstance(metadata_enabled, str):
+                normalized_enabled = metadata_enabled.strip().lower()
+                if normalized_enabled in {"1", "true", "yes", "on"}:
+                    enabled = True
+                elif normalized_enabled in {"0", "false", "no", "off"}:
+                    enabled = False
+                else:
+                    logger.warning("Invalid provider_metadata.graph_api_enabled=%s; using configured default %s", metadata_enabled, enabled)
+            else:
+                enabled = bool(metadata_enabled)
+
+        metadata_timeout = metadata.get("graph_api_timeout")
+        if metadata_timeout is not None:
+            try:
+                timeout_candidate = int(metadata_timeout)
+                if timeout_candidate >= 1:
+                    timeout = timeout_candidate
+                else:
+                    logger.warning("Invalid provider_metadata.graph_api_timeout=%s; using configured default %s", metadata_timeout, timeout)
+            except (TypeError, ValueError):
+                logger.warning("Invalid provider_metadata.graph_api_timeout=%s; using configured default %s", metadata_timeout, timeout)
+
+        metadata_max_groups = metadata.get("graph_api_max_groups")
+        if metadata_max_groups is not None:
+            try:
+                max_groups_candidate = int(metadata_max_groups)
+                if max_groups_candidate >= 0:
+                    max_groups = max_groups_candidate
+                else:
+                    logger.warning("Invalid provider_metadata.graph_api_max_groups=%s; using configured default %s", metadata_max_groups, max_groups)
+            except (TypeError, ValueError):
+                logger.warning("Invalid provider_metadata.graph_api_max_groups=%s; using configured default %s", metadata_max_groups, max_groups)
+
+        return enabled, timeout, max_groups
+
+    async def _fetch_entra_groups_from_graph_api(self, access_token: str, user_email: str, provider_metadata: Optional[Dict[str, Any]] = None) -> Optional[List[str]]:
+        """Fetch Entra group object IDs from Microsoft Graph for overage tokens.
+
+        Args:
+            access_token: Delegated OAuth access token from Entra.
+            user_email: User identifier for structured logs.
+            provider_metadata: Optional provider metadata for runtime overrides.
+
+        Returns:
+            List of group IDs on success, empty list when Graph returns no IDs,
+            or None if retrieval failed/disabled.
+        """
+        graph_api_enabled, graph_api_timeout, graph_api_max_groups = self._resolve_entra_graph_fallback_settings(provider_metadata)
+        if not graph_api_enabled:
+            logger.info("Microsoft Graph fallback for Entra group overage is disabled")
+            return None
+
+        # First-Party
+        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+
+        client = await get_http_client()
+        try:
+            response = await client.post(
+                "https://graph.microsoft.com/v1.0/me/getMemberObjects",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json={"securityEnabledOnly": False},
+                timeout=graph_api_timeout,
+            )
+        except Exception as e:
+            logger.error("Failed to retrieve groups from Graph API for %s: %s", user_email, e)
+            return None
+
+        if response.status_code != 200:
+            if response.status_code in {401, 403}:
+                logger.error(
+                    "Failed to retrieve groups from Graph API for %s: HTTP %s. Check Entra delegated permissions and consent (minimum User.Read).",
+                    user_email,
+                    response.status_code,
+                )
+            else:
+                logger.error("Failed to retrieve groups from Graph API for %s: HTTP %s", user_email, response.status_code)
+            return None
+
+        try:
+            groups_payload = response.json()
+        except ValueError as e:
+            logger.error("Failed to parse Graph API response for %s: %s", user_email, e)
+            return None
+
+        group_values = groups_payload.get("value", [])
+        if not isinstance(group_values, list):
+            logger.warning("Unexpected Graph API groups payload for %s: expected list in 'value'", user_email)
+            return []
+
+        deduped_groups: List[str] = []
+        seen_groups: set[str] = set()
+        for group_id in group_values:
+            if not isinstance(group_id, str):
+                continue
+            normalized_group_id = group_id.strip()
+            if not normalized_group_id or normalized_group_id in seen_groups:
+                continue
+            seen_groups.add(normalized_group_id)
+            deduped_groups.append(normalized_group_id)
+
+        if graph_api_max_groups > 0 and len(deduped_groups) > graph_api_max_groups:
+            logger.warning(
+                "Graph API returned %d groups for %s; applying configured cap (%d)",
+                len(deduped_groups),
+                user_email,
+                graph_api_max_groups,
+            )
+            deduped_groups = deduped_groups[:graph_api_max_groups]
+
+        logger.info("Retrieved %d groups from Graph API for %s", len(deduped_groups), user_email)
+        return deduped_groups
+
     def list_enabled_providers(self) -> List[SSOProvider]:
         """Get list of enabled SSO providers.
 
@@ -605,20 +735,30 @@ class SSOService:
             if provider.id == "entra" and token_data and "id_token" in token_data:
                 id_token_claims = self._decode_jwt_claims(token_data["id_token"])
                 if id_token_claims:
-                    # Detect group overage - when user has too many groups (>200), EntraID returns
-                    # _claim_names/_claim_sources instead of the actual groups array.
+                    entra_groups_from_graph: Optional[List[str]] = None
+                    # Detect group overage - when user has too many groups (>200), EntraID can return
+                    # overage markers (e.g. _claim_names/_claim_sources, hasgroups, groups:srcN)
+                    # instead of an inline groups array.
                     # See: https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference
                     claim_names = id_token_claims.get("_claim_names", {})
-                    if isinstance(claim_names, dict) and "groups" in claim_names:
+                    has_groups_src_key = any(isinstance(key, str) and key.startswith("groups:src") for key in id_token_claims)
+                    groups_claim_value = id_token_claims.get("groups")
+                    has_group_overage = (
+                        (isinstance(claim_names, dict) and "groups" in claim_names) or bool(id_token_claims.get("hasgroups")) or has_groups_src_key or isinstance(groups_claim_value, str)
+                    )
+                    if has_group_overage:
                         user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
                         logger.warning(
-                            f"Group overage detected for user {user_email} - token contains too many groups (>200). "
-                            f"Role mapping may be incomplete. Consider using App Roles or Azure group filtering. "
-                            f"See docs/docs/manage/sso-entra-role-mapping.md#token-size-considerations"
+                            f"Group overage detected for user {user_email} - token contains too many groups (>200). " "Attempting Microsoft Graph fallback to resolve complete group membership."
                         )
+                        entra_groups_from_graph = await self._fetch_entra_groups_from_graph_api(access_token, user_email, provider.provider_metadata)
+                        if entra_groups_from_graph is None:
+                            logger.warning("Proceeding without Graph-resolved Entra groups for user %s", user_email)
 
                     # Extract groups from id_token (Security Groups as Object IDs)
-                    if "groups" in id_token_claims:
+                    if entra_groups_from_graph is not None:
+                        user_data["groups"] = entra_groups_from_graph
+                    elif "groups" in id_token_claims:
                         user_data["groups"] = id_token_claims["groups"]
                         logger.debug(f"Extracted {len(id_token_claims['groups'])} groups from Entra ID token")
 

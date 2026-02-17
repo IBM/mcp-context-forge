@@ -598,6 +598,27 @@
       "title": "Sso Entra Sync Roles On Login",
       "type": "boolean"
     },
+    "sso_entra_graph_api_enabled": {
+      "default": true,
+      "description": "Enable Microsoft Graph fallback for EntraID groups overage claims",
+      "title": "Sso Entra Graph Api Enabled",
+      "type": "boolean"
+    },
+    "sso_entra_graph_api_timeout": {
+      "default": 10,
+      "description": "Timeout in seconds for Microsoft Graph group fallback requests",
+      "maximum": 120,
+      "minimum": 1,
+      "title": "Sso Entra Graph Api Timeout",
+      "type": "integer"
+    },
+    "sso_entra_graph_api_max_groups": {
+      "default": 0,
+      "description": "Maximum groups to keep from Graph fallback (0 = no limit)",
+      "minimum": 0,
+      "title": "Sso Entra Graph Api Max Groups",
+      "type": "integer"
+    },
     "sso_generic_enabled": {
       "default": false,
       "description": "Enable generic OIDC provider (Keycloak, Auth0, etc.)",
