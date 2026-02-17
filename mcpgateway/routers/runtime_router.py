@@ -281,7 +281,8 @@ async def deploy_runtime(
 @require_permission("servers.read")
 async def list_runtimes(
     backend: Optional[str] = Query(default=None),
-    status_filter: Optional[str] = Query(default=None, alias="status"),
+    status_filter: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None, alias="status", include_in_schema=False),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -291,7 +292,8 @@ async def list_runtimes(
 
     Args:
         backend: Optional backend filter.
-        status_filter: Optional runtime status filter.
+        status_filter: Optional runtime status filter (`status_filter` query param).
+        status: Legacy runtime status filter (`status` query param).
         limit: Maximum number of items to return.
         offset: Pagination offset.
         db: Database session used for query execution.
@@ -299,14 +301,16 @@ async def list_runtimes(
     Returns:
         RuntimeListResponse: Paginated runtime deployment list.
     """
-    runtimes, total = await runtime_service.list_runtimes(db, backend=backend, status=status_filter, limit=limit, offset=offset)
+    effective_status = status_filter if status_filter is not None else status
+    runtimes, total = await runtime_service.list_runtimes(db, backend=backend, status=effective_status, limit=limit, offset=offset)
     return RuntimeListResponse(runtimes=runtimes, total=total)
 
 
 @runtime_router.get("/approvals", response_model=RuntimeApprovalListResponse)
 @require_permission("admin.system_config")
 async def list_runtime_approvals(
-    status_filter: Optional[str] = Query(default="pending", alias="status"),
+    status_filter: Optional[str] = Query(default=None),
+    status: Optional[str] = Query(default=None, alias="status", include_in_schema=False),
     limit: int = Query(default=100, ge=1, le=500),
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
@@ -315,7 +319,8 @@ async def list_runtime_approvals(
     """List runtime approval requests.
 
     Args:
-        status_filter: Optional approval status filter.
+        status_filter: Optional approval status filter (`status_filter` query param).
+        status: Legacy approval status filter (`status` query param).
         limit: Maximum number of approvals to return.
         offset: Pagination offset.
         db: Database session used for query execution.
@@ -323,7 +328,8 @@ async def list_runtime_approvals(
     Returns:
         RuntimeApprovalListResponse: Paginated runtime approval list.
     """
-    approvals, total = await runtime_service.list_approvals(db, status=status_filter, limit=limit, offset=offset)
+    effective_status = status_filter if status_filter is not None else status or "pending"
+    approvals, total = await runtime_service.list_approvals(db, status=effective_status, limit=limit, offset=offset)
     return RuntimeApprovalListResponse(approvals=approvals, total=total)
 
 

@@ -8693,6 +8693,41 @@ function runtimeHandleSourceTypeChange() {
     if (sourceType === "catalog" && catalogFields) {
         catalogFields.classList.remove("hidden");
     }
+
+    const setRequired = (elementId, required) => {
+        const element = safeGetElement(elementId, true);
+        if (!element) {
+            return;
+        }
+        element.required = Boolean(required);
+    };
+
+    setRequired("runtime-source-image", sourceType === "docker");
+    setRequired("runtime-source-repo", sourceType === "github");
+    setRequired("runtime-source-compose-file", sourceType === "compose");
+    setRequired("runtime-source-main-service", sourceType === "compose");
+    setRequired("runtime-source-catalog-id", sourceType === "catalog");
+}
+
+function runtimeResetDeployForm(clearMessage = true) {
+    const deployForm = safeGetElement("runtime-deploy-form", true);
+    if (!deployForm) {
+        return;
+    }
+    deployForm.reset();
+
+    const sourceTypeElement = safeGetElement(
+        "runtime-deploy-source-type",
+        true,
+    );
+    if (sourceTypeElement && !sourceTypeElement.value) {
+        sourceTypeElement.value = "docker";
+    }
+
+    runtimeHandleSourceTypeChange();
+    if (clearMessage) {
+        runtimeSetDeployMessage("");
+    }
 }
 
 function runtimeParseJsonInput(value, label) {
@@ -9095,11 +9130,78 @@ async function runtimeHandleDeploySubmit(event) {
             method: "POST",
             body: payload,
         });
+        const deployedRuntime = response?.runtime || {};
+        const deployedBackend = String(deployedRuntime.backend || "").trim();
+        const deployedStatus = String(deployedRuntime.status || "").trim();
+
+        let clearedRuntimeBackendFilter = false;
+        const runtimeBackendFilter = safeGetElement(
+            "runtime-filter-backend",
+            true,
+        );
+        if (
+            runtimeBackendFilter &&
+            runtimeBackendFilter.value &&
+            deployedBackend &&
+            runtimeBackendFilter.value !== deployedBackend
+        ) {
+            runtimeBackendFilter.value = "";
+            clearedRuntimeBackendFilter = true;
+        }
+
+        let clearedRuntimeStatusFilter = false;
+        const runtimeStatusFilter = safeGetElement(
+            "runtime-filter-status",
+            true,
+        );
+        if (
+            runtimeStatusFilter &&
+            runtimeStatusFilter.value &&
+            deployedStatus &&
+            runtimeStatusFilter.value !== deployedStatus
+        ) {
+            runtimeStatusFilter.value = "";
+            clearedRuntimeStatusFilter = true;
+        }
+
+        let switchedApprovalFilterToPending = false;
+        const approvalStatusFilter = safeGetElement(
+            "runtime-approval-filter-status",
+            true,
+        );
+        if (
+            approvalStatusFilter &&
+            String(deployedRuntime.approval_status || "") === "pending" &&
+            !["pending", "all"].includes(approvalStatusFilter.value)
+        ) {
+            approvalStatusFilter.value = "pending";
+            switchedApprovalFilterToPending = true;
+        }
+
         const message = response?.message || "Deployment request submitted";
+        runtimeResetDeployForm(false);
         runtimeSetDeployMessage(message, "success");
         showNotification(message, "success");
         await runtimeLoadRuntimes();
         await runtimeLoadApprovals();
+        if (clearedRuntimeBackendFilter) {
+            showNotification(
+                "Cleared runtime backend filter so the new deployment is visible",
+                "info",
+            );
+        }
+        if (clearedRuntimeStatusFilter) {
+            showNotification(
+                "Cleared runtime status filter so the new deployment is visible",
+                "info",
+            );
+        }
+        if (switchedApprovalFilterToPending) {
+            showNotification(
+                "Switched approvals filter to pending for the new request",
+                "info",
+            );
+        }
     } catch (error) {
         runtimeSetDeployMessage(error.message, "error");
         showNotification(`Runtime deploy failed: ${error.message}`, "error");
@@ -9130,15 +9232,17 @@ function bindRuntimePanelEventHandlers() {
 
     const deployForm = safeGetElement("runtime-deploy-form", true);
     if (deployForm) {
+        // Enforce runtimeBuildDeployPayload()-based validation and messages.
+        // This keeps behavior consistent even if templates are served from
+        // older images without a `novalidate` attribute on the form.
+        deployForm.noValidate = true;
         deployForm.addEventListener("submit", runtimeHandleDeploySubmit);
     }
 
     const resetButton = safeGetElement("runtime-deploy-reset", true);
     if (resetButton && deployForm) {
         resetButton.addEventListener("click", () => {
-            deployForm.reset();
-            runtimeHandleSourceTypeChange();
-            runtimeSetDeployMessage("");
+            runtimeResetDeployForm();
         });
     }
 

@@ -367,6 +367,11 @@ describe("runtime source and payload building", () => {
                 className: "hidden",
             },
         );
+        addElement("input", "runtime-source-image");
+        const repoField = addElement("input", "runtime-source-repo");
+        addElement("input", "runtime-source-compose-file");
+        addElement("input", "runtime-source-main-service");
+        addElement("input", "runtime-source-catalog-id");
 
         win.runtimeHandleSourceTypeChange();
 
@@ -374,6 +379,7 @@ describe("runtime source and payload building", () => {
         expect(dockerFields.classList.contains("hidden")).toBe(true);
         expect(composeFields.classList.contains("hidden")).toBe(true);
         expect(catalogFields.classList.contains("hidden")).toBe(true);
+        expect(repoField.required).toBe(true);
     });
 
     test("builds docker deploy payload", () => {
@@ -631,17 +637,55 @@ describe("runtime API helpers and actions", () => {
 describe("runtime deploy submit, bindings, and panel loading", () => {
     test("submits deploy requests and handles failures", async () => {
         const submitButton = addElement("button", "runtime-deploy-submit");
+        const deployForm = addElement("form", "runtime-deploy-form");
         addElement("span", "runtime-deploy-message");
+        addSelect("runtime-filter-backend", ["", "ibm_code_engine"], "ibm_code_engine");
+        addSelect("runtime-filter-status", ["", "rejected"], "rejected");
+        addSelect(
+            "runtime-approval-filter-status",
+            ["pending", "rejected"],
+            "rejected",
+        );
+
+        const sourceType = addSelect(
+            "runtime-deploy-source-type",
+            ["docker", "github", "compose", "catalog"],
+            "docker",
+        );
+        sourceType.defaultValue = "docker";
+        addElement("div", "runtime-source-docker-fields");
+        addElement("div", "runtime-source-github-fields", {
+            className: "hidden",
+        });
+        addElement("div", "runtime-source-compose-fields", {
+            className: "hidden",
+        });
+        addElement("div", "runtime-source-catalog-fields", {
+            className: "hidden",
+        });
+        addElement("input", "runtime-source-image");
+        addElement("input", "runtime-source-repo");
+        addElement("input", "runtime-source-compose-file");
+        addElement("input", "runtime-source-main-service");
+        addElement("input", "runtime-source-catalog-id");
+
         const event = { preventDefault: vi.fn() };
         vi.spyOn(win, "runtimeBuildDeployPayload").mockReturnValue({
             name: "runtime-one",
         });
         vi.spyOn(win, "runtimeApiRequest").mockResolvedValue({
             message: "submitted",
+            runtime: {
+                id: "runtime-1",
+                backend: "docker",
+                status: "pending_approval",
+                approval_status: "pending",
+            },
         });
         vi.spyOn(win, "runtimeLoadRuntimes").mockResolvedValue(undefined);
         vi.spyOn(win, "runtimeLoadApprovals").mockResolvedValue(undefined);
         const notifySpy = vi.spyOn(win, "showNotification");
+        vi.spyOn(deployForm, "reset");
 
         await win.runtimeHandleDeploySubmit(event);
         expect(event.preventDefault).toHaveBeenCalled();
@@ -650,6 +694,12 @@ describe("runtime deploy submit, bindings, and panel loading", () => {
             "submitted",
         );
         expect(notifySpy).toHaveBeenCalledWith("submitted", "success");
+        expect(doc.getElementById("runtime-filter-backend").value).toBe("");
+        expect(doc.getElementById("runtime-filter-status").value).toBe("");
+        expect(doc.getElementById("runtime-approval-filter-status").value).toBe(
+            "pending",
+        );
+        expect(deployForm.reset).toHaveBeenCalled();
 
         vi.spyOn(win, "runtimeBuildDeployPayload").mockImplementation(() => {
             throw new Error("invalid payload");
