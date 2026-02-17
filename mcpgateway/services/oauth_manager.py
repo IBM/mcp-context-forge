@@ -20,6 +20,7 @@ import hmac
 import logging
 import secrets
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 # Third-Party
 import httpx
@@ -113,6 +114,16 @@ class OAuthManager:
         >>> " ".join(empty_scopes)
         ''
     """
+
+    # Known Microsoft Entra login hosts (global + sovereign clouds).
+    _ENTRA_HOSTS: frozenset[str] = frozenset(
+        {
+            "login.microsoftonline.com",
+            "login.microsoftonline.us",
+            "login.microsoftonline.de",
+            "login.partner.microsoftonline.cn",
+        }
+    )
 
     def __init__(self, request_timeout: int = 30, max_retries: int = 3, token_storage: Optional[Any] = None):
         """Initialize OAuth Manager.
@@ -963,6 +974,64 @@ class OAuthManager:
 
         return auth_url, state
 
+    @staticmethod
+    def _is_microsoft_entra_v2_endpoint(endpoint_url: Any) -> bool:
+        """Return True when endpoint matches Microsoft Entra v2 login endpoints.
+
+        Args:
+            endpoint_url: OAuth endpoint URL to check
+
+        Returns:
+            True if the endpoint is a Microsoft Entra v2 OAuth endpoint
+        """
+        if not isinstance(endpoint_url, str) or not endpoint_url:
+            return False
+
+        parsed = urlparse(endpoint_url)
+        host = (parsed.hostname or "").lower()
+        path = parsed.path.lower()
+
+        return host in OAuthManager._ENTRA_HOSTS and "/oauth2/v2.0/" in path
+
+    @staticmethod
+    def _is_enabled_flag(value: Any) -> bool:
+        """Parse boolean-like config values from oauth_config.
+
+        Args:
+            value: Config value to interpret as boolean
+
+        Returns:
+            True if value represents an enabled/truthy setting
+        """
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return False
+
+    def _should_include_resource_parameter(self, credentials: Dict[str, Any], scopes: Any) -> bool:
+        """Determine whether RFC 8707 resource should be sent for this request.
+
+        Args:
+            credentials: OAuth configuration containing resource and endpoint URLs
+            scopes: OAuth scopes for the request
+
+        Returns:
+            True if the resource parameter should be included in the request
+        """
+        if not credentials.get("resource"):
+            return False
+
+        if self._is_enabled_flag(credentials.get("omit_resource")):
+            return False
+
+        # Microsoft Entra v2 does not accept legacy resource with v2 scope-based requests.
+        if scopes and (self._is_microsoft_entra_v2_endpoint(credentials.get("authorization_url")) or self._is_microsoft_entra_v2_endpoint(credentials.get("token_url"))):
+            logger.info("Omitting OAuth resource parameter for Microsoft Entra v2 scope-based flow")
+            return False
+
+        return True
+
     def _create_authorization_url_with_pkce(self, credentials: Dict[str, Any], state: str, code_challenge: str, code_challenge_method: str) -> str:
         """Create authorization URL with PKCE parameters (RFC 7636).
 
@@ -993,7 +1062,7 @@ class OAuthManager:
         # Add resource parameter for JWT access token (RFC 8707)
         # The resource is the MCP server URL, set by oauth_router.py
         resource = credentials.get("resource")
-        if resource:
+        if self._should_include_resource_parameter(credentials, scopes):
             params["resource"] = resource  # urlencode with doseq=True handles lists
 
         # Build full URL (doseq=True handles list values like multiple resource params)
@@ -1053,7 +1122,8 @@ class OAuthManager:
         # Add resource parameter to request JWT access token (RFC 8707)
         # The resource identifies the MCP server (resource server), not the OAuth server
         resource = credentials.get("resource")
-        if resource:
+        scopes = credentials.get("scopes", [])
+        if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples
                 form_data: list[tuple[str, str]] = list(token_data.items())
@@ -1146,7 +1216,8 @@ class OAuthManager:
         # Add resource parameter for JWT access token (RFC 8707)
         # Must be included in refresh requests to maintain JWT token type
         resource = credentials.get("resource")
-        if resource:
+        scopes = credentials.get("scopes", [])
+        if self._should_include_resource_parameter(credentials, scopes):
             if isinstance(resource, list):
                 # RFC 8707 allows multiple resource parameters - use list of tuples
                 form_data: list[tuple[str, str]] = list(token_data.items())

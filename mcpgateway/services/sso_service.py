@@ -1241,7 +1241,7 @@ class SSOService:
                     logger.info(f"Assigned SSO role '{role.name}' to {user_email}")
 
             except Exception as e:
-                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}")
+                logger.warning(f"Failed to assign role '{assignment['role_name']}' to {user_email}: {e}", exc_info=True)
                 try:
                     self.db.rollback()
                 except Exception as rollback_error:
