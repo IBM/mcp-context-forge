@@ -709,6 +709,8 @@ class ServerService:
                 user_email=created_by,
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
+
+
     def _apply_visibility_filter(
         self,
         query,
@@ -746,13 +748,11 @@ class ServerService:
                 return query.where(False)
 
             access_conditions.append(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
-            
+
             # Only include owner access for non-public-only tokens with user_email
             if not is_public_only_token and user_email:
                 access_conditions.append(and_(DbServer.team_id == team_id, DbServer.owner_email == user_email))
             return query.where(or_(*access_conditions))
-
-        
 
         # Only include owner access for non-public-only tokens with user_email
         if not is_public_only_token and user_email:

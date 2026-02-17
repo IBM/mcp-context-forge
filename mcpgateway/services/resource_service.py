@@ -914,6 +914,8 @@ class ResourceService:
                 return True
 
         return False
+
+
     def _apply_visibility_filter(
         self,
         query,
@@ -955,8 +957,6 @@ class ResourceService:
             if not is_public_only_token and user_email:
                 access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
             return query.where(or_(*access_conditions))
-
-        
 
         # Only include owner access for non-public-only tokens with user_email
         if not is_public_only_token and user_email:

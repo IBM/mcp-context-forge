@@ -284,12 +284,11 @@ class A2AAgentService:
                 return query.where(False)
 
             access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
-            
+
             # Only include owner access for non-public-only tokens with user_email
             if not is_public_only_token and user_email:
                 access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
             return query.where(or_(*access_conditions))
-
 
         # Only include owner access for non-public-only tokens with user_email
         if not is_public_only_token and user_email:

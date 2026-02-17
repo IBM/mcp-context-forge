@@ -1707,6 +1707,8 @@ class ToolService:
             plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
             plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
         )
+
+
     def _apply_visibility_filter(
         self,
         query,
@@ -1743,7 +1745,7 @@ class ToolService:
                 # Return query that matches nothing (will return empty result)
                 return query.where(False)
 
-            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))            
+            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))
             # Only include owner access for non-public-only tokens with user_email
             if not is_public_only_token and user_email:
                 access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))

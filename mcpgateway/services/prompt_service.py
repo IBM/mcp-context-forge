@@ -960,6 +960,8 @@ class PromptService:
         )
 
         return stats
+
+
     def _apply_visibility_filter(
         self,
         query,
@@ -1002,8 +1004,6 @@ class PromptService:
             if not is_public_only_token and user_email:
                 access_conditions.append(and_(DbPrompt.team_id == team_id, DbPrompt.owner_email == user_email))
             return query.where(or_(*access_conditions))
-
-        
 
         # Only include owner access for non-public-only tokens with user_email
         if not is_public_only_token and user_email:
