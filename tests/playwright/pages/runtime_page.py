@@ -99,6 +99,11 @@ class RuntimePage(BasePage):
         return self.page.locator("#runtime-refresh-approvals-btn")
 
     @property
+    def refresh_runtimes_button(self) -> Locator:
+        """Runtimes refresh button."""
+        return self.page.locator("#runtime-refresh-runtimes-btn")
+
+    @property
     def compatibility_button(self) -> Locator:
         """Guardrail compatibility check button."""
         return self.page.locator("#runtime-compat-check-btn")
@@ -137,6 +142,16 @@ class RuntimePage(BasePage):
     def logs_output(self) -> Locator:
         """Runtime logs output panel."""
         return self.page.locator("#runtime-logs-output")
+
+    @property
+    def clear_logs_button(self) -> Locator:
+        """Clear runtime logs button."""
+        return self.page.locator("#runtime-clear-logs-btn")
+
+    @property
+    def toast_notifications(self) -> Locator:
+        """Transient toast notifications rendered by showNotification()."""
+        return self.page.locator("div.fixed.top-4.right-4.z-50")
 
     # ==================== Navigation and Readiness ====================
 
@@ -236,6 +251,12 @@ class RuntimePage(BasePage):
             f'button[data-runtime-action="{action}"][data-runtime-id="{runtime_id}"]'
         )
 
+    def enabled_runtime_action_buttons(self, action: str) -> Locator:
+        """Return all enabled runtime action buttons for a given action."""
+        return self.page.locator(
+            f'button[data-runtime-action="{action}"]:not([disabled])'
+        )
+
     def approval_action_button(self, approval_id: str, action: str) -> Locator:
         """Return approval action button locator for a specific approval request."""
         return self.page.locator(
@@ -318,3 +339,11 @@ class RuntimePage(BasePage):
             if approval.get("status") == "pending":
                 self.api_reject_approval(str(approval["id"]), rejection_reason)
         self.api_delete_runtime(runtime_id)
+
+    def runtime_short_id(self, runtime_id: str, size: int = 12) -> str:
+        """Return short runtime id text used in table rows."""
+        if not runtime_id:
+            return "-"
+        if len(runtime_id) <= size:
+            return runtime_id
+        return f"{runtime_id[:size]}..."

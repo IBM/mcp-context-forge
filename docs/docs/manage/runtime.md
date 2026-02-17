@@ -28,6 +28,61 @@ By default, runtime endpoints are platform-admin-only. Set `RUNTIME_PLATFORM_ADM
 
 ---
 
+## Local Docker Quickstart (Fast Time Server)
+
+This is a known-working end-to-end example for local testing.
+
+### 1. Configure runtime flags
+
+Set these values in your environment (for example `.env`, Docker Compose `environment:`, or Helm values):
+
+```bash
+MCPGATEWAY_UI_ENABLED=true
+MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_RUNTIME_ENABLED=true
+RUNTIME_PLATFORM_ADMIN_ONLY=true
+RUNTIME_DEFAULT_BACKEND=docker
+RUNTIME_DOCKER_ENABLED=true
+RUNTIME_IBM_CODE_ENGINE_ENABLED=false
+```
+
+### 2. Open the Runtime admin panel
+
+Navigate to:
+
+- `/admin#runtime` (tab label: **Runtime**)
+
+### 3. Deploy a runtime with the known test image
+
+In the Deploy form, use:
+
+- source type: `docker`
+- image: `ghcr.io/ibm/fast-time-server:0.8.0`
+
+Expected result:
+
+- the runtime appears in the Runtime table
+- status transitions toward `running`/`connected`
+- `logs` action returns container output
+
+### 4. Validate over API (optional)
+
+```bash
+# list runtime records
+curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  http://localhost:4444/runtimes
+
+# fetch runtime logs
+curl -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  "http://localhost:4444/runtimes/<runtime_id>/logs?tail=200"
+
+# delete runtime
+curl -X DELETE -H "Authorization: Bearer ${MCPGATEWAY_BEARER_TOKEN}" \
+  http://localhost:4444/runtimes/<runtime_id>
+```
+
+---
+
 ## Runtime APIs
 
 Main endpoints:
@@ -45,7 +100,7 @@ Main endpoints:
 
 ## Admin UI
 
-When `MCPGATEWAY_RUNTIME_ENABLED=true`, the Admin UI includes a **Runtime** tab at `#runtime`.
+When `MCPGATEWAY_RUNTIME_ENABLED=true`, the Admin UI includes a **Runtime** tab at `#runtime` (`/admin#runtime`).
 
 Visibility rules:
 
@@ -116,6 +171,23 @@ Remote catalog federation for runtime use can be enabled with:
 ```bash
 RUNTIME_CATALOG_REMOTE_URLS='["https://example.com/catalog.yml"]'
 RUNTIME_CATALOG_REMOTE_TIMEOUT_SECONDS=15
+```
+
+Catalog example (Docker source using fast-time server):
+
+```yaml
+servers:
+  - id: "fast-time-runtime"
+    name: "Fast Time Runtime"
+    description: "Known working runtime sample for Docker backend"
+    source_type: "docker"
+    source: "ghcr.io/ibm/fast-time-server:0.8.0"
+    transport: "streamable-http"
+    endpoint: "http://localhost:8099/mcp"
+    runtime:
+      supported_backends: ["docker"]
+      guardrails_profile: "standard"
+      requires_approval: false
 ```
 
 ---
