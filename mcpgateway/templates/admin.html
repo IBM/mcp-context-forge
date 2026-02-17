@@ -432,6 +432,15 @@
               <span x-show="!sidebarCollapsed">MCP Registry</span>
             </a>
             {% endif %}
+            {% if runtime_ui_access and 'runtime' not in hidden_sections %}
+            <a href="#runtime" id="tab-runtime" data-testid="runtime-tab"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('runtime')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🚀</span>
+              <span x-show="!sidebarCollapsed">Runtime</span>
+            </a>
+            {% endif %}
           </div>
 
           <!-- Agents Section -->
@@ -2228,6 +2237,11 @@
           </div>
         </div>
       </div>
+      {% endif %}
+
+      {% if runtime_ui_access and 'runtime' not in hidden_sections %}
+      <!-- Runtime Panel -->
+      <div id="runtime-panel" class="tab-panel hidden"></div>
       {% endif %}
 
       {% if 'servers' not in hidden_sections %}
@@ -11820,6 +11834,10 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
       window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
       window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
+      window.RUNTIME_ENABLED = {{ runtime_enabled | default(false) | tojson }};
+      window.RUNTIME_UI_ACCESS = {{ runtime_ui_access | default(false) | tojson }};
+      window.RUNTIME_PLATFORM_ADMIN_ONLY = {{ runtime_platform_admin_only | default(true) | tojson }};
+      window.RUNTIME_DEFAULT_BACKEND = {{ runtime_default_backend | default('docker') | tojson }};
 
       // Display flash messages from URL parameters
       (function() {

@@ -195,6 +195,7 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "resources": ("resources",),
     "roots": ("roots",),
     "mcp-registry": ("mcp-registry",),
+    "runtime": ("runtime",),
     "metrics": ("metrics",),
     "plugins": ("plugins",),
     "export-import": ("export-import",),
@@ -3303,6 +3304,8 @@ async def admin_ui(
     # Template variables and context: include selected_team_id so the template and frontend can read it
     root_path = settings.app_root_path
     max_name_length = settings.validation_max_name_length
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    runtime_ui_access = bool(settings.mcpgateway_runtime_enabled and (is_admin_user or not settings.runtime_platform_admin_only))
 
     # End the read-only transaction before template rendering to avoid idle-in-transaction timeouts.
     db.commit()
@@ -3332,9 +3335,13 @@ async def admin_ui(
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),
             "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
+            "runtime_enabled": bool(settings.mcpgateway_runtime_enabled),
+            "runtime_ui_access": runtime_ui_access,
+            "runtime_platform_admin_only": bool(settings.runtime_platform_admin_only),
+            "runtime_default_backend": settings.runtime_default_backend,
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
-            "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
+            "is_admin": is_admin_user,
             "user_teams": user_teams,
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
@@ -15850,6 +15857,53 @@ async def admin_generate_support_bundle(
     except Exception as e:
         LOGGER.error(f"Support bundle generation failed for user {user}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to generate support bundle: {str(e)}")
+
+
+# ============================================================================
+# Runtime Admin UI Routes
+# ============================================================================
+
+
+@admin_router.get("/runtime/partial", response_class=HTMLResponse)
+@require_permission("servers.read", allow_admin_bypass=False)
+async def get_runtime_partial(
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+    _db: Session = Depends(get_db),
+) -> HTMLResponse:
+    """Render the runtime deployment panel partial for the admin UI.
+
+    Args:
+        request: FastAPI request object.
+        user: Authenticated user context.
+        _db: Database session used for permission checks.
+
+    Returns:
+        HTMLResponse: Rendered runtime management partial template.
+
+    Raises:
+        HTTPException: 404 when runtime feature is disabled.
+        HTTPException: 403 when runtime access is platform-admin-only and user is not a platform admin.
+    """
+    if not settings.mcpgateway_runtime_enabled:
+        raise HTTPException(status_code=404, detail="Runtime feature is disabled")
+
+    is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
+    if settings.runtime_platform_admin_only and not is_admin_user:
+        raise HTTPException(status_code=403, detail="Runtime UI is restricted to platform administrators")
+
+    LOGGER.debug("User %s requested runtime admin partial", get_user_email(user))
+    root_path = request.scope.get("root_path", "")
+    return request.app.state.templates.TemplateResponse(
+        request,
+        "runtime_partial.html",
+        {
+            "request": request,
+            "root_path": root_path,
+            "runtime_default_backend": settings.runtime_default_backend,
+            "runtime_platform_admin_only": bool(settings.runtime_platform_admin_only),
+        },
+    )
 
 
 # ============================================================================

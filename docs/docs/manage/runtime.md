@@ -41,6 +41,30 @@ Main endpoints:
 - `DELETE /runtimes/{runtime_id}`
 - `GET /runtimes/{runtime_id}/logs`
 
+---
+
+## Admin UI
+
+When `MCPGATEWAY_RUNTIME_ENABLED=true`, the Admin UI includes a **Runtime** tab at `#runtime`.
+
+Visibility rules:
+
+- Runtime disabled: tab is hidden and `/admin/runtime/partial` returns `404`.
+- `RUNTIME_PLATFORM_ADMIN_ONLY=true`: tab and runtime panel are available only to platform administrators.
+- `RUNTIME_PLATFORM_ADMIN_ONLY=false`: tab is shown to users allowed into the admin UI, with runtime API access still enforced by RBAC route permissions.
+- You can explicitly hide it with `MCPGATEWAY_UI_HIDE_SECTIONS=runtime`.
+
+Quick UI test (known working image):
+
+1. Enable runtime settings:
+   `MCPGATEWAY_RUNTIME_ENABLED=true`
+   `RUNTIME_DOCKER_ENABLED=true`
+2. Open `/admin#runtime`.
+3. Deploy with:
+   source type `docker`
+   image `ghcr.io/ibm/fast-time-server:0.8.0`
+4. Verify the deployment appears in the table, then click `logs` to confirm runtime output.
+
 Guardrails management:
 
 - `GET /runtimes/guardrails`

@@ -220,6 +220,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_resources_errors,
     get_resources_partial,
     get_resources_section,
+    get_runtime_partial,
     get_servers_section,
     get_system_stats,
     get_timeseries_metrics,
@@ -3003,7 +3004,7 @@ class TestUIVisibilityConfig:
     ):
         """Extended hideable sections should map directly to their tab IDs."""
         request = MagicMock(spec=Request)
-        request.query_params = {"ui_hide": "overview,mcp-registry,logs,version-info"}
+        request.query_params = {"ui_hide": "overview,mcp-registry,runtime,logs,version-info"}
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
@@ -3018,12 +3019,14 @@ class TestUIVisibilityConfig:
             "logs",
             "mcp-registry",
             "overview",
+            "runtime",
             "version-info",
         ]
         assert config["hidden_tabs"] == [
             "logs",
             "mcp-registry",
             "overview",
+            "runtime",
             "version-info",
         ]
         assert config["cookie_action"] == "set"
@@ -14515,6 +14518,67 @@ class TestMaintenanceMisc:
         result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, _db=mock_db)
         assert isinstance(result, HTMLResponse)
         request.app.state.templates.TemplateResponse.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_admin_success(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_default_backend", "docker", raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Runtime</html>")
+
+        result = await get_runtime_partial(request, user={"email": "admin@test.com", "is_admin": True}, _db=mock_db)
+        assert isinstance(result, HTMLResponse)
+        request.app.state.templates.TemplateResponse.assert_called_once()
+        context = request.app.state.templates.TemplateResponse.call_args[0][2]
+        assert context["runtime_default_backend"] == "docker"
+        assert context["runtime_platform_admin_only"] is True
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_feature_disabled(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", True, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_runtime_partial(request, user={"email": "admin@test.com", "is_admin": True}, _db=mock_db)
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_platform_admin_only_forbidden(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", True, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_runtime_partial(request, user={"email": "user@test.com", "is_admin": False}, _db=mock_db)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_get_runtime_partial_non_admin_allowed_when_configured(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_runtime_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.runtime_platform_admin_only", False, raising=False)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.app = MagicMock()
+        request.app.state.templates = MagicMock()
+        request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Runtime</html>")
+
+        result = await get_runtime_partial(request, user={"email": "user@test.com", "is_admin": False}, _db=mock_db)
+        assert isinstance(result, HTMLResponse)
 
     @pytest.mark.asyncio
     async def test_admin_import_preview_success(self, monkeypatch, allow_permission, mock_db):

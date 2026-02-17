@@ -134,6 +134,7 @@ UI_HIDABLE_SECTIONS = frozenset(
         "resources",
         "roots",
         "mcp-registry",
+        "runtime",
         "metrics",
         "plugins",
         "export-import",
@@ -156,6 +157,7 @@ UI_HIDE_SECTION_ALIASES = {
     "grpc-services": "agents",
     "api_tokens": "tokens",
     "llm-settings": "settings",
+    "runtimes": "runtime",
 }
 
 
@@ -569,7 +571,7 @@ class Settings(BaseSettings):
         description=(
             "CSV/JSON list of UI sections to hide. "
             "Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, "
-            "metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
+            "runtime, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings"
         ),
     )
     mcpgateway_ui_hide_header_items: Annotated[list[str], NoDecode] = Field(
