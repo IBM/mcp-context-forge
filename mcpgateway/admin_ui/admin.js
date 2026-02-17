@@ -19,7 +19,9 @@ const Admin = window.Admin;
 // ===================================================================
 // Utils
 import {
+  buildTableUrl,
   copyToClipboard,
+  getPaginationParams,
   handleKeydown,
   refreshLogs,
   safeGetElement,
@@ -28,7 +30,9 @@ import {
   showSuccessMessage,
 } from "./utils.js";
 
+Admin.buildTableUrl = buildTableUrl;
 Admin.copyToClipboard = copyToClipboard;
+Admin.getPaginationParams = getPaginationParams;
 Admin.handleKeydown = handleKeydown;
 Admin.refreshLogs = refreshLogs;
 Admin.safeGetElement = safeGetElement;
@@ -51,10 +55,7 @@ Admin.logRestrictedContext = logRestrictedContext;
 // TIER 2: Feature modules (fully converted to ES modules)
 // ===================================================================
 
-import {
-  editA2AAgent,
-  viewA2AAgent,
-} from "./a2aAgents.js";
+import { editA2AAgent, viewA2AAgent } from "./a2aAgents.js";
 
 Admin.editA2AAgent = editA2AAgent;
 Admin.viewA2AAgent = viewA2AAgent;
@@ -107,9 +108,8 @@ Admin.previewImport = previewImport;
 Admin.resetImportFile = resetImportFile;
 
 // Filtering
-import { clearSearch, filterServerTable } from "./filters.js";
+import { filterServerTable } from "./filters.js";
 
-Admin.clearSearch = clearSearch;
 Admin.filterServerTable = filterServerTable;
 
 // Form Fields
@@ -135,11 +135,7 @@ Admin.handleSubmitWithConfirmation = handleSubmitWithConfirmation;
 Admin.handleDeleteSubmit = handleDeleteSubmit;
 
 // Gateways
-import { 
-  editGateway,
-  testGateway,
-  viewGateway,
-} from "./gateway.js";
+import { editGateway, testGateway, viewGateway } from "./gateway.js";
 
 Admin.editGateway = editGateway;
 Admin.testGateway = testGateway;
@@ -293,11 +289,11 @@ Admin.filterPlugins = filterPlugins;
 Admin.showPluginDetails = showPluginDetails;
 
 // Prompts
-import { 
+import {
   editPrompt,
-  initPromptSelect, 
+  initPromptSelect,
   runPromptTest,
-  testPrompt, 
+  testPrompt,
   viewPrompt,
 } from "./prompts.js";
 
@@ -308,7 +304,7 @@ Admin.testPrompt = testPrompt;
 Admin.viewPrompt = viewPrompt;
 
 // Resources
-import { 
+import {
   editResource,
   initResourceSelect,
   runResourceTest,
@@ -323,15 +319,24 @@ Admin.testResource = testResource;
 Admin.viewResource = viewResource;
 
 // Roots
-import {
-  viewRoot,
-  editRoot,
-  exportRoot,
-} from "./roots.js";
+import { viewRoot, editRoot, exportRoot } from "./roots.js";
 
 Admin.viewRoot = viewRoot;
 Admin.editRoot = editRoot;
 Admin.exportRoot = exportRoot;
+
+// Search
+import {
+  clearSearch,
+  closeGlobalSearchModal,
+  navigateToGlobalSearchResult,
+  openGlobalSearchModal,
+} from "./search.js";
+
+Admin.clearSearch = clearSearch;
+Admin.closeGlobalSearchModal = closeGlobalSearchModal;
+Admin.navigateToGlobalSearchResult = navigateToGlobalSearchResult;
+Admin.openGlobalSearchModal = openGlobalSearchModal;
 
 // Selective Import
 import {
@@ -351,10 +356,7 @@ Admin.resetImportSelection = resetImportSelection;
 Admin.handleSelectiveImport = handleSelectiveImport;
 
 // Servers
-import {
-  viewServer,
-  editServer,
-} from "./servers.js";
+import { viewServer, editServer } from "./servers.js";
 
 Admin.viewServer = viewServer;
 Admin.editServer = editServer;

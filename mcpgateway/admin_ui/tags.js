@@ -2,6 +2,7 @@
 // TAG FILTERING FUNCTIONALITY
 // ===============================================
 
+import { getPanelSearchConfig, loadSearchablePanel, queueSearchablePanelReload } from "./search.js";
 import { safeGetElement } from "./utils.js";
 
 /**
@@ -206,7 +207,11 @@ export const addTagToFilter = function (entityType, tag) {
   if (!currentTags.includes(tag)) {
     currentTags.push(tag);
     filterInput.value = currentTags.join(", ");
-    filterEntitiesByTags(entityType, filterInput.value);
+    if (getPanelSearchConfig(entityType)) {
+      queueSearchablePanelReload(entityType, 0);
+    } else {
+      filterEntitiesByTags(entityType, filterInput.value);
+    }
   }
 };
 
@@ -260,7 +265,11 @@ export const clearTagFilter = function (entityType) {
   const filterInput = safeGetElement(`${entityType}-tag-filter`);
   if (filterInput) {
     filterInput.value = "";
+    // Apply immediate local reset for responsive UX and test compatibility.
     filterEntitiesByTags(entityType, "");
+    if (getPanelSearchConfig(entityType)) {
+      loadSearchablePanel(entityType);
+    }
   }
 };
 

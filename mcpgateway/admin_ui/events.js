@@ -6,6 +6,7 @@ import {
   initializeCodeMirrorEditors,
   initializeEventListeners,
   initializeExportImport,
+  initializeGlobalSearch,
   initializeSearchInputs,
   initializeTabState,
   initializeToolSelects,
@@ -16,7 +17,7 @@ import {
 import { closeModal } from "./modals.js";
 import { initializeRealTimeMonitoring } from "./monitoring.js";
 import { initializeTagFiltering } from "./tags.js";
-import { hideTeamEditModal, initializeAddMembersForms, initializePasswordValidation } from "./teams.js";
+import { hideTeamEditModal, initializeAddMembersForms, initializePasswordValidation, updateDefaultVisibility } from "./teams.js";
 import { initializeTeamScopingMonitor } from "./tokens.js";
 import { cleanupToolTestState, loadTools } from "./tools.js";
 import {
@@ -399,6 +400,9 @@ import {
       updateEditToolUrl();
     }
 
+    // Initialize default visibility based on URL team_id
+    updateDefaultVisibility();
+
     // Initialize CA certificate upload immediately
     initializeCACertUpload();
 
@@ -415,11 +419,13 @@ import {
 
     // Initialize search functionality for all entity types (immediate, no debounce)
     initializeSearchInputsMemoized();
+    initializeGlobalSearch();
     // Only initialize password validation if password fields exist on page
     if (document.getElementById("password-field")) {
       initializePasswordValidation();
     }
     initializeAddMembersForms();
+    initializeSearchInputsMemoized();
 
     // Event delegation for team member search - server-side search for unified view
     // This handler is initialized here for early binding, but the actual search logic
@@ -576,7 +582,7 @@ import {
    * buttons when the client-side user context says the current user should not
    * be able to mutate a given row.
    */
-  window.addEventListener("htmx:afterSettle", function (_evt) {
+  document.addEventListener("htmx:afterSettle", function (_evt) {
     const currentUser = window.CURRENT_USER;
     const isAdmin = Boolean(window.IS_ADMIN);
     const userTeams = window.USER_TEAMS || [];

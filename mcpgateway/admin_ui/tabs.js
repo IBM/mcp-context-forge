@@ -9,8 +9,8 @@ import { loadAggregatedMetrics } from "./metrics.js";
 import { populatePluginFilters } from "./plugins.js";
 import { escapeHtml, safeReplaceState, safeSetInnerHTML } from "./security.js";
 import {
-  loadTokensList,
   setupCreateTokenForm,
+  setupTokenListEventHandlers,
   updateTeamScopingWarning,
 } from "./tokens.js";
 import { initializePermissionsPanel } from "./users.js";
@@ -39,7 +39,142 @@ export const isAdminOnlyTab = function (tabName) {
 };
 
 export const getDefaultTabName = function () {
-  return safeGetElement("overview-panel", true) ? "overview" : "gateways";
+  const visibleTabs = getVisibleSidebarTabs().filter((tabName) => {
+    if (isTabHidden(tabName)) {
+      return false;
+    }
+    if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+      return false;
+    }
+    return isTabAvailable(tabName);
+  });
+
+  if (visibleTabs.includes("overview")) {
+    return "overview";
+  }
+  if (visibleTabs.includes("gateways")) {
+    return "gateways";
+  }
+  if (visibleTabs.length > 0) {
+    return visibleTabs[0];
+  }
+
+  // Backwards-compatible fallback for minimal DOM states (unit tests, etc).
+  // Previously, the presence of overview-panel alone controlled the default.
+  if (!isTabHidden("overview") && safeGetElement("overview-panel", true)) {
+    return "overview";
+  }
+  return "gateways";
+};
+
+export const resolveTabForNavigation = function (tabName) {
+  const normalizedTab = normalizeTabName(tabName);
+  if (!normalizedTab) {
+    return getDefaultTabName();
+  }
+  if (isTabHidden(normalizedTab)) {
+    return getDefaultTabName();
+  }
+  if (!isAdminUser() && isAdminOnlyTab(normalizedTab)) {
+    return getDefaultTabName();
+  }
+  if (!isTabAvailable(normalizedTab)) {
+    return getDefaultTabName();
+  }
+  return normalizedTab;
+};
+
+export const updateHashForTab = function (tabName) {
+  const normalizedTab = normalizeTabName(tabName);
+  if (!normalizedTab) {
+    return;
+  }
+
+  const desiredHash = `#${normalizedTab}`;
+  if (window.location.hash === desiredHash) {
+    return;
+  }
+
+  const url = new URL(window.location.href);
+  url.hash = desiredHash;
+  safeReplaceState({}, "", url.toString());
+};
+
+export const normalizeTabName = function (tabName) {
+  if (!tabName || typeof tabName !== "string") {
+    return "";
+  }
+  return tabName
+    .replace(/^#/, "")
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "");
+};
+
+export const getUiHiddenSections = function () {
+  const rawHiddenSections = Array.isArray(window.UI_HIDDEN_SECTIONS)
+    ? window.UI_HIDDEN_SECTIONS
+    : [];
+  const hiddenSections = new Set();
+  rawHiddenSections.forEach((section) => {
+    const normalizedSection = normalizeTabName(String(section));
+    if (normalizedSection) {
+      hiddenSections.add(normalizedSection);
+    }
+  });
+  return hiddenSections;
+};
+
+export const getUiHiddenTabs = function () {
+  const rawHiddenTabs = Array.isArray(window.UI_HIDDEN_TABS)
+    ? window.UI_HIDDEN_TABS
+    : [];
+  const hiddenTabs = new Set();
+  rawHiddenTabs.forEach((tab) => {
+    const normalizedTab = normalizeTabName(String(tab));
+    if (normalizedTab) {
+      hiddenTabs.add(normalizedTab);
+    }
+  });
+  return hiddenTabs;
+};
+
+export const isTabHidden = function (tabName) {
+  const normalizedTab = normalizeTabName(tabName);
+  if (!normalizedTab) {
+    return false;
+  }
+  return getUiHiddenTabs().has(normalizedTab);
+};
+
+export const getVisibleSidebarTabs = function () {
+  const sidebarLinks = document.querySelectorAll('.sidebar-link[href^="#"]');
+  const visibleTabs = [];
+
+  sidebarLinks.forEach((link) => {
+    const href = link.getAttribute("href") || "";
+    const normalizedTab = normalizeTabName(href);
+    if (!normalizedTab) {
+      return;
+    }
+    visibleTabs.push(normalizedTab);
+  });
+
+  return Array.from(new Set(visibleTabs));
+};
+
+export const isTabAvailable = function (tabName) {
+  const normalizedTab = normalizeTabName(tabName);
+  if (!normalizedTab) {
+    return false;
+  }
+
+  const panelExists = Boolean(safeGetElement(`${normalizedTab}-panel`, true));
+  const navExists = Boolean(
+    document.querySelector(`.sidebar-link[href="#${normalizedTab}"]`)
+  );
+
+  return panelExists && navExists;
 };
 
 let tabSwitchTimeout = null;
@@ -58,7 +193,7 @@ export const getTableNamesForTab = function (tabName) {
   // Find all pagination control elements within this panel
   // Pattern: id="<tableName>-pagination-controls"
   const paginationControls = panel.querySelectorAll(
-    '[id$="-pagination-controls"]',
+    '[id$="-pagination-controls"]'
   );
 
   const tableNames = [];
@@ -112,14 +247,54 @@ export const cleanUpUrlParamsForTab = function (targetTabName) {
 
 export const showTab = function (tabName) {
   try {
-    if (!isAdminUser() && isAdminOnlyTab(tabName)) {
-      console.warn(`Blocked non-admin access to tab: ${tabName}`);
+    tabName = normalizeTabName(tabName);
+    if (!tabName) {
+      console.warn("showTab called without a valid tab name");
+      return;
+    }
+
+    if (isTabHidden(tabName)) {
       const fallbackTab = getDefaultTabName();
-      if (tabName !== fallbackTab) {
+      console.warn(
+        `Blocked navigation to hidden tab "${tabName}", redirecting to "${fallbackTab}"`
+      );
+      if (fallbackTab && fallbackTab !== tabName) {
+        updateHashForTab(fallbackTab);
         showTab(fallbackTab);
       }
       return;
     }
+
+    if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+      console.warn(`Blocked non-admin access to tab: ${tabName}`);
+      const fallbackTab = getDefaultTabName();
+      if (fallbackTab && tabName !== fallbackTab) {
+        updateHashForTab(fallbackTab);
+        showTab(fallbackTab);
+      }
+      return;
+    }
+
+    // Idempotency: a single click can trigger multiple navigation paths
+    // (inline onclick, hashchange, and JS click bindings). If the requested
+    // tab is already visible, do nothing to avoid duplicate loads/HTMX calls.
+    const existingPanel = safeGetElement(`${tabName}-panel`, true);
+    if (existingPanel && !existingPanel.classList.contains("hidden")) {
+      const visiblePanels = document.querySelectorAll(
+        ".tab-panel:not(.hidden)"
+      );
+      const existingNav = document.querySelector(
+        `.sidebar-link[href="#${tabName}"]`
+      );
+      if (existingNav) {
+        existingNav.classList.add("active");
+      }
+      // If multiple panels are visible, continue to force a clean state.
+      if (visiblePanels.length <= 1) {
+        return;
+      }
+    }
+
     console.log(`Switching to tab: ${tabName}`);
 
     // Clear any pending tab switch
@@ -130,15 +305,16 @@ export const showTab = function (tabName) {
     // Cleanup observability tab when leaving
     const currentPanel = document.querySelector(".tab-panel:not(.hidden)");
     if (
-      currentPanel?.id === "observability-panel" &&
+      currentPanel &&
+      currentPanel.id === "observability-panel" &&
       tabName !== "observability"
     ) {
       console.log("Leaving observability tab, triggering cleanup...");
       // Destroy all observability charts
-      window.Admin.chartRegistry.destroyByPrefix("metrics-");
-      window.Admin.chartRegistry.destroyByPrefix("tools-");
-      window.Admin.chartRegistry.destroyByPrefix("prompts-");
-      window.Admin.chartRegistry.destroyByPrefix("resources-");
+      window.chartRegistry.destroyByPrefix("metrics-");
+      window.chartRegistry.destroyByPrefix("tools-");
+      window.chartRegistry.destroyByPrefix("prompts-");
+      window.chartRegistry.destroyByPrefix("resources-");
       // Dispatch event so Alpine components can stop intervals and reset state
       document.dispatchEvent(new CustomEvent("observability:leave"));
     }
@@ -165,6 +341,11 @@ export const showTab = function (tabName) {
       panel.classList.remove("hidden");
     } else {
       console.error(`Panel ${tabName}-panel not found`);
+      const fallbackTab = getDefaultTabName();
+      if (fallbackTab && fallbackTab !== tabName) {
+        updateHashForTab(fallbackTab);
+        showTab(fallbackTab);
+      }
       return;
     }
 
@@ -231,7 +412,7 @@ export const showTab = function (tabName) {
           const gatewaysTable = safeGetElement("gateways-table");
           if (gatewaysTable) {
             const hasLoadingMessage = gatewaysTable.innerHTML.includes(
-              "Loading gateways...",
+              "Loading gateways..."
             );
             const isEmpty = gatewaysTable.innerHTML.trim() === "";
             if (hasLoadingMessage || isEmpty) {
@@ -244,14 +425,19 @@ export const showTab = function (tabName) {
         }
 
         if (tabName === "tokens") {
-          // Load Tokens list and set up form handling
-          const tokensList = safeGetElement("tokens-list");
-          if (tokensList) {
+          // Set up event delegation for token action buttons (once)
+          setupTokenListEventHandlers();
+
+          // Load tokens list if not already loaded
+          const tokensTable = document.getElementById("tokens-table");
+          if (tokensTable) {
             const hasLoadingMessage =
-              tokensList.innerHTML.includes("Loading tokens...");
-            const isEmpty = !tokensList.innerHTML.trim();
-            if (hasLoadingMessage || isEmpty) {
-              loadTokensList();
+              tokensTable.innerHTML.includes("Loading tokens...");
+            if (hasLoadingMessage) {
+              // Trigger HTMX load manually if HTMX is available
+              if (window.htmx && window.htmx.trigger) {
+                window.htmx.trigger(tokensTable, "load");
+              }
             }
           }
 
@@ -347,7 +533,7 @@ export const showTab = function (tabName) {
           const gatewaysList = safeGetElement("gateways-table");
           if (gatewaysList) {
             const hasLoadingMessage = gatewaysList.innerHTML.includes(
-              "Loading gateways...",
+              "Loading gateways..."
             );
             if (hasLoadingMessage) {
               // Trigger HTMX load manually if HTMX is available
@@ -395,7 +581,7 @@ export const showTab = function (tabName) {
                   Accept: "text/html",
                 },
               },
-              5000,
+              5000
             )
               .then((response) => {
                 if (!response.ok) {
@@ -428,7 +614,7 @@ export const showTab = function (tabName) {
             fetchWithTimeout(
               `${window.ROOT_PATH}/version?partial=true`,
               {},
-              window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+              window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
             )
               .then((resp) => {
                 if (!resp.ok) {
@@ -458,7 +644,7 @@ export const showTab = function (tabName) {
             fetchWithTimeout(
               `${window.ROOT_PATH}/admin/maintenance/partial`,
               {},
-              window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000,
+              window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000
             )
               .then((resp) => {
                 if (!resp.ok) {
@@ -514,9 +700,7 @@ export const showTab = function (tabName) {
               if (typeof initializePermissionsPanel === "function") {
                 initializePermissionsPanel();
               } else {
-                console.warn(
-                  "initializePermissionsPanel function not found",
-                );
+                console.warn("initializePermissionsPanel function not found");
               }
             } catch (error) {
               console.error("Error initializing permissions panel:", error);

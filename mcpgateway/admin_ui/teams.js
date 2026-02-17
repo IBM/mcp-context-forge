@@ -71,7 +71,7 @@ const performTeamSearch = async function (searchTerm) {
   const params = new URLSearchParams();
   params.set("page", "1");
   params.set("per_page", getTeamsPerPage().toString());
-  
+
   // Sync URL state so CRUD refresh reads the correct page
   const currentUrl = new URL(window.location.href);
   const urlParams = new URLSearchParams(currentUrl.searchParams);
@@ -787,7 +787,8 @@ export const handleAdminTeamAction = function (event) {
           params.set("q", searchInput.value.trim());
         }
         // Preserve relationship filter
-        const currentTeamRelationshipFilter = AppState.getCurrentTeamRelationshipFilter();
+        const currentTeamRelationshipFilter =
+          AppState.getCurrentTeamRelationshipFilter();
         if (
           typeof currentTeamRelationshipFilter !== "undefined" &&
           currentTeamRelationshipFilter &&
@@ -836,13 +837,13 @@ export const handleAdminTeamAction = function (event) {
 };
 
 // Get current pagination state from URL parameters
-export const  getTeamsCurrentPaginationState = function() {
+export const getTeamsCurrentPaginationState = function () {
   const urlParams = new URLSearchParams(window.location.search);
   return {
     page: Math.max(1, parseInt(urlParams.get("teams_page"), 10) || 1),
     perPage: Math.max(1, parseInt(urlParams.get("teams_size"), 10) || 10),
   };
-}
+};
 
 export const initializeAddMembersForm = function (form) {
   if (!form || form.dataset.initialized === "true") {
@@ -1101,3 +1102,71 @@ export const initializeAddMembersForms = function (root = document) {
   const allForms = [...addMembersForms, ...teamMembersForms];
   allForms.forEach((form) => initializeAddMembersForm(form));
 };
+
+// Function to update default visibility based on team_id in URL
+export const updateDefaultVisibility = function () {
+  const urlParams = new URLSearchParams(window.location.search);
+  const teamId = urlParams.get("team_id");
+  const hasTeam = teamId && teamId.trim() !== "";
+
+  // List of visibility prefixes to handle
+  // These correspond to the "public", "team", "private" radio buttons
+  // e.g. "tool-visibility" -> ids: "tool-visibility-public", "tool-visibility-team", "tool-visibility-private"
+  const visibilityPrefixes = [
+    "gateway-visibility", // Gateways (Create)
+    "server-visibility", // Virtual Servers (Create)
+    "tool-visibility", // Tools (Create)
+    "resource-visibility", // Resources (Create)
+    "prompt-visibility", // Prompts (Create)
+    "a2a-visibility", // Agents (Create)
+  ];
+
+  visibilityPrefixes.forEach((prefix) => {
+    const publicId = `[id="${prefix}-public"]`;
+    const teamIdStr = `[id="${prefix}-team"]`;
+    const privateIdStr = `[id="${prefix}-private"]`;
+
+    // Handle potential duplicate IDs using querySelectorAll
+    const publicRadios = document.querySelectorAll(publicId);
+    const teamRadios = document.querySelectorAll(teamIdStr);
+    const privateRadios = document.querySelectorAll(privateIdStr);
+
+    if (hasTeam) {
+      // Default to Team
+      teamRadios.forEach((radio) => {
+        // Ensure we only set check if it's the initial default (not user modified,
+        // though on page load user hasn't modified yet).
+        if (!radio.checked) {
+          radio.checked = true;
+          // Also set defaultChecked to ensure form resets go to this state
+          radio.defaultChecked = true;
+          // Trigger change event for any listeners
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      // Reset public and private radios default state
+      publicRadios.forEach((radio) => {
+        radio.defaultChecked = false;
+      });
+      privateRadios.forEach((radio) => {
+        radio.defaultChecked = false;
+      });
+    } else {
+      // Default to Public
+      publicRadios.forEach((radio) => {
+        if (!radio.checked) {
+          radio.checked = true;
+          radio.defaultChecked = true;
+          radio.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+      });
+      // Reset team and private radios default state
+      teamRadios.forEach((radio) => {
+        radio.defaultChecked = false;
+      });
+      privateRadios.forEach((radio) => {
+        radio.defaultChecked = false;
+      });
+    }
+  });
+}

@@ -15,6 +15,57 @@ import { safeGetElement } from "./utils.js";
 // ===================================================================
 
 /**
+ * Show user edit modal and load edit form
+ */
+export const showUserEditModal = async function (userEmail) {
+  const modal = document.getElementById("user-edit-modal");
+  const modalContent = document.getElementById("user-edit-modal-content");
+  if (!modal || !modalContent || !userEmail) {
+    return;
+  }
+
+  modalContent.innerHTML = `
+        <div class="flex items-center justify-center py-8 text-sm text-gray-500 dark:text-gray-400">
+            Loading user details...
+        </div>
+    `;
+
+  if (modal) {
+    modal.style.display = "block";
+    modal.classList.remove("hidden");
+  }
+
+  const rootPath = window.ROOT_PATH || "";
+  const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit`;
+
+  try {
+    if (window.htmx && typeof window.htmx.ajax === "function") {
+      await window.htmx.ajax("GET", url, {
+        target: "#user-edit-modal-content",
+        swap: "innerHTML",
+      });
+      return;
+    }
+
+    const response = await fetchWithAuth(url, { method: "GET" });
+    if (!response.ok) {
+      throw new Error(
+        `Failed to load user edit form (${response.status} ${response.statusText})`
+      );
+    }
+
+    modalContent.innerHTML = await response.text();
+  } catch (error) {
+    console.error("Error loading user edit form:", error);
+    modalContent.innerHTML = `
+            <div class="p-4 text-sm text-red-600 dark:text-red-400">
+                Failed to load user details.
+            </div>
+        `;
+  }
+}
+
+/**
  * Hide user edit modal
  */
 export const hideUserEditModal = function () {
@@ -261,14 +312,8 @@ export const registerAdminActionListeners = function () {
   }
   document.body.dataset.adminActionListeners = "1";
 
-  document.body.addEventListener(
-    "adminTeamAction",
-    handleAdminTeamAction
-  );
-  document.body.addEventListener(
-    "adminUserAction",
-    handleAdminUserAction
-  );
+  document.body.addEventListener("adminTeamAction", handleAdminTeamAction);
+  document.body.addEventListener("adminUserAction", handleAdminUserAction);
   document.body.addEventListener("userCreated", function () {
     handleAdminUserAction({ detail: { refreshUsersList: true } });
   });

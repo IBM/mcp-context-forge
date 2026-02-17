@@ -10,6 +10,7 @@ import {
   validatePassthroughHeader,
   validateUrl, 
 } from "./security.js";
+import { getUiHiddenSections } from "./tabs.js";
 import { 
   decodeHtml,
   fetchWithTimeout, 
@@ -1818,6 +1819,10 @@ export const testTool = async function (toolId) {
 };
 
 export const loadTools = async function () {
+  if (getUiHiddenSections().has("tools")) {
+    return;
+  }
+
   const toolBody = safeGetElement("toolBody");
   console.log("Loading tools...");
   try {
