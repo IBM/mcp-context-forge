@@ -377,7 +377,7 @@ class TestAgentsUI:
         )
 
         # Submit the form and capture response
-        with agents_page.page.expect_response(lambda response: "/admin/a2a" in response.url and response.request.method == "POST") as response_info:
+        with agents_page.page.expect_response(lambda response: "/ui/a2a" in response.url and response.request.method == "POST") as response_info:
             agents_page.submit_agent_form()
 
         response = response_info.value

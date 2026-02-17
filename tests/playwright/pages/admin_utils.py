@@ -47,7 +47,7 @@ def find_entity_by_name(page: Page, endpoint: str, name: str, retries: int = 5):
     headers = _get_auth_headers(page)
     for attempt in range(retries):
         cache_bust = str(attempt)
-        url = f"/admin/{endpoint}?per_page=500&cache_bust={cache_bust}"
+        url = f"/ui/{endpoint}?per_page=500&cache_bust={cache_bust}"
         response = page.request.get(url, headers=headers)
         if response.ok:
             payload = response.json()
@@ -89,7 +89,7 @@ def wait_for_entity_deleted(page: Page, endpoint: str, name: str, retries: int =
     """
     headers = _get_auth_headers(page)
     for attempt in range(retries):
-        url = f"/admin/{endpoint}?per_page=500&cache_bust=del{attempt}"
+        url = f"/ui/{endpoint}?per_page=500&cache_bust=del{attempt}"
         response = page.request.get(url, headers=headers)
         if response.ok:
             payload = response.json()
@@ -189,7 +189,7 @@ def delete_entity_by_id(page: Page, endpoint: str, entity_id: str, mark_inactive
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     headers.update(_get_auth_headers(page))
     response = page.request.post(
-        f"/admin/{endpoint}/{entity_id}/delete",
+        f"/ui/{endpoint}/{entity_id}/delete",
         data=data,
         headers=headers,
     )

@@ -142,7 +142,7 @@ class VersionPage(BasePage):
     @property
     def download_support_bundle_btn(self) -> Locator:
         """Download support bundle button."""
-        return self.support_bundle_card.locator('a[href*="/admin/support-bundle/generate"]')
+        return self.support_bundle_card.locator('a[href*="/ui/support-bundle/generate"]')
 
     @property
     def security_notice(self) -> Locator:

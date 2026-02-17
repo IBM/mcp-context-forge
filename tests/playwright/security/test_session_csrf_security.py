@@ -41,7 +41,7 @@ class TestSessionAndCSRFSecurity:
         if before is None:
             pytest.skip("No jwt_token cookie present before logout in this environment.")
 
-        response = page.request.post("/admin/logout")
+        response = page.request.post("/ui/logout")
         assert response.status in (200, 302, 303), f"Unexpected logout status: {response.status}"
 
         after = next((cookie for cookie in page.context.cookies() if cookie["name"] == "jwt_token"), None)
@@ -57,7 +57,7 @@ class TestSessionAndCSRFSecurity:
 
         page = admin_page.page
         response = page.request.post(
-            "/admin/logout",
+            "/ui/logout",
             headers={"Origin": "https://evil.example"},
         )
         assert response.status in (400, 403), f"Cross-origin POST should be rejected, got {response.status}"

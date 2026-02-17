@@ -63,8 +63,8 @@ class TestAuthentication:
         """Test successful access with valid email/password credentials."""
         page = context.new_page()
         # Go directly to admin and log in if redirected
-        page.goto("/admin")
-        if re.search(r"/admin/login", page.url):
+        page.goto("/ui")
+        if re.search(r"/ui/login", page.url):
             if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
                 pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
 
@@ -93,10 +93,10 @@ class TestAuthentication:
         page = context.new_page()
 
         # Access admin without credentials should redirect to login page when auth is required
-        response = page.goto("/admin")
+        response = page.goto("/ui")
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (admin endpoint not found).")
-        if re.search(r"/admin/login", page.url):
+        if re.search(r"/ui/login", page.url):
             expect(page).to_have_url(re.compile(r".*/admin/login"))
         else:
             admin_ui = AdminPage(page, BASE_URL)
@@ -107,15 +107,15 @@ class TestAuthentication:
         page = context.new_page()
 
         # Access admin page and log in if needed
-        response = page.goto("/admin")
+        response = page.goto("/ui")
         if response and response.status == 404:
             pytest.skip("Admin UI not enabled (admin endpoint not found).")
-        if re.search(r"/admin/login", page.url):
+        if re.search(r"/ui/login", page.url):
             if not self._login(page, ADMIN_EMAIL, ADMIN_ACTIVE_PASSWORD[0], allow_password_change=True):
                 pytest.skip("Admin credentials invalid. Set PLATFORM_ADMIN_PASSWORD/PLATFORM_ADMIN_NEW_PASSWORD to match the running gateway.")
 
         # Verify admin interface elements are present
-        if re.search(r"/admin/change-password-required", page.url):
+        if re.search(r"/ui/change-password-required", page.url):
             pytest.skip("Admin password change required; configure a final password and retry.")
         expect(page).to_have_url(re.compile(r".*/admin(?!/login).*"))
         expect(page.locator("h1")).to_contain_text("Gateway Administration")
