@@ -1196,7 +1196,6 @@ class ToolService:
                     "visibility": visibility,
                     "integration_type": db_tool.integration_type,
                 },
-                db=db,
             )
 
             # Refresh db_tool after logging commits (they expire the session objects)
@@ -1230,7 +1229,6 @@ class ToolService:
                 custom_fields={
                     "tool_name": tool.name,
                 },
-                db=db,
             )
             raise ie
         except ToolNameConflictError as tnce:
@@ -1249,7 +1247,6 @@ class ToolService:
                     "tool_name": tool.name,
                     "visibility": visibility,
                 },
-                db=db,
             )
             raise tnce
         except Exception as e:
@@ -1267,7 +1264,6 @@ class ToolService:
                 custom_fields={
                     "tool_name": tool.name,
                 },
-                db=db,
             )
             raise ToolError(f"Failed to register tool: {str(e)}")
 
@@ -2243,7 +2239,6 @@ class ToolService:
                 "tool_name": tool.name,
                 "include_metrics": bool(getattr(tool_read, "metrics", {})),
             },
-            db=db,
         )
 
         return tool_read
@@ -2340,7 +2335,6 @@ class ToolService:
                     "tool_name": tool_name,
                     "purge_metrics": purge_metrics,
                 },
-                db=db,
             )
 
             # Invalidate cache after successful deletion
@@ -2372,7 +2366,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=pe,
-                db=db,
             )
             raise
         except Exception as e:
@@ -2388,7 +2381,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=e,
-                db=db,
             )
             raise ToolError(f"Failed to delete tool: {str(e)}")
 
@@ -2518,7 +2510,6 @@ class ToolService:
                         "enabled": tool.enabled,
                         "reachable": tool.reachable,
                     },
-                    db=db,
                 )
 
             return self.convert_tool_to_read(tool, requesting_user_email=getattr(tool, "owner_email", None))
@@ -2533,7 +2524,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=e,
-                db=db,
             )
             raise e
         except ToolLockConflictError:
@@ -2555,7 +2545,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=e,
-                db=db,
             )
             raise ToolError(f"Failed to set tool state: {str(e)}")
 
@@ -4180,7 +4169,6 @@ class ToolService:
                     "tool_name": tool.name,
                     "version": tool.version,
                 },
-                db=db,
             )
 
             # Invalidate cache after successful update
@@ -4209,7 +4197,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=pe,
-                db=db,
             )
             raise
         except IntegrityError as ie:
@@ -4227,7 +4214,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=ie,
-                db=db,
             )
             raise ie
         except ToolNotFoundError as tnfe:
@@ -4244,7 +4230,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=tnfe,
-                db=db,
             )
             raise tnfe
         except ToolNameConflictError as tnce:
@@ -4262,7 +4247,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=tnce,
-                db=db,
             )
             raise tnce
         except Exception as ex:
@@ -4279,7 +4263,6 @@ class ToolService:
                 resource_type="tool",
                 resource_id=tool_id,
                 error=ex,
-                db=db,
             )
             raise ToolError(f"Failed to update tool: {str(ex)}")
 

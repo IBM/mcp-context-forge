@@ -1059,7 +1059,6 @@ class ServerService:
                 "resource_count": len(getattr(server, "resources", []) or []),
                 "prompt_count": len(getattr(server, "prompts", []) or []),
             },
-            db=db,
         )
 
         self._audit_trail.log_action(
