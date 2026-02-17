@@ -307,6 +307,37 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 
 **Usage:** Register a gateway with `"gateway_mode": "direct_proxy"`, then send requests with the `X-Context-Forge-Gateway-Id` header set to the gateway's ID. All MCP operations (tools/list, tools/call, resources/list, resources/read) will be proxied directly to the remote server.
 
+### gRPC Support (EXPERIMENTAL)
+
+| Setting                              | Description                                    | Default     | Options |
+| ------------------------------------ | ---------------------------------------------- | ----------- | ------- |
+| `MCPGATEWAY_GRPC_ENABLED`           | Enable gRPC to MCP translation support         | `false`     | bool    |
+| `MCPGATEWAY_GRPC_REFLECTION_ENABLED`| Enable gRPC server reflection by default       | `true`      | bool    |
+| `MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE`  | Maximum gRPC message size in bytes             | `4194304`   | int     |
+| `MCPGATEWAY_GRPC_TIMEOUT`           | Default gRPC call timeout in seconds           | `30`        | int     |
+| `MCPGATEWAY_GRPC_TLS_ENABLED`      | Enable TLS for gRPC connections by default     | `false`     | bool    |
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_GRPC_ENABLED=false` (default): gRPC service registration is disabled; the Admin UI hides the gRPC Services tab and API endpoints return 404
+- `MCPGATEWAY_GRPC_ENABLED=true`: Enables gRPC service discovery via server reflection and exposes gRPC methods as MCP tools
+
+### GraphQL Support (EXPERIMENTAL)
+
+| Setting                                    | Description                                          | Default | Options |
+| ------------------------------------------ | ---------------------------------------------------- | ------- | ------- |
+| `MCPGATEWAY_GRAPHQL_ENABLED`               | Enable GraphQL to MCP translation support            | `false` | bool    |
+| `MCPGATEWAY_GRAPHQL_INTROSPECTION_ENABLED` | Enable GraphQL schema introspection by default       | `true`  | bool    |
+| `MCPGATEWAY_GRAPHQL_MAX_DEPTH`             | Maximum GraphQL field selection depth                | `3`     | int     |
+| `MCPGATEWAY_GRAPHQL_TIMEOUT`               | Default GraphQL operation timeout in seconds         | `30`    | int     |
+| `MCPGATEWAY_GRAPHQL_INCLUDE_MUTATIONS`     | Include GraphQL mutations when discovering tools     | `true`  | bool    |
+
+**Configuration Effects:**
+
+- `MCPGATEWAY_GRAPHQL_ENABLED=false` (default): GraphQL tool registration is disabled; tools with `integration_type=GRAPHQL` cannot be created
+- `MCPGATEWAY_GRAPHQL_ENABLED=true`: Enables GraphQL schema introspection and exposes GraphQL queries/mutations as MCP tools
+- `MCPGATEWAY_GRAPHQL_INCLUDE_MUTATIONS=false`: Only GraphQL queries are exposed as tools; mutations are excluded
+
 ### ToolOps
 
 ToolOps streamlines the entire workflow by enabling seamless tool enrichment, automated test case generation, and comprehensive tool validation.
