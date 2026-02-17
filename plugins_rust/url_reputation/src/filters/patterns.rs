@@ -7,3 +7,7 @@ pub fn in_blocked_patterns_regex(domain: &str, blocked_patterns: &[Regex]) -> bo
 pub fn in_allow_patterns_regex(domain: &str, allowed_pattens: &[Regex]) -> bool {
     allowed_pattens.iter().any(|re| re.is_match(domain))
 }
+
+pub fn domain_matches(domain: &str, blocked: &str) -> bool {
+    domain == blocked || domain.ends_with(&format!(".{}", blocked))
+}

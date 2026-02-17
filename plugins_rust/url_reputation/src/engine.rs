@@ -78,7 +78,12 @@ impl URLReputationPlugin {
         let scheme = parsed_url.scheme();
 
         // check whitelisted domains
-        if self.config.whitelist_domains.contains(domain) {
+        if self
+            .config
+            .whitelist_domains
+            .iter()
+            .any(|d| patterns::domain_matches(domain, d))
+        {
             return URLPluginResult {
                 continue_processing: true,
                 violation: None,
@@ -103,14 +108,19 @@ impl URLReputationPlugin {
                 }),
             };
         }
-        if self.config.blocked_domains.contains(domain) {
+        if self
+            .config
+            .blocked_domains
+            .iter()
+            .any(|d| patterns::domain_matches(domain, d))
+        {
             return URLPluginResult {
                 continue_processing: false,
                 violation: Some(PluginViolation {
                     reason: "Domain in blocked set".to_string(),
                     description: format!("Domain '{}' in blocked set", domain),
                     code: "URL_REPUTATION_BLOCK".to_string(),
-                    details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
+                    details: Some(HashMap::from([("domain".to_string(), domain.to_string())])),
                 }),
             };
         }
@@ -207,10 +217,10 @@ mod tests {
             block_non_secure_http: true,
         };
         let plugin = URLReputationPlugin::new(config);
-        let url = "https://idontlikethisdomain.com";
+        let url = "https://api.idontlikethisdomain.com";
 
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(result.violation.unwrap().reason, "Domain in blocked set");
     }
 
@@ -229,7 +239,7 @@ mod tests {
         let url = "http://ibm.com";
 
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Blocked non secure http url"
@@ -269,7 +279,7 @@ mod tests {
         let url = "https://safe.com/crypto-invest";
 
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(result.violation.unwrap().reason, "Blocked pattern");
     }
 
@@ -305,7 +315,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "ht!tp://example.com"; // Zero-width joiner U+200D
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert!(result.violation.unwrap().reason == "Could not parse url")
     }
 
@@ -323,7 +333,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "mailto:user@example.com"; // Zero-width joiner U+200D
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert!(result.violation.unwrap().reason == "Could not parse domain")
     }
 
@@ -341,7 +351,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://axb12c34d56ef.com";
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert!(result.violation.unwrap().reason == "High entropy domain");
     }
 
@@ -360,7 +370,7 @@ mod tests {
         let url = "https://test.daks/test";
 
         let result = plugin.validate_url(url);
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert!(result.violation.unwrap().reason == "Illegal TLD");
     }
 
@@ -381,7 +391,7 @@ mod tests {
         let url = format!("https://{}.com", domain_label);
         let result = plugin.validate_url(&url);
 
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -404,7 +414,7 @@ mod tests {
         let url = "https://pаypal.com/test"; // Cyrillic 'а'
         let result = plugin.validate_url(url);
 
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -446,7 +456,7 @@ mod tests {
         let url = "https://my..com";
         let result = plugin.validate_url(url);
 
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -469,7 +479,7 @@ mod tests {
         let url = "https://exa!mple.com";
         let result = plugin.validate_url(url);
 
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -511,7 +521,7 @@ mod tests {
         let url = "https://332.168.0.1:442";
         let result = plugin.validate_url(url);
 
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
     }
 
     #[test]
@@ -549,6 +559,6 @@ mod tests {
         let url = "https://[2001:db8::85a3::8a2e:370:7334 ]:442/";
         let result = plugin.validate_url(url);
 
-        assert!(!result.continue_processing );
+        assert!(!result.continue_processing);
     }
 }
