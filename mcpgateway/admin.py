@@ -4766,10 +4766,6 @@ async def admin_teams_partial_html(
             "query_params": query_params_dict,
         },
     )
-    # Prevent nginx caching for real-time team updates
-    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
     return response
 
 
@@ -4923,6 +4919,7 @@ async def admin_create_team(
         await team_service.create_team(name=team_data.name, description=team_data.description, created_by=user_email, visibility=team_data.visibility)
 
         response = HTMLResponse(content="", status_code=201)
+        response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
     except (ValidationError, CoreValidationError) as e:
@@ -5067,7 +5064,7 @@ async def admin_view_team_members(
                             id="team-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}"
+                            hx-get="{root_path}/admin/teams/{team.id}/members/partial?page={page}&per_page={per_page}&_t={int(time.time() * 1000)}"
                             hx-trigger="load delay:100ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5083,7 +5080,7 @@ async def admin_view_team_members(
                             id="team-non-members-container-{team.id}"
                             class="border border-gray-300 dark:border-gray-600 rounded-md p-3 max-h-64 overflow-y-auto dark:bg-gray-700"
                             data-per-page="{per_page}"
-                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}"
+                            hx-get="{root_path}/admin/teams/{team.id}/non-members/partial?page=1&per_page={per_page}&_t={int(time.time() * 1000)}"
                             hx-trigger="load delay:200ms"
                             hx-target="this"
                             hx-swap="innerHTML"
@@ -5111,10 +5108,6 @@ async def admin_view_team_members(
         """  # nosec B608 - HTML template f-string, not SQL (uses SQLAlchemy ORM for DB)
 
         response = HTMLResponse(content=interface_html)
-        # Prevent nginx caching for real-time team member updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:
@@ -5497,10 +5490,6 @@ async def admin_delete_team(
         </div>
         """
         response = HTMLResponse(content=success_html)
-        # Prevent nginx caching for real-time updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
         response.headers["HX-Trigger"] = orjson.dumps({"adminTeamAction": {"refreshUnifiedTeamsList": True, "delayMs": 1000}}).decode()
         return response
 
@@ -5707,11 +5696,6 @@ async def admin_add_team_members(
         </script>
         """
         response = HTMLResponse(content=success_html)
-
-        # Prevent nginx caching for real-time updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
 
         # Trigger refresh of teams list (but don't reopen modal)
         response.headers["HX-Trigger"] = orjson.dumps(
@@ -6687,7 +6671,7 @@ async def admin_team_members_partial_html(
         db.commit()
 
         root_path = request.scope.get("root_path", "")
-        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        next_page_url = f"{root_path}/admin/teams/{team_id}/members/partial?page={pagination.page + 1}&per_page={pagination.per_page}&_t={int(time.time() * 1000)}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -6705,10 +6689,6 @@ async def admin_team_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
-        # Prevent nginx caching for real-time member list updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:
@@ -6772,7 +6752,7 @@ async def admin_team_non_members_partial_html(
         db.commit()
 
         root_path = request.scope.get("root_path", "")
-        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}"
+        next_page_url = f"{root_path}/admin/teams/{team_id}/non-members/partial?page={pagination.page + 1}&per_page={pagination.per_page}&_t={int(time.time() * 1000)}"
         response = request.app.state.templates.TemplateResponse(
             request,
             "team_users_selector.html",
@@ -6790,10 +6770,6 @@ async def admin_team_non_members_partial_html(
                 "next_page_url": next_page_url,
             },
         )
-        # Prevent nginx caching for real-time non-member list updates
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-        response.headers["Pragma"] = "no-cache"
-        response.headers["Expires"] = "0"
         return response
 
     except Exception as e:
@@ -7308,7 +7284,9 @@ async def admin_delete_user(
         await auth_service.delete_user(decoded_email)
 
         # Return empty content to remove the user from the list
-        return HTMLResponse(content="", status_code=200)
+        response = HTMLResponse(content="", status_code=200)
+        response.headers["HX-Trigger"] = orjson.dumps({"adminUserAction": {"refreshUsersList": True, "delayMs": 1000}}).decode()
+        return response
 
     except Exception as e:
         LOGGER.error(f"Error deleting user {user_email}: {e}")

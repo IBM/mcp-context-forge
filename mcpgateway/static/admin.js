@@ -22023,7 +22023,7 @@ async function showUserEditModal(userEmail) {
     }
 
     const rootPath = window.ROOT_PATH || "";
-    const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit`;
+    const url = `${rootPath}/admin/users/${encodeURIComponent(userEmail)}/edit?_t=${Date.now()}`;
 
     try {
         if (window.htmx && typeof window.htmx.ajax === "function") {
@@ -22102,7 +22102,7 @@ async function showTeamEditModal(teamId) {
     }
 
     // Construct the full URL - ensure it starts with /
-    const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit";
+    const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit?_t=" + Date.now();
 
     // Load the team edit form via HTMX
     fetch(url, {
@@ -22782,7 +22782,7 @@ function handleAdminTeamAction(event) {
                 if (modalContent) {
                     window.htmx.ajax(
                         "GET",
-                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members`,
+                        `${window.ROOT_PATH || ""}/admin/teams/${detail.teamId}/members?_t=${Date.now()}`,
                         {
                             target: "#team-edit-modal-content",
                             swap: "innerHTML",
@@ -32001,7 +32001,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         try {
             // Reload members - use fetchWithAuth for bearer token support
             const membersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=${membersPerPage}&_t=${Date.now()}`,
             );
             if (membersResponse.ok) {
                 membersContainer.innerHTML = await membersResponse.text();
@@ -32013,7 +32013,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
 
             // Reload non-members
             const nonMembersResponse = await fetchWithAuth(
-                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}`,
+                `${window.ROOT_PATH}/admin/teams/${teamId}/non-members/partial?page=1&per_page=${nonMembersPerPage}&_t=${Date.now()}`,
             );
             if (nonMembersResponse.ok) {
                 nonMembersContainer.innerHTML = await nonMembersResponse.text();
@@ -32075,7 +32075,7 @@ async function serverSideUserSearch(teamId, searchTerm) {
         if (Object.keys(memberDataFromDom).length === 0) {
             try {
                 const membersResp = await fetchWithAuth(
-                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100`,
+                    `${window.ROOT_PATH}/admin/teams/${teamId}/members/partial?page=1&per_page=100&_t=${Date.now()}`,
                 );
                 if (membersResp.ok) {
                     const tempDiv = document.createElement("div");
