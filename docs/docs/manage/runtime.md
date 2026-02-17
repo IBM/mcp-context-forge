@@ -58,6 +58,8 @@ In the Deploy form, use:
 
 - source type: `docker`
 - image: `ghcr.io/ibm/fast-time-server:0.8.0`
+- endpoint port: `8080` (optional, recommended when server does not expose a default port map)
+- endpoint path: `/http` (optional, recommended for fast-time streamable HTTP endpoint)
 
 Expected result:
 
@@ -118,7 +120,15 @@ Quick UI test (known working image):
 3. Deploy with:
    source type `docker`
    image `ghcr.io/ibm/fast-time-server:0.8.0`
+   endpoint port `8080` (optional)
+   endpoint path `/http` (optional)
 4. Verify the deployment appears in the table, then click `logs` to confirm runtime output.
+
+Endpoint override behavior:
+
+- `Endpoint Port` overrides the preferred container port used to resolve runtime endpoint URL.
+- `Endpoint Path` is used first during auto-registration to MCP Server gateway URL discovery.
+- If unset, runtime keeps backend-driven defaults and transport-specific path heuristics (`/http`, `/mcp`, `/sse`).
 
 Guardrails management:
 

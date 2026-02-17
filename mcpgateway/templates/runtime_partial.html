@@ -167,6 +167,14 @@
                 <option value="SSE">SSE</option>
               </select>
             </div>
+            <div>
+              <label for="runtime-deploy-endpoint-port" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint Port (optional)</label>
+              <input id="runtime-deploy-endpoint-port" name="endpoint_port" type="number" min="1" max="65535" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="8080" />
+            </div>
+            <div>
+              <label for="runtime-deploy-endpoint-path" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Endpoint Path (optional)</label>
+              <input id="runtime-deploy-endpoint-path" name="endpoint_path" class="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:bg-gray-900 dark:border-gray-700 dark:text-gray-200" placeholder="/http" />
+            </div>
             <div class="md:col-span-2 flex items-center gap-2 pt-2">
               <input id="runtime-deploy-register-gateway" name="register_gateway" type="checkbox" checked class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
               <label for="runtime-deploy-register-gateway" class="text-sm text-gray-700 dark:text-gray-300">Automatically register runtime endpoint as gateway</label>

@@ -23,7 +23,7 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
-from functools import wraps
+from functools import lru_cache, wraps
 import html
 import io
 import logging
@@ -211,6 +211,25 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
 UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
 UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
 UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
+
+
+@lru_cache(maxsize=32)
+def get_ui_asset_version(asset_name: str) -> str:
+    """Return a cache-busting version token for a static UI asset.
+
+    Args:
+        asset_name: Static asset file name under ``mcpgateway/static``.
+
+    Returns:
+        str: Deterministic version token based on file modification time, or
+            app version fallback when the file cannot be stat'ed.
+    """
+    static_dir = Path(__file__).resolve().parent / "static"
+    asset_path = static_dir / asset_name
+    try:
+        return str(asset_path.stat().st_mtime_ns)
+    except OSError:
+        return __version__
 
 
 def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
@@ -3343,6 +3362,8 @@ async def admin_ui(
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": is_admin_user,
             "user_teams": user_teams,
+            "admin_js_asset_version": get_ui_asset_version("admin.js"),
+            "admin_css_asset_version": get_ui_asset_version("admin.css"),
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,

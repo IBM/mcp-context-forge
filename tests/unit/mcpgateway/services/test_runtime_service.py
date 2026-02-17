@@ -637,6 +637,59 @@ async def test_execute_deployment_error_and_gateway_registration_warning(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_register_gateway_retries_common_streamable_paths(monkeypatch, test_db):
+    monkeypatch.setattr("mcpgateway.services.runtime_service.settings", _runtime_settings(runtime_docker_enabled=False))
+    service = RuntimeService()
+
+    runtime = _runtime_row(
+        status="running",
+        endpoint_url="http://runtime-host:8080",
+        runtime_metadata={"register_gateway": True, "gateway_name": "gw-runtime", "gateway_transport": "STREAMABLEHTTP", "visibility": "public", "tags": []},
+    )
+
+    attempted_urls: list[str] = []
+
+    async def _register_gateway(*, gateway, **_kwargs):  # noqa: ANN001
+        attempted_urls.append(gateway.url)
+        if gateway.url.endswith("/http"):
+            return SimpleNamespace(id="gw-123")
+        raise RuntimeError("initialization failed")
+
+    service.gateway_service.register_gateway = AsyncMock(side_effect=_register_gateway)
+
+    await service._register_gateway(runtime, test_db)
+
+    assert attempted_urls == ["http://runtime-host:8080/http"]
+    assert runtime.gateway_id == "gw-123"
+    assert runtime.status == "connected"
+    assert runtime.endpoint_url == "http://runtime-host:8080/http"
+
+
+def test_resolve_endpoint_preferences_precedence(monkeypatch):
+    monkeypatch.setattr("mcpgateway.services.runtime_service.settings", _runtime_settings(runtime_docker_enabled=False))
+    service = RuntimeService()
+    request = RuntimeDeployRequest(
+        name="endpoint-precedence",
+        backend="docker",
+        source=RuntimeSource(type="docker", image="docker.io/acme/runtime:1"),
+        endpoint_port=19000,
+        endpoint_path="http",
+        metadata={"endpoint_port": 18000, "endpoint_path": "/mcp"},
+    )
+    endpoint_port, endpoint_path = service._resolve_endpoint_preferences(
+        request,
+        {
+            "runtime": {
+                "endpoint_port": 17000,
+                "endpoint_path": "/catalog",
+            }
+        },
+    )
+    assert endpoint_port == 19000
+    assert endpoint_path == "/http"
+
+
+@pytest.mark.asyncio
 async def test_source_resolution_and_guardrail_resolution_helpers(monkeypatch, test_db):
     monkeypatch.setattr("mcpgateway.services.runtime_service.settings", _runtime_settings(runtime_docker_enabled=False))
     service = RuntimeService()
@@ -764,6 +817,26 @@ def test_runtime_service_static_utilities(test_db):
     assert RuntimeService._infer_transport("wss://example.com/ws") == "SSE"
     assert RuntimeService._infer_transport("https://example.com/sse") == "SSE"
     assert RuntimeService._infer_transport("https://example.com/mcp") == "STREAMABLEHTTP"
+    assert RuntimeService._append_path("https://example.com", "/http") == "https://example.com/http"
+    assert RuntimeService._append_path("https://example.com/base", "mcp") == "https://example.com/base/mcp"
+    assert RuntimeService._candidate_gateway_urls("https://example.com", "STREAMABLEHTTP") == [
+        "https://example.com/http",
+        "https://example.com/mcp",
+        "https://example.com",
+    ]
+    assert RuntimeService._candidate_gateway_urls(
+        "https://example.com",
+        "STREAMABLEHTTP",
+        preferred_path="/custom",
+    ) == [
+        "https://example.com/custom",
+        "https://example.com/http",
+        "https://example.com/mcp",
+        "https://example.com",
+    ]
+    assert RuntimeService._candidate_gateway_urls("https://example.com/sse", "SSE") == [
+        "https://example.com/sse"
+    ]
 
     runtime = _runtime_row()
     test_db.add(runtime)
@@ -880,6 +953,81 @@ async def test_docker_backend_deploy_ignores_k8s_seccomp_and_missing_apparmor(mo
 
 
 @pytest.mark.asyncio
+async def test_docker_backend_deploy_uses_ingress_ports_for_endpoint_resolution(monkeypatch):
+    backend = DockerRuntimeBackend(docker_binary="docker", default_network="runtime-net")
+    run_commands: list[list[str]] = []
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        run_commands.append(cmd)
+        if len(cmd) >= 2 and cmd[1] == "run":
+            return "container-789\n"
+        if len(cmd) >= 2 and cmd[1] == "port":
+            raise RuntimeBackendError("no published ports")
+        return ""
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+
+    result = await backend.deploy(
+        RuntimeBackendDeployRequest(
+            runtime_id="12345678-1234-1234-1234-123456789abc",
+            name="runtime-name",
+            source_type="docker",
+            source={"type": "docker", "image": "ghcr.io/ibm/fast-time-server:0.8.0"},
+            guardrails={
+                "capabilities": {"drop_all": True, "add": []},
+                "filesystem": {"read_only_root": True},
+                "network": {"egress_allowed": True, "ingress_ports": [8080]},
+            },
+        )
+    )
+
+    run_invocation = next(cmd for cmd in run_commands if len(cmd) >= 2 and cmd[1] == "run")
+    assert "--network" in run_invocation
+    assert "runtime-net" in run_invocation
+    assert "-p" in run_invocation
+    assert "127.0.0.1::8080" in run_invocation
+    assert result.endpoint_url == "http://mcpruntime-runtime-name-12345678:8080"
+    assert result.backend_response["network"] == "runtime-net"
+    assert result.backend_response["ingress_ports"] == [8080]
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_deploy_uses_metadata_endpoint_port_override(monkeypatch):
+    backend = DockerRuntimeBackend(docker_binary="docker", default_network="runtime-net")
+    run_commands: list[list[str]] = []
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        run_commands.append(cmd)
+        if len(cmd) >= 2 and cmd[1] == "run":
+            return "container-321\n"
+        if len(cmd) >= 2 and cmd[1] == "port":
+            raise RuntimeBackendError("no published ports")
+        return ""
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+
+    result = await backend.deploy(
+        RuntimeBackendDeployRequest(
+            runtime_id="c0ffee00-1234-1234-1234-123456789abc",
+            name="runtime-name",
+            source_type="docker",
+            source={"type": "docker", "image": "ghcr.io/ibm/fast-time-server:0.8.0"},
+            metadata={"endpoint_port": 9090},
+            guardrails={
+                "capabilities": {"drop_all": True, "add": []},
+                "filesystem": {"read_only_root": True},
+                "network": {"egress_allowed": True},
+            },
+        )
+    )
+
+    run_invocation = next(cmd for cmd in run_commands if len(cmd) >= 2 and cmd[1] == "run")
+    assert "127.0.0.1::9090" in run_invocation
+    assert result.endpoint_url == "http://mcpruntime-runtime-name-c0ffee00:9090"
+    assert result.backend_response["endpoint_port"] == 9090
+
+
+@pytest.mark.asyncio
 async def test_docker_backend_deploy_retries_without_missing_network(monkeypatch):
     backend = DockerRuntimeBackend(
         docker_binary="docker",
@@ -900,6 +1048,7 @@ async def test_docker_backend_deploy_retries_without_missing_network(monkeypatch
         return ""
 
     monkeypatch.setattr(backend, "_run", _fake_run)
+    monkeypatch.setattr(backend, "_detect_gateway_network", AsyncMock(return_value=None))
 
     result = await backend.deploy(
         RuntimeBackendDeployRequest(
@@ -922,3 +1071,50 @@ async def test_docker_backend_deploy_retries_without_missing_network(monkeypatch
     assert "--network" in run_invocations[0]
     assert "--network" not in run_invocations[1]
     assert any(warning.get("field") == "guardrails.network" for warning in result.warnings)
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_deploy_retries_with_detected_gateway_network(monkeypatch):
+    backend = DockerRuntimeBackend(
+        docker_binary="docker",
+        default_network="missing-network",
+    )
+    run_commands: list[list[str]] = []
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        run_commands.append(cmd)
+        if len(cmd) >= 2 and cmd[1] == "rm":
+            return ""
+        if len(cmd) >= 2 and cmd[1] == "run" and "missing-network" in cmd:
+            raise RuntimeBackendError("Command failed (125): docker run ... network missing-network not found")
+        if len(cmd) >= 2 and cmd[1] == "run":
+            return "container-999\n"
+        if len(cmd) >= 2 and cmd[1] == "port":
+            raise RuntimeBackendError("no published ports")
+        return ""
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+    monkeypatch.setattr(backend, "_detect_gateway_network", AsyncMock(return_value="mcp-context-forge_mcpnet"))
+
+    result = await backend.deploy(
+        RuntimeBackendDeployRequest(
+            runtime_id="abcdef12-1234-1234-1234-123456789abc",
+            name="runtime-name",
+            source_type="docker",
+            source={"type": "docker", "image": "ghcr.io/ibm/fast-time-server:0.8.0"},
+            guardrails={
+                "capabilities": {"drop_all": True, "add": []},
+                "filesystem": {"read_only_root": True},
+                "network": {"egress_allowed": True, "ingress_ports": [8080]},
+            },
+        )
+    )
+
+    run_invocations = [cmd for cmd in run_commands if len(cmd) >= 2 and cmd[1] == "run"]
+    assert len(run_invocations) == 2
+    assert "missing-network" in run_invocations[0]
+    assert "mcp-context-forge_mcpnet" in run_invocations[1]
+    assert result.backend_response["network"] == "mcp-context-forge_mcpnet"
+    assert result.endpoint_url == "http://mcpruntime-runtime-name-abcdef12:8080"
+    warning_messages = [warning.get("message", "") for warning in result.warnings if warning.get("field") == "guardrails.network"]
+    assert any("gateway network" in message for message in warning_messages)

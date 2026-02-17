@@ -48,12 +48,18 @@ class TestRuntimeUI:
         return f"pw-runtime-ui-{suffix}-{uuid.uuid4().hex[:8]}"
 
     def _deploy_runtime_via_ui(
-        self, runtime_page: RuntimePage, runtime_name: str
+        self,
+        runtime_page: RuntimePage,
+        runtime_name: str,
+        endpoint_port: int | None = None,
+        endpoint_path: str | None = None,
     ) -> str:
         """Deploy a Docker runtime from UI and return runtime id."""
         runtime_page.fill_docker_deploy_form(
             name=runtime_name,
             image=DOCKER_RUNTIME_IMAGE,
+            endpoint_port=endpoint_port,
+            endpoint_path=endpoint_path,
         )
 
         with runtime_page.page.expect_response(
@@ -310,6 +316,48 @@ class TestRuntimeUI:
             )
             assert runtime_after_delete is not None
             assert runtime_after_delete.get("status") == "deleted"
+        finally:
+            if runtime_id:
+                runtime_page.api_cleanup_runtime(runtime_id)
+
+    def test_deploy_with_explicit_endpoint_port_and_path_registers_expected_url(
+        self, runtime_page: RuntimePage
+    ):
+        """Deploy with endpoint overrides and verify runtime endpoint URL uses the requested values."""
+        self._open_runtime_panel_or_skip(runtime_page)
+
+        runtime_name = self._runtime_name("endpoint-config")
+        runtime_id: str | None = None
+
+        try:
+            runtime_id = self._deploy_runtime_via_ui(
+                runtime_page,
+                runtime_name,
+                endpoint_port=8080,
+                endpoint_path="/http",
+            )
+            approval_id = self._find_pending_approval_or_skip(runtime_page, runtime_id)
+            self._show_all_approvals(runtime_page)
+            approve_button = runtime_page.approval_action_button(approval_id, "approve")
+            expect(approve_button).to_be_visible(timeout=20000)
+
+            runtime_page.page.once(
+                "dialog",
+                lambda dialog: dialog.accept("Playwright endpoint override validation"),
+            )
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/approvals/{approval_id}/approve"
+                in response.url
+                and response.request.method == "POST",
+                timeout=30000,
+            ) as approve_response:
+                approve_button.click()
+            assert approve_response.value.status < 400
+
+            runtime_payload = runtime_page.api_get_runtime(runtime_id, refresh=True)
+            endpoint_url = str(runtime_payload.get("endpoint_url") or "")
+            assert ":8080/" in endpoint_url
+            assert endpoint_url.endswith("/http")
         finally:
             if runtime_id:
                 runtime_page.api_cleanup_runtime(runtime_id)
