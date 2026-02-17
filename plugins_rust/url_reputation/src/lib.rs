@@ -1,13 +1,11 @@
 use pyo3::prelude::*;
-mod plugin;
-/// A Python module implemented in Rust.
-#[pymodule]
-mod url_reputation {
-    use pyo3::prelude::*;
+pub mod filters;
+mod engine;
+use engine::validate_url;
 
-    /// Formats the sum of two numbers as string.
-    #[pyfunction]
-    fn sum_as_string(a: usize, b: usize) -> PyResult<String> {
-        Ok((a + b).to_string())
-    }
+#[pymodule]
+fn url_reputation(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<engine::URLReputationConfig>()?;
+    m.add_function(wrap_pyfunction!(validate_url, m)?)?;
+    Ok(())
 }
