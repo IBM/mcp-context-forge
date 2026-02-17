@@ -312,7 +312,7 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         if not compose_content or not main_service:
             raise RuntimeBackendError("Compose deployment requires compose_file and main_service")
 
-        runtime_dir = Path("/tmp/mcpgateway-runtime") / request.runtime_id
+        runtime_dir = Path(tempfile.gettempdir()) / "mcpgateway-runtime" / request.runtime_id
         runtime_dir.mkdir(parents=True, exist_ok=True)
         compose_path = runtime_dir / "docker-compose.runtime.yaml"
 

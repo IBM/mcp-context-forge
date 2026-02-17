@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 # Third-Party
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -245,20 +245,32 @@ class RuntimeService:
             Tuple[List[RuntimeRead], int]: Runtime list and total count.
         """
         stmt = select(RuntimeDeployment)
-        count_stmt = select(func.count(RuntimeDeployment.id))
+        total_query = db.query(RuntimeDeployment)
         if backend:
             stmt = stmt.where(RuntimeDeployment.backend == backend)
-            count_stmt = count_stmt.where(RuntimeDeployment.backend == backend)
+            total_query = total_query.filter(RuntimeDeployment.backend == backend)
         if status:
             stmt = stmt.where(RuntimeDeployment.status == status)
-            count_stmt = count_stmt.where(RuntimeDeployment.status == status)
+            total_query = total_query.filter(RuntimeDeployment.status == status)
 
         stmt = stmt.order_by(RuntimeDeployment.created_at.desc()).offset(offset).limit(limit)
         rows = db.execute(stmt).scalars().all()
-        total = int(db.execute(count_stmt).scalar() or 0)
+        total = int(total_query.count())
         return [self._to_runtime_read(row) for row in rows], total
 
     async def get_runtime(self, runtime_id: str, db: Session) -> RuntimeRead:
+        """Get a runtime deployment by identifier.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup.
+
+        Returns:
+            RuntimeRead: Runtime deployment details.
+
+        Raises:
+            RuntimeBackendError: If runtime deployment is not found.
+        """
         runtime = db.execute(select(RuntimeDeployment).where(RuntimeDeployment.id == runtime_id)).scalar_one_or_none()
         if not runtime:
             raise RuntimeBackendError(f"Runtime deployment '{runtime_id}' not found")
@@ -401,6 +413,18 @@ class RuntimeService:
         return profiles
 
     async def get_guardrail_profile(self, name: str, db: Session) -> RuntimeGuardrailProfileRead:
+        """Get a built-in or custom guardrail profile by name.
+
+        Args:
+            name: Guardrail profile name.
+            db: Database session used for custom profile lookup.
+
+        Returns:
+            RuntimeGuardrailProfileRead: Guardrail profile details.
+
+        Raises:
+            RuntimeBackendError: If profile is not found.
+        """
         builtin = self._BUILTIN_PROFILES.get(name)
         if builtin:
             now = utc_now()
@@ -534,16 +558,28 @@ class RuntimeService:
             Tuple[List[RuntimeApprovalRead], int]: Approval list and total count.
         """
         stmt = select(RuntimeDeploymentApproval)
-        count_stmt = select(func.count(RuntimeDeploymentApproval.id))
+        total_query = db.query(RuntimeDeploymentApproval)
         if status:
             stmt = stmt.where(RuntimeDeploymentApproval.status == status)
-            count_stmt = count_stmt.where(RuntimeDeploymentApproval.status == status)
+            total_query = total_query.filter(RuntimeDeploymentApproval.status == status)
         stmt = stmt.order_by(RuntimeDeploymentApproval.created_at.desc()).offset(offset).limit(limit)
         rows = db.execute(stmt).scalars().all()
-        total = int(db.execute(count_stmt).scalar() or 0)
+        total = int(total_query.count())
         return [self._to_approval_read(row) for row in rows], total
 
     async def get_approval(self, approval_id: str, db: Session) -> RuntimeApprovalRead:
+        """Get a runtime approval request by identifier.
+
+        Args:
+            approval_id: Runtime approval identifier.
+            db: Database session used for lookup.
+
+        Returns:
+            RuntimeApprovalRead: Runtime approval details.
+
+        Raises:
+            RuntimeBackendError: If approval request is not found.
+        """
         approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id)).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
@@ -810,7 +846,7 @@ class RuntimeService:
         if not settings.runtime_approval_enabled:
             return False, {}
 
-        reasons: Dict[str, Any] = {"source_type": source.get("type"), "profile": profile_name}
+        reasons: Dict[str, Any] = {"source_type": source.get("type"), "profile": profile_name, "requested_backend": request.backend}
         required = False
 
         source_type = str(source.get("type", "")).lower()
