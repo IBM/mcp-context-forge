@@ -2550,6 +2550,9 @@ class GatewayCreate(BaseModel):
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
 
+    # Per-gateway identity propagation configuration
+    identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
+
     @field_validator("gateway_mode", mode="before")
     @classmethod
     def default_gateway_mode(cls, v: Optional[str]) -> str:
@@ -2885,6 +2888,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
 
     # Gateway mode configuration
     gateway_mode: Optional[str] = Field(None, description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)", pattern="^(cache|direct_proxy)$")
+
+    # Per-gateway identity propagation configuration
+    identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}")
 
     @field_validator("tags")
     @classmethod
@@ -3251,6 +3257,9 @@ class GatewayRead(BaseModelWithConfigDict):
 
     # Gateway mode configuration
     gateway_mode: str = Field(default="cache", description="Gateway mode: 'cache' (database caching, default) or 'direct_proxy' (pass-through mode with no caching)")
+
+    # Per-gateway identity propagation configuration
+    identity_propagation: Optional[Dict[str, Any]] = Field(None, description="Per-gateway identity propagation config")
 
     @model_validator(mode="before")
     @classmethod

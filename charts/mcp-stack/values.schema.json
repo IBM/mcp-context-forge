@@ -1078,6 +1078,39 @@
               "description": "Auth encryption secret",
               "default": "my-test-salt"
             },
+            "IDENTITY_PROPAGATION_ENABLED": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Enable end-user identity propagation to upstream MCP servers",
+              "default": "false"
+            },
+            "IDENTITY_PROPAGATION_MODE": {
+              "type": "string",
+              "enum": ["headers", "meta", "both"],
+              "description": "How to propagate identity: headers (HTTP), meta (MCP _meta), or both",
+              "default": "both"
+            },
+            "IDENTITY_PROPAGATION_HEADERS_PREFIX": {
+              "type": "string",
+              "description": "Prefix for identity propagation HTTP headers (e.g. X-Forwarded-User)",
+              "default": "X-Forwarded-User"
+            },
+            "IDENTITY_SENSITIVE_ATTRIBUTES": {
+              "type": "string",
+              "description": "JSON array of user attributes to strip before propagating",
+              "default": "[\"password_hash\",\"internal_id\",\"ssn\"]"
+            },
+            "IDENTITY_SIGN_CLAIMS": {
+              "type": "string",
+              "enum": ["true", "false"],
+              "description": "Sign propagated user claims with HMAC-SHA256 for upstream verification",
+              "default": "false"
+            },
+            "IDENTITY_CLAIMS_SECRET": {
+              "type": "string",
+              "description": "Secret for signing identity claims (uses JWT_SECRET_KEY if unset)",
+              "default": ""
+            },
             "ENABLE_ED25519_SIGNING": {
               "type": "string",
               "enum": ["true", "false"],

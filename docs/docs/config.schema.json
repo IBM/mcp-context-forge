@@ -818,6 +818,46 @@
       "title": "Insecure Queryparam Auth Allowed Hosts",
       "type": "array"
     },
+    "identity_propagation_enabled": {
+      "default": false,
+      "description": "Enable end-user identity propagation to upstream MCP servers. When enabled, the gateway forwards the authenticated user's identity (email, groups, roles) to upstream servers via HTTP headers and/or MCP _meta fields.",
+      "title": "Identity Propagation Enabled",
+      "type": "boolean"
+    },
+    "identity_propagation_mode": {
+      "default": "both",
+      "description": "How to propagate identity to upstream servers: 'headers' (HTTP headers only), 'meta' (MCP _meta field only), 'both' (headers and _meta).",
+      "enum": ["headers", "meta", "both"],
+      "title": "Identity Propagation Mode",
+      "type": "string"
+    },
+    "identity_propagation_headers_prefix": {
+      "default": "X-Forwarded-User",
+      "description": "Prefix for identity propagation HTTP headers. Headers will be named {prefix}-Id, {prefix}-Email, {prefix}-Groups, etc.",
+      "title": "Identity Propagation Headers Prefix",
+      "type": "string"
+    },
+    "identity_sensitive_attributes": {
+      "default": ["password_hash", "internal_id", "ssn"],
+      "description": "User attributes to strip before propagating identity to upstream servers. These keys are removed from the user context before forwarding.",
+      "items": {
+        "type": "string"
+      },
+      "title": "Identity Sensitive Attributes",
+      "type": "array"
+    },
+    "identity_sign_claims": {
+      "default": false,
+      "description": "Sign propagated user claims with HMAC-SHA256 for upstream verification. When enabled, a signature header/field is included so upstream servers can verify the claims originated from this gateway.",
+      "title": "Identity Sign Claims",
+      "type": "boolean"
+    },
+    "identity_claims_secret": {
+      "default": null,
+      "description": "Secret key for signing propagated identity claims. If unset, falls back to JWT_SECRET_KEY.",
+      "title": "Identity Claims Secret",
+      "type": ["string", "null"]
+    },
     "ssrf_protection_enabled": {
       "default": true,
       "description": "Enable SSRF protection for gateway/tool URLs. Blocks access to dangerous endpoints.",

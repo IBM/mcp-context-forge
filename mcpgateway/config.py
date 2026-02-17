@@ -376,6 +376,36 @@ class Settings(BaseSettings):
     )
 
     # ===================================
+    # Identity Propagation Configuration
+    # ===================================
+    # Controls how end-user identity is forwarded to upstream MCP servers.
+
+    identity_propagation_enabled: bool = Field(
+        default=False,
+        description="Enable end-user identity propagation to upstream MCP servers",
+    )
+    identity_propagation_mode: Literal["headers", "meta", "both"] = Field(
+        default="both",
+        description="How to propagate identity: 'headers' (HTTP headers), 'meta' (MCP _meta field), 'both'",
+    )
+    identity_propagation_headers_prefix: str = Field(
+        default="X-Forwarded-User",
+        description="Prefix for identity propagation HTTP headers",
+    )
+    identity_sensitive_attributes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["password_hash", "internal_id", "ssn"],
+        description="User attributes to strip before propagating to upstream servers",
+    )
+    identity_sign_claims: bool = Field(
+        default=False,
+        description="Sign propagated user claims with HMAC for verification",
+    )
+    identity_claims_secret: Optional[str] = Field(
+        default=None,
+        description="Secret key for signing propagated identity claims (uses JWT_SECRET_KEY if unset)",
+    )
+
+    # ===================================
     # SSRF Protection Configuration
     # ===================================
     # Server-Side Request Forgery (SSRF) protection prevents the gateway from being

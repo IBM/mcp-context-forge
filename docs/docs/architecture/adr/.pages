@@ -43,3 +43,4 @@ nav:
   - 38b Multi-Worker Session Affinity: 038-multi-worker-session-affinity.md
   - 39 Adopt Fully Independent Plugin Crates Architecture: 039-adopt-fully-independent-plugin-crates-architecture.md
   - 40 Flexible Admin UI Section Visibility: 040-flexible-admin-ui-sections.md
+  - 41 End-User Identity Propagation: 041-identity-propagation.md

@@ -93,6 +93,9 @@ class AuditTrailService:
         details: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         db: Optional[Session] = None,
+        auth_method: Optional[str] = None,
+        acting_as: Optional[str] = None,
+        delegation_chain: Optional[Dict[str, Any]] = None,
     ) -> Optional[AuditTrail]:
         """Log an audit trail entry.
 
@@ -119,6 +122,9 @@ class AuditTrailService:
             details: Extra key/value payload (stored under context.details)
             metadata: Extra metadata payload (stored under context.metadata)
             db: Optional database session
+            auth_method: Authentication method used (bearer, api_key, basic, sso, proxy)
+            acting_as: Service account acting on behalf of user
+            delegation_chain: Chain of delegated identities
 
         Returns:
             Created AuditTrail entry or None if logging disabled
@@ -172,6 +178,9 @@ class AuditTrailService:
                 success=success,
                 error_message=error_message,
                 context=context_value,
+                auth_method=auth_method,
+                acting_as=acting_as,
+                delegation_chain=delegation_chain,
             )
 
             db.add(audit_entry)

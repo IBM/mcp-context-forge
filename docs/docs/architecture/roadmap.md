@@ -620,7 +620,7 @@
     - ⏳ [**#1223**](https://github.com/IBM/mcp-context-forge/issues/1223) - [FEATURE][COMPLIANCE]: Resource access audit trail for compliance and security
     - ⏳ [**#1265**](https://github.com/IBM/mcp-context-forge/issues/1265) - [FEATURE][AUTH]: Map teams to roles and permissions
     - ⏳ [**#1435**](https://github.com/IBM/mcp-context-forge/issues/1435) - [FEATURE][AUTH]: Infer identity provider info for onboarded MCP servers
-    - ⏳ [**#1436**](https://github.com/IBM/mcp-context-forge/issues/1436) - [FEATURE][AUTH]: Propagate end user identity and context through the CF workflow
+    - ✅ [**#1436**](https://github.com/IBM/mcp-context-forge/issues/1436) - [FEATURE][AUTH]: Propagate end user identity and context through the CF workflow
     - ⏳ [**#1618**](https://github.com/IBM/mcp-context-forge/issues/1618) - [RUST]: Rewrite wrapper module in Rust
     - ⏳ [**#1985**](https://github.com/IBM/mcp-context-forge/issues/1985) - [FEATURE]: Elicitation pass-through and logging
     - ⏳ [**#2075**](https://github.com/IBM/mcp-context-forge/issues/2075) - [FEATURE][UI]: Flexible UI sections for embedded contexts

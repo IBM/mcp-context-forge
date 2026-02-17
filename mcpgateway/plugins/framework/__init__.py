@@ -60,6 +60,7 @@ from mcpgateway.plugins.framework.models import (
     PluginPayload,
     PluginResult,
     PluginViolation,
+    UserContext,
 )
 from mcpgateway.plugins.framework.utils import get_attr
 
@@ -148,4 +149,5 @@ __all__ = [
     "ToolPostInvokeResult",
     "ToolPreInvokeResult",
     "ToolPreInvokePayload",
+    "UserContext",
 ]
