@@ -22763,6 +22763,8 @@ function handleAdminTeamAction(event) {
                 ) {
                     params.set("relationship", currentTeamRelationshipFilter);
                 }
+                // Cache-bust to bypass nginx proxy cache and browser cache
+                params.set("_t", Date.now());
                 const url = `${window.ROOT_PATH || ""}/admin/teams/partial?${params.toString()}`;
                 window.htmx.ajax("GET", url, {
                     target: "#unified-teams-list",
@@ -22820,7 +22822,15 @@ function handleAdminUserAction(event) {
         if (detail.refreshUsersList) {
             const usersList = document.getElementById("users-list-container");
             if (usersList && window.htmx) {
-                window.htmx.trigger(usersList, "refreshUsers");
+                // Use htmx.ajax with cache-busting timestamp to bypass
+                // nginx proxy cache and browser cache
+                const hxGet = usersList.getAttribute("hx-get") || "";
+                const sep = hxGet.includes("?") ? "&" : "?";
+                const url = `${hxGet}${sep}_t=${Date.now()}`;
+                window.htmx.ajax("GET", url, {
+                    target: "#users-list-container",
+                    swap: "outerHTML",
+                });
             }
         }
     }, delayMs);
