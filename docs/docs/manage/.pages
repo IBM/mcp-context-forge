@@ -22,6 +22,7 @@ nav:
   - dcr.md
   - oauth.md
   - oauth-troubleshooting.md
+  - identity-propagation.md
   - securing.md
   - sso.md
   - sso-github-tutorial.md

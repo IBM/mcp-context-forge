@@ -651,6 +651,31 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
     - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
     - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
 
+### Identity Propagation
+
+MCP Gateway can **propagate end-user identity** to upstream MCP servers when proxying requests. This enables upstream services to make authorization decisions based on the original caller's identity, and supports audit trails that track the full delegation chain.
+
+| Setting                              | Description                                              | Default              | Options                    |
+| ------------------------------------ | -------------------------------------------------------- | -------------------- | -------------------------- |
+| `IDENTITY_PROPAGATION_ENABLED`       | Enable end-user identity propagation to upstream servers  | `false`              | bool                       |
+| `IDENTITY_PROPAGATION_MODE`          | How to propagate identity                                | `both`               | `headers`, `meta`, `both`  |
+| `IDENTITY_PROPAGATION_HEADERS_PREFIX`| Prefix for identity HTTP headers                         | `X-Forwarded-User`   | string                     |
+| `IDENTITY_SENSITIVE_ATTRIBUTES`      | User attributes to strip before propagating              | `["password_hash","internal_id","ssn"]` | JSON array |
+| `IDENTITY_SIGN_CLAIMS`               | Sign propagated user claims with HMAC                    | `false`              | bool                       |
+| `IDENTITY_CLAIMS_SECRET`             | Secret key for signing identity claims                   | (none)               | string                     |
+
+**Propagation modes:**
+
+- **`headers`**: Sends identity as HTTP headers (`X-Forwarded-User-Id`, `X-Forwarded-User-Email`, `X-Forwarded-User-Groups`, etc.) to upstream servers.
+- **`meta`**: Injects identity into the MCP `_meta` field for MCP protocol-level propagation.
+- **`both`** (default): Uses both headers and `_meta` propagation.
+
+!!! info "Per-Gateway Override"
+    Identity propagation can be configured per-gateway by setting the `identity_propagation` JSON field on individual gateway registrations. Per-gateway settings override the global defaults. See the [Identity Propagation guide](identity-propagation.md) for details.
+
+!!! warning "Claim Signing"
+    When `IDENTITY_SIGN_CLAIMS=true`, an HMAC-SHA256 signature is appended to propagated headers/meta so upstream servers can verify the claims were issued by the gateway. Uses `IDENTITY_CLAIMS_SECRET` if set, otherwise falls back to `JWT_SECRET_KEY`.
+
 ### SSRF Protection
 
 MCP Gateway includes **Server-Side Request Forgery (SSRF) protection** to prevent the gateway from being used to access internal resources or cloud metadata services.

@@ -356,6 +356,17 @@ mcpContextForge:
     INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # enable query param auth (default: disabled)
     INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # JSON array of allowed hosts, e.g. '["mcp.tavily.com"]'
 
+    # ─ Identity Propagation ─
+    # Forward end-user identity (email, groups, roles) to upstream MCP servers.
+    # Supports HTTP headers (X-Forwarded-User-*) and MCP _meta field propagation.
+    # Can be overridden per-gateway via the identity_propagation JSON field.
+    IDENTITY_PROPAGATION_ENABLED: "false"      # master switch for identity propagation
+    IDENTITY_PROPAGATION_MODE: "both"          # headers, meta, or both
+    IDENTITY_PROPAGATION_HEADERS_PREFIX: "X-Forwarded-User" # prefix for identity HTTP headers
+    # IDENTITY_SENSITIVE_ATTRIBUTES: '["password_hash","internal_id","ssn"]' # attributes to strip
+    # IDENTITY_SIGN_CLAIMS: "false"            # HMAC-sign propagated claims for upstream verification
+    # IDENTITY_CLAIMS_SECRET: ""               # signing secret (uses JWT_SECRET_KEY if unset)
+
     # ─ SSRF Protection (Server-Side Request Forgery) ─
     # Prevents gateway from accessing internal resources or cloud metadata services.
     # Default: enabled with safe settings for internal/dev deployments.

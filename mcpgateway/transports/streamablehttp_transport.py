@@ -60,6 +60,7 @@ from starlette.types import Receive, Scope, Send
 from mcpgateway.common.models import LogLevel
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
+from mcpgateway.plugins.framework.models import UserContext
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.prompt_service import PromptService
@@ -67,6 +68,7 @@ from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
+from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.verify_credentials import verify_credentials
 
@@ -88,6 +90,7 @@ mcp_app: Server[Any] = Server("mcp-streamable-http")
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 request_headers_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("request_headers", default={})
 user_context_var: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar("user_context", default={})
+user_identity_var: contextvars.ContextVar[Optional[UserContext]] = contextvars.ContextVar("user_identity", default=None)
 
 # ------------------------------ Event store ------------------------------
 
@@ -483,6 +486,11 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
                 if header_value:
                     headers[header_name] = header_value
 
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
+
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
             async with ClientSession(read_stream, write_stream) as session:
@@ -525,6 +533,11 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
                 header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
                 if header_value:
                     headers[header_name] = header_value
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -582,6 +595,11 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
                 header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
                 if header_value:
                     headers[header_name] = header_value
+
+        # Inject identity propagation headers
+        identity = user_identity_var.get()
+        if identity:
+            headers.update(build_identity_headers(identity, gateway))
 
         logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -718,6 +736,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
                         meta_data=meta_data,
                         user_email=user_email,
                         token_teams=token_teams,
+                        user_context=user_identity_var.get(),
                     )
         except Exception as e:
             logger.error(f"Direct proxy mode failed for gateway {gateway_id_from_header}: {e}")
@@ -2004,6 +2023,29 @@ class SessionManagerWrapper:
 # ------------------------- Authentication for /mcp routes ------------------------------
 
 
+def _set_user_identity_from_dict(ctx: dict[str, Any]) -> None:
+    """Build a UserContext from the user_context dict and store it in user_identity_var.
+
+    Args:
+        ctx: User context dictionary with email, is_admin, teams, auth_method keys.
+    """
+    # Standard
+    from datetime import datetime, timezone  # pylint: disable=import-outside-toplevel
+
+    email = ctx.get("email")
+    if email:
+        user_identity_var.set(
+            UserContext(
+                user_id=email,
+                email=email,
+                is_admin=ctx.get("is_admin", False),
+                teams=ctx.get("teams"),
+                auth_method=ctx.get("auth_method", "bearer"),
+                authenticated_at=datetime.now(timezone.utc),
+            )
+        )
+
+
 async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
     """
     Perform authentication check in middleware context (ASGI scope).
@@ -2063,14 +2105,14 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         # Client auth disabled → allow proxy header
         if proxy_user:
             # Set enriched user context for proxy-authenticated sessions
-            user_context_var.set(
-                {
-                    "email": proxy_user,
-                    "teams": [],  # Proxy auth has no team context
-                    "is_authenticated": True,
-                    "is_admin": False,
-                }
-            )
+            _proxy_ctx = {
+                "email": proxy_user,
+                "teams": [],  # Proxy auth has no team context
+                "is_authenticated": True,
+                "is_admin": False,
+            }
+            user_context_var.set(_proxy_ctx)
+            _set_user_identity_from_dict({**_proxy_ctx, "auth_method": "proxy"})
             return True  # Trusted proxy supplied user
 
     # --- Standard JWT authentication flow (client auth enabled) ---
@@ -2180,14 +2222,14 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
                             pass  # nosec B110 - Best effort rollback
                         db.close()
 
-            user_context_var.set(
-                {
-                    "email": user_email,
-                    "teams": final_teams,
-                    "is_authenticated": True,
-                    "is_admin": is_admin,
-                }
-            )
+            _ctx = {
+                "email": user_email,
+                "teams": final_teams,
+                "is_authenticated": True,
+                "is_admin": is_admin,
+            }
+            user_context_var.set(_ctx)
+            _set_user_identity_from_dict(_ctx)
         elif proxy_user:
             # If using proxy auth, store the proxy user
             user_context_var.set(

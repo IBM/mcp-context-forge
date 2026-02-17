@@ -67,6 +67,7 @@ from mcpgateway.plugins.framework import (
     ToolHookType,
     ToolPostInvokePayload,
     ToolPreInvokePayload,
+    UserContext,
 )
 from mcpgateway.plugins.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate, TopPerformer
@@ -85,6 +86,7 @@ from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
+from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -2568,6 +2570,7 @@ class ToolService:
         meta_data: Optional[Dict[str, Any]] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        user_context: Optional[UserContext] = None,
     ) -> types.CallToolResult:
         """
         Invoke a tool directly on a remote MCP gateway in direct_proxy mode.
@@ -2583,6 +2586,7 @@ class ToolService:
             meta_data: Optional metadata dictionary for additional context (e.g., request ID).
             user_email: Email of the requesting user for access control.
             token_teams: Team IDs from the user's token for access control.
+            user_context: Optional UserContext for identity propagation.
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
@@ -2616,6 +2620,11 @@ class ToolService:
                     header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
                     if header_value:
                         headers[header_name] = header_value
+
+            # Inject identity propagation headers
+            if user_context:
+                headers.update(build_identity_headers(user_context, gateway))
+                meta_data = build_identity_meta(user_context, meta_data, gateway)
 
             gateway_url = gateway.url
 
@@ -3109,6 +3118,10 @@ class ToolService:
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity")
 
+                    # Inject identity propagation headers for REST tools
+                    if global_context and global_context.user_context:
+                        headers.update(build_identity_headers(global_context.user_context))
+
                     if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
                         # Use pre-created Pydantic model from Phase 2 (no ORM access)
                         if tool_metadata:
@@ -3299,6 +3312,11 @@ class ToolService:
                             worker_id = str(os.getpid())
                             session_short = mcp_session_id[:8] if len(mcp_session_id) >= 8 else mcp_session_id
                             logger.debug(f"[AFFINITY] Worker {worker_id} | Session {session_short}... | Tool: {name} | Normalized MCP-Session-Id → x-mcp-session-id for pool affinity (MCP transport)")
+
+                    # Inject identity propagation headers and meta for MCP tools
+                    if global_context and global_context.user_context:
+                        headers.update(build_identity_headers(global_context.user_context))
+                        meta_data = build_identity_meta(global_context.user_context, meta_data)
 
                     def create_ssl_context(ca_certificate: str) -> ssl.SSLContext:
                         """Create an SSL context with the provided CA certificate.

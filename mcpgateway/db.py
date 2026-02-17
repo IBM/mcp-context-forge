@@ -4453,6 +4453,10 @@ class Gateway(Base):
     # - 'direct_proxy': All RPC calls are proxied directly to remote MCP server with no database caching
     gateway_mode: Mapped[str] = mapped_column(String(20), nullable=False, default="cache", comment="Gateway mode: 'cache' (database caching) or 'direct_proxy' (pass-through mode)")
 
+    # Per-gateway identity propagation configuration (JSON)
+    # Overrides global settings when set: {enabled, mode, headers_prefix, sign_claims, allowed_attributes}
+    identity_propagation: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True, comment="Per-gateway identity propagation config overrides")
+
     # Relationship with OAuth tokens
     oauth_tokens: Mapped[List["OAuthToken"]] = relationship("OAuthToken", back_populates="gateway", cascade="all, delete-orphan")
 
@@ -6155,6 +6159,11 @@ class AuditTrail(Base):
 
     # Additional context
     context: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Identity propagation audit fields
+    auth_method: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)  # bearer, api_key, basic, sso, proxy
+    acting_as: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # service account acting on behalf of user
+    delegation_chain: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)  # chain of delegated identities
 
     __table_args__ = (
         Index("idx_audit_action_time", "action", "timestamp"),

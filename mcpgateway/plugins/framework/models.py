@@ -10,6 +10,7 @@ the base plugin layer including configurations, and contexts.
 """
 
 # Standard
+from datetime import datetime
 from enum import Enum
 import logging
 import os
@@ -1408,12 +1409,63 @@ class PluginResult(BaseModel, Generic[T]):
     metadata: Optional[dict[str, Any]] = Field(default_factory=dict)
 
 
+class UserContext(BaseModel):
+    """Authenticated user identity context for propagation to upstream servers and plugins.
+
+    Attributes:
+        user_id: Primary user identifier (typically email).
+        email: User email address.
+        full_name: User's display name.
+        is_admin: Whether the user has admin privileges.
+        groups: User's group memberships.
+        roles: User's RBAC roles.
+        team_id: Current team context (for single-team API tokens).
+        teams: All teams the user belongs to.
+        department: User's department.
+        attributes: Additional user attributes (extensible).
+        auth_method: How the user authenticated (bearer, api_key, basic, sso, proxy).
+        authenticated_at: When the authentication occurred.
+        service_account: Set when a service account is acting on behalf of this user.
+        delegation_chain: Chain of delegated identities for audit trail.
+
+    Examples:
+        >>> uc = UserContext(user_id="alice@example.com")
+        >>> uc.user_id
+        'alice@example.com'
+        >>> uc.is_admin
+        False
+        >>> uc.groups
+        []
+        >>> uc2 = UserContext(user_id="bob@example.com", email="bob@example.com", is_admin=True, auth_method="bearer")
+        >>> uc2.is_admin
+        True
+        >>> uc2.auth_method
+        'bearer'
+    """
+
+    user_id: str
+    email: Optional[str] = None
+    full_name: Optional[str] = None
+    is_admin: bool = False
+    groups: list[str] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    team_id: Optional[str] = None
+    teams: Optional[list[str]] = None
+    department: Optional[str] = None
+    attributes: dict[str, Any] = Field(default_factory=dict)
+    auth_method: Optional[str] = None
+    authenticated_at: Optional[datetime] = None
+    service_account: Optional[str] = None
+    delegation_chain: list[str] = Field(default_factory=list)
+
+
 class GlobalContext(BaseModel):
     """The global context, which shared across all plugins.
 
     Attributes:
             request_id (str): ID of the HTTP request.
             user (str): user ID associated with the request.
+            user_context (Optional[UserContext]): structured user identity context.
             tenant_id (str): tenant ID.
             server_id (str): server ID.
             metadata (Optional[dict[str,Any]]): a global shared metadata across plugins (Read-only from plugin's perspective).
@@ -1439,6 +1491,7 @@ class GlobalContext(BaseModel):
 
     request_id: str
     user: Optional[Union[str, dict[str, Any]]] = None
+    user_context: Optional[UserContext] = None
     tenant_id: Optional[str] = None
     server_id: Optional[str] = None
     state: dict[str, Any] = Field(default_factory=dict)
@@ -1502,6 +1555,63 @@ class PluginContext(BaseModel):
             True if the context state and metadata are empty.
         """
         return not (self.state or self.metadata or self.global_context.state)
+
+    @property
+    def user_context(self) -> Optional[UserContext]:
+        """Get the authenticated user context.
+
+        Returns:
+            The UserContext if available, None otherwise.
+
+        Examples:
+            >>> gctx = GlobalContext(request_id="req-1")
+            >>> ctx = PluginContext(global_context=gctx)
+            >>> ctx.user_context is None
+            True
+        """
+        return self.global_context.user_context
+
+    @property
+    def user_email(self) -> Optional[str]:
+        """Get the authenticated user's email.
+
+        Falls back to the legacy ``global_context.user`` field when no
+        structured UserContext is available.
+
+        Returns:
+            User email string or None.
+
+        Examples:
+            >>> gctx = GlobalContext(request_id="req-1", user="alice@example.com")
+            >>> ctx = PluginContext(global_context=gctx)
+            >>> ctx.user_email
+            'alice@example.com'
+        """
+        uc = self.global_context.user_context
+        if uc:
+            return uc.email
+        user = self.global_context.user
+        if isinstance(user, str):
+            return user
+        if isinstance(user, dict):
+            return user.get("email")
+        return None
+
+    @property
+    def user_groups(self) -> list[str]:
+        """Get the authenticated user's groups.
+
+        Returns:
+            List of group names. Empty if no user context.
+
+        Examples:
+            >>> gctx = GlobalContext(request_id="req-1")
+            >>> ctx = PluginContext(global_context=gctx)
+            >>> ctx.user_groups
+            []
+        """
+        uc = self.global_context.user_context
+        return uc.groups if uc else []
 
 
 PluginContextTable = dict[str, PluginContext]
