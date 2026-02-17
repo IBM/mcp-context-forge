@@ -7629,8 +7629,14 @@ async def test_get_request_context_stateful_success(monkeypatch):
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
-    mock_auth_override = AsyncMock(return_value={"user": "test_user"})
+    # Use realistic JWT payload shape (raw from require_auth_override)
+    raw_jwt = {"sub": "test_user@example.com", "token_use": "api", "teams": ["team-1"]}
+    mock_auth_override = AsyncMock(return_value=raw_jwt)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+
+    # Mock normalization to avoid DB/cache dependencies
+    normalized = {"email": "test_user@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
@@ -7639,7 +7645,7 @@ async def test_get_request_context_stateful_success(monkeypatch):
             # Verify server_id extracted from URL
             assert sid == valid_hex_id
             assert headers["authorization"] == "Bearer token"
-            assert user == {"user": "test_user"}
+            assert user == normalized
     finally:
         server_id_var.reset(token)
 
@@ -7865,15 +7871,21 @@ async def test_get_request_context_url_without_server_id(monkeypatch):
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
-    mock_auth = AsyncMock(return_value={"email": "test@example.com"})
+    # Use realistic JWT payload shape (raw from require_auth_override)
+    raw_jwt = {"sub": "test@example.com", "token_use": "api"}
+    mock_auth = AsyncMock(return_value=raw_jwt)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+
+    # Mock normalization to avoid DB/cache dependencies
+    normalized = {"email": "test@example.com", "teams": [], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
             sid, headers, user = await _get_request_context_or_default()
             assert sid == "default_server_id"  # No match, keeps default
             assert headers["x-custom"] == "value"
-            assert user == {"email": "test@example.com"}
+            assert user == normalized
     finally:
         server_id_var.reset(token)
 
@@ -7961,18 +7973,94 @@ async def test_get_request_context_cookie_token_used(monkeypatch):
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
-    mock_auth = AsyncMock(return_value={"email": "cookie-user@test.com"})
+    # Use realistic JWT payload shape (raw from require_auth_override)
+    raw_jwt = {"sub": "cookie-user@test.com", "token_use": "session"}
+    mock_auth = AsyncMock(return_value=raw_jwt)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+
+    # Mock normalization to avoid DB/cache dependencies
+    normalized = {"email": "cookie-user@test.com", "teams": [], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
             sid, headers, user = await _get_request_context_or_default()
             assert sid == "aabbcc-112233"
-            assert user == {"email": "cookie-user@test.com"}
+            assert user == normalized
             # Verify cookie token was passed
             mock_auth.assert_awaited_once_with(auth_header=None, jwt_token="cookie-jwt-value", request=mock_request)
     finally:
         server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _normalize_jwt_payload tests
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_jwt_payload_api_token(monkeypatch):
+    """API token (no token_use or token_use != 'session') uses normalize_token_teams."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
+
+    raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"]}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True}
+
+
+def test_normalize_jwt_payload_session_token_admin(monkeypatch):
+    """Session token with is_admin=True gets admin bypass (teams=None)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"sub": "admin@example.com", "token_use": "session", "is_admin": True}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True}
+
+
+def test_normalize_jwt_payload_session_token_non_admin(monkeypatch):
+    """Session token without admin resolves teams from DB."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db_sync", lambda email, is_admin: ["team-x"])
+
+    raw = {"sub": "dev@example.com", "token_use": "session"}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True}
+
+
+def test_normalize_jwt_payload_nested_is_admin():
+    """Nested user.is_admin is detected when top-level is_admin is absent."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"sub": "nested-admin@example.com", "token_use": "session", "user": {"is_admin": True}}
+    result = _normalize_jwt_payload(raw)
+    assert result["is_admin"] is True
+    assert result["teams"] is None  # Admin bypass
+
+
+def test_normalize_jwt_payload_email_fallback():
+    """Falls back to 'email' key when 'sub' is missing."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"email": "legacy@example.com", "token_use": "session", "is_admin": True}
+    result = _normalize_jwt_payload(raw)
+    assert result["email"] == "legacy@example.com"
+
+
+def test_normalize_jwt_payload_session_no_email():
+    """Session token without email/sub gets public-only teams."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"token_use": "session"}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True}
 
 
 # ---------------------------------------------------------------------------

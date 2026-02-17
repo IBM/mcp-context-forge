@@ -722,7 +722,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
             return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
 
     # Normal mode: use standard tool invocation with normalization
-    app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
+    # Use the already-recovered user_context (works for both ContextVar and stateful session paths)
+    app_user_email = (user_context.get("email") or user_context.get("sub") or "unknown") if user_context else "unknown"
 
     # Multi-worker session affinity: check if we should forward to another worker
     # Check both x-mcp-session-id (internal/forwarded) and mcp-session-id (client protocol header)
@@ -998,8 +999,14 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         cookie_token = request.cookies.get("jwt_token")
 
         try:
-            user_ctx = await require_auth_override(auth_header=auth_header, jwt_token=cookie_token, request=request)
-            if isinstance(user_ctx, str):  # "anonymous"
+            raw_payload = await require_auth_override(auth_header=auth_header, jwt_token=cookie_token, request=request)
+            if isinstance(raw_payload, str):  # "anonymous"
+                user_ctx = {}
+            elif isinstance(raw_payload, dict):
+                # Normalize raw JWT payload to canonical user context shape
+                # (matches streamable_http_auth normalization at lines 2155-2259)
+                user_ctx = _normalize_jwt_payload(raw_payload)
+            else:
                 user_ctx = {}
         except Exception as e:
             logger.warning(f"Failed to recover user context in stateful session: {e}")
@@ -1013,6 +1020,48 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     except Exception as e:
         logger.error(f"Error recovering context in stateful session: {e}", exc_info=True)
         return s_id, request_headers_var.get(), user_context_var.get()
+
+
+def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a raw JWT payload to the canonical user context shape.
+
+    Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
+    canonical ``{email, teams, is_admin, is_authenticated}`` dict that MCP
+    handlers expect.  This mirrors the normalization performed by
+    ``streamable_http_auth`` so that the stateful-session fallback path in
+    ``_get_request_context_or_default`` returns an identical shape.
+    """
+    email = payload.get("sub") or payload.get("email")
+    is_admin = payload.get("is_admin", False)
+    if not is_admin:
+        user_info = payload.get("user", {})
+        is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+
+    token_use = payload.get("token_use")
+    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        # Session token: resolve teams from DB/cache
+        if is_admin:
+            final_teams = None  # Admin bypass
+        elif email:
+            # First-Party
+            from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+            final_teams = _resolve_teams_from_db_sync(email, is_admin=False)
+        else:
+            final_teams = []  # No email — public-only
+    else:
+        # API token or legacy: use embedded teams from JWT
+        # First-Party
+        from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+        final_teams = normalize_token_teams(payload)
+
+    return {
+        "email": email,
+        "teams": final_teams,
+        "is_admin": is_admin,
+        "is_authenticated": True,
+    }
 
 
 @mcp_app.list_tools()
