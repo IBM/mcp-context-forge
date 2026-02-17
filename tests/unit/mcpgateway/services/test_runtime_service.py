@@ -13,7 +13,8 @@ import pytest
 # First-Party
 from mcpgateway.db import RuntimeDeployment, RuntimeDeploymentApproval, RuntimeGuardrailProfile, utc_now
 from mcpgateway.runtime_schemas import RuntimeDeployRequest, RuntimeGuardrailProfileCreate, RuntimeGuardrailProfileUpdate, RuntimeSecurityGuardrails, RuntimeSource
-from mcpgateway.runtimes.base import RuntimeBackendCapabilities, RuntimeBackendDeployResult, RuntimeBackendError, RuntimeBackendStatus
+from mcpgateway.runtimes import DockerRuntimeBackend
+from mcpgateway.runtimes.base import RuntimeBackendCapabilities, RuntimeBackendDeployRequest, RuntimeBackendDeployResult, RuntimeBackendError, RuntimeBackendStatus
 from mcpgateway.services.runtime_service import RuntimeService
 
 
@@ -22,6 +23,7 @@ def _runtime_settings(**overrides):
         "mcpgateway_runtime_enabled": True,
         "runtime_docker_enabled": True,
         "runtime_docker_binary": "docker",
+        "runtime_docker_socket": "/var/run/docker.sock",
         "runtime_docker_network": None,
         "runtime_docker_allowed_registries": [],
         "runtime_ibm_code_engine_enabled": False,
@@ -263,6 +265,18 @@ async def test_constructor_enables_ibm_code_engine_backend(monkeypatch):
     )
     service = RuntimeService()
     assert "ibm_code_engine" in service.backends
+
+
+@pytest.mark.asyncio
+async def test_constructor_passes_runtime_docker_socket_to_backend(monkeypatch):
+    monkeypatch.setattr(
+        "mcpgateway.services.runtime_service.settings",
+        _runtime_settings(runtime_docker_socket="/tmp/docker-custom.sock"),
+    )
+    service = RuntimeService()
+    backend = service.backends["docker"]
+    assert isinstance(backend, DockerRuntimeBackend)
+    assert backend.docker_socket == "/tmp/docker-custom.sock"
 
 
 @pytest.mark.asyncio
@@ -778,3 +792,133 @@ def test_runtime_service_static_utilities(test_db):
     caps = RuntimeBackendCapabilities(backend="docker", supports_compose=True, supports_github_build=True)
     caps_read = RuntimeService._capabilities_to_schema("docker", caps)
     assert caps_read.backend == "docker"
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_run_maps_missing_binary_to_runtime_error(monkeypatch):
+    backend = DockerRuntimeBackend(docker_binary="docker")
+
+    async def _missing_binary(*_args, **_kwargs):
+        raise FileNotFoundError("missing docker binary")
+
+    monkeypatch.setattr(
+        "mcpgateway.runtimes.docker_backend.asyncio.create_subprocess_exec",
+        _missing_binary,
+    )
+
+    with pytest.raises(RuntimeBackendError, match="Command not found: docker"):
+        await backend._run(["docker", "version"])
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_run_sets_docker_host_when_socket_configured(monkeypatch):
+    backend = DockerRuntimeBackend(
+        docker_binary="docker",
+        docker_socket="/tmp/test-docker.sock",
+    )
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+
+    captured_kwargs = {}
+
+    class _Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"ok", b""
+
+    async def _create_subprocess_exec(*_args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _Process()
+
+    monkeypatch.setattr(
+        "mcpgateway.runtimes.docker_backend.asyncio.create_subprocess_exec",
+        _create_subprocess_exec,
+    )
+
+    output = await backend._run(["docker", "version"])
+    assert output == "ok"
+    assert captured_kwargs["env"]["DOCKER_HOST"] == "unix:///tmp/test-docker.sock"
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_deploy_ignores_k8s_seccomp_and_missing_apparmor(monkeypatch):
+    backend = DockerRuntimeBackend(docker_binary="docker")
+    seen_run_cmd: list[str] = []
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        if len(cmd) >= 2 and cmd[1] == "run":
+            seen_run_cmd.extend(cmd)
+            return "container-123\n"
+        if len(cmd) >= 2 and cmd[1] == "port":
+            raise RuntimeBackendError("no published ports")
+        return ""
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+    monkeypatch.setattr(backend, "_apparmor_profile_available", lambda _profile: False)
+
+    result = await backend.deploy(
+        RuntimeBackendDeployRequest(
+            runtime_id="runtime-12345678",
+            name="runtime-name",
+            source_type="docker",
+            source={"type": "docker", "image": "ghcr.io/ibm/fast-time-server:0.8.0"},
+            guardrails={
+                "seccomp": "runtime/default",
+                "apparmor": "mcp-standard",
+                "capabilities": {"drop_all": True, "add": []},
+                "filesystem": {"read_only_root": True},
+                "network": {"egress_allowed": True},
+            },
+        )
+    )
+
+    warning_fields = {warning.get("field") for warning in result.warnings}
+    assert "guardrails.seccomp" in warning_fields
+    assert "guardrails.apparmor" in warning_fields
+    assert "seccomp=runtime/default" not in seen_run_cmd
+    assert "apparmor=mcp-standard" not in seen_run_cmd
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_deploy_retries_without_missing_network(monkeypatch):
+    backend = DockerRuntimeBackend(
+        docker_binary="docker",
+        default_network="missing-network",
+    )
+    run_commands: list[list[str]] = []
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        run_commands.append(cmd)
+        if len(cmd) >= 2 and cmd[1] == "rm":
+            return ""
+        if len(cmd) >= 2 and cmd[1] == "run" and "--network" in cmd:
+            raise RuntimeBackendError("Command failed (125): docker run ... network missing-network not found")
+        if len(cmd) >= 2 and cmd[1] == "run":
+            return "container-456\n"
+        if len(cmd) >= 2 and cmd[1] == "port":
+            raise RuntimeBackendError("no published ports")
+        return ""
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+
+    result = await backend.deploy(
+        RuntimeBackendDeployRequest(
+            runtime_id="runtime-abcdef12",
+            name="runtime-name",
+            source_type="docker",
+            source={"type": "docker", "image": "ghcr.io/ibm/fast-time-server:0.8.0"},
+            guardrails={
+                "capabilities": {"drop_all": True, "add": []},
+                "filesystem": {"read_only_root": True},
+                "network": {"egress_allowed": True},
+            },
+        )
+    )
+
+    run_invocations = [cmd for cmd in run_commands if len(cmd) >= 2 and cmd[1] == "run"]
+    rm_invocations = [cmd for cmd in run_commands if len(cmd) >= 2 and cmd[1] == "rm"]
+    assert len(run_invocations) == 2
+    assert len(rm_invocations) == 1
+    assert "--network" in run_invocations[0]
+    assert "--network" not in run_invocations[1]
+    assert any(warning.get("field") == "guardrails.network" for warning in result.warnings)

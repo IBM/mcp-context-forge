@@ -6,6 +6,7 @@
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
@@ -21,10 +22,17 @@ logger = logging.getLogger(__name__)
 class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in environment-dependent integration flows.
     """Docker-based runtime backend."""
 
-    def __init__(self, docker_binary: str = "docker", default_network: Optional[str] = None, allowed_registries: Optional[List[str]] = None):
+    def __init__(
+        self,
+        docker_binary: str = "docker",
+        default_network: Optional[str] = None,
+        allowed_registries: Optional[List[str]] = None,
+        docker_socket: Optional[str] = None,
+    ):
         self.docker_binary = docker_binary
         self.default_network = default_network
         self.allowed_registries = allowed_registries or []
+        self.docker_socket = docker_socket
 
     def get_capabilities(self) -> RuntimeBackendCapabilities:
         return RuntimeBackendCapabilities(
@@ -81,11 +89,14 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         network = guardrails.get("network", {})
         filesystem = guardrails.get("filesystem", {})
         caps = guardrails.get("capabilities", {})
+        selected_network: Optional[str] = None
 
         # If egress is disabled, isolate network entirely unless explicit ports are needed.
         if network.get("egress_allowed") is False:
+            selected_network = "none"
             cmd.extend(["--network", "none"])
         elif self.default_network:
+            selected_network = self.default_network
             cmd.extend(["--network", self.default_network])
 
         if filesystem.get("read_only_root"):
@@ -102,10 +113,30 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
 
         seccomp = guardrails.get("seccomp")
         if seccomp:
-            cmd.extend(["--security-opt", f"seccomp={seccomp}"])
+            seccomp_value = str(seccomp).strip()
+            if seccomp_value.lower() not in {"runtime/default", "default", "docker/default"}:
+                cmd.extend(["--security-opt", f"seccomp={seccomp_value}"])
+            else:
+                warnings.append(
+                    {
+                        "field": "guardrails.seccomp",
+                        "message": f"Ignoring seccomp profile '{seccomp_value}' and using Docker default profile",
+                        "backend": "docker",
+                    }
+                )
         apparmor = guardrails.get("apparmor")
         if apparmor:
-            cmd.extend(["--security-opt", f"apparmor={apparmor}"])
+            apparmor_value = str(apparmor).strip()
+            if self._apparmor_profile_available(apparmor_value):
+                cmd.extend(["--security-opt", f"apparmor={apparmor_value}"])
+            else:
+                warnings.append(
+                    {
+                        "field": "guardrails.apparmor",
+                        "message": f"Ignoring unavailable AppArmor profile '{apparmor_value}' and using Docker default profile",
+                        "backend": "docker",
+                    }
+                )
 
         for key, value in (request.environment or {}).items():
             cmd.extend(["-e", f"{key}={value}"])
@@ -118,7 +149,31 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
             else:
                 cmd.append(str(run_cmd))
 
-        stdout = await self._run(cmd, timeout=900)
+        try:
+            stdout = await self._run(cmd, timeout=900)
+        except RuntimeBackendError as exc:
+            message = str(exc).lower()
+            if selected_network and selected_network != "none" and "network" in message and "not found" in message:
+                cmd_without_network = self._without_network_option(cmd)
+                container_name = self._container_name_from_run_command(cmd)
+                if container_name:
+                    try:
+                        await self._run([self.docker_binary, "rm", "-f", container_name], timeout=120)
+                    except RuntimeBackendError:
+                        logger.debug(
+                            "Ignoring cleanup failure for retry container %s",
+                            container_name,
+                        )
+                warnings.append(
+                    {
+                        "field": "guardrails.network",
+                        "message": f"Docker network '{selected_network}' not found. Retrying deployment without explicit network.",
+                        "backend": "docker",
+                    }
+                )
+                stdout = await self._run(cmd_without_network, timeout=900)
+            else:
+                raise
         runtime_ref = stdout.strip().splitlines()[-1]
         endpoint_url = await self._resolve_container_endpoint(runtime_ref)
 
@@ -407,6 +462,67 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         """
         return [self.docker_binary, "compose", "-p", project_name, "-f", compose_file, *args]
 
+    @staticmethod
+    def _without_network_option(cmd: List[str]) -> List[str]:
+        """Return a command list with the ``--network`` option removed.
+
+        Args:
+            cmd: Docker command arguments.
+
+        Returns:
+            List[str]: Command arguments without explicit network selection.
+        """
+        result: List[str] = []
+        skip_next = False
+        for index, token in enumerate(cmd):
+            if skip_next:
+                skip_next = False
+                continue
+            # "--network" is a Docker CLI flag, not a secret.
+            if token == "--network" and index + 1 < len(cmd):  # nosec B105
+                skip_next = True
+                continue
+            result.append(token)
+        return result
+
+    @staticmethod
+    def _container_name_from_run_command(cmd: List[str]) -> Optional[str]:
+        """Extract container name from a ``docker run`` command argument list.
+
+        Args:
+            cmd: Docker command arguments.
+
+        Returns:
+            Optional[str]: Configured container name when present.
+        """
+        for index, token in enumerate(cmd):
+            # "--name" is a Docker CLI flag, not a secret.
+            if token == "--name" and index + 1 < len(cmd):  # nosec B105
+                return str(cmd[index + 1])
+        return None
+
+    @staticmethod
+    def _apparmor_profile_available(profile_name: str) -> bool:
+        """Check whether an AppArmor profile is available on the host.
+
+        Args:
+            profile_name: AppArmor profile to validate.
+
+        Returns:
+            bool: True when the profile exists and is loaded, else False.
+        """
+        if not profile_name:
+            return False
+        profiles_path = Path("/sys/kernel/security/apparmor/profiles")
+        try:
+            if not profiles_path.exists():
+                return False
+            entries = profiles_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except OSError:
+            return False
+        prefix = f"{profile_name} "
+        return any(entry.startswith(prefix) for entry in entries)
+
     async def _resolve_container_endpoint(self, runtime_ref: str) -> Optional[str]:
         """Resolve an HTTP endpoint URL from Docker port mappings when available.
 
@@ -443,7 +559,25 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
             RuntimeBackendError: If command times out or exits with non-zero status.
         """
         logger.debug("Docker runtime command: %s", " ".join(cmd))
-        process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        subprocess_env = None
+        if self.docker_socket and not os.environ.get("DOCKER_HOST"):
+            subprocess_env = dict(os.environ)
+            subprocess_env["DOCKER_HOST"] = f"unix://{self.docker_socket}"
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=subprocess_env,
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeBackendError(
+                f"Command not found: {cmd[0]}. Ensure runtime backend dependencies are installed in the gateway container."
+            ) from exc
+        except PermissionError as exc:
+            raise RuntimeBackendError(f"Permission denied while executing: {' '.join(cmd)}") from exc
+        except OSError as exc:
+            raise RuntimeBackendError(f"Failed to start command: {' '.join(cmd)} ({exc})") from exc
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
         except asyncio.TimeoutError as exc:

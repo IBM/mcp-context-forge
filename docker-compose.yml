@@ -120,6 +120,9 @@ services:
     # ports:
     #   - "4444:4444"               # Disabled for multi-replica mode
     networks: [mcpnet]
+    group_add:
+      # Allow non-root gateway user to access Docker socket when runtime Docker backend is enabled.
+      - "${DOCKER_GID:-109}"
 
     # ──────────────────────────────────────────────────────────────────────
     # Environment - pick ONE database URL line, comment the rest
@@ -627,6 +630,7 @@ services:
     # Mount catalog configuration and SSL certificates
     volumes:
       - ./mcp-catalog.yml:/app/mcp-catalog.yml:ro # mount catalog configuration
+      - ${RUNTIME_DOCKER_SOCKET:-/var/run/docker.sock}:${RUNTIME_DOCKER_SOCKET:-/var/run/docker.sock}
       # - ./certs:/app/certs:ro   # mount certs folder read-only (includes both SSL and JWT keys)
     #
     # SSL/TLS Certificate Setup:

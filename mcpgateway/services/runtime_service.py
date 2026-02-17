@@ -101,6 +101,7 @@ class RuntimeService:
                 docker_binary=settings.runtime_docker_binary,
                 default_network=settings.runtime_docker_network,
                 allowed_registries=settings.runtime_docker_allowed_registries,
+                docker_socket=settings.runtime_docker_socket,
             )
 
         if settings.runtime_ibm_code_engine_enabled:
