@@ -30,6 +30,7 @@ import {
   handleEditServerFormSubmit,
   handleEditToolFormSubmit,
   handleGatewayFormSubmit,
+  handleGrpcServiceFormSubmit,
   handlePromptFormSubmit,
   handleResourceFormSubmit,
   handleServerFormSubmit,
@@ -46,12 +47,32 @@ import {
 import { closeModal, openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
 import { initResourceSelect } from "./resources.js";
-import { filterA2AAgentsTable, filterGatewaysTable, filterPromptsTable, filterResourcesTable, filterServerTable, filterToolsTable } from "./filters.js";
 import { escapeHtml, safeSetInnerHTML } from "./security.js";
-import { ADMIN_ONLY_TABS, showTab } from "./tabs.js";
+import {
+  ADMIN_ONLY_TABS,
+  getDefaultTabName,
+  getUiHiddenSections,
+  getVisibleSidebarTabs,
+  isAdminOnlyTab,
+  isTabAvailable,
+  isTabHidden,
+  normalizeTabName,
+  resolveTabForNavigation,
+  showTab,
+  updateHashForTab,
+} from "./tabs.js";
 import { initToolSelect } from "./tools.js";
 import { fetchWithTimeout, isAdminUser, safeGetElement } from "./utils.js";
-import { getTeamNameById } from "./tokens.js";
+import { debouncedServerSideTokenSearch, getTeamNameById } from "./tokens.js";
+import {
+  closeGlobalSearchModal,
+  getPanelSearchStateFromUrl,
+  navigateToGlobalSearchResult,
+  openGlobalSearchModal,
+  queueSearchablePanelReload,
+  runGlobalSearch,
+} from "./search.js";
+import { PANEL_SEARCH_CONFIG } from "./constants.js";
 
 // ===================================================================
 // SINGLE CONSOLIDATED INITIALIZATION SYSTEM
@@ -143,7 +164,7 @@ export const initializeCodeMirrorEditors = function () {
       }
     } else {
       console.warn(
-        `Element ${config.id} not found or CodeMirror not available`,
+        `Element ${config.id} not found or CodeMirror not available`
       );
     }
   });
@@ -159,7 +180,7 @@ export const initializeToolSelects = function () {
     "selectedToolsWarning",
     6,
     "selectAllToolsBtn",
-    "clearAllToolsBtn",
+    "clearAllToolsBtn"
   );
 
   initResourceSelect(
@@ -168,7 +189,7 @@ export const initializeToolSelects = function () {
     "selectedResourcesWarning",
     10,
     "selectAllResourcesBtn",
-    "clearAllResourcesBtn",
+    "clearAllResourcesBtn"
   );
 
   initPromptSelect(
@@ -177,7 +198,7 @@ export const initializeToolSelects = function () {
     "selectedPromptsWarning",
     8,
     "selectAllPromptsBtn",
-    "clearAllPromptsBtn",
+    "clearAllPromptsBtn"
   );
 
   // Edit Server form
@@ -187,7 +208,7 @@ export const initializeToolSelects = function () {
     "selectedEditToolsWarning",
     6,
     "selectAllEditToolsBtn",
-    "clearAllEditToolsBtn",
+    "clearAllEditToolsBtn"
   );
 
   // Initialize resource selector
@@ -197,7 +218,7 @@ export const initializeToolSelects = function () {
     "selectedEditResourcesWarning",
     10,
     "selectAllEditResourcesBtn",
-    "clearAllEditResourcesBtn",
+    "clearAllEditResourcesBtn"
   );
 
   // Initialize prompt selector
@@ -207,7 +228,7 @@ export const initializeToolSelects = function () {
     "selectedEditPromptsWarning",
     8,
     "selectAllEditPromptsBtn",
-    "clearAllEditPromptsBtn",
+    "clearAllEditPromptsBtn"
   );
 };
 
@@ -225,41 +246,31 @@ export const initializeEventListeners = function () {
 };
 
 export const setupTabNavigation = function () {
-  const tabs = [
-    "catalog",
-    "tools",
-    "resources",
-    "prompts",
-    "gateways",
-    "a2a-agents",
-    "roots",
-    "metrics",
-    "plugins",
-    "logs",
-    "export-import",
-    "version-info",
-  ];
-
-  const visibleTabs = isAdminUser()
-    ? tabs
-    : tabs.filter((tabName) => !ADMIN_ONLY_TABS.has(tabName));
-
-  visibleTabs.forEach((tabName) => {
-    // Suppress warnings for optional tabs that might not be enabled
-    const optionalTabs = [
-      "roots",
-      "metrics",
-      "logs",
-      "export-import",
-      "version-info",
-      "plugins",
-    ];
-    const suppressWarning = optionalTabs.includes(tabName);
-
-    const tabElement = safeGetElement(`tab-${tabName}`, suppressWarning);
-    if (tabElement) {
-      tabElement.addEventListener("click", () => showTab(tabName));
+  const availableTabs = getVisibleSidebarTabs().filter((tabName) => {
+    if (isTabHidden(tabName)) {
+      return false;
     }
+    if (!isAdminUser() && isAdminOnlyTab(tabName)) {
+      return false;
+    }
+    return isTabAvailable(tabName);
+  });
+
+  availableTabs.forEach((tabName) => {
+    const tabElement = safeGetElement(`tab-${tabName}`, true);
+    if (!tabElement) {
+      return;
+    }
+    // The sidebar anchors already have inline onclick handlers in admin.html.
+    // Avoid adding a second click handler that would call showTab twice.
+    if (tabElement.hasAttribute("onclick")) {
+      return;
+    }
+    if (tabElement.dataset.tabBound === "true") {
+      return;
+    }
+    tabElement.dataset.tabBound = "true";
+    tabElement.addEventListener("click", () => showTab(tabName));
   });
 };
 
@@ -355,7 +366,7 @@ const setupAuthenticationToggles = function () {
           bearerFields,
           headersFields,
           oauthFields,
-          queryParamFields,
+          queryParamFields
         );
       });
     }
@@ -378,7 +389,7 @@ const setupFormHandlers = function () {
     if (oauthGrantTypeField) {
       oauthGrantTypeField.addEventListener(
         "change",
-        handleOAuthGrantTypeChange,
+        handleOAuthGrantTypeChange
       );
     }
   }
@@ -399,7 +410,7 @@ const setupFormHandlers = function () {
     if (oauthGrantTypeField) {
       oauthGrantTypeField.addEventListener(
         "change",
-        handleOAuthGrantTypeChange,
+        handleOAuthGrantTypeChange
       );
     }
   }
@@ -521,6 +532,11 @@ const setupFormHandlers = function () {
     });
   }
 
+  const addGrpcServiceForm = safeGetElement("add-grpc-service-form");
+  if (addGrpcServiceForm) {
+    addGrpcServiceForm.addEventListener("submit", handleGrpcServiceFormSubmit);
+  }
+
   // Setup search functionality for selectors
   setupSelectorSearch();
 };
@@ -578,7 +594,7 @@ const setupSelectorSearch = function () {
               "selectedEditToolsWarning",
               6,
               "selectAllEditToolsBtn",
-              "clearAllEditToolsBtn",
+              "clearAllEditToolsBtn"
             );
           }
         } catch (err) {
@@ -633,7 +649,7 @@ const setupSelectorSearch = function () {
               "selectedEditPromptsWarning",
               6,
               "selectAllEditPromptsBtn",
-              "clearAllEditPromptsBtn",
+              "clearAllEditPromptsBtn"
             );
           }
         } catch (err) {
@@ -688,7 +704,7 @@ const setupSelectorSearch = function () {
               "selectedEditResourcesWarning",
               6,
               "selectAllEditResourcesBtn",
-              "clearAllEditResourcesBtn",
+              "clearAllEditResourcesBtn"
             );
           }
         } catch (err) {
@@ -706,134 +722,152 @@ const setupSelectorSearch = function () {
 export const initializeSearchInputs = function () {
   console.log("🔍 Initializing search inputs...");
 
-  // Clone inputs to remove existing event listeners before re-adding.
-  // This prevents duplicate listeners when re-initializing after reset.
-  const searchInputIds = [
-    "catalog-search-input",
-    "gateways-search-input",
-    "tools-search-input",
-    "resources-search-input",
-    "prompts-search-input",
-    "a2a-agents-search-input",
-  ];
-
-  searchInputIds.forEach((inputId) => {
-    const input = safeGetElement(inputId);
+  // Clone inputs to remove existing listeners from previous initialization runs.
+  Object.values(PANEL_SEARCH_CONFIG).forEach((panelConfig) => {
+    const input = document.getElementById(panelConfig.searchInputId);
     if (input) {
-      const newInput = input.cloneNode(true);
-      input.parentNode.replaceChild(newInput, input);
+      const clonedInput = input.cloneNode(true);
+      clonedInput.removeAttribute("oninput");
+      input.parentNode.replaceChild(clonedInput, input);
     }
   });
 
-  // Virtual Servers search
-  const catalogSearchInput = safeGetElement("catalog-search-input");
-  if (catalogSearchInput) {
-    catalogSearchInput.addEventListener("input", function () {
-      filterServerTable(this.value);
-    });
-    console.log("✅ Virtual Servers search initialized");
-    // Reapply current search term if any (preserves search after HTMX swap)
-    const currentSearch = catalogSearchInput.value || "";
-    if (currentSearch) {
-      filterServerTable(currentSearch);
+  Object.entries(PANEL_SEARCH_CONFIG).forEach(([entityType, panelConfig]) => {
+    const searchInput = document.getElementById(panelConfig.searchInputId);
+    const tagInput = document.getElementById(panelConfig.tagInputId);
+    if (!searchInput) {
+      return;
     }
-  }
 
-  // MCP Servers (Gateways) search
-  const gatewaysSearchInput = safeGetElement("gateways-search-input");
-  if (gatewaysSearchInput) {
-    console.log("✅ Found MCP Servers search input");
-
-    // Use addEventListener instead of direct assignment
-    gatewaysSearchInput.addEventListener("input", function (e) {
-      const searchValue = e.target.value;
-      console.log("🔍 MCP Servers search triggered:", searchValue);
-      filterGatewaysTable(searchValue);
-    });
-
-    // Add keyup as backup
-    gatewaysSearchInput.addEventListener("keyup", function (e) {
-      const searchValue = e.target.value;
-      filterGatewaysTable(searchValue);
-    });
-
-    // Add change as backup
-    gatewaysSearchInput.addEventListener("change", function (e) {
-      const searchValue = e.target.value;
-      filterGatewaysTable(searchValue);
-    });
-
-    console.log("✅ MCP Servers search events attached");
-
-    // Reapply current search term if any (preserves search after HTMX swap)
-    const currentSearch = gatewaysSearchInput.value || "";
-    if (currentSearch) {
-      filterGatewaysTable(currentSearch);
+    const searchState = getPanelSearchStateFromUrl(panelConfig.tableName);
+    if (searchState.query) {
+      searchInput.value = searchState.query;
     }
-  } else {
-    console.error("❌ MCP Servers search input not found!");
+    if (tagInput && searchState.tags) {
+      tagInput.value = searchState.tags;
+    }
 
-    // Debug available inputs
-    const allInputs = document.querySelectorAll('input[type="text"]');
-    console.log(
-      "Available text inputs:",
-      Array.from(allInputs).map((input) => ({
-        id: input.id,
-        placeholder: input.placeholder,
-        className: input.className,
-      })),
+    searchInput.addEventListener("input", () => {
+      queueSearchablePanelReload(entityType, 250);
+    });
+
+    const panel = document.getElementById(`${entityType}-panel`);
+    const isVisible = Boolean(panel && !panel.classList.contains("hidden"));
+    if (isVisible && (searchState.query || searchState.tags)) {
+      queueSearchablePanelReload(entityType, 0);
+    }
+  });
+
+  // Tokens search (server-side, not part of PANEL_SEARCH_CONFIG)
+  const tokensSearchInput = document.getElementById("tokens-search-input");
+  if (tokensSearchInput) {
+    const clonedTokensInput = tokensSearchInput.cloneNode(true);
+    tokensSearchInput.parentNode.replaceChild(
+      clonedTokensInput,
+      tokensSearchInput
     );
-  }
-
-  // Tools search
-  const toolsSearchInput = safeGetElement("tools-search-input");
-  if (toolsSearchInput) {
-    toolsSearchInput.addEventListener("input", function () {
-      filterToolsTable(this.value);
-    });
-    console.log("✅ Tools search initialized");
-  }
-
-  // Resources search
-  const resourcesSearchInput = safeGetElement("resources-search-input");
-  if (resourcesSearchInput) {
-    resourcesSearchInput.addEventListener("input", function () {
-      filterResourcesTable(this.value);
-    });
-    console.log("✅ Resources search initialized");
-  }
-
-  // Prompts search
-  const promptsSearchInput = safeGetElement("prompts-search-input");
-  if (promptsSearchInput) {
-    promptsSearchInput.addEventListener("input", function () {
-      filterPromptsTable(this.value);
-    });
-    console.log("✅ Prompts search initialized");
-  }
-
-  // A2A Agents search
-  const agentsSearchInput = safeGetElement("a2a-agents-search-input");
-  if (agentsSearchInput) {
-    agentsSearchInput.addEventListener("input", function () {
-      filterA2AAgentsTable(this.value);
-    });
-    console.log("✅ A2A Agents search initialized");
+    const freshTokensInput = document.getElementById("tokens-search-input");
+    if (freshTokensInput) {
+      freshTokensInput.addEventListener("input", function () {
+        debouncedServerSideTokenSearch(this.value);
+      });
+    }
   }
 };
+
+let globalSearchDebounceTimer = null;
+export const initializeGlobalSearch = function () {
+  const input = document.getElementById("global-search-input");
+  if (input && !input.dataset.listenerAttached) {
+    input.dataset.listenerAttached = "true";
+    input.addEventListener("input", (event) => {
+      const value = event.target?.value || "";
+      if (globalSearchDebounceTimer) {
+        clearTimeout(globalSearchDebounceTimer);
+      }
+      globalSearchDebounceTimer = setTimeout(() => {
+        runGlobalSearch(value);
+      }, 220);
+    });
+
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        closeGlobalSearchModal();
+        event.preventDefault();
+        return;
+      }
+      if (event.key === "Enter") {
+        const firstResult = document.querySelector(
+          "#global-search-results .global-search-result-item"
+        );
+        if (firstResult) {
+          navigateToGlobalSearchResult(firstResult);
+          event.preventDefault();
+        }
+      }
+    });
+  }
+
+  if (!window.__globalSearchHotkeysBound) {
+    window.__globalSearchHotkeysBound = true;
+    document.addEventListener("keydown", (event) => {
+      const isShortcut =
+        (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k";
+      if (isShortcut) {
+        event.preventDefault();
+        openGlobalSearchModal();
+        return;
+      }
+      if (event.key === "Escape") {
+        const modal = document.getElementById("global-search-modal");
+        if (modal && !modal.classList.contains("hidden")) {
+          closeGlobalSearchModal();
+          event.preventDefault();
+        }
+      }
+    });
+  }
+};
+
+let tabHashChangeListenerRegistered = false;
 
 export const initializeTabState = function () {
   console.log("Initializing tab state...");
 
-  const hash = window.location.hash;
-  if (hash) {
-    showTab(hash.slice(1));
+  const initialHashTab = normalizeTabName(window.location.hash);
+  const initialRequestedTab = initialHashTab || getDefaultTabName();
+  const initialTab = resolveTabForNavigation(initialRequestedTab);
+
+  if (initialTab) {
+    if (initialHashTab && initialHashTab !== initialTab) {
+      updateHashForTab(initialTab);
+    }
+    showTab(initialTab);
   } else {
-    showTab("gateways");
+    console.warn("No available tabs found during initialization");
+  }
+
+  if (!tabHashChangeListenerRegistered) {
+    window.addEventListener("hashchange", () => {
+      const hashTab = normalizeTabName(window.location.hash);
+      const requestedTab = hashTab || getDefaultTabName();
+      const resolvedTab = resolveTabForNavigation(requestedTab);
+
+      if (!resolvedTab) {
+        return;
+      }
+
+      if (hashTab && hashTab !== resolvedTab) {
+        updateHashForTab(resolvedTab);
+      }
+
+      showTab(resolvedTab);
+    });
+    tabHashChangeListenerRegistered = true;
   }
 
   // Pre-load version info if that's the initial tab
-  if (isAdminUser() && window.location.hash === "#version-info") {
+  if (isAdminUser() && initialTab === "version-info") {
     setTimeout(() => {
       const panel = safeGetElement("version-info-panel");
       if (panel && panel.innerHTML.trim() === "") {
@@ -860,7 +894,7 @@ export const initializeTabState = function () {
   }
 
   // Pre-load maintenance panel if that's the initial tab
-  if (isAdminUser() && window.location.hash === "#maintenance") {
+  if (isAdminUser() && initialTab === "maintenance") {
     setTimeout(() => {
       const panel = safeGetElement("maintenance-panel");
       if (panel && panel.innerHTML.trim() === "") {
@@ -989,7 +1023,7 @@ export const setupIntegrationTypeHandlers = function () {
     integrationTypeSelect.value = defaultIntegration;
     updateRequestTypeOptions();
     integrationTypeSelect.addEventListener("change", () =>
-      updateRequestTypeOptions(),
+      updateRequestTypeOptions()
     );
   }
 
@@ -997,7 +1031,7 @@ export const setupIntegrationTypeHandlers = function () {
   if (editToolTypeSelect) {
     editToolTypeSelect.addEventListener(
       "change",
-      () => updateEditToolRequestTypes(),
+      () => updateEditToolRequestTypes()
       // updateEditToolUrl(),
     );
   }
@@ -1151,7 +1185,7 @@ export const setupBulkImportModal = function () {
           {
             method: "POST",
             body: formData,
-          },
+          }
         );
 
         const result = await response.json();
@@ -1440,10 +1474,22 @@ export const registerReloadAllResourceSections = function () {
     "catalog",
   ];
 
+  const SECTION_HIDE_KEY_OVERRIDES = {
+    catalog: "servers",
+  };
+
+  function isSectionHidden(sectionName) {
+    const hideKey = SECTION_HIDE_KEY_OVERRIDES[sectionName] || sectionName;
+    return getUiHiddenSections().has(hideKey);
+  }
+
   // Save initial markup on first full load so we can restore exactly if needed
   document.addEventListener("DOMContentLoaded", () => {
     window.Admin.__initialSectionMarkup = window.__initialSectionMarkup || {};
     SECTION_NAMES.forEach((s) => {
+      if (isSectionHidden(s)) {
+        return;
+      }
       const el = safeGetElement(`${s}-section`);
       if (el && !(s in window.__initialSectionMarkup)) {
         // store the exact innerHTML produced by the server initially
@@ -1541,10 +1587,7 @@ export const registerReloadAllResourceSections = function () {
           textareas.forEach((ta) => {
             // If the page previously attached a CodeMirror instance on same textarea,
             // the existing instance may have been stored on the element. If refresh available, refresh it.
-            if (
-              ta.CodeMirror &&
-              typeof ta.CodeMirror.refresh === "function"
-            ) {
+            if (ta.CodeMirror && typeof ta.CodeMirror.refresh === "function") {
               ta.CodeMirror.refresh();
             } else {
               // Create a new CodeMirror instance only when an explicit init function is present on page
@@ -1604,7 +1647,13 @@ export const registerReloadAllResourceSections = function () {
   };
 
   const updateSectionHeaders = function (teamId) {
-    const sections = ["tools", "resources", "prompts", "servers", "gateways"];
+    const sections = [
+      "tools",
+      "resources",
+      "prompts",
+      "servers",
+      "gateways",
+    ].filter((sectionName) => !isSectionHidden(sectionName));
 
     sections.forEach((section) => {
       const header = document.querySelector("#" + section + "-section h2");
@@ -1632,13 +1681,17 @@ export const registerReloadAllResourceSections = function () {
 
   // The exported function: reloadAllResourceSections
   window.Admin.reloadAllResourceSections = async function (teamId) {
-    const sections = ["tools", "resources", "prompts", "servers", "gateways"];
+    const sections = [
+      "tools",
+      "resources",
+      "prompts",
+      "servers",
+      "gateways",
+    ].filter((sectionName) => !isSectionHidden(sectionName));
 
     // ensure there is a ROOT_PATH set
     if (!window.ROOT_PATH) {
-      console.warn(
-        "ROOT_PATH not defined; aborting reloadAllResourceSections"
-      );
+      console.warn("ROOT_PATH not defined; aborting reloadAllResourceSections");
       return;
     }
 

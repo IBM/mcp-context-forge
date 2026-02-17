@@ -1,171 +1,145 @@
-import { escapeHtml, logRestrictedContext, parseErrorResponse } from "./security.js";
 import {
+  escapeHtml,
+  logRestrictedContext,
+  parseErrorResponse,
+} from "./security.js";
+import {
+  buildTableUrl,
   fetchWithTimeout,
   getCookie,
   getCurrentTeamId,
   getCurrentTeamName,
+  getPaginationParams,
   safeGetElement,
   showNotification,
 } from "./utils.js";
 
 /**
- * Load tokens list from API
+ * Load tokens list from API.
+ * @param {boolean} resetToFirstPage - If true, forces page 1 (use after create/revoke).
  */
-export const loadTokensList = async function () {
-  const tokensList = safeGetElement("tokens-list");
-  if (!tokensList) {
+async function loadTokensList(resetToFirstPage) {
+  const tokensTable = document.getElementById("tokens-table");
+  if (!tokensTable) {
     return;
   }
 
-  try {
-    tokensList.innerHTML =
-      '<p class="text-gray-500 dark:text-gray-400">Loading tokens...</p>';
-
-    const response = await fetchWithTimeout(`${window.ROOT_PATH}/tokens`, {
-      headers: {
-        Authorization: `Bearer ${await getAuthToken()}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Failed to load tokens: (${response.status})`);
-    }
-
-    const data = await response.json();
-    displayTokensList(data.tokens);
-  } catch (error) {
-    console.error("Error loading tokens:", error);
-    tokensList.innerHTML =
-      '<div class="text-red-500">Error loading tokens: ' +
-      escapeHtml(error.message) +
-      "</div>";
+  const teamId =
+    typeof getCurrentTeamId === "function" ? getCurrentTeamId() : "";
+  const includeInactive =
+    document.getElementById("show-inactive-tokens")?.checked ?? false;
+  const params = { include_inactive: includeInactive.toString() };
+  if (teamId) {
+    params.team_id = teamId;
   }
+
+  let url;
+  if (resetToFirstPage) {
+    const baseUrl = new URL(
+      `${window.ROOT_PATH}/admin/tokens/partial`,
+      window.location.origin
+    );
+    baseUrl.searchParams.set("page", "1");
+    baseUrl.searchParams.set(
+      "per_page",
+      String(getPaginationParams("tokens").perPage || 10)
+    );
+    Object.entries(params).forEach(function (entry) {
+      if (entry[1] !== null && entry[1] !== undefined && entry[1] !== "") {
+        baseUrl.searchParams.set(entry[0], entry[1]);
+      }
+    });
+    url = baseUrl.pathname + baseUrl.search;
+  } else {
+    url = buildTableUrl(
+      "tokens",
+      `${window.ROOT_PATH}/admin/tokens/partial`,
+      params
+    );
+  }
+
+  // Update hx-get on the element and trigger an element-based HTMX request.
+  // This ensures OOB swaps (pagination controls) are properly processed,
+  // unlike htmx.ajax() which can silently skip OOB handling.
+  tokensTable.setAttribute("hx-get", url);
+  window.htmx.process(tokensTable);
+  window.htmx.trigger(tokensTable, "refreshTokens");
+}
+
+/**
+ * Debounced server-side token search
+ * @param {string} searchTerm - The search query
+ */
+let tokenSearchDebounceTimer = null;
+export const debouncedServerSideTokenSearch = function (searchTerm) {
+  if (tokenSearchDebounceTimer) {
+    clearTimeout(tokenSearchDebounceTimer);
+  }
+  tokenSearchDebounceTimer = setTimeout(() => {
+    performTokenSearch(searchTerm);
+  }, 300);
 };
 
 /**
- * Display tokens list in the UI
+ * Actually perform the token search after debounce
+ * @param {string} searchTerm - The search query
  */
-export const displayTokensList = function (tokens) {
-  const tokensList = safeGetElement("tokens-list");
-  if (!tokensList) {
+export const performTokenSearch = async function (searchTerm) {
+  const tokensTable = document.getElementById("tokens-table");
+  if (!tokensTable) {
+    console.error("tokens-table container not found");
     return;
   }
-
-  if (!tokens || tokens.length === 0) {
-    tokensList.innerHTML =
-      '<p class="text-gray-500 dark:text-gray-400">No tokens found. Create your first token above.</p>';
-    return;
+  // Get current parameters
+  const teamId =
+    typeof getCurrentTeamId === "function" ? getCurrentTeamId() : "";
+  const includeInactive =
+    document.getElementById("show-inactive-tokens")?.checked ?? false;
+  // Build URL with search query
+  const params = new URLSearchParams();
+  params.set("page", "1");
+  params.set("per_page", String(getPaginationParams("tokens").perPage || 10));
+  params.set("include_inactive", includeInactive.toString());
+  if (teamId) {
+    params.set("team_id", teamId);
   }
+  if (searchTerm && searchTerm.trim() !== "") {
+    params.set("q", searchTerm.trim());
+  }
+  const url = `${window.ROOT_PATH}/admin/tokens/partial?${params.toString()}`;
+  console.log(`[Token Search] Searching tokens with URL: ${url}`);
 
-  let tokensHTML = "";
-  tokens.forEach((token) => {
-    const expiresText = token.expires_at
-      ? new Date(token.expires_at).toLocaleDateString()
-      : "Never";
-    const createdText = token.created_at
-      ? new Date(token.created_at).toLocaleDateString()
-      : "Never";
-    const lastUsedText = token.last_used
-      ? new Date(token.last_used).toLocaleDateString()
-      : "Never";
-    const statusBadge = token.is_active
-      ? '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-800 dark:text-green-100">Active</span>'
-      : '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-800 dark:text-red-100">Inactive</span>';
-
-    // Build scope badges
-    const teamName = token.team_id ? getTeamNameById(token.team_id) : null;
-    const teamBadge = teamName
-      ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800 dark:bg-purple-800 dark:text-purple-100">Team: ${escapeHtml(teamName)}</span>`
-      : '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">Public-only</span>';
-
-    const ipBadge =
-      token.ip_restrictions && token.ip_restrictions.length > 0
-        ? `<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800 dark:bg-orange-800 dark:text-orange-100">${token.ip_restrictions.length} IP${token.ip_restrictions.length > 1 ? "s" : ""}</span>`
-        : "";
-
-    const serverBadge = token.server_id
-      ? '<span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800 dark:bg-blue-800 dark:text-blue-100">Server-scoped</span>'
-      : "";
-
-    // Safely encode token data for data attribute (URL encoding preserves all characters)
-    const tokenDataEncoded = encodeURIComponent(JSON.stringify(token));
-
-    tokensHTML += `
-      <div class="border border-gray-200 dark:border-gray-600 rounded-lg p-4 mb-4">
-        <div class="flex justify-between items-start">
-          <div class="flex-1">
-            <div class="flex items-center flex-wrap gap-2">
-              <h4 class="text-lg font-medium text-gray-900 dark:text-white">${escapeHtml(token.name)}</h4>
-              ${statusBadge}
-              ${teamBadge}
-              ${serverBadge}
-              ${ipBadge}
-            </div>
-            ${token.description ? `<p class="text-sm text-gray-600 dark:text-gray-400 mt-1">${escapeHtml(token.description)}</p>` : ""}
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-3 text-sm text-gray-500 dark:text-gray-400">
-                <div>
-                  <span class="font-medium">Created:</span> ${createdText}
-                </div>
-                <div>
-                  <span class="font-medium">Expires:</span> ${expiresText}
-                </div>
-                <div>
-                  <span class="font-medium">Last Used:</span> ${lastUsedText}
-                </div>
-            </div>
-            ${token.server_id ? `<div class="mt-2 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Scoped to Server:</span> ${escapeHtml(token.server_id)}</div>` : ""}
-            ${token.resource_scopes && token.resource_scopes.length > 0 ? `<div class="mt-1 text-sm"><span class="font-medium text-gray-700 dark:text-gray-300">Permissions:</span> ${token.resource_scopes.map((p) => escapeHtml(p)).join(", ")}</div>` : ""}
-          </div>
-          <div class="flex flex-wrap gap-2 ml-4">
-            <button
-                data-action="token-details"
-                data-token="${tokenDataEncoded}"
-                class="px-3 py-1 text-sm font-medium text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 border border-gray-300 dark:border-gray-600 hover:border-gray-500 dark:hover:border-gray-400 rounded-md"
-            >
-              Details
-            </button>
-            <button
-                data-action="token-usage"
-                data-token-id="${escapeHtml(token.id)}"
-                class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 border border-blue-300 dark:border-blue-600 hover:border-blue-500 dark:hover:border-blue-400 rounded-md"
-            >
-              Usage Stats
-            </button>
-            <button
-                data-action="token-revoke"
-                data-token-id="${escapeHtml(token.id)}"
-                data-token-name="${escapeHtml(token.name)}"
-                class="px-3 py-1 text-sm font-medium text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 border border-red-300 dark:border-red-600 hover:border-red-500 dark:hover:border-red-400 rounded-md"
-            >
-              Revoke
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
-  });
-
-  tokensList.innerHTML = tokensHTML;
-
-  // Attach event handlers via delegation (avoids inline JS and XSS risks)
-  setupTokenListEventHandlers(tokensList);
+  try {
+    // Update hx-get on the element and trigger an element-based HTMX request
+    tokensTable.setAttribute("hx-get", url);
+    window.htmx.process(tokensTable);
+    window.htmx.trigger(tokensTable, "refreshTokens");
+  } catch (error) {
+    console.error("Error searching tokens:", error);
+  }
 };
 
 /**
  * Set up event handlers for token list buttons using event delegation.
  * This avoids inline onclick handlers and associated XSS risks.
- * Uses a one-time guard to prevent duplicate handlers on repeated renders.
- * @param {HTMLElement} container - The tokens list container element
+ * Attaches to the persistent tokens-panel parent so handlers survive
+ * HTMX swaps of the tokens-table content.
+ * @param {HTMLElement} [container] - Optional container; defaults to tokens-panel
  */
-const setupTokenListEventHandlers = function (container) {
-  // Guard against duplicate handlers on repeated renders
-  if (container.dataset.handlersAttached === "true") {
+export const setupTokenListEventHandlers = function(container) {
+  // Prefer the persistent parent panel so delegation survives HTMX swaps
+  const panel = document.getElementById("tokens-panel") || container;
+  if (!panel) {
     return;
   }
-  container.dataset.handlersAttached = "true";
 
-  container.addEventListener("click", (event) => {
+  // Guard against duplicate handlers on repeated renders
+  if (panel.dataset.tokenHandlersAttached === "true") {
+    return;
+  }
+  panel.dataset.tokenHandlersAttached = "true";
+
+  panel.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-action]");
     if (!button) {
       return;
@@ -177,7 +151,12 @@ const setupTokenListEventHandlers = function (container) {
       const tokenData = button.dataset.token;
       if (tokenData) {
         try {
-          const token = JSON.parse(decodeURIComponent(tokenData));
+          let token;
+          try {
+            token = JSON.parse(decodeURIComponent(tokenData));
+          } catch (_) {
+            token = JSON.parse(tokenData);
+          }
           showTokenDetailsModal(token);
         } catch (e) {
           console.error("Failed to parse token data:", e);
@@ -196,7 +175,7 @@ const setupTokenListEventHandlers = function (container) {
       }
     }
   });
-};
+}
 
 /**
  * Update the team scoping warning/info visibility based on team selection
@@ -449,7 +428,6 @@ const createToken = async function (form) {
     const result = await response.json();
     showTokenCreatedModal(result);
     form.reset();
-    await loadTokensList();
 
     // Show appropriate success message
     const tokenType = currentTeamId ? "team-scoped" : "public-only";
@@ -475,7 +453,7 @@ const showTokenCreatedModal = function (tokenData) {
                 <div class="mt-3">
                     <div class="flex items-center justify-between mb-4">
                         <h3 class="text-lg font-medium text-gray-900 dark:text-white">Token Created Successfully</h3>
-                        <button onclick="this.closest('.fixed').remove()" class="text-gray-400 hover:text-gray-600">
+                        <button data-dismiss-token-modal class="text-gray-400 hover:text-gray-600">
                             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                             </svg>
@@ -528,7 +506,7 @@ const showTokenCreatedModal = function (tokenData) {
 
                     <div class="flex justify-end">
                         <button
-                            onclick="this.closest('.fixed').remove()"
+                            data-dismiss-token-modal
                             class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             I've Saved It
@@ -539,6 +517,16 @@ const showTokenCreatedModal = function (tokenData) {
         `;
 
   document.body.appendChild(modal);
+
+  // Close handlers: remove modal then refresh the token list
+  modal
+    .querySelectorAll("[data-dismiss-token-modal]")
+    .forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        modal.remove();
+        loadTokensList(true);
+      });
+    });
 
   // Focus the token input for easy selection
   const tokenInput = modal.querySelector("#new-token-value");
@@ -582,7 +570,7 @@ const revokeToken = async function (tokenId, tokenName) {
     }
 
     showNotification("Token revoked successfully", "success");
-    await loadTokensList();
+    loadTokensList(true);
   } catch (error) {
     console.error("Error revoking token:", error);
     showNotification(`Error revoking token: ${error.message}`, "error");

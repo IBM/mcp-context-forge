@@ -1,16 +1,12 @@
-import { HEADER_NAME_REGEX } from './constants';
-import { generateSchema } from './formFieldHandlers';
-import { 
+import { HEADER_NAME_REGEX } from "./constants";
+import { generateSchema } from "./formFieldHandlers";
+import {
   safeParseJsonResponse,
-  validateInputName, 
-  validateJson, 
+  validateInputName,
+  validateJson,
   validateUrl,
-} from './security';
-import { 
-  isInactiveChecked, 
-  safeGetElement, 
-  showErrorMessage,
-} from './utils'
+} from "./security";
+import { isInactiveChecked, safeGetElement, showErrorMessage } from "./utils";
 
 // ===================================================================
 // ENHANCED FORM HANDLERS with Input Validation
@@ -18,28 +14,28 @@ import {
 
 export const handleGatewayFormSubmit = async function (e) {
   e.preventDefault();
-  
+
   const form = e.target;
   const formData = new FormData(form);
   const status = safeGetElement("status-gateways");
   const loading = safeGetElement("add-gateway-loading");
-  
+
   try {
     // Validate form inputs
     const name = formData.get("name");
     const url = formData.get("url");
-    
+
     const nameValidation = validateInputName(name, "gateway");
     const urlValidation = validateUrl(url);
-    
+
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     if (!urlValidation.valid) {
       throw new Error(urlValidation.error);
     }
-    
+
     if (loading) {
       loading.style.display = "block";
     }
@@ -47,10 +43,10 @@ export const handleGatewayFormSubmit = async function (e) {
       status.textContent = "";
       status.classList.remove("error-status");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("gateways");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
-    
+
     // Process passthrough headers - convert comma-separated string to array
     const passthroughHeadersString = formData.get("passthrough_headers");
     if (passthroughHeadersString && passthroughHeadersString.trim()) {
@@ -59,25 +55,25 @@ export const handleGatewayFormSubmit = async function (e) {
         .split(",")
         .map((header) => header.trim())
         .filter((header) => header.length > 0);
-      
+
       // Validate each header name
       for (const headerName of passthroughHeaders) {
         if (!HEADER_NAME_REGEX.test(headerName)) {
           showErrorMessage(
-            `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+            `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`
           );
           return;
         }
       }
-      
+
       // Remove the original string and add as JSON array
       formData.delete("passthrough_headers");
       formData.append(
         "passthrough_headers",
-        JSON.stringify(passthroughHeaders),
+        JSON.stringify(passthroughHeaders)
       );
     }
-    
+
     // Handle auth_headers JSON field
     const authHeadersJson = formData.get("auth_headers");
     if (authHeadersJson) {
@@ -86,16 +82,13 @@ export const handleGatewayFormSubmit = async function (e) {
         if (Array.isArray(authHeaders) && authHeaders.length > 0) {
           // Remove the JSON string and add as parsed data for backend processing
           formData.delete("auth_headers");
-          formData.append(
-            "auth_headers",
-            JSON.stringify(authHeaders),
-          );
+          formData.append("auth_headers", JSON.stringify(authHeaders));
         }
       } catch (e) {
         console.error("Invalid auth_headers JSON:", e);
       }
     }
-    
+
     // Handle OAuth configuration
     // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
     // The backend assembles individual form fields into oauth_config with proper field names
@@ -110,29 +103,25 @@ export const handleGatewayFormSubmit = async function (e) {
     if (authType !== "oauth") {
       formData.set("oauth_grant_type", "");
     }
-    
+
     formData.append("visibility", formData.get("visibility"));
-    
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
+
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
     teamId && formData.append("team_id", teamId);
-    
+
     const response = await fetch(`${window.ROOT_PATH}/admin/gateways`, {
       method: "POST",
       body: formData,
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to add Gateway",
+      "Failed to add Gateway"
     );
-    
+
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Gateway");
     } else {
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -140,7 +129,7 @@ export const handleGatewayFormSubmit = async function (e) {
       if (teamId) {
         searchParams.set("team_id", teamId);
       }
-      
+
       const queryString = searchParams.toString();
       const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#gateways`;
       window.location.href = redirectUrl;
@@ -157,7 +146,7 @@ export const handleGatewayFormSubmit = async function (e) {
       loading.style.display = "none";
     }
   }
-}
+};
 
 export const handleResourceFormSubmit = async function (e) {
   e.preventDefault();
@@ -176,20 +165,20 @@ export const handleResourceFormSubmit = async function (e) {
       // append uri_template only when uri is a templatized resource
       formData.append("uri_template", template);
     }
-    
+
     const nameValidation = validateInputName(name, "resource");
     const uriValidation = validateInputName(uri, "resource URI");
-    
+
     if (!nameValidation.valid) {
       showErrorMessage(nameValidation.error);
       return;
     }
-    
+
     if (!uriValidation.valid) {
       showErrorMessage(uriValidation.error);
       return;
     }
-    
+
     if (loading) {
       loading.style.display = "block";
     }
@@ -197,13 +186,11 @@ export const handleResourceFormSubmit = async function (e) {
       status.textContent = "";
       status.classList.remove("error-status");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("resources");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     formData.append("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
     teamId && formData.append("team_id", teamId);
     const response = await fetch(`${window.ROOT_PATH}/admin/resources`, {
       method: "POST",
@@ -211,15 +198,13 @@ export const handleResourceFormSubmit = async function (e) {
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to add Resource",
+      "Failed to add Resource"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Resource");
     } else {
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
-      
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -244,7 +229,7 @@ export const handleResourceFormSubmit = async function (e) {
       loading.style.display = "none";
     }
   }
-}
+};
 
 export const handlePromptFormSubmit = async function (e) {
   e.preventDefault();
@@ -256,12 +241,12 @@ export const handlePromptFormSubmit = async function (e) {
     // Validate inputs
     const name = formData.get("name");
     const nameValidation = validateInputName(name, "prompt");
-    
+
     if (!nameValidation.valid) {
       showErrorMessage(nameValidation.error);
       return;
     }
-    
+
     if (loading) {
       loading.style.display = "block";
     }
@@ -269,13 +254,11 @@ export const handlePromptFormSubmit = async function (e) {
       status.textContent = "";
       status.classList.remove("error-status");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("prompts");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     formData.append("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
     teamId && formData.append("team_id", teamId);
     const response = await fetch(`${window.ROOT_PATH}/admin/prompts`, {
       method: "POST",
@@ -283,12 +266,12 @@ export const handlePromptFormSubmit = async function (e) {
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to add Prompt",
+      "Failed to add Prompt"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Prompt");
     }
-    
+
     const searchParams = new URLSearchParams();
     if (isInactiveCheckedBool) {
       searchParams.set("include_inactive", "true");
@@ -312,19 +295,19 @@ export const handlePromptFormSubmit = async function (e) {
       loading.style.display = "none";
     }
   }
-}
+};
 
 export const handleEditPromptFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
-  
+
   const formData = new FormData(form);
   // Add team_id from URL if present (like handleEditToolFormSubmit)
   const teamId = new URL(window.location.href).searchParams.get("team_id");
   if (teamId) {
     formData.set("team_id", teamId);
   }
-  
+
   try {
     // Validate inputs
     const name = formData.get("name");
@@ -333,7 +316,7 @@ export const handleEditPromptFormSubmit = async function (e) {
       showErrorMessage(nameValidation.error);
       return;
     }
-    
+
     // Save CodeMirror editors' contents if present
     if (window.promptToolHeadersEditor) {
       window.promptToolHeadersEditor.save();
@@ -341,28 +324,26 @@ export const handleEditPromptFormSubmit = async function (e) {
     if (window.promptToolSchemaEditor) {
       window.promptToolSchemaEditor.save();
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("prompts");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
-    
+
     // Submit via fetch
     const response = await fetch(form.action, {
       method: "POST",
       body: formData,
     });
-    
+
     const result = await safeParseJsonResponse(
       response,
-      "Failed to edit Prompt",
+      "Failed to edit Prompt"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit Prompt");
     }
     // Only redirect on success
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
-    
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+
     const searchParams = new URLSearchParams();
     if (isInactiveCheckedBool) {
       searchParams.set("include_inactive", "true");
@@ -377,59 +358,55 @@ export const handleEditPromptFormSubmit = async function (e) {
     console.error("Error:", error);
     showErrorMessage(error.message);
   }
-}
+};
 
 export const handleServerFormSubmit = async function (e) {
   e.preventDefault();
-  
+
   const form = e.target;
   const formData = new FormData(form);
   const status = safeGetElement("serverFormError");
   const loading = safeGetElement("add-server-loading"); // Add a loading spinner if needed
-  
+
   try {
     const name = formData.get("name");
-    
+
     // Basic validation
     const nameValidation = validateInputName(name, "server");
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     if (loading) {
       loading.style.display = "block";
     }
-    
+
     if (status) {
       status.textContent = "";
       status.classList.remove("error-status");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("servers");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
-    
+
     formData.append("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
     teamId && formData.append("team_id", teamId);
-    
+
     const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
       method: "POST",
       body: formData,
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to add Server",
+      "Failed to add Server"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Server.");
     } else {
       // Success redirect
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
-      
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -437,7 +414,7 @@ export const handleServerFormSubmit = async function (e) {
       if (teamId) {
         searchParams.set("team_id", teamId);
       }
-      
+
       const queryString = searchParams.toString();
       const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#catalog`;
       window.location.href = redirectUrl;
@@ -454,17 +431,17 @@ export const handleServerFormSubmit = async function (e) {
       loading.style.display = "none";
     }
   }
-}
+};
 
 // Handle Add A2A Form Submit
 export const handleA2AFormSubmit = async function (e) {
   e.preventDefault();
-  
+
   const form = e.target;
   const formData = new FormData(form);
   const status = safeGetElement("a2aFormError");
   const loading = safeGetElement("add-a2a-loading");
-  
+
   try {
     // Basic validation
     const name = formData.get("name");
@@ -472,7 +449,7 @@ export const handleA2AFormSubmit = async function (e) {
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     if (loading) {
       loading.style.display = "block";
     }
@@ -480,7 +457,7 @@ export const handleA2AFormSubmit = async function (e) {
       status.textContent = "";
       status.classList.remove("error-status");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     // Process passthrough headers - convert comma-separated string to array
@@ -491,25 +468,25 @@ export const handleA2AFormSubmit = async function (e) {
         .split(",")
         .map((header) => header.trim())
         .filter((header) => header.length > 0);
-      
+
       // Validate each header name
       for (const headerName of passthroughHeaders) {
         if (!HEADER_NAME_REGEX.test(headerName)) {
           showErrorMessage(
-            `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+            `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`
           );
           return;
         }
       }
-      
+
       // Remove the original string and add as JSON array
       formData.delete("passthrough_headers");
       formData.append(
         "passthrough_headers",
-        JSON.stringify(passthroughHeaders),
+        JSON.stringify(passthroughHeaders)
       );
     }
-    
+
     // Handle auth_headers JSON field
     const authHeadersJson = formData.get("auth_headers");
     if (authHeadersJson) {
@@ -518,43 +495,38 @@ export const handleA2AFormSubmit = async function (e) {
         if (Array.isArray(authHeaders) && authHeaders.length > 0) {
           // Remove the JSON string and add as parsed data for backend processing
           formData.delete("auth_headers");
-          formData.append(
-            "auth_headers",
-            JSON.stringify(authHeaders),
-          );
+          formData.append("auth_headers", JSON.stringify(authHeaders));
         }
       } catch (e) {
         console.error("Invalid auth_headers JSON:", e);
       }
     }
-    
+
     const authType = formData.get("auth_type");
     if (authType !== "oauth") {
       formData.set("oauth_grant_type", "");
     }
-    
+
     // ✅ Ensure visibility is captured from checked radio button
     // formData.set("visibility", visibility);
     formData.append("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
     teamId && formData.append("team_id", teamId);
-    
+
     // Submit to backend
     // specifically log agentType only
     console.log("agentType:", formData.get("agentType"));
-    
+
     const response = await fetch(`${window.ROOT_PATH}/admin/a2a`, {
       method: "POST",
       body: formData,
     });
-    
+
     const result = await safeParseJsonResponse(
       response,
-      "Failed to edit A2A Agentt",
+      "Failed to edit A2A Agentt"
     );
-    
+
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add A2A Agent.");
     } else {
@@ -566,7 +538,7 @@ export const handleA2AFormSubmit = async function (e) {
       if (teamId) {
         searchParams.set("team_id", teamId);
       }
-      
+
       const queryString = searchParams.toString();
       const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#a2a-agents`;
       window.location.href = redirectUrl;
@@ -583,40 +555,40 @@ export const handleA2AFormSubmit = async function (e) {
       loading.style.display = "none";
     }
   }
-}
+};
 
 export const handleToolFormSubmit = async function (event) {
   event.preventDefault();
-  
+
   try {
     const form = event.target;
     const formData = new FormData(form);
-    
+
     // Validate form inputs
     const name = formData.get("name");
     const url = formData.get("url");
-    
+
     const nameValidation = validateInputName(name, "tool");
     const urlValidation = validateUrl(url);
-    
+
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     if (!urlValidation.valid) {
       throw new Error(urlValidation.error);
     }
-    
+
     // If in UI mode, update schemaEditor with generated schema
     const mode = document.querySelector(
-      'input[name="schema_input_mode"]:checked',
+      'input[name="schema_input_mode"]:checked'
     );
     if (mode && mode.value === "ui") {
       if (window.schemaEditor) {
         const generatedSchema = generateSchema();
         const schemaValidation = validateJson(
           generatedSchema,
-          "Generated Schema",
+          "Generated Schema"
         );
         if (!schemaValidation.valid) {
           throw new Error(schemaValidation.error);
@@ -624,7 +596,7 @@ export const handleToolFormSubmit = async function (event) {
         window.schemaEditor.setValue(generatedSchema);
       }
     }
-    
+
     // Save CodeMirror editors' contents
     if (window.headersEditor) {
       window.headersEditor.save();
@@ -635,31 +607,24 @@ export const handleToolFormSubmit = async function (event) {
     if (window.outputSchemaEditor) {
       window.outputSchemaEditor.save();
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("tools");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
-    
+
     formData.append("visibility", formData.get("visibility"));
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
     teamId && formData.append("team_id", teamId);
-    
+
     const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
       method: "POST",
       body: formData,
     });
-    const result = await safeParseJsonResponse(
-      response,
-      "Failed to add Tool",
-    );
+    const result = await safeParseJsonResponse(response, "Failed to add Tool");
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to add Tool");
     } else {
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
-      
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -675,31 +640,31 @@ export const handleToolFormSubmit = async function (event) {
     console.error("Fetch error:", error);
     showErrorMessage(error.message);
   }
-}
+};
 
 export const handleEditToolFormSubmit = async function (event) {
   event.preventDefault();
-  
+
   const form = event.target;
-  
+
   try {
     const formData = new FormData(form);
-    
+
     // Basic validation (customize as needed)
     const name = formData.get("name");
     const url = formData.get("url");
     const nameValidation = validateInputName(name, "tool");
     const urlValidation = validateUrl(url);
-    
+
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
     if (!urlValidation.valid) {
       throw new Error(urlValidation.error);
     }
-    
+
     // // Save CodeMirror editors' contents if present
-    
+
     if (window.editToolHeadersEditor) {
       window.editToolHeadersEditor.save();
     }
@@ -709,28 +674,23 @@ export const handleEditToolFormSubmit = async function (event) {
     if (window.editToolOutputSchemaEditor) {
       window.editToolOutputSchemaEditor.save();
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("tools");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
-    
+
     // Submit via fetch
     const response = await fetch(form.action, {
       method: "POST",
       body: formData,
       headers: { "X-Requested-With": "XMLHttpRequest" },
     });
-    
-    const result = await safeParseJsonResponse(
-      response,
-      "Failed to edit Tool",
-    );
+
+    const result = await safeParseJsonResponse(response, "Failed to edit Tool");
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit Tool");
     } else {
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
-      
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -746,7 +706,7 @@ export const handleEditToolFormSubmit = async function (event) {
     console.error("Fetch error:", error);
     showErrorMessage(error.message);
   }
-}
+};
 
 // Handle Gateway Edit Form
 export const handleEditGatewayFormSubmit = async function (e) {
@@ -757,41 +717,37 @@ export const handleEditGatewayFormSubmit = async function (e) {
     // Validate form inputs
     const name = formData.get("name");
     const url = formData.get("url");
-    
+
     const nameValidation = validateInputName(name, "gateway");
     const urlValidation = validateUrl(url);
-    
+
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     if (!urlValidation.valid) {
       throw new Error(urlValidation.error);
     }
-    
+
     // Handle passthrough headers
-    const passthroughHeadersString =
-    formData.get("passthrough_headers") || "";
+    const passthroughHeadersString = formData.get("passthrough_headers") || "";
     const passthroughHeaders = passthroughHeadersString
       .split(",")
       .map((header) => header.trim())
       .filter((header) => header.length > 0);
-    
+
     // Validate each header name
     for (const headerName of passthroughHeaders) {
       if (headerName && !HEADER_NAME_REGEX.test(headerName)) {
         showErrorMessage(
-          `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+          `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`
         );
         return;
       }
     }
-    
-    formData.append(
-      "passthrough_headers",
-      JSON.stringify(passthroughHeaders),
-    );
-    
+
+    formData.append("passthrough_headers", JSON.stringify(passthroughHeaders));
+
     // Handle OAuth configuration
     // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
     // The backend assembles individual form fields into oauth_config with proper field names
@@ -806,7 +762,7 @@ export const handleEditGatewayFormSubmit = async function (e) {
     if (authType !== "oauth") {
       formData.set("oauth_grant_type", "");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("gateways");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     // Submit via fetch
@@ -816,16 +772,14 @@ export const handleEditGatewayFormSubmit = async function (e) {
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to edit Gateway",
+      "Failed to edit Gateway"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit Gateway");
     }
     // Only redirect on success
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
-    
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+
     const searchParams = new URLSearchParams();
     if (isInactiveCheckedBool) {
       searchParams.set("include_inactive", "true");
@@ -840,19 +794,17 @@ export const handleEditGatewayFormSubmit = async function (e) {
     console.error("Error:", error);
     showErrorMessage(error.message);
   }
-}
+};
 
 // Handle A2A Agent Edit Form
 export const handleEditA2AAgentFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
-  
+
   console.log("Edit A2A Agent Form Details: ");
-  console.log(
-    JSON.stringify(Object.fromEntries(formData.entries()), null, 2),
-  );
-  
+  console.log(JSON.stringify(Object.fromEntries(formData.entries()), null, 2));
+
   try {
     // Validate form inputs
     const name = formData.get("name");
@@ -860,38 +812,34 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
     console.log("Original A2A URL: ", url);
     const nameValidation = validateInputName(name, "a2a_agent");
     const urlValidation = validateUrl(url);
-    
+
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     if (!urlValidation.valid) {
       throw new Error(urlValidation.error);
     }
-    
+
     // Handle passthrough headers
-    const passthroughHeadersString =
-    formData.get("passthrough_headers") || "";
+    const passthroughHeadersString = formData.get("passthrough_headers") || "";
     const passthroughHeaders = passthroughHeadersString
       .split(",")
       .map((header) => header.trim())
       .filter((header) => header.length > 0);
-    
+
     // Validate each header name
     for (const headerName of passthroughHeaders) {
       if (headerName && !HEADER_NAME_REGEX.test(headerName)) {
         showErrorMessage(
-          `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`,
+          `Invalid passthrough header name: "${headerName}". Only letters, numbers, and hyphens are allowed.`
         );
         return;
       }
     }
-    
-    formData.append(
-      "passthrough_headers",
-      JSON.stringify(passthroughHeaders),
-    );
-    
+
+    formData.append("passthrough_headers", JSON.stringify(passthroughHeaders));
+
     // Handle OAuth configuration
     // NOTE: OAuth config assembly is now handled by the backend (mcpgateway/admin.py)
     // The backend assembles individual form fields into oauth_config with proper field names
@@ -902,12 +850,12 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
     // if (authType === "oauth") {
     //     ... backend handles this now ...
     // }
-    
+
     const authType = formData.get("auth_type");
     if (authType !== "oauth") {
       formData.set("oauth_grant_type", "");
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("a2a-agents");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     // Submit via fetch
@@ -917,16 +865,14 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to edit A2A Agent",
+      "Failed to edit A2A Agent"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit A2A Agent");
     }
     // Only redirect on success
-    const teamId = new URL(window.location.href).searchParams.get(
-      "team_id",
-    );
-    
+    const teamId = new URL(window.location.href).searchParams.get("team_id");
+
     const searchParams = new URLSearchParams();
     if (isInactiveCheckedBool) {
       searchParams.set("include_inactive", "true");
@@ -941,13 +887,13 @@ export const handleEditA2AAgentFormSubmit = async function (e) {
     console.error("Error:", error);
     showErrorMessage(error.message);
   }
-}
+};
 
 export const handleEditServerFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
-  
+
   try {
     // Validate inputs
     const name = formData.get("name");
@@ -955,7 +901,7 @@ export const handleEditServerFormSubmit = async function (e) {
     if (!nameValidation.valid) {
       throw new Error(nameValidation.error);
     }
-    
+
     // Save CodeMirror editors' contents if present
     if (window.promptToolHeadersEditor) {
       window.promptToolHeadersEditor.save();
@@ -963,10 +909,10 @@ export const handleEditServerFormSubmit = async function (e) {
     if (window.promptToolSchemaEditor) {
       window.promptToolSchemaEditor.save();
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("servers");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
-    
+
     // Submit via fetch
     const response = await fetch(form.action, {
       method: "POST",
@@ -974,7 +920,7 @@ export const handleEditServerFormSubmit = async function (e) {
     });
     const result = await safeParseJsonResponse(
       response,
-      "Failed to edit Server",
+      "Failed to edit Server"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit Server");
@@ -982,10 +928,8 @@ export const handleEditServerFormSubmit = async function (e) {
     // Only redirect on success
     else {
       // Redirect to the appropriate page based on inactivity checkbox
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
-      
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -1001,13 +945,13 @@ export const handleEditServerFormSubmit = async function (e) {
     console.error("Error:", error);
     showErrorMessage(error.message);
   }
-}
+};
 
 export const handleEditResFormSubmit = async function (e) {
   e.preventDefault();
   const form = e.target;
   const formData = new FormData(form);
-  
+
   try {
     // Validate inputs
     const name = formData.get("name");
@@ -1020,17 +964,17 @@ export const handleEditResFormSubmit = async function (e) {
     formData.append("uri_template", template);
     const nameValidation = validateInputName(name, "resource");
     const uriValidation = validateInputName(uri, "resource URI");
-    
+
     if (!nameValidation.valid) {
       showErrorMessage(nameValidation.error);
       return;
     }
-    
+
     if (!uriValidation.valid) {
       showErrorMessage(uriValidation.error);
       return;
     }
-    
+
     // Save CodeMirror editors' contents if present
     if (window.promptToolHeadersEditor) {
       window.promptToolHeadersEditor.save();
@@ -1038,7 +982,7 @@ export const handleEditResFormSubmit = async function (e) {
     if (window.promptToolSchemaEditor) {
       window.promptToolSchemaEditor.save();
     }
-    
+
     const isInactiveCheckedBool = isInactiveChecked("resources");
     formData.append("is_inactive_checked", isInactiveCheckedBool);
     // Submit via fetch
@@ -1046,10 +990,10 @@ export const handleEditResFormSubmit = async function (e) {
       method: "POST",
       body: formData,
     });
-    
+
     const result = await safeParseJsonResponse(
       response,
-      "Failed to edit Resource",
+      "Failed to edit Resource"
     );
     if (!result || !result.success) {
       throw new Error(result?.message || "Failed to edit Resource");
@@ -1057,10 +1001,8 @@ export const handleEditResFormSubmit = async function (e) {
     // Only redirect on success
     else {
       // Redirect to the appropriate page based on inactivity checkbox
-      const teamId = new URL(window.location.href).searchParams.get(
-        "team_id",
-      );
-      
+      const teamId = new URL(window.location.href).searchParams.get("team_id");
+
       const searchParams = new URLSearchParams();
       if (isInactiveCheckedBool) {
         searchParams.set("include_inactive", "true");
@@ -1075,5 +1017,113 @@ export const handleEditResFormSubmit = async function (e) {
   } catch (error) {
     console.error("Error:", error);
     showErrorMessage(error.message);
+  }
+};
+
+export const handleGrpcServiceFormSubmit = async function (e) {
+  e.preventDefault();
+
+  const form = e.target;
+  const formData = new FormData(form);
+  const status = safeGetElement("grpcFormError");
+  const loading = safeGetElement("add-grpc-loading");
+  const submitButton = form.querySelector('button[type="submit"]');
+
+  try {
+    const name = formData.get("name");
+    const target = formData.get("target");
+
+    // Basic validation
+    const nameValidation = validateInputName(name, "gRPC service");
+    if (!nameValidation.valid) {
+      throw new Error(nameValidation.error);
+    }
+
+    if (!target || !/^[\w.-]+:\d+$/.test(target)) {
+      throw new Error(
+        "Target must be in host:port format (e.g. localhost:50051)"
+      );
+    }
+
+    // Disable submit button during request
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+
+    if (loading) {
+      loading.classList.remove("hidden");
+    }
+
+    if (status) {
+      status.textContent = "";
+      status.classList.add("hidden");
+    }
+
+    // Build JSON payload matching GrpcServiceCreate schema
+    const payload = {
+      name,
+      target,
+      description: formData.get("description") || null,
+      reflection_enabled: formData.get("reflection_enabled") === "on",
+      tls_enabled: formData.get("tls_enabled") === "on",
+      tls_cert_path: formData.get("tls_cert_path") || null,
+      tls_key_path: formData.get("tls_key_path") || null,
+      grpc_metadata: {},
+      tags: [],
+      visibility: formData.get("visibility") || "public",
+    };
+
+    // Add team_id if present
+    const teamIdFromForm = formData.get("team_id");
+    const teamIdFromUrl = new URL(window.location.href).searchParams.get(
+      "team_id"
+    );
+    const teamId = teamIdFromForm || teamIdFromUrl;
+    if (teamId) {
+      payload.team_id = teamId;
+    }
+
+    const response = await fetch(`${window.ROOT_PATH}/admin/grpc`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(
+        errorData.detail ||
+          `Failed to register gRPC service (${response.status})`
+      );
+    }
+
+    // Success - redirect to grpc services panel
+    const searchParams = new URLSearchParams();
+    if (teamId) {
+      searchParams.set("team_id", teamId);
+    }
+
+    const queryString = searchParams.toString();
+    const redirectUrl = `${window.ROOT_PATH}/admin${queryString ? `?${queryString}` : ""}#grpc-services`;
+    window.location.href = redirectUrl;
+  } catch (error) {
+    console.error("Add gRPC Service Error:", error);
+    if (status) {
+      status.textContent =
+        error.message ||
+        "An error occurred while registering the gRPC service.";
+      status.classList.remove("hidden");
+    }
+    showErrorMessage(error.message);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
+    if (loading) {
+      loading.classList.add("hidden");
+    }
   }
 }
