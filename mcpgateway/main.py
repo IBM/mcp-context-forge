@@ -1461,7 +1461,11 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     # These are built dynamically based on UI_BASE_PATH
     @classmethod
     def get_exempt_paths(cls) -> list[str]:
-        """Get list of exempt paths based on configured UI base path."""
+        """Get list of exempt paths based on configured UI base path.
+
+        Returns:
+            list[str]: List of paths that are exempt from authentication.
+        """
         return [
             f"{cls.UI_BASE_PATH}/login",
             f"{cls.UI_BASE_PATH}/logout",
