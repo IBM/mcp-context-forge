@@ -3213,3 +3213,29 @@ class TestGetRpcFilterContext:
         assert email == "plugin_user@example.com"
         assert teams == []  # SECURITY: No JWT = public-only (secure default)
         assert is_admin is False
+
+
+# --------------------------------------------------------------------------- #
+#                    Legacy /admin redirect tests                              #
+# --------------------------------------------------------------------------- #
+class TestLegacyAdminRedirect:
+    """Test backward compatibility redirects from /admin to /ui."""
+
+    def test_legacy_admin_path_redirect(self, test_client):
+        """Test /admin/* paths redirect to /ui/* when legacy redirect is enabled."""
+        # With default settings (mcpgateway_ui_base_path=/ui, mcpgateway_ui_legacy_redirect=true)
+        # /admin/tools should redirect to /ui/tools
+        response = test_client.get("/admin/tools", follow_redirects=False)
+
+        # Should be a 301 permanent redirect
+        assert response.status_code == 301
+        assert settings.mcpgateway_ui_base_path in response.headers["location"]
+        assert "/tools" in response.headers["location"]
+
+    def test_legacy_admin_root_redirect(self, test_client):
+        """Test /admin root redirects to /ui/ when legacy redirect is enabled."""
+        response = test_client.get("/admin", follow_redirects=False)
+
+        # Should be a 301 permanent redirect
+        assert response.status_code == 301
+        assert settings.mcpgateway_ui_base_path in response.headers["location"]

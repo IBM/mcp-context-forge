@@ -1024,3 +1024,45 @@ def test_direct_proxy_timeout_default_30():
     """mcpgateway_direct_proxy_timeout should default to 30."""
     s = Settings(_env_file=None)
     assert s.mcpgateway_direct_proxy_timeout == 30
+
+
+# --------------------------------------------------------------------------- #
+#                    UI base path validator tests                              #
+# --------------------------------------------------------------------------- #
+def test_ui_base_path_must_start_with_slash():
+    """mcpgateway_ui_base_path must start with /."""
+    with pytest.raises(ValueError, match="must start with '/'"):
+        Settings(mcpgateway_ui_base_path="admin", _env_file=None)
+
+
+def test_ui_base_path_must_not_end_with_slash():
+    """mcpgateway_ui_base_path must not end with /."""
+    with pytest.raises(ValueError, match="must not end with '/'"):
+        Settings(mcpgateway_ui_base_path="/admin/", _env_file=None)
+
+
+def test_ui_base_path_cannot_be_just_slash():
+    """mcpgateway_ui_base_path cannot be just /."""
+    with pytest.raises(ValueError, match="cannot be empty or just '/'"):
+        Settings(mcpgateway_ui_base_path="/", _env_file=None)
+
+
+def test_ui_base_path_conflicts_with_reserved_api_routes():
+    """mcpgateway_ui_base_path cannot conflict with reserved API routes."""
+    with pytest.raises(ValueError, match="conflicts with reserved API route"):
+        Settings(mcpgateway_ui_base_path="/tools", _env_file=None)
+
+    with pytest.raises(ValueError, match="conflicts with reserved API route"):
+        Settings(mcpgateway_ui_base_path="/servers", _env_file=None)
+
+
+def test_ui_base_path_valid_values():
+    """mcpgateway_ui_base_path accepts valid paths."""
+    s = Settings(mcpgateway_ui_base_path="/ui", _env_file=None)
+    assert s.mcpgateway_ui_base_path == "/ui"
+
+    s2 = Settings(mcpgateway_ui_base_path="/admin", _env_file=None)
+    assert s2.mcpgateway_ui_base_path == "/admin"
+
+    s3 = Settings(mcpgateway_ui_base_path="/custom-path", _env_file=None)
+    assert s3.mcpgateway_ui_base_path == "/custom-path"
