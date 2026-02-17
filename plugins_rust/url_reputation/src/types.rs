@@ -13,18 +13,24 @@ pub struct URLReputationConfig {
     pub block_non_secure_http: bool,
 }
 
-#[allow(dead_code)]
-#[pyclass]
+#[pyclass(from_py_object)]
+#[derive(Debug, Clone)]
 pub struct PluginViolation {
+    #[pyo3(get, set)]
     pub reason: String,
+    #[pyo3(get, set)]
     pub description: String,
+    #[pyo3(get, set)]
     pub code: String,
+    #[pyo3(get, set)]
     pub details: Option<HashMap<String, String>>,
 }
 
-#[allow(dead_code)]
 #[pyclass]
+#[derive(Debug)]
 pub struct URLPluginResult {
+    #[pyo3(get, set)]
     pub continue_processing: bool,
+    #[pyo3(get, set)]
     pub violation: Option<PluginViolation>,
 }
