@@ -119,6 +119,8 @@ class TokenUsageMiddleware:
         jti = state.get("jti") if state else None
         user = state.get("user") if state else None
         user_email = getattr(user, "email", None) if user else None
+        if not user_email:
+            user_email = state.get("user_email") if state else None
 
         # If we don't have JTI or email, try to decode the token
         if not jti or not user_email:

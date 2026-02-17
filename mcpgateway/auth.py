@@ -23,6 +23,7 @@ import uuid
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
+from starlette.requests import Request
 
 # First-Party
 from mcpgateway.config import settings
@@ -37,6 +38,11 @@ security = HTTPBearer(auto_error=False)
 # Module-level sync Redis client for rate-limiting (lazy-initialized)
 _SYNC_REDIS_CLIENT = None  # pylint: disable=invalid-name
 _SYNC_REDIS_LOCK = threading.Lock()
+_SYNC_REDIS_FAILURE_TIME: Optional[float] = None  # Backoff after connection failures
+
+# Module-level in-memory cache for last_used rate-limiting (fallback when Redis unavailable)
+_LAST_USED_CACHE: dict = {}
+_LAST_USED_CACHE_LOCK = threading.Lock()
 
 
 def _log_auth_event(
@@ -477,10 +483,11 @@ def _get_sync_redis_client():
     Returns:
         Redis client or None if Redis is unavailable/disabled.
     """
-    global _SYNC_REDIS_CLIENT  # pylint: disable=global-statement
+    global _SYNC_REDIS_CLIENT, _SYNC_REDIS_FAILURE_TIME  # pylint: disable=global-statement
 
     # Standard
     import logging as log  # pylint: disable=import-outside-toplevel,reimported
+    import time  # pylint: disable=import-outside-toplevel
 
     # First-Party
     from mcpgateway.config import settings as config_settings  # pylint: disable=import-outside-toplevel,reimported
@@ -488,6 +495,10 @@ def _get_sync_redis_client():
     # Quick check without lock
     if _SYNC_REDIS_CLIENT is not None or not (config_settings.redis_url and config_settings.redis_url.strip() and config_settings.cache_type == "redis"):
         return _SYNC_REDIS_CLIENT
+
+    # Backoff after recent failure (30 seconds)
+    if _SYNC_REDIS_FAILURE_TIME and (time.time() - _SYNC_REDIS_FAILURE_TIME < 30):
+        return None
 
     # Lazy initialization with lock
     with _SYNC_REDIS_LOCK:
@@ -502,10 +513,12 @@ def _get_sync_redis_client():
             _SYNC_REDIS_CLIENT = redis.from_url(config_settings.redis_url, decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
             # Test connection
             _SYNC_REDIS_CLIENT.ping()
+            _SYNC_REDIS_FAILURE_TIME = None  # Clear failure state on success
             log.getLogger(__name__).debug("Sync Redis client initialized for API token rate-limiting")
         except Exception as e:
             log.getLogger(__name__).debug(f"Sync Redis client unavailable: {e}")
             _SYNC_REDIS_CLIENT = None
+            _SYNC_REDIS_FAILURE_TIME = time.time()
 
     return _SYNC_REDIS_CLIENT
 
@@ -569,17 +582,13 @@ def _update_api_token_last_used_sync(jti: str) -> None:
             logger = logging.getLogger(__name__)
             logger.debug("Redis unavailable for API token rate-limiting, using in-memory fallback: %s", exc)
 
-    # Fallback: In-memory cache (simple dict with threading.Lock for thread-safety)
+    # Fallback: In-memory cache (module-level dict with threading.Lock for thread-safety)
     # Note: This is per-process and won't work in multi-worker deployments
     # but provides basic rate-limiting when Redis is unavailable
     max_cache_size = 1024  # Prevent unbounded growth
 
-    if not hasattr(_update_api_token_last_used_sync, "_cache"):
-        _update_api_token_last_used_sync._cache = {}  # type: ignore[attr-defined]  # pylint: disable=protected-access
-        _update_api_token_last_used_sync._cache_lock = threading.Lock()  # type: ignore[attr-defined]  # pylint: disable=protected-access
-
-    with _update_api_token_last_used_sync._cache_lock:  # type: ignore[attr-defined]  # pylint: disable=protected-access
-        last_update = _update_api_token_last_used_sync._cache.get(jti)  # type: ignore[attr-defined]  # pylint: disable=protected-access
+    with _LAST_USED_CACHE_LOCK:
+        last_update = _LAST_USED_CACHE.get(jti)
         if last_update:
             time_since_update = time.time() - last_update
             if time_since_update < update_interval_seconds:
@@ -599,14 +608,13 @@ def _update_api_token_last_used_sync(jti: str) -> None:
             api_token.last_used = utc_now()
             db.commit()
             # Update in-memory cache (with lock for thread-safety)
-            with _update_api_token_last_used_sync._cache_lock:  # type: ignore[attr-defined]  # pylint: disable=protected-access
-                cache = _update_api_token_last_used_sync._cache  # type: ignore[attr-defined]  # pylint: disable=protected-access
-                if len(cache) >= max_cache_size:
+            with _LAST_USED_CACHE_LOCK:
+                if len(_LAST_USED_CACHE) >= max_cache_size:
                     # Evict oldest entries (by timestamp value)
-                    sorted_keys = sorted(cache, key=cache.get)  # type: ignore[arg-type]
-                    for k in sorted_keys[: len(cache) // 2]:
-                        del cache[k]
-                cache[jti] = time.time()
+                    sorted_keys = sorted(_LAST_USED_CACHE, key=_LAST_USED_CACHE.get)  # type: ignore[arg-type]
+                    for k in sorted_keys[: len(_LAST_USED_CACHE) // 2]:
+                        del _LAST_USED_CACHE[k]
+                _LAST_USED_CACHE[jti] = time.time()
 
 
 def _is_api_token_jti_sync(jti: str) -> bool:
@@ -786,7 +794,7 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
 
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
-    request: Optional[object] = None,
+    request: Request = None,  # type: ignore[assignment]
 ) -> EmailUser:
     """Get current authenticated user from JWT token with revocation checking.
 
@@ -1299,6 +1307,7 @@ async def get_current_user(
                 # Set auth_method for database API tokens
                 if request:
                     request.state.auth_method = "api_token"
+                    request.state.user_email = api_token_info["user_email"]
                     # Store JTI for use in middleware
                     if "jti" in api_token_info:
                         request.state.jti = api_token_info["jti"]

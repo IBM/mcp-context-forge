@@ -451,3 +451,47 @@ async def test_handles_exception_extracting_token_info():
     mock_session.assert_not_called()
     # Request should still succeed
     app.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_uses_user_email_from_state_fallback():
+    """Middleware should use user_email from scope state when user object is absent."""
+    app = AsyncMock()
+
+    async def app_impl(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    app.side_effect = app_impl
+    middleware = TokenUsageMiddleware(app=app)
+
+    scope = {
+        "type": "http",
+        "path": "/api/tools",
+        "method": "GET",
+        "state": {
+            "auth_method": "api_token",
+            "jti": "jti-opaque-123",
+            "user": None,
+            "user_email": "opaque@example.com",
+        },
+        "client": ("192.168.1.100", 12345),
+        "headers": [(b"user-agent", b"TestClient/1.0")],
+    }
+
+    mock_db = MagicMock()
+    mock_token_service = MagicMock()
+    mock_token_service.log_token_usage = AsyncMock()
+
+    with (
+        patch("mcpgateway.middleware.token_usage_middleware.fresh_db_session") as mock_fresh_session,
+        patch("mcpgateway.middleware.token_usage_middleware.TokenCatalogService", return_value=mock_token_service),
+    ):
+        mock_fresh_session.return_value.__enter__.return_value = mock_db
+        await _make_asgi_call(middleware, scope)
+
+    # Verify log_token_usage was called with user_email from state
+    mock_token_service.log_token_usage.assert_awaited_once()
+    call_args = mock_token_service.log_token_usage.call_args
+    assert call_args.kwargs["jti"] == "jti-opaque-123"
+    assert call_args.kwargs["user_email"] == "opaque@example.com"

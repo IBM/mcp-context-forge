@@ -1250,9 +1250,7 @@ class Settings(BaseSettings):
     # API Token Tracking Configuration
     # Controls how token usage and last_used timestamps are tracked
     token_usage_logging_enabled: bool = Field(default=True, description="Enable API token usage logging middleware")
-    token_last_used_update_interval_minutes: int = Field(
-        default=5, ge=1, le=1440, description="Minimum minutes between last_used timestamp updates (rate-limits DB writes)"
-    )
+    token_last_used_update_interval_minutes: int = Field(default=5, ge=1, le=1440, description="Minimum minutes between last_used timestamp updates (rate-limits DB writes)")
 
     # Metrics Aggregation Configuration
     metrics_aggregation_enabled: bool = Field(default=True, description="Enable automatic log aggregation into performance metrics")

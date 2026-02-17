@@ -878,6 +878,54 @@ class TestGetSyncRedisClient:
             # Restore original state
             auth._SYNC_REDIS_CLIENT = original_client
 
+    def test_get_sync_redis_client_backoff_after_failure(self):
+        """Test that _get_sync_redis_client backs off for 30s after a failure."""
+        # Standard
+        import sys
+        import time as time_module
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Save and reset state
+        original_client = auth._SYNC_REDIS_CLIENT
+        original_failure_time = auth._SYNC_REDIS_FAILURE_TIME
+        auth._SYNC_REDIS_CLIENT = None
+        auth._SYNC_REDIS_FAILURE_TIME = None
+
+        try:
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.side_effect = Exception("Connection refused")
+
+            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                # First call: should attempt connection and fail
+                result1 = auth._get_sync_redis_client()
+                assert result1 is None
+                assert auth._SYNC_REDIS_FAILURE_TIME is not None
+                mock_redis_module.from_url.assert_called_once()
+
+                # Second call within 30s: should skip retry due to backoff
+                mock_redis_module.from_url.reset_mock()
+                result2 = auth._get_sync_redis_client()
+                assert result2 is None
+                mock_redis_module.from_url.assert_not_called()
+
+                # Simulate 31 seconds passing
+                auth._SYNC_REDIS_FAILURE_TIME = time_module.time() - 31
+
+                # Third call after backoff: should retry
+                mock_redis_module.from_url.reset_mock()
+                mock_redis_module.from_url.side_effect = Exception("Still down")
+                result3 = auth._get_sync_redis_client()
+                assert result3 is None
+                mock_redis_module.from_url.assert_called_once()
+        finally:
+            auth._SYNC_REDIS_CLIENT = original_client
+            auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
+
 
 class TestUpdateApiTokenLastUsed:
     """Test cases for _update_api_token_last_used_sync helper function."""
@@ -1003,9 +1051,11 @@ class TestUpdateApiTokenLastUsed:
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
 
-        # Clear the in-memory cache if it exists
-        if hasattr(_update_api_token_last_used_sync, "_cache"):
-            _update_api_token_last_used_sync._cache.clear()
+        # First-Party
+        from mcpgateway import auth
+
+        # Clear the module-level in-memory cache
+        auth._LAST_USED_CACHE.clear()
 
         mock_api_token = MagicMock(spec=EmailApiToken)
         mock_api_token.jti = "jti-fallback-123"
@@ -1051,9 +1101,11 @@ class TestUpdateApiTokenLastUsed:
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
 
-        # Clear the in-memory cache if it exists
-        if hasattr(_update_api_token_last_used_sync, "_cache"):
-            _update_api_token_last_used_sync._cache.clear()
+        # First-Party
+        from mcpgateway import auth
+
+        # Clear the module-level in-memory cache
+        auth._LAST_USED_CACHE.clear()
 
         mock_api_token = MagicMock(spec=EmailApiToken)
         mock_api_token.jti = "jti-redis-error-123"
@@ -1321,15 +1373,12 @@ class TestUpdateApiTokenLastUsed:
     def test_update_api_token_last_used_sync_evicts_old_cache_entries(self):
         """Test that in-memory cache evicts oldest entries when max size is reached."""
         # First-Party
+        from mcpgateway import auth
         from mcpgateway.auth import _update_api_token_last_used_sync
         from mcpgateway.db import EmailApiToken
 
-        # Clear and set up cache
-        if hasattr(_update_api_token_last_used_sync, "_cache"):
-            _update_api_token_last_used_sync._cache.clear()
-        else:
-            _update_api_token_last_used_sync._cache = {}
-            _update_api_token_last_used_sync._cache_lock = __import__("threading").Lock()
+        # Clear the module-level cache
+        auth._LAST_USED_CACHE.clear()
 
         mock_api_token = MagicMock(spec=EmailApiToken)
         mock_api_token.jti = "jti-evict"
@@ -1343,9 +1392,9 @@ class TestUpdateApiTokenLastUsed:
         # Pre-fill cache to _MAX_CACHE_SIZE (1024) entries
         base_time = 1000000.0
         for i in range(1024):
-            _update_api_token_last_used_sync._cache[f"jti-old-{i}"] = base_time + i
+            auth._LAST_USED_CACHE[f"jti-old-{i}"] = base_time + i
 
-        assert len(_update_api_token_last_used_sync._cache) == 1024
+        assert len(auth._LAST_USED_CACHE) == 1024
 
         with (
             patch("mcpgateway.auth._get_sync_redis_client", return_value=None),
@@ -1362,13 +1411,12 @@ class TestUpdateApiTokenLastUsed:
             _update_api_token_last_used_sync("jti-evict")
 
         # Cache should have been evicted to ~512 + the new entry
-        cache = _update_api_token_last_used_sync._cache
-        assert len(cache) <= 513
-        assert "jti-evict" in cache
+        assert len(auth._LAST_USED_CACHE) <= 513
+        assert "jti-evict" in auth._LAST_USED_CACHE
         # Oldest entries (lower indices) should have been evicted
-        assert "jti-old-0" not in cache
+        assert "jti-old-0" not in auth._LAST_USED_CACHE
         # Newer entries should remain
-        assert "jti-old-1023" in cache
+        assert "jti-old-1023" in auth._LAST_USED_CACHE
 
     def test_update_api_token_last_used_sync_no_jti_in_api_token(self):
         """Test that _set_auth_method_from_payload handles api_token without JTI."""
