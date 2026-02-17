@@ -1871,5 +1871,4 @@ class TestEntraIDSyncDisabled:
             user = db.query(EmailUser).filter(EmailUser.email == nosync_email).first()
             assert user is not None
             # When sync is disabled, existing admin status should be preserved
-            # (This tests that the sync flag is respected)
-            # Note: Actual behavior depends on SSOService implementation
+            assert user.is_admin is True, "Admin should retain role when role sync is disabled"

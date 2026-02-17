@@ -115,6 +115,16 @@ class OAuthManager:
         ''
     """
 
+    # Known Microsoft Entra login hosts (global + sovereign clouds).
+    _ENTRA_HOSTS: frozenset[str] = frozenset(
+        {
+            "login.microsoftonline.com",
+            "login.microsoftonline.us",
+            "login.microsoftonline.de",
+            "login.partner.microsoftonline.cn",
+        }
+    )
+
     def __init__(self, request_timeout: int = 30, max_retries: int = 3, token_storage: Optional[Any] = None):
         """Initialize OAuth Manager.
 
@@ -966,7 +976,7 @@ class OAuthManager:
 
     @staticmethod
     def _is_microsoft_entra_v2_endpoint(endpoint_url: Any) -> bool:
-        """Return True when endpoint matches Entra v2 hosted on login.microsoftonline.com.
+        """Return True when endpoint matches Microsoft Entra v2 login endpoints.
 
         Args:
             endpoint_url: OAuth endpoint URL to check
@@ -978,10 +988,10 @@ class OAuthManager:
             return False
 
         parsed = urlparse(endpoint_url)
-        host = parsed.netloc.lower()
+        host = (parsed.hostname or "").lower()
         path = parsed.path.lower()
 
-        return host.startswith("login.microsoftonline.com") and "/oauth2/v2.0/" in path
+        return host in OAuthManager._ENTRA_HOSTS and "/oauth2/v2.0/" in path
 
     @staticmethod
     def _is_enabled_flag(value: Any) -> bool:

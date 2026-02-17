@@ -672,6 +672,57 @@ def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_scope_fl
     assert "resource=" not in url
 
 
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_sovereign_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.us/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_china_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.partner.microsoftonline.cn/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_keeps_resource_for_lookalike_host(oauth_manager):
+    """Ensure a host like login.microsoftonline.evil.com is NOT treated as Entra."""
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.evil.com/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "resource=" in url
+
+
 def test_create_authorization_url_with_pkce_omits_resource_when_flag_enabled(oauth_manager):
     url = oauth_manager._create_authorization_url_with_pkce(
         {
