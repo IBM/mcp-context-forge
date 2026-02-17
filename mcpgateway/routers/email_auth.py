@@ -160,6 +160,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
         "token_use": "session",  # nosec B105 - token type marker, not a password
         # Token scoping (if provided)
         "scopes": token_scopes or {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
+        # "teams": ["83e6e105cfad4d91bb02334fb1d50e90"]
     }
 
     # Generate token using centralized token creation

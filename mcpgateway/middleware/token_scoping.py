@@ -876,7 +876,10 @@ class TokenScopingMiddleware:
 
                 is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
                 user_info = {"is_admin": is_admin}
-                token_teams = await _resolve_teams_from_db(user_email, user_info)
+                if "teams" in payload:
+                    token_teams = normalize_token_teams(payload)
+                else:
+                    token_teams = await _resolve_teams_from_db(user_email, user_info)
             else:
                 # API token or legacy: use embedded teams with normalize_token_teams
                 token_teams = normalize_token_teams(payload)
