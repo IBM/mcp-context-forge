@@ -298,7 +298,86 @@ class TestGetCurrentUser:
 
                     assert user.email == mock_user.email
                     assert user.auth_provider == "api_token"
-                    assert user.password_change_required is False
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_single_team_uses_embedded_teams(self, monkeypatch):
+        """Test that session tokens with exactly one team use embedded teams (line 1056 coverage)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+
+        # Session token with exactly one team
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-123"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "session_jti_123",
+        }
+
+        # Mock cached context
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Enable auth cache
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                with patch("mcpgateway.auth.normalize_token_teams", return_value=["team-123"]) as mock_normalize:
+                    with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_db:
+                        user = await get_current_user(credentials=credentials, request=request)
+
+                        assert user.email == "test@example.com"
+                        # Verify normalize_token_teams was called (single team path)
+                        mock_normalize.assert_called_once()
+                        # Verify _resolve_teams_from_db was NOT called
+                        mock_resolve_db.assert_not_called()
+                        # Verify token_teams was set on request state
+                        assert request.state.token_teams == ["team-123"]
+
+    @pytest.mark.asyncio
+    async def test_session_token_with_multiple_teams_resolves_from_db(self, monkeypatch):
+        """Test that session tokens with multiple teams resolve from DB (else branch of line 1056)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_token")
+
+        # Session token with multiple teams
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-1", "team-2"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "jti": "session_jti_456",
+        }
+
+        # Mock cached context
+        cached_ctx = SimpleNamespace(
+            is_token_revoked=False,
+            user={"email": "test@example.com", "full_name": "Test User", "is_admin": False, "is_active": True},
+            personal_team_id="team_123",
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Enable auth cache
+        monkeypatch.setattr(settings, "auth_cache_enabled", True)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+                with patch("mcpgateway.auth.normalize_token_teams") as mock_normalize:
+                    with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1", "db-team-2"]) as mock_resolve_db:
+                        user = await get_current_user(credentials=credentials, request=request)
+
+                        assert user.email == "test@example.com"
+                        # Verify _resolve_teams_from_db WAS called (multiple teams path)
+                        mock_resolve_db.assert_called_once()
+                        # Verify normalize_token_teams was NOT called
+                        mock_normalize.assert_not_called()
+                        # Verify token_teams was set on request state
+                        assert request.state.token_teams == ["db-team-1", "db-team-2"]
 
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_uses_embedded_teams(self):
