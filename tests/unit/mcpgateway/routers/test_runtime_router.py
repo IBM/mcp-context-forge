@@ -182,6 +182,22 @@ async def test_list_runtimes(mock_db, mock_user):
 
 
 @pytest.mark.asyncio
+async def test_list_runtimes_prefers_status_filter_over_legacy_status(mock_db, mock_user):
+    runtime = _runtime_read()
+    with patch("mcpgateway.routers.runtime_router.runtime_service.list_runtimes", AsyncMock(return_value=([runtime], 1))) as list_mock:
+        await list_runtimes(db=mock_db, _user=mock_user, backend=None, status_filter="running", status="error", limit=100, offset=0)
+    list_mock.assert_awaited_once_with(mock_db, backend=None, status="running", limit=100, offset=0)
+
+
+@pytest.mark.asyncio
+async def test_list_runtimes_supports_legacy_status_query(mock_db, mock_user):
+    runtime = _runtime_read()
+    with patch("mcpgateway.routers.runtime_router.runtime_service.list_runtimes", AsyncMock(return_value=([runtime], 1))) as list_mock:
+        await list_runtimes(db=mock_db, _user=mock_user, backend=None, status_filter=None, status="stopped", limit=100, offset=0)
+    list_mock.assert_awaited_once_with(mock_db, backend=None, status="stopped", limit=100, offset=0)
+
+
+@pytest.mark.asyncio
 async def test_get_runtime_refresh_status(mock_db, mock_user):
     runtime = _runtime_read()
     with patch("mcpgateway.routers.runtime_router.runtime_service.refresh_runtime_status", AsyncMock(return_value=runtime)):
@@ -354,6 +370,36 @@ async def test_list_runtime_approvals(mock_db, mock_user):
         response = await list_runtime_approvals(db=mock_db, _user=mock_user)
     assert response.total == 1
     assert response.approvals[0].id == "approval-2"
+
+
+@pytest.mark.asyncio
+async def test_list_runtime_approvals_status_precedence_and_default(mock_db, mock_user):
+    now = datetime.now(timezone.utc)
+    approval = RuntimeApprovalRead(
+        id="approval-3",
+        runtime_deployment_id="runtime-3",
+        status="pending",
+        requested_by="developer@example.com",
+        reviewed_by=None,
+        requested_reason=None,
+        decision_reason=None,
+        approvers=["security@example.com"],
+        rule_snapshot={},
+        expires_at=None,
+        created_at=now,
+        reviewed_at=None,
+    )
+    with patch("mcpgateway.routers.runtime_router.runtime_service.list_approvals", AsyncMock(return_value=([approval], 1))) as list_mock:
+        await list_runtime_approvals(db=mock_db, _user=mock_user, status_filter="approved", status="rejected", limit=100, offset=0)
+    list_mock.assert_awaited_once_with(mock_db, status="approved", limit=100, offset=0)
+
+    with patch("mcpgateway.routers.runtime_router.runtime_service.list_approvals", AsyncMock(return_value=([approval], 1))) as list_mock:
+        await list_runtime_approvals(db=mock_db, _user=mock_user, status_filter=None, status="expired", limit=100, offset=0)
+    list_mock.assert_awaited_once_with(mock_db, status="expired", limit=100, offset=0)
+
+    with patch("mcpgateway.routers.runtime_router.runtime_service.list_approvals", AsyncMock(return_value=([approval], 1))) as list_mock:
+        await list_runtime_approvals(db=mock_db, _user=mock_user, status_filter=None, status=None, limit=100, offset=0)
+    list_mock.assert_awaited_once_with(mock_db, status="pending", limit=100, offset=0)
 
 
 @pytest.mark.asyncio
