@@ -87,7 +87,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
              patch("mcpgateway.routers.email_auth.settings") as mock_settings:
             mock_service = MockAuthService.return_value
             mock_service.authenticate_user = AsyncMock(return_value=mock_user_needs_password_change)
-            
+
             # Enable password change enforcement
             mock_settings.password_change_enforcement_enabled = True
 
