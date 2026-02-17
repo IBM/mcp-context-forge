@@ -959,13 +959,6 @@ class TokenCatalogService:
         self.db.add(usage_log)
         self.db.commit()
 
-        # Update token last_used timestamp
-        token = self.db.execute(select(EmailApiToken).where(EmailApiToken.jti == jti)).scalar_one_or_none()
-
-        if token:
-            token.last_used = utc_now()
-            self.db.commit()
-
     async def get_token_usage_stats(self, user_email: str, token_id: Optional[str] = None, days: int = 30) -> dict:
         """Get token usage statistics.
 

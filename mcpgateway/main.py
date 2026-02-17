@@ -1880,6 +1880,18 @@ if settings.security_logging_enabled:
 else:
     logger.info("🔐 Security event logging disabled")
 
+# Add token usage logging middleware
+# This tracks API token usage for analytics and security monitoring
+# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
+if settings.token_usage_logging_enabled:
+    # First-Party
+    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
+
+    app.add_middleware(TokenUsageMiddleware)
+    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
+else:
+    logger.info("📊 Token usage logging middleware disabled")
+
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
 # If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it

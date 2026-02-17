@@ -1017,8 +1017,6 @@ class TestTokenCatalogService:
     @pytest.mark.asyncio
     async def test_log_token_usage_basic(self, token_service, mock_db, mock_api_token):
         """Test log_token_usage method - basic logging."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_api_token
-
         await token_service.log_token_usage(
             jti="jti-123",
             user_email="test@example.com",
@@ -1042,8 +1040,8 @@ class TestTokenCatalogService:
         assert usage_log.response_time_ms == 45
         assert usage_log.blocked is False
 
-        # Check token last_used was updated
-        assert mock_api_token.last_used is not None
+        # Note: last_used is updated during authentication (auth.py), not here
+        # This method only logs usage statistics
 
     @pytest.mark.asyncio
     async def test_log_token_usage_blocked(self, token_service, mock_db):
