@@ -1466,7 +1466,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             logger.error(f"Failed to fetch tools after OAuth for gateway {gateway_id}: {e}")
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
 
-
     def _apply_visibility_filter(
         self,
         query,
@@ -1516,7 +1515,6 @@ class GatewayService:  # pylint: disable=too-many-instance-attributes
             access_conditions.append(and_(DbGateway.team_id.in_(token_teams), DbGateway.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
-
 
     async def list_gateways(
         self,

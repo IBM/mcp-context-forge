@@ -710,7 +710,6 @@ class ServerService:
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
 
-
     def _apply_visibility_filter(
         self,
         query,
@@ -762,7 +761,6 @@ class ServerService:
             access_conditions.append(and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
-
 
     async def list_servers(
         self,

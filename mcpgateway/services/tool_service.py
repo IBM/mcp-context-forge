@@ -1708,7 +1708,6 @@ class ToolService:
             plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
         )
 
-
     def _apply_visibility_filter(
         self,
         query,
@@ -1759,7 +1758,6 @@ class ToolService:
             access_conditions.append(and_(DbTool.team_id.in_(token_teams), DbTool.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
-
 
     async def list_tools(
         self,

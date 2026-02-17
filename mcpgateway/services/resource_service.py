@@ -915,7 +915,6 @@ class ResourceService:
 
         return False
 
-
     def _apply_visibility_filter(
         self,
         query,
@@ -966,7 +965,6 @@ class ResourceService:
             access_conditions.append(and_(DbResource.team_id.in_(token_teams), DbResource.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
-
 
     async def list_resources(
         self,

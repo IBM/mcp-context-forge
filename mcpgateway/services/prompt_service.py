@@ -961,7 +961,6 @@ class PromptService:
 
         return stats
 
-
     def _apply_visibility_filter(
         self,
         query,
@@ -1013,7 +1012,6 @@ class PromptService:
             access_conditions.append(and_(DbPrompt.team_id.in_(token_teams), DbPrompt.visibility.in_(["team", "public"])))
 
         return query.where(or_(*access_conditions))
-
 
     async def list_prompts(
         self,
