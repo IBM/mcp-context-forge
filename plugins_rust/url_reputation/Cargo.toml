@@ -10,5 +10,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 anyhow = "1.0.101"
+idna = "1.1.0"
+phf = { version = "0.13.1", features = ["macros"] }
 pyo3 = { version = "0.28.0", features = ["anyhow"] }
+unicode-script = "0.5.8"
+unicode-security = "0.1.2"
 url = "2.5.8"
