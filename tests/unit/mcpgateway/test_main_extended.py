@@ -4757,6 +4757,7 @@ class TestRemainingCoverageGaps:
 
     async def test_list_tools_and_get_tool_jsonpath_modifier(self, monkeypatch):
         import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -4767,7 +4768,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
         monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(return_value={"filtered": True}))
 
-        apijsonpath = SimpleNamespace(jsonpath="$", mapping={})
+        apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
         result = await main_mod.list_tools.__wrapped__(
             request,
             cursor=None,

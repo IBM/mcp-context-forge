@@ -3581,6 +3581,9 @@ async def list_tools(
 
     Returns:
         List of tools or modified result based on jsonpath
+
+    Raises:
+        HTTPException: If JSONPath modifier fails to process the tools list
     """
 
     # Parse tags parameter if provided
@@ -3677,8 +3680,8 @@ async def list_tools(
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
     try:
         result = jsonpath_modifier(tools_dict_list, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
-        return ORJSONResponse(content=result)
-    except Exception as ex:
+        return result
+    except Exception:
         logger.exception("JSONPath modifier failed while processing tools list")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
 
@@ -3811,7 +3814,7 @@ async def get_tool(
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
         # Allow apijsonpath as a direct model (internal/tests) or as JSON string via query
         parsed_apijsonpath: Optional[JsonPathModifier] = None
-        logger.info(f"Received request for tool {tool_id} with apijsonpath: {apijsonpath}") 
+        logger.info(f"Received request for tool {tool_id} with apijsonpath: {apijsonpath}")
         if apijsonpath is None:
             return data
 
@@ -3822,14 +3825,14 @@ async def get_tool(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
         elif isinstance(apijsonpath, JsonPathModifier):
             parsed_apijsonpath = apijsonpath
-        logger.infor(f"Parsed JSONPath modifier for tool {tool_id}: {parsed_apijsonpath}")
+        logger.info(f"Parsed JSONPath modifier for tool {tool_id}: {parsed_apijsonpath}")
         if parsed_apijsonpath is None:
             return data
 
         data_dict = data.to_dict(use_alias=True)
         try:
             result = jsonpath_modifier(data_dict, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
-            return ORJSONResponse(content=result)
+            return result
         except Exception:
             logger.exception("JSONPath modifier failed while processing single tool")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
