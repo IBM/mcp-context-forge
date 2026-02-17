@@ -17845,6 +17845,71 @@ const {
     reset: resetSearchInputsState,
 } = createMemoizedInit(initializeSearchInputs, 300, "SearchInputs");
 
+/**
+ * Update visible filter-status text for each table panel.
+ * Reads the pagination total from the Alpine-rendered pagination controls
+ * and shows a summary when any filter (search, tags, inactive) is active.
+ */
+function updateFilterStatus() {
+    Object.values(PANEL_SEARCH_CONFIG).forEach((config) => {
+        const statusEl = document.getElementById(
+            config.tableName + "-filter-status",
+        );
+        if (!statusEl) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const prefix = config.tableName + "_";
+        const hasQuery = Boolean(params.get(prefix + "q"));
+        const hasTags = Boolean(params.get(prefix + "tags"));
+        const hasInactive = params.get(prefix + "inactive") === "true";
+        const hasFilters = hasQuery || hasTags || hasInactive;
+
+        if (!hasFilters) {
+            statusEl.textContent = "";
+            return;
+        }
+
+        // Read totalItems from the pagination controls Alpine component
+        const paginationEl = document.getElementById(
+            config.tableName + "-pagination-controls",
+        );
+        if (paginationEl) {
+            const pageInfoSpan = paginationEl.querySelector(
+                "[x-text*='totalItems']",
+            );
+            if (pageInfoSpan && pageInfoSpan.textContent) {
+                statusEl.textContent = "Filtered: " + pageInfoSpan.textContent;
+                return;
+            }
+        }
+        statusEl.textContent = "Filters active";
+    });
+}
+window.updateFilterStatus = updateFilterStatus;
+
+/**
+ * Rehydrate search inputs and filter status after HTMX content swaps.
+ * This ensures that search/tag values from the URL are restored into the
+ * input elements after pagination or partial refresh replaces table content.
+ */
+document.body.addEventListener("htmx:afterSettle", function (evt) {
+    const target = evt.detail.target;
+    if (!target || !target.id) return;
+
+    // Only rehydrate when a table partial or pagination was swapped
+    const isTableSwap =
+        target.id.endsWith("-table") ||
+        target.id.endsWith("-table-body") ||
+        target.id.endsWith("-list-container");
+    const isPaginationSwap = target.id.endsWith("-pagination-controls");
+
+    if (isTableSwap || isPaginationSwap) {
+        resetSearchInputsState();
+        initializeSearchInputsMemoized();
+        updateFilterStatus();
+    }
+});
+
 const GLOBAL_SEARCH_ENTITY_CONFIG = {
     servers: { label: "Servers", tab: "catalog", viewFunction: "viewServer" },
     gateways: {
