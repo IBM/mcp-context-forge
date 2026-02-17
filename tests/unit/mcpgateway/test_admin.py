@@ -3063,8 +3063,9 @@ class TestAdminUIRoute:
         # Simulate a failure in one service
         mock_resources.side_effect = Exception("Resource service down")
 
+        # Ensure no sections are hidden (env may set MCPGATEWAY_UI_HIDE_SECTIONS)
         # Patch logger to verify logging occurred
-        with patch("mcpgateway.admin.LOGGER.exception") as mock_log, patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources):
+        with patch("mcpgateway.admin.LOGGER.exception") as mock_log, patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources), patch.object(settings, "mcpgateway_ui_hide_sections", []):
             response = await admin_ui(
                 request=mock_request,
                 team_id=None,
@@ -3703,6 +3704,8 @@ class TestAdminUIRoute:
 
         # Keep email teams out of the picture so team_id is not dropped.
         monkeypatch.setattr(settings, "email_auth_enabled", False)
+        # Ensure no sections are hidden (env may set MCPGATEWAY_UI_HIDE_SECTIONS)
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [])
 
         mock_servers.return_value = []
         mock_tools.return_value = [
