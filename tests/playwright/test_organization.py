@@ -28,7 +28,7 @@ class TestTeams:
         team_name = f"Test Team {uuid.uuid4().hex[:8]}"
 
         # Create team - HTMX will automatically update #unified-teams-list
-        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST") as response_info:
+        with team_page.page.expect_response(lambda response: "/ui/teams" in response.url and response.request.method == "POST") as response_info:
             team_page.create_team(team_name)
         response = response_info.value
         assert response.status < 400
@@ -56,7 +56,7 @@ class TestTeams:
         team_name = f"Test Team {uuid.uuid4().hex[:8]}"
 
         # Create test team
-        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+        with team_page.page.expect_response(lambda response: "/ui/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
         # Reload to see the new team — after reload, the default tab shows
@@ -106,7 +106,7 @@ class TestTeams:
         team_name = f"Test Team {uuid.uuid4().hex[:8]}"
 
         # Create test team
-        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+        with team_page.page.expect_response(lambda response: "/ui/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
         # Reload to see the new team — after reload, the default tab shows
@@ -163,7 +163,7 @@ class TestTeams:
         team_name = f"Test Team {uuid.uuid4().hex[:8]}"
 
         # Create test team
-        with team_page.page.expect_response(lambda response: "/admin/teams" in response.url and response.request.method == "POST"):
+        with team_page.page.expect_response(lambda response: "/ui/teams" in response.url and response.request.method == "POST"):
             team_page.create_team(team_name)
 
         # Reload to see the new team — after reload, the default tab shows

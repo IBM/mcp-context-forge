@@ -281,6 +281,7 @@ def test_register_catalog_server_htmx_retry_button_attributes(client):
          patch("mcpgateway.admin.settings") as mock_settings:
         mock_settings.mcpgateway_catalog_enabled = True
         mock_settings.app_root_path = "/api"
+        mock_settings.mcpgateway_ui_base_path = "/ui"
 
         response = client.post(
             "/ui/mcp-registry/timeout-server/register",
@@ -289,7 +290,7 @@ def test_register_catalog_server_htmx_retry_button_attributes(client):
 
     assert response.status_code == 200
     html_content = response.text
-    assert 'hx-post="/api/admin/mcp-registry/timeout-server/register"' in html_content
+    assert 'hx-post="/api/ui/mcp-registry/timeout-server/register"' in html_content
     assert 'hx-target="#timeout-server-button-container"' in html_content
     assert 'hx-swap="innerHTML"' in html_content
     assert 'hx-disabled-elt="this"' in html_content

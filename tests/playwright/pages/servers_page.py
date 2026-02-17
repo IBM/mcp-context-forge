@@ -345,7 +345,7 @@ class ServersPage(BasePage):
         request_seen = False
         try:
             with self.page.expect_response(
-                lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                lambda response: "/ui/servers/partial" in response.url and response.request.method == "GET",
                 timeout=5000,
             ):
                 self.click_locator(self.clear_search_btn)
@@ -358,7 +358,7 @@ class ServersPage(BasePage):
             # explicitly wait for the partial reload request.
             try:
                 with self.page.expect_response(
-                    lambda response: "/admin/servers/partial" in response.url and response.request.method == "GET",
+                    lambda response: "/ui/servers/partial" in response.url and response.request.method == "GET",
                     timeout=5000,
                 ):
                     self.page.evaluate("window.clearSearch && window.clearSearch('catalog')")

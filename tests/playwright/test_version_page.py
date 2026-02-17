@@ -169,7 +169,7 @@ class TestVersionPage:
         # Verify download button is visible and has correct href
         expect(version_page.download_support_bundle_btn).to_be_visible()
         href = version_page.download_support_bundle_btn.get_attribute("href")
-        assert "/admin/support-bundle/generate" in href, "Download button should link to support bundle endpoint"
+        assert "/ui/support-bundle/generate" in href, "Download button should link to support bundle endpoint"
 
         # Verify security notice is visible
         expect(version_page.security_notice).to_be_visible()
