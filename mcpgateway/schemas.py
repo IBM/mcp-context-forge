@@ -305,7 +305,9 @@ class ToolCreate(BaseModel):
     displayName: Optional[str] = Field(None, description="Display name for the tool (shown in UI)")  # noqa: N815
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Literal["REST", "MCP", "A2A"] = Field("REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents")
+    integration_type: Literal["REST", "MCP", "A2A", "GRAPHQL"] = Field(
+        "REST", description="'REST' for individual endpoints, 'MCP' for gateway-discovered tools, 'A2A' for A2A agents, 'GRAPHQL' for GraphQL endpoints"
+    )
     request_type: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "SSE", "STDIO", "STREAMABLEHTTP"] = Field("SSE", description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(default_factory=lambda: {"type": "object", "properties": {}}, description="JSON Schema for validating tool parameters", alias="inputSchema")
@@ -334,6 +336,12 @@ class ToolCreate(BaseModel):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
+    # GraphQL-specific fields
+    graphql_operation: Optional[str] = Field(None, description="GraphQL operation string for direct tool registration")
+    graphql_variables_mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of MCP argument names to GraphQL variable names")
+    graphql_field_selection: Optional[str] = Field(None, description="Explicit GraphQL field selection override")
+    graphql_operation_type: Optional[str] = Field(None, description="GraphQL operation type: 'query', 'mutation', or 'subscription'")
 
     @field_validator("tags")
     @classmethod
@@ -562,7 +570,7 @@ class ToolCreate(BaseModel):
 
         integration_type = info.data.get("integration_type")
 
-        if integration_type not in ["REST", "MCP", "A2A"]:
+        if integration_type not in ["REST", "MCP", "A2A", "GRAPHQL"]:
             raise ValueError(f"Unknown integration type: {integration_type}")
 
         if integration_type == "REST":
@@ -577,6 +585,10 @@ class ToolCreate(BaseModel):
             allowed = ["POST"]
             if v not in allowed:
                 raise ValueError(f"Request type '{v}' not allowed for A2A. Only {allowed} methods are accepted.")
+        elif integration_type == "GRAPHQL":
+            allowed = ["POST"]
+            if v not in allowed:
+                raise ValueError(f"Request type '{v}' not allowed for GRAPHQL. Only {allowed} methods are accepted.")
         return v
 
     @model_validator(mode="before")
@@ -701,6 +713,36 @@ class ToolCreate(BaseModel):
             for field in passthrough_fields:
                 if field in values and values[field] not in (None, [], {}):
                     raise ValueError(f"Field '{field}' is only allowed for integration_type 'REST'.")
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def enforce_graphql_fields(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Enforce that GraphQL-specific fields are only set for integration_type 'GRAPHQL'.
+
+        Args:
+            values: The input values to validate.
+
+        Returns:
+            The validated values.
+
+        Raises:
+            ValueError: If GraphQL fields are set for non-GRAPHQL integration_type.
+        """
+        graphql_fields = ["graphql_operation", "graphql_variables_mapping", "graphql_field_selection", "graphql_operation_type"]
+        integration_type = values.get("integration_type")
+        if integration_type != "GRAPHQL":
+            for field in graphql_fields:
+                if field in values and values[field] is not None:
+                    raise ValueError(f"Field '{field}' is only allowed for integration_type 'GRAPHQL'.")
+        else:
+            # GRAPHQL integration_type: require graphql_operation or allow auto-discovery
+            op_type = values.get("graphql_operation_type")
+            if op_type and op_type not in ("query", "mutation", "subscription"):
+                raise ValueError("graphql_operation_type must be 'query', 'mutation', or 'subscription'")
+            # Default request_type to POST for GraphQL
+            if "request_type" not in values or values.get("request_type") is None:
+                values["request_type"] = "POST"
         return values
 
     @model_validator(mode="before")
@@ -868,7 +910,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     custom_name: Optional[str] = Field(None, description="Custom name for the tool")
     url: Optional[Union[str, AnyHttpUrl]] = Field(None, description="Tool endpoint URL")
     description: Optional[str] = Field(None, description="Tool description")
-    integration_type: Optional[Literal["REST", "MCP", "A2A"]] = Field(None, description="Tool integration type")
+    integration_type: Optional[Literal["REST", "MCP", "A2A", "GRAPHQL"]] = Field(None, description="Tool integration type")
     request_type: Optional[Literal["GET", "POST", "PUT", "DELETE", "PATCH"]] = Field(None, description="HTTP method to be used for invoking the tool")
     headers: Optional[Dict[str, str]] = Field(None, description="Additional headers to send when invoking the tool")
     input_schema: Optional[Dict[str, Any]] = Field(None, description="JSON Schema for validating tool parameters")
@@ -890,6 +932,12 @@ class ToolUpdate(BaseModelWithConfigDict):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
+    # GraphQL-specific fields
+    graphql_operation: Optional[str] = Field(None, description="GraphQL operation string for direct tool registration")
+    graphql_variables_mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of MCP argument names to GraphQL variable names")
+    graphql_field_selection: Optional[str] = Field(None, description="Explicit GraphQL field selection override")
+    graphql_operation_type: Optional[str] = Field(None, description="GraphQL operation type: 'query', 'mutation', or 'subscription'")
 
     @field_validator("tags")
     @classmethod
@@ -1018,6 +1066,8 @@ class ToolUpdate(BaseModelWithConfigDict):
             allowed = ["SSE", "STDIO", "STREAMABLEHTTP"]
         elif integration_type == "A2A":
             allowed = ["POST"]  # A2A agents typically use POST
+        elif integration_type == "GRAPHQL":
+            allowed = ["POST"]  # GraphQL uses POST
         else:
             raise ValueError(f"Unknown integration type: {integration_type}")
 
@@ -1336,6 +1386,12 @@ class ToolRead(BaseModelWithConfigDict):
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
     plugin_chain_post: Optional[List[str]] = Field(None, description="Post-plugin chain for passthrough")
+
+    # GraphQL-specific fields
+    graphql_operation: Optional[str] = Field(None, description="GraphQL operation string for direct tool registration")
+    graphql_variables_mapping: Optional[Dict[str, str]] = Field(None, description="Mapping of MCP argument names to GraphQL variable names")
+    graphql_field_selection: Optional[str] = Field(None, description="Explicit GraphQL field selection override")
+    graphql_operation_type: Optional[str] = Field(None, description="GraphQL operation type: 'query', 'mutation', or 'subscription'")
 
     # MCP protocol extension field
     meta: Optional[Dict[str, Any]] = Field(None, alias="_meta", description="Optional metadata for protocol extension")

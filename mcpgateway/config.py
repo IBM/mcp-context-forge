@@ -594,6 +594,13 @@ class Settings(BaseSettings):
     mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
 
+    # GraphQL Support Configuration (EXPERIMENTAL - disabled by default)
+    mcpgateway_graphql_enabled: bool = Field(default=False, description="Enable GraphQL to MCP translation support (experimental feature)")
+    mcpgateway_graphql_introspection_enabled: bool = Field(default=True, description="Enable GraphQL schema introspection by default")
+    mcpgateway_graphql_max_depth: int = Field(default=3, description="Maximum GraphQL field selection depth for auto-discovered tools")
+    mcpgateway_graphql_timeout: int = Field(default=30, description="Default GraphQL operation timeout in seconds")
+    mcpgateway_graphql_include_mutations: bool = Field(default=True, description="Include GraphQL mutations when discovering tools")
+
     # Direct Proxy Configuration (disabled by default)
     mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
     mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")

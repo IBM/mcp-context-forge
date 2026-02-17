@@ -8,6 +8,7 @@ nav:
   - tool-annotations.md
   - rest-passthrough.md
   - "gRPC Services (Experimental)": grpc-services.md
+  - "GraphQL Services (Experimental)": graphql-services.md
   - Clients: clients
   - Agents: agents
   - Servers: servers
