@@ -8,6 +8,7 @@ Tests for URLReputationPlugin.
 """
 
 import pytest
+from unittest.mock import patch
 
 from mcpgateway.plugins.framework import (
     GlobalContext,
@@ -16,11 +17,19 @@ from mcpgateway.plugins.framework import (
     ResourceHookType,
     ResourcePreFetchPayload,
 )
-from plugins.url_reputation.url_reputation import URLReputationPlugin
 
-
+# Keep python and Rust with same test
 @pytest.mark.asyncio
-async def test_blocks_blocklisted_domain():
+@pytest.mark.parametrize("use_python_fallback", [True, False])
+async def test_blocks_blocklisted_domain_paths(use_python_fallback):
+
+    if use_python_fallback:
+        # Patch _RUST_AVAILABLE to False to force Python fallback
+        patcher = patch("plugins.url_reputation.url_reputation._RUST_AVAILABLE", False)
+        patcher.start()
+
+    from plugins.url_reputation.url_reputation import URLReputationPlugin
+
     plugin = URLReputationPlugin(
         PluginConfig(
             name="urlrep",
@@ -29,6 +38,16 @@ async def test_blocks_blocklisted_domain():
             config={"blocked_domains": ["bad.example"]},
         )
     )
+
     ctx = PluginContext(global_context=GlobalContext(request_id="r1"))
-    res = await plugin.resource_pre_fetch(ResourcePreFetchPayload(uri="https://api.bad.example/v1"), ctx)
+    res = await plugin.resource_pre_fetch(
+        ResourcePreFetchPayload(uri="https://api.bad.example/v1"), ctx
+    )
+
+    # Stop patching if it was applied
+    if use_python_fallback:
+        patcher.stop()
+
+    # Assertions
     assert res.violation is not None
+    assert res.violation.reason in ("Blocked domain", "Domain in blocked set")
