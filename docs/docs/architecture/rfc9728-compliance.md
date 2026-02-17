@@ -43,7 +43,7 @@ The metadata response fields (per RFC 9728 Section 2):
 
 **Authentication:** None required (per RFC 9728)
 
-**Implementation:** [`mcpgateway/routers/well_known.py:118`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L118)
+**Implementation:** [`mcpgateway/routers/well_known.py:111`](../../mcpgateway/routers/well_known.py#L111)
 
 **Features:**
 
@@ -73,7 +73,7 @@ curl https://gateway.example.com/.well-known/oauth-protected-resource/servers/55
 
 ### Service Layer
 
-**Implementation:** [`mcpgateway/services/server_service.py:1913`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/services/server_service.py#L1913)
+**Implementation:** [`mcpgateway/services/server_service.py:1827`](../../mcpgateway/services/server_service.py#L1827)
 
 The `get_oauth_protected_resource_metadata()` method:
 
