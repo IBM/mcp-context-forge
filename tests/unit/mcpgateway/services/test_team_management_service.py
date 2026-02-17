@@ -1788,19 +1788,33 @@ class TestTeamManagementService:
 
     # ---- get_user_teams cache paths ---- #
     @pytest.mark.asyncio
-    async def test_get_user_teams_cache_hit_with_ids(self, service, mock_db):
-        """get_user_teams returns teams from cache when cache hit."""
-        mock_team = MagicMock()
-        mock_team.id = "team-1"
-        mock_db.query.return_value.filter.return_value.all.return_value = [mock_team]
-        mock_db.commit = MagicMock()
+    async def test_get_user_teams_cache_hit_with_objects(self, service, mock_db):
+        """get_user_teams returns teams from cache when cache hit with team objects."""
+        now = datetime.now(timezone.utc)
+        cached_teams = [
+            {
+                "id": "team-1",
+                "name": "Team One",
+                "slug": "team-one",
+                "description": "Test team",
+                "created_by": "admin@example.com",
+                "is_personal": False,
+                "visibility": "public",
+                "max_members": 100,
+                "is_active": True,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            }
+        ]
 
         mock_cache = AsyncMock()
-        mock_cache.get_user_teams = AsyncMock(return_value=["team-1"])
+        mock_cache.get_user_teams = AsyncMock(return_value=cached_teams)
         service._get_auth_cache = MagicMock(return_value=mock_cache)
 
         result = await service.get_user_teams("user@test.com")
-        assert result == [mock_team]
+        assert len(result) == 1
+        assert result[0].id == "team-1"
+        assert result[0].name == "Team One"
 
     @pytest.mark.asyncio
     async def test_get_user_teams_cache_hit_empty(self, service, mock_db):

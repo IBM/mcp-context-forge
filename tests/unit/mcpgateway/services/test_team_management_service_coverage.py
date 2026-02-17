@@ -453,21 +453,47 @@ class TestGetUserTeamsCachePaths:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_cache_hit_with_ids(self, svc, db):
-        """Cached team IDs fetches from DB."""
+    async def test_cache_hit_with_objects(self, svc, db):
+        """Cached team objects are reconstructed from cache."""
+        now = datetime.now(timezone.utc)
+        cached_teams = [
+            {
+                "id": "t1",
+                "name": "Team 1",
+                "slug": "team-1",
+                "description": "Test",
+                "created_by": "admin@example.com",
+                "is_personal": False,
+                "visibility": "public",
+                "max_members": 100,
+                "is_active": True,
+                "created_at": now.isoformat(),
+                "updated_at": now.isoformat(),
+            },
+            {
+                "id": "t2",
+                "name": "Team 2",
+                "slug": "team-2",
+                "description": None,
+                "created_by": "user@example.com",
+                "is_personal": True,
+                "visibility": "private",
+                "max_members": None,
+                "is_active": True,
+                "created_at": now.isoformat(),
+                "updated_at": None,
+            },
+        ]
         mock_cache = MagicMock()
-        mock_cache.get_user_teams = AsyncMock(return_value=["t1", "t2"])
-
-        team1 = _mock_team(id="t1")
-        mock_query = MagicMock()
-        mock_filter = MagicMock()
-        mock_filter.all = MagicMock(return_value=[team1])
-        mock_query.filter = MagicMock(return_value=mock_filter)
-        db.query = MagicMock(return_value=mock_query)
+        mock_cache.get_user_teams = AsyncMock(return_value=cached_teams)
 
         with patch.object(svc, "_get_auth_cache", return_value=mock_cache):
             result = await svc.get_user_teams("u@t.com")
-        assert result == [team1]
+        assert len(result) == 2
+        assert result[0].id == "t1"
+        assert result[0].name == "Team 1"
+        assert result[1].id == "t2"
+        assert result[1].name == "Team 2"
 
     @pytest.mark.asyncio
     async def test_cache_hit_db_failure_falls_through(self, svc, db):
