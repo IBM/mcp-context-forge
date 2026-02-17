@@ -669,8 +669,8 @@ class AuthCache:
             except Exception as e:
                 logger.warning(f"AuthCache Redis invalidate_team_roles failed: {e}")
 
-    async def get_user_teams(self, cache_key: str) -> Optional[List[str]]:
-        """Get cached team IDs for a user.
+    async def get_user_teams(self, cache_key: str) -> Optional[List[Dict[str, Any]]]:
+        """Get cached team objects for a user.
 
         The cache_key should be in the format "email:include_personal" to
         distinguish between calls with different include_personal flags.
@@ -678,7 +678,7 @@ class AuthCache:
         Returns:
             - None: Cache miss (caller should query DB)
             - Empty list: User has no teams (cached result)
-            - List of team IDs: Cached team IDs
+            - List of team dicts: Cached team objects
 
         Args:
             cache_key: Cache key in format "email:include_personal"
@@ -711,16 +711,16 @@ class AuthCache:
                     # Third-Party
                     import orjson  # pylint: disable=import-outside-toplevel
 
-                    team_ids = orjson.loads(data)
+                    teams = orjson.loads(data)
 
                     # Write-through: populate L1 from Redis hit
                     with self._lock:
                         self._teams_list_cache[cache_key] = CacheEntry(
-                            value=team_ids,
+                            value=teams,
                             expiry=time.time() + self._teams_list_ttl,
                         )
 
-                    return team_ids
+                    return teams
                 self._redis_miss_count += 1
             except Exception as e:
                 logger.warning(f"AuthCache Redis get_user_teams failed: {e}")
@@ -728,17 +728,17 @@ class AuthCache:
         self._miss_count += 1
         return None
 
-    async def set_user_teams(self, cache_key: str, team_ids: List[str]) -> None:
-        """Store team IDs for a user in cache.
+    async def set_user_teams(self, cache_key: str, teams: List[Dict[str, Any]]) -> None:
+        """Store team objects for a user in cache.
 
         Args:
             cache_key: Cache key in format "email:include_personal"
-            team_ids: List of team IDs the user belongs to
+            teams: List of team dicts to cache
 
         Examples:
             >>> import asyncio
             >>> cache = AuthCache()
-            >>> asyncio.run(cache.set_user_teams("test@example.com:True", ["team-1", "team-2"]))
+            >>> asyncio.run(cache.set_user_teams("test@example.com:True", [{"id": "team-1", "name": "Team 1"}]))
         """
         if not self._enabled or not self._teams_list_enabled:
             return
@@ -751,14 +751,14 @@ class AuthCache:
                 import orjson  # pylint: disable=import-outside-toplevel
 
                 redis_key = self._get_redis_key("teams", cache_key)
-                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(team_ids))
+                await redis.setex(redis_key, self._teams_list_ttl, orjson.dumps(teams))
             except Exception as e:
                 logger.warning(f"AuthCache Redis set_user_teams failed: {e}")
 
         # Store in in-memory cache
         with self._lock:
             self._teams_list_cache[cache_key] = CacheEntry(
-                value=team_ids,
+                value=teams,
                 expiry=time.time() + self._teams_list_ttl,
             )
 

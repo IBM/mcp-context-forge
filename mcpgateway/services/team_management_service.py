@@ -907,19 +907,32 @@ class TeamManagementService:
         cache_key = f"{user_email}:{include_personal}"
 
         if cache:
-            cached_team_ids = await cache.get_user_teams(cache_key)
-            if cached_team_ids is not None:
-                if not cached_team_ids:  # Empty list = user has no teams
+            cached_teams = await cache.get_user_teams(cache_key)
+            if cached_teams is not None:
+                if not cached_teams:  # Empty list = user has no teams
                     return []
-                # Fetch full team objects by IDs (fast indexed lookup)
+                # Reconstruct EmailTeam objects from cached dicts
                 try:
-                    teams = self.db.query(EmailTeam).filter(EmailTeam.id.in_(cached_team_ids), EmailTeam.is_active.is_(True)).all()
-                    self.db.commit()  # Release transaction to avoid idle-in-transaction
+                    teams = [
+                        EmailTeam(
+                            id=team["id"],
+                            name=team["name"],
+                            slug=team.get("slug"),
+                            description=team.get("description"),
+                            created_by=team.get("created_by"),
+                            is_personal=team.get("is_personal", False),
+                            visibility=team.get("visibility", "public"),
+                            max_members=team.get("max_members"),
+                            is_active=team.get("is_active", True),
+                            created_at=datetime.fromisoformat(team["created_at"]) if team.get("created_at") else None,
+                            updated_at=datetime.fromisoformat(team["updated_at"]) if team.get("updated_at") else None,
+                        )
+                        for team in cached_teams
+                    ]
                     return teams
                 except Exception as e:
-                    self.db.rollback()
-                    logger.warning(f"Failed to fetch teams by IDs from cache: {e}")
-                    # Fall through to full query
+                    logger.warning(f"Failed to reconstruct teams from cache: {e}")
+                    # Fall through to DB query
 
         # Cache miss or caching disabled - do full query
         try:
@@ -931,10 +944,25 @@ class TeamManagementService:
             teams = query.all()
             self.db.commit()  # Release transaction to avoid idle-in-transaction
 
-            # Update cache with team IDs
+            # Update cache with serialized team objects
             if cache:
-                team_ids = [t.id for t in teams]
-                await cache.set_user_teams(cache_key, team_ids)
+                team_dicts = [
+                    {
+                        "id": str(team.id),
+                        "name": team.name,
+                        "slug": team.slug,
+                        "description": team.description,
+                        "created_by": team.created_by,
+                        "is_personal": team.is_personal,
+                        "visibility": team.visibility,
+                        "max_members": team.max_members,
+                        "is_active": team.is_active,
+                        "created_at": team.created_at.isoformat() if team.created_at else None,
+                        "updated_at": team.updated_at.isoformat() if team.updated_at else None,
+                    }
+                    for team in teams
+                ]
+                await cache.set_user_teams(cache_key, team_dicts)
 
             return teams
 
