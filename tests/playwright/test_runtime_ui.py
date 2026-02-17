@@ -417,6 +417,118 @@ class TestRuntimeUI:
             if runtime_id:
                 runtime_page.api_cleanup_runtime(runtime_id)
 
+    def test_full_docker_lifecycle_via_ui_actions(
+        self, runtime_page: RuntimePage
+    ):
+        """Run full UI lifecycle: deploy, approve, logs/clear, stop/start/stop, delete."""
+        self._open_runtime_panel_or_skip(runtime_page)
+
+        runtime_name = self._runtime_name("full")
+        runtime_id: str | None = None
+
+        try:
+            runtime_id = self._deploy_runtime_via_ui(runtime_page, runtime_name)
+            approval_id = self._find_pending_approval_or_skip(runtime_page, runtime_id)
+
+            self._show_all_approvals(runtime_page)
+            approve_button = runtime_page.approval_action_button(approval_id, "approve")
+            expect(approve_button).to_be_visible(timeout=20000)
+
+            runtime_page.page.once(
+                "dialog", lambda dialog: dialog.accept("Playwright full lifecycle approval")
+            )
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/approvals/{approval_id}/approve"
+                in response.url
+                and response.request.method == "POST",
+                timeout=30000,
+            ) as approve_response:
+                approve_button.click()
+            assert approve_response.value.status < 400
+
+            runtime_status = None
+            runtime_error = None
+            for _ in range(30):
+                runtime_payload = runtime_page.api_get_runtime(runtime_id, refresh=True)
+                runtime_status = runtime_payload.get("status")
+                runtime_error = runtime_payload.get("error_message")
+                if runtime_status in {"running", "connected"}:
+                    break
+                if runtime_status == "error":
+                    pytest.fail(f"Runtime failed after approval: {runtime_error}")
+                runtime_page.page.wait_for_timeout(1000)
+            assert runtime_status in {"running", "connected"}
+
+            runtime_page.refresh_runtimes_button.click()
+            runtime_page.page.wait_for_timeout(800)
+
+            logs_button = runtime_page.runtime_action_button(runtime_id, "logs")
+            stop_button = runtime_page.runtime_action_button(runtime_id, "stop")
+            start_button = runtime_page.runtime_action_button(runtime_id, "start")
+            delete_button = runtime_page.runtime_action_button(runtime_id, "delete")
+
+            expect(logs_button).to_be_visible(timeout=20000)
+            expect(stop_button).to_be_enabled(timeout=20000)
+            expect(start_button).to_be_disabled()
+            expect(delete_button).to_be_visible()
+
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/{runtime_id}/logs?tail=200" in response.url
+                and response.request.method == "GET",
+                timeout=30000,
+            ) as logs_response:
+                logs_button.click()
+            assert logs_response.value.status < 400
+
+            runtime_page.clear_logs_button.click()
+            expect(runtime_page.logs_output).to_have_text("No logs loaded.")
+
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/{runtime_id}/stop" in response.url
+                and response.request.method == "POST",
+                timeout=30000,
+            ) as stop_response:
+                stop_button.click()
+            assert stop_response.value.status < 400
+
+            runtime_page.refresh_runtimes_button.click()
+            runtime_page.page.wait_for_timeout(800)
+            expect(runtime_page.runtime_action_button(runtime_id, "start")).to_be_enabled(timeout=20000)
+
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/{runtime_id}/start" in response.url
+                and response.request.method == "POST",
+                timeout=30000,
+            ) as start_response:
+                runtime_page.runtime_action_button(runtime_id, "start").click()
+            assert start_response.value.status < 400
+
+            runtime_page.refresh_runtimes_button.click()
+            runtime_page.page.wait_for_timeout(800)
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/{runtime_id}/stop" in response.url
+                and response.request.method == "POST",
+                timeout=30000,
+            ) as second_stop_response:
+                runtime_page.runtime_action_button(runtime_id, "stop").click()
+            assert second_stop_response.value.status < 400
+
+            runtime_page.page.once("dialog", lambda dialog: dialog.accept())
+            with runtime_page.page.expect_response(
+                lambda response: f"/runtimes/{runtime_id}" in response.url
+                and response.request.method == "DELETE",
+                timeout=30000,
+            ) as delete_response:
+                runtime_page.runtime_action_button(runtime_id, "delete").click()
+            assert delete_response.value.status < 400
+
+            runtime_page.page.wait_for_timeout(1000)
+            runtime_after_delete = runtime_page.api_get_runtime(runtime_id)
+            assert runtime_after_delete.get("status") == "deleted"
+        finally:
+            if runtime_id:
+                runtime_page.api_cleanup_runtime(runtime_id)
+
     def test_stop_action_when_running_runtime_is_available(
         self, runtime_page: RuntimePage
     ):

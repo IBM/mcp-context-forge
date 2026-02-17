@@ -305,6 +305,17 @@ class RuntimePage(BasePage):
             self.page.wait_for_timeout(wait_ms)
         return None
 
+    def api_get_runtime(self, runtime_id: str, refresh: bool = False) -> Dict[str, Any]:
+        """Fetch a runtime deployment by id."""
+        query = "?refresh=true" if refresh else ""
+        response = self.page.request.get(
+            f"/runtimes/{runtime_id}{query}",
+            headers=self._auth_headers(),
+        )
+        expect(response).to_be_ok()
+        payload = response.json()
+        return payload if isinstance(payload, dict) else {}
+
     def api_find_pending_approval_for_runtime(
         self, runtime_id: str, retries: int = 10, wait_ms: int = 400
     ) -> Dict[str, Any] | None:
