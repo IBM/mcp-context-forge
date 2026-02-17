@@ -11,3 +11,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dynamic = ["version"]
+
+
+[tool.maturin]
+include = ["url_reputation.pyi"]
