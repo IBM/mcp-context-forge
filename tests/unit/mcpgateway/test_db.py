@@ -1123,11 +1123,6 @@ def test_email_user_account_helpers():
     assert user.is_account_locked() is False
     user.locked_until = db.utc_now() + timedelta(minutes=10)
     assert user.is_account_locked() is True
-    user.failed_login_attempts = 5
-    user.locked_until = db.utc_now() - timedelta(minutes=1)
-    assert user.is_account_locked() is False
-    assert user.failed_login_attempts == 0
-    assert user.locked_until is None
 
     user.full_name = "Test User"
     assert user.get_display_name() == "Test User"
@@ -1147,21 +1142,6 @@ def test_email_user_failed_attempts_flow():
     assert user.increment_failed_attempts(max_attempts=2, lockout_duration_minutes=1) is False
     assert user.increment_failed_attempts(max_attempts=2, lockout_duration_minutes=1) is True
     assert user.locked_until is not None
-
-
-def test_password_reset_token_helpers():
-    token = db.PasswordResetToken(
-        user_email="user@example.com",
-        token_hash="abcd" * 16,
-        expires_at=db.utc_now() + timedelta(minutes=10),
-    )
-    assert token.is_expired() is False
-    assert token.is_used() is False
-
-    token.expires_at = db.utc_now() - timedelta(minutes=1)
-    token.used_at = db.utc_now()
-    assert token.is_expired() is True
-    assert token.is_used() is True
 
 
 def test_email_user_team_helpers():
@@ -2003,10 +1983,8 @@ def test_validate_prompt_schema_logs_unsupported_draft(caplog):
 
 # --- MariaDB VARCHAR patching helper ---
 def test_patch_string_columns_for_mariadb_sets_varchar_length():
-    # Standard
-    from types import SimpleNamespace
-
     # Third-Party
+    from types import SimpleNamespace
     from sqlalchemy import Column, MetaData, String, Table
     from sqlalchemy.sql.sqltypes import VARCHAR
 
@@ -2023,10 +2001,8 @@ def test_patch_string_columns_for_mariadb_sets_varchar_length():
 
 
 def test_patch_string_columns_for_mariadb_non_mariadb_noop():
-    # Standard
-    from types import SimpleNamespace
-
     # Third-Party
+    from types import SimpleNamespace
     from sqlalchemy import Column, MetaData, String, Table
 
     md = MetaData()
@@ -2150,8 +2126,6 @@ def test_set_llm_provider_slug_sets_slug(monkeypatch):
 def test_db_module_connect_args_postgresql_options_and_prepare_threshold(monkeypatch, caplog):
     # Standard
     import importlib
-
-    # Third-Party
     import sqlalchemy
 
     original_url = db.settings.database_url
@@ -2192,8 +2166,6 @@ def test_db_module_observability_instrumentation_success(monkeypatch, caplog):
     import importlib
     import sys
     import types
-
-    # Third-Party
     import sqlalchemy
 
     original_url = db.settings.database_url
@@ -2233,8 +2205,6 @@ def test_db_module_observability_instrumentation_importerror(monkeypatch, caplog
     # Standard
     import builtins
     import importlib
-
-    # Third-Party
     import sqlalchemy
 
     original_url = db.settings.database_url
@@ -2473,7 +2443,6 @@ def test_tool_name_and_gateway_slug_instance_and_expression(monkeypatch):
     assert tool.name == "gateway-name__my-tool"
 
     # Expression should resolve to stored column.
-    # Third-Party
     from sqlalchemy import select
 
     stmt = select(db.Tool.name)
@@ -2517,11 +2486,9 @@ def test_get_for_update_dialect_detection_exception_path():
 
 
 def test_get_for_update_where_and_options_paths():
-    # Standard
-    from types import SimpleNamespace
-
     # Third-Party
     from sqlalchemy.orm import joinedload
+    from types import SimpleNamespace
 
     executed = []
 

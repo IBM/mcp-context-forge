@@ -65,7 +65,7 @@ from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
+from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import EmailApiToken, EmailTeam, extract_json_field
 from mcpgateway.db import Gateway as DbGateway
@@ -121,6 +121,7 @@ from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.catalog_service import catalog_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
+from mcpgateway.services.embedding_service import index_tool_fire_and_forget
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError, GatewayService
@@ -131,7 +132,6 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_session_pool import get_mcp_session_pool
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.performance_service import get_performance_service
-from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.plugin_service import get_plugin_service
 from mcpgateway.services.prompt_service import PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError
@@ -151,7 +151,6 @@ from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import decode_auth
-from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
@@ -185,113 +184,6 @@ except ImportError:
 # This will be set by main.py when it imports admin_router
 logging_service: Optional[LoggingService] = None
 LOGGER: logging.Logger = logging.getLogger("mcpgateway.admin")
-
-UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
-    "overview": ("overview",),
-    "servers": ("catalog",),
-    "gateways": ("gateways",),
-    "tools": ("tools", "tool-ops"),
-    "prompts": ("prompts",),
-    "resources": ("resources",),
-    "roots": ("roots",),
-    "mcp-registry": ("mcp-registry",),
-    "metrics": ("metrics",),
-    "plugins": ("plugins",),
-    "export-import": ("export-import",),
-    "logs": ("logs",),
-    "version-info": ("version-info",),
-    "maintenance": ("maintenance",),
-    "teams": ("teams",),
-    "users": ("users",),
-    "agents": ("a2a-agents", "grpc-services"),
-    "tokens": ("tokens",),
-    "settings": ("llm-settings",),
-}
-UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS: frozenset[str] = frozenset({"logout", "team_selector"})
-UI_HIDE_SECTIONS_COOKIE_NAME = "mcpgateway_ui_hide_sections"
-UI_HIDE_SECTIONS_COOKIE_MAX_AGE = 30 * 24 * 60 * 60  # 30 days
-
-
-def _normalize_ui_hide_values(raw: Any, valid_values: frozenset[str], aliases: Optional[Dict[str, str]] = None) -> set[str]:
-    """Normalize UI hide values from CSV/list input into a validated set.
-
-    Args:
-        raw: Source value (CSV string, iterable, or ``None``).
-        valid_values: Allowed normalized values.
-        aliases: Optional alias mapping to canonical values.
-
-    Returns:
-        set[str]: Lowercase validated values with aliases resolved.
-    """
-    if raw is None:
-        return set()
-
-    tokens: list[str] = []
-    if isinstance(raw, str):
-        tokens = [item.strip() for item in raw.split(",")]
-    elif isinstance(raw, (list, tuple, set)):
-        tokens = [str(item).strip() for item in raw]
-    else:
-        return set()
-
-    normalized: set[str] = set()
-    for token in tokens:
-        if not token:
-            continue
-        item = token.lower()
-        if aliases:
-            item = aliases.get(item, item)
-        if item in valid_values:
-            normalized.add(item)
-    return normalized
-
-
-def get_ui_visibility_config(request: Request) -> Dict[str, Any]:
-    """Build final UI visibility settings for the current admin request.
-
-    Args:
-        request: Incoming FastAPI request.
-
-    Returns:
-        Dict[str, Any]: Hidden sections/header items/tabs plus cookie update intent.
-    """
-    hidden_sections = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_sections", []), UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
-    hidden_header_items = _normalize_ui_hide_values(getattr(settings, "mcpgateway_ui_hide_header_items", []), UI_HIDABLE_HEADER_ITEMS)
-
-    if bool(getattr(settings, "mcpgateway_ui_embedded", False)):
-        hidden_header_items.update(UI_EMBEDDED_DEFAULT_HIDDEN_HEADER_ITEMS)
-
-    query_ui_hide_raw = request.query_params.get("ui_hide")
-    query_ui_hide_values = _normalize_ui_hide_values(query_ui_hide_raw, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES) if query_ui_hide_raw is not None else set()
-
-    if query_ui_hide_raw is not None:
-        # Query override is additive and also becomes the persisted session value.
-        hidden_sections.update(query_ui_hide_values)
-    else:
-        cookie_ui_hide_raw = request.cookies.get(UI_HIDE_SECTIONS_COOKIE_NAME)
-        hidden_sections.update(_normalize_ui_hide_values(cookie_ui_hide_raw, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES))
-
-    hidden_tabs: set[str] = set()
-    for section in hidden_sections:
-        hidden_tabs.update(UI_SECTION_TO_TABS.get(section, ()))
-
-    cookie_action: Optional[str] = None
-    cookie_value: Optional[str] = None
-    if query_ui_hide_raw is not None:
-        # Empty query clears persisted overrides.
-        if query_ui_hide_values:
-            cookie_action = "set"
-            cookie_value = ",".join(sorted(query_ui_hide_values))
-        else:
-            cookie_action = "delete"
-
-    return {
-        "hidden_sections": sorted(hidden_sections),
-        "hidden_header_items": sorted(hidden_header_items),
-        "hidden_tabs": sorted(hidden_tabs),
-        "cookie_action": cookie_action,
-        "cookie_value": cookie_value,
-    }
 
 
 def set_logging_service(service: LoggingService):
@@ -969,319 +861,6 @@ admin_router = APIRouter(prefix="/admin", tags=["Admin UI"])
 ####################
 
 
-def _escape_like(value: str) -> str:
-    """Escape SQL LIKE wildcard characters.
-
-    Args:
-        value (str): Raw search string.
-
-    Returns:
-        str: Escaped string safe for use in ``LIKE`` expressions with ``ESCAPE '\\'``.
-    """
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-
-def _like_contains(column, value: str):
-    """Case-insensitive substring match with proper LIKE wildcard escaping.
-
-    Wraps the escaped *value* with ``%`` wildcards and adds an explicit
-    ``ESCAPE '\\\\'`` clause so that ``%`` and ``_`` in the search term are
-    treated literally on all backends (SQLite requires the clause).
-
-    Args:
-        column: SQLAlchemy column expression (pre-wrapped with ``func.lower``
-            / ``coalesce`` as needed by the caller).
-        value: Raw search term — escaping is applied internally.
-
-    Returns:
-        A SQLAlchemy binary expression suitable for ``.where()``.
-    """
-    return column.like("%" + _escape_like(value) + "%", escape="\\")
-
-
-async def _get_user_team_ids(user: dict, db: Session) -> list:
-    """Return team IDs for the authenticated user.
-
-    When called from :func:`admin_unified_search`, the user dict carries a
-    ``_cached_team_ids`` key so the expensive lookup is executed only once
-    per request instead of once per entity type.
-
-    If the auth context includes explicit ``token_teams`` (API tokens), the
-    returned IDs are derived from that token scope so search endpoints cannot
-    return entities outside the token's team restrictions.
-
-    Args:
-        user (dict): Authenticated user context.
-        db (Session): Database session.
-
-    Returns:
-        list: Team ID list for the user.
-    """
-    cached = user.get("_cached_team_ids")
-    if cached is not None:
-        return cached
-
-    if "token_teams" in user:
-        token_teams = user.get("token_teams")
-        if token_teams is not None:
-            team_ids: list[str] = []
-            for team in token_teams:
-                if isinstance(team, dict):
-                    team_id = team.get("id")
-                    if isinstance(team_id, str) and team_id:
-                        team_ids.append(team_id)
-                elif isinstance(team, str) and team:
-                    team_ids.append(team)
-            return team_ids
-
-    user_email = get_user_email(user)
-    team_service = TeamManagementService(db)
-    user_teams = await team_service.get_user_teams(user_email)
-    return [t.id for t in user_teams]
-
-
-def _is_explicit_token_team_scope(user: Any) -> bool:
-    """Return whether the auth context carries explicit token team scope.
-
-    Tokens with ``token_teams`` present and not ``None`` are scope-constrained
-    (including public-only tokens with ``[]``). ``None`` denotes admin bypass.
-
-    Args:
-        user (Any): Authenticated user context.
-
-    Returns:
-        bool: True when ``token_teams`` is present and not ``None``.
-    """
-    if not isinstance(user, dict):
-        return False
-    return "token_teams" in user and user.get("token_teams") is not None
-
-
-def _owner_access_condition(owner_column, team_column, *, user_email: str, team_ids: list[str], user: Any):
-    """Build owner visibility predicate honoring token team scoping.
-
-    For explicit token scopes, owner visibility is constrained to token teams.
-    For legacy/session contexts without explicit scope (or admin bypass), keep
-    existing owner visibility semantics.
-
-    Args:
-        owner_column: SQLAlchemy owner-email column expression.
-        team_column: SQLAlchemy team-id column expression.
-        user_email (str): Current user email.
-        team_ids (list[str]): Team IDs visible to this auth context.
-        user (Any): Authenticated user context.
-
-    Returns:
-        Any: SQLAlchemy boolean predicate for owner visibility.
-    """
-    if _is_explicit_token_team_scope(user):
-        if not team_ids:
-            return false()
-        return and_(owner_column == user_email, team_column.in_(team_ids))
-    return owner_column == user_email
-
-
-async def _has_permission(
-    *,
-    db: Session,
-    user: dict,
-    permission: str,
-    team_id: Optional[str] = None,
-    allow_admin_bypass: bool = False,
-    check_any_team: bool = False,
-) -> bool:
-    """Check a permission for the current user context.
-
-    Args:
-        db (Session): Database session.
-        user (dict): Authenticated user context.
-        permission (str): Permission to evaluate.
-        team_id (Optional[str]): Optional team scope for the permission check.
-        allow_admin_bypass (bool): Whether admin bypass is allowed.
-        check_any_team (bool): Whether to check across all team-scoped roles.
-
-    Returns:
-        bool: True when permission is granted.
-    """
-    permission_service = PermissionService(db)
-    return await permission_service.check_permission(
-        user_email=get_user_email(user),
-        permission=permission,
-        team_id=team_id,
-        ip_address=user.get("ip_address"),
-        user_agent=user.get("user_agent"),
-        allow_admin_bypass=allow_admin_bypass,
-        check_any_team=check_any_team,
-    )
-
-
-def _normalize_search_query(query: Optional[str]) -> str:
-    """Normalize search query values for consistent filtering.
-
-    Args:
-        query (Optional[str]): Raw query value or FastAPI ``Query`` wrapper.
-
-    Returns:
-        str: Lowercased, trimmed query string (empty string when unset).
-    """
-    if query is None:
-        return ""
-    if isinstance(query, str):
-        return query.strip().lower()
-
-    # Support direct unit-test invocation where FastAPI Query(...) defaults
-    # can be passed through instead of resolved string values.
-    default_value = getattr(query, "default", None)
-    if default_value is None:
-        return ""
-    if isinstance(default_value, str):
-        return default_value.strip().lower()
-    return str(default_value).strip().lower()
-
-
-def _normalize_tags_query(tags: Any) -> str:
-    """Normalize tags query values.
-
-    Handles plain strings and FastAPI `Query(...)` defaults when handlers are
-    called directly in unit tests.
-
-    Args:
-        tags (Any): Raw tags value or FastAPI ``Query`` wrapper.
-
-    Returns:
-        str: Trimmed tags expression (empty string when unset).
-    """
-    if tags is None:
-        return ""
-    if isinstance(tags, str):
-        return tags.strip()
-
-    default_value = getattr(tags, "default", None)
-    if default_value is None:
-        return ""
-    if isinstance(default_value, str):
-        return default_value.strip()
-    return str(default_value).strip()
-
-
-def _normalize_int_query(value: Any, fallback: int) -> int:
-    """Normalize integer query values, including FastAPI Query defaults.
-
-    Args:
-        value (Any): Raw integer value or FastAPI ``Query`` wrapper.
-        fallback (int): Fallback value when normalization fails.
-
-    Returns:
-        int: Normalized integer value.
-    """
-    if isinstance(value, int):
-        return value
-
-    default_value = getattr(value, "default", None)
-    if isinstance(default_value, int):
-        return default_value
-
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return fallback
-
-
-_TAG_MAX_GROUPS = 20
-_TAG_MAX_TERMS_PER_GROUP = 10
-
-
-def _parse_tag_filter_groups(tags: Optional[str]) -> list[list[str]]:
-    """Parse tag filter expressions.
-
-    Expression syntax:
-    - `,` separates OR groups (capped at :data:`_TAG_MAX_GROUPS`)
-    - `+` separates AND terms inside a group (capped at :data:`_TAG_MAX_TERMS_PER_GROUP`)
-
-    Examples:
-      - `"prod,staging"` => [["prod"], ["staging"]]
-      - `"mcp+critical"` => [["mcp", "critical"]]
-      - `"mcp+critical,ui"` => [["mcp", "critical"], ["ui"]]
-
-    Args:
-        tags (Optional[str]): Tag expression with comma-separated OR groups and
-            plus-separated AND terms.
-
-    Returns:
-        list[list[str]]: Parsed tag groups ready for SQL filter construction.
-    """
-    if not tags:
-        return []
-
-    groups: list[list[str]] = []
-    for raw_group in tags.split(","):
-        if len(groups) >= _TAG_MAX_GROUPS:
-            break
-        candidate = [term.strip() for term in raw_group.split("+") if term.strip()][:_TAG_MAX_TERMS_PER_GROUP]
-        if candidate:
-            groups.append(candidate)
-    return groups
-
-
-def _apply_tag_filter_groups(query: Any, db: Session, column: Any, tag_groups: list[list[str]]) -> Any:
-    """Apply parsed tag filter groups to a SQLAlchemy query.
-
-    Args:
-        query (Any): SQLAlchemy ``select`` query to update.
-        db (Session): Database session.
-        column (Any): SQLAlchemy model column containing tags.
-        tag_groups (list[list[str]]): Parsed OR-of-AND tag groups.
-
-    Returns:
-        Any: Updated query with tag filters applied.
-    """
-    if not tag_groups:
-        return query
-
-    group_exprs = []
-    for group in tag_groups:
-        # Single term group => OR semantics (term exists)
-        # Multi-term group => AND semantics (all terms exist)
-        group_exprs.append(json_contains_tag_expr(db, column, group, match_any=len(group) == 1))
-
-    if len(group_exprs) == 1:
-        return query.where(group_exprs[0])
-    return query.where(or_(*group_exprs))
-
-
-def _build_search_response(
-    *,
-    entity_key: str,
-    entity_type: str,
-    items: list[dict[str, Any]],
-    query: str,
-    tags: str,
-    tag_groups: list[list[str]],
-) -> dict[str, Any]:
-    """Build a consistent search response while preserving legacy keys.
-
-    Args:
-        entity_key (str): Legacy entity key (for example ``tools``).
-        entity_type (str): Canonical entity type label.
-        items (list[dict[str, Any]]): Serialized entity items.
-        query (str): Normalized free-text query.
-        tags (str): Normalized tag expression.
-        tag_groups (list[list[str]]): Parsed tag groups.
-
-    Returns:
-        dict[str, Any]: Unified search payload with legacy and standard keys.
-    """
-    filters_applied = {"q": query, "tags": tags, "tag_groups": tag_groups}
-    return {
-        entity_key: items,  # legacy key for backward compatibility
-        "items": items,
-        "count": len(items),
-        "entity_type": entity_type,
-        "query": query,
-        "filters_applied": filters_applied,
-    }
-
-
 @admin_router.get("/overview/partial")
 @require_permission("admin.overview", allow_admin_bypass=False)
 async def get_overview_partial(
@@ -1946,8 +1525,6 @@ async def admin_servers_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -1967,8 +1544,6 @@ async def admin_servers_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        q (str): Free-text query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): If True, include inactive servers in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
@@ -1982,9 +1557,6 @@ async def admin_servers_partial_html(
         encoded server data when templates expect it.
     """
     LOGGER.debug(f"User {get_user_email(user)} requested servers HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, team_id={team_id})")
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
 
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -1992,7 +1564,9 @@ async def admin_servers_partial_html(
     user_email = get_user_email(user)
 
     # Team scoping
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     # Build base query with eager loading to avoid N+1 queries
     query = select(DbServer).options(
@@ -2026,22 +1600,11 @@ async def admin_servers_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbServer.owner_email, DbServer.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbServer.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
         access_conditions.append(DbServer.visibility == "public")
         query = query.where(or_(*access_conditions))
-
-    if search_query:
-        query = query.where(
-            or_(
-                _like_contains(func.lower(DbServer.id), search_query),
-                _like_contains(func.lower(DbServer.name), search_query),
-                _like_contains(func.lower(coalesce(DbServer.description, "")), search_query),
-            )
-        )
-
-    query = _apply_tag_filter_groups(query, db, DbServer.tags, tag_groups)
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbServer.created_at), desc(DbServer.id))
@@ -2052,10 +1615,6 @@ async def admin_servers_partial_html(
         query_params["include_inactive"] = "true"
     if team_id:
         query_params["team_id"] = team_id
-    if search_query:
-        query_params["q"] = search_query
-    if normalized_tags:
-        query_params["tags"] = normalized_tags
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -2133,7 +1692,6 @@ async def admin_servers_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
-            "query_params": query_params,
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -2889,30 +2447,13 @@ async def admin_ui(
     """
     LOGGER.debug(f"User {get_user_email(user)} accessed the admin UI (team_id={team_id})")
     user_email = get_user_email(user)
-    ui_visibility_config = get_ui_visibility_config(request)
-    hidden_sections = set(ui_visibility_config["hidden_sections"])
-    hidden_header_items = set(ui_visibility_config["hidden_header_items"])
 
     # --------------------------------------------------------------------------------
     # Load user teams so we can validate team_id
     # --------------------------------------------------------------------------------
     user_teams = []
     team_service = None
-    sections_requiring_user_teams = {
-        "teams",
-        "tokens",
-        "users",
-        "tools",
-        "servers",
-        "resources",
-        "prompts",
-        "gateways",
-        "agents",
-    }
-    should_load_user_teams = getattr(settings, "email_auth_enabled", False) and (
-        team_id is not None or "team_selector" not in hidden_header_items or bool(sections_requiring_user_teams - hidden_sections)
-    )
-    if should_load_user_teams:
+    if getattr(settings, "email_auth_enabled", False):
         try:
             team_service = TeamManagementService(db)
             if user_email and "@" in user_email:
@@ -3122,53 +2663,48 @@ async def admin_ui(
     # For each returned list, try to produce consistent "model_dump(by_alias=True)" dicts,
     # applying server-side filtering as a fallback if the service didn't accept team_id.
     # --------------------------------------------------------------------------------
-    raw_tools = []
-    if "tools" not in hidden_sections:
-        try:
-            raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-            if isinstance(raw_tools, tuple):
-                raw_tools = raw_tools[0]
-        except Exception as e:
-            LOGGER.exception("Failed to load tools for user: %s", e)
+    try:
+        raw_tools = await _call_list_with_team_support(tool_service.list_tools, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+        if isinstance(raw_tools, tuple):
+            raw_tools = raw_tools[0]
+    except Exception as e:
+        LOGGER.exception("Failed to load tools for user: %s", e)
+        raw_tools = []
 
-    raw_servers = []
-    if "servers" not in hidden_sections:
-        try:
-            raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-            # Handle tuple return (list, cursor)
-            if isinstance(raw_servers, tuple):
-                raw_servers = raw_servers[0]
-        except Exception as e:
-            LOGGER.exception("Failed to load servers for user: %s", e)
+    try:
+        raw_servers = await _call_list_with_team_support(server_service.list_servers, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+        # Handle tuple return (list, cursor)
+        if isinstance(raw_servers, tuple):
+            raw_servers = raw_servers[0]
+    except Exception as e:
+        LOGGER.exception("Failed to load servers for user: %s", e)
+        raw_servers = []
 
-    raw_resources = []
-    if "resources" not in hidden_sections:
-        try:
-            raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-            if isinstance(raw_resources, tuple):
-                raw_resources = raw_resources[0]
-        except Exception as e:
-            LOGGER.exception("Failed to load resources for user: %s", e)
+    try:
+        raw_resources = await _call_list_with_team_support(resource_service.list_resources, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+        if isinstance(raw_resources, tuple):
+            raw_resources = raw_resources[0]
+    except Exception as e:
+        LOGGER.exception("Failed to load resources for user: %s", e)
+        raw_resources = []
 
-    raw_prompts = []
-    if "prompts" not in hidden_sections:
-        try:
-            raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-            # Handle tuple return (list, cursor)
-            if isinstance(raw_prompts, tuple):
-                raw_prompts = raw_prompts[0]
-        except Exception as e:
-            LOGGER.exception("Failed to load prompts for user: %s", e)
+    try:
+        raw_prompts = await _call_list_with_team_support(prompt_service.list_prompts, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+        # Handle tuple return (list, cursor)
+        if isinstance(raw_prompts, tuple):
+            raw_prompts = raw_prompts[0]
+    except Exception as e:
+        LOGGER.exception("Failed to load prompts for user: %s", e)
+        raw_prompts = []
 
-    gateways_raw = []
-    if "gateways" not in hidden_sections:
-        try:
-            gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email, limit=0)
-            # Handle tuple return (list, cursor)
-            if isinstance(gateways_raw, tuple):
-                gateways_raw = gateways_raw[0]
-        except Exception as e:
-            LOGGER.exception("Failed to load gateways: %s", e)
+    try:
+        gateways_raw = await _call_list_with_team_support(gateway_service.list_gateways, db, include_inactive=include_inactive, user_email=user_email, limit=0)
+        # Handle tuple return (list, cursor)
+        if isinstance(gateways_raw, tuple):
+            gateways_raw = gateways_raw[0]
+    except Exception as e:
+        LOGGER.exception("Failed to load gateways: %s", e)
+        gateways_raw = []
 
     # Convert models to dicts and filter as needed
     def _to_dict_and_filter(raw_list):
@@ -3244,7 +2780,7 @@ async def admin_ui(
 
     # Load A2A agents if enabled
     a2a_agents = []
-    if "agents" not in hidden_sections and a2a_service and settings.mcpgateway_a2a_enabled:
+    if a2a_service and settings.mcpgateway_a2a_enabled:
         a2a_agents_raw = await a2a_service.list_agents_for_user(
             db,
             user_info=user_email,
@@ -3256,7 +2792,7 @@ async def admin_ui(
     # Load gRPC services if enabled and available
     grpc_services = []
     try:
-        if "agents" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
+        if GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
             grpc_services_raw = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
@@ -3308,17 +2844,12 @@ async def admin_ui(
             "mcpgateway_ui_tool_test_timeout": settings.mcpgateway_ui_tool_test_timeout,
             "selected_team_id": selected_team_id,
             "ui_airgapped": settings.mcpgateway_ui_airgapped,
-            "ui_hidden_sections": ui_visibility_config["hidden_sections"],
-            "ui_hidden_header_items": ui_visibility_config["hidden_header_items"],
-            "ui_hidden_tabs": ui_visibility_config["hidden_tabs"],
             # Password policy flags for frontend templates
             "password_min_length": getattr(settings, "password_min_length", 8),
             "password_require_uppercase": getattr(settings, "password_require_uppercase", False),
             "password_require_lowercase": getattr(settings, "password_require_lowercase", False),
             "password_require_numbers": getattr(settings, "password_require_numbers", False),
             "password_require_special": getattr(settings, "password_require_special", False),
-            # Token policy flags
-            "require_token_expiration": getattr(settings, "require_token_expiration", True),
         },
     )
 
@@ -3390,31 +2921,6 @@ async def admin_ui(
         except Exception as e:
             LOGGER.warning(f"Failed to set JWT token cookie for user {user}: {e}")
 
-    cookie_action = ui_visibility_config.get("cookie_action")
-    if cookie_action:
-        scope_root_path = request.scope.get("root_path", "") or ""
-        ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
-        use_secure = (settings.environment == "production") or settings.secure_cookies
-        samesite = settings.cookie_samesite
-        if cookie_action == "set":
-            response.set_cookie(
-                key=UI_HIDE_SECTIONS_COOKIE_NAME,
-                value=ui_visibility_config.get("cookie_value", ""),
-                max_age=UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
-                path=ui_cookie_path,
-                httponly=True,
-                secure=use_secure,
-                samesite=samesite,
-            )
-        elif cookie_action == "delete":
-            response.delete_cookie(
-                key=UI_HIDE_SECTIONS_COOKIE_NAME,
-                path=ui_cookie_path,
-                secure=use_secure,
-                httponly=True,
-                samesite=samesite,
-            )
-
     return response
 
 
@@ -3471,14 +2977,7 @@ async def admin_login_page(request: Request) -> Response:
     return request.app.state.templates.TemplateResponse(
         request,
         "login.html",
-        {
-            "request": request,
-            "root_path": root_path,
-            "secure_cookie_warning": secure_cookie_warning,
-            "ui_airgapped": settings.mcpgateway_ui_airgapped,
-            "prefill_email": prefill_email,
-            "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
-        },
+        {"request": request, "root_path": root_path, "secure_cookie_warning": secure_cookie_warning, "ui_airgapped": settings.mcpgateway_ui_airgapped, "prefill_email": prefill_email},
     )
 
 
@@ -3644,151 +3143,6 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
         LOGGER.error(f"Login handler error: {e}")
         root_path = request.scope.get("root_path", "")
         return RedirectResponse(url=f"{root_path}/admin/login?error=server_error", status_code=303)
-
-
-@admin_router.get("/forgot-password")
-async def admin_forgot_password_page(request: Request) -> Response:
-    """Render forgot-password page.
-
-    Args:
-        request: Incoming HTTP request.
-
-    Returns:
-        Response: Forgot-password page response.
-    """
-    root_path = settings.app_root_path
-    if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "forgot-password.html",
-        {
-            "request": request,
-            "root_path": root_path,
-            "password_reset_enabled": getattr(settings, "password_reset_enabled", True),
-            "ui_airgapped": settings.mcpgateway_ui_airgapped,
-        },
-    )
-
-
-@admin_router.post("/forgot-password")
-async def admin_forgot_password_handler(request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    """Handle forgot-password form submission.
-
-    Args:
-        request: Incoming HTTP request with form data.
-        db: Database session dependency.
-
-    Returns:
-        RedirectResponse: Redirect to login or forgot-password page with status.
-    """
-    root_path = request.scope.get("root_path", "")
-    if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
-    if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
-
-    try:
-        form = await request.form()
-        email_val = form.get("email")
-        email = str(email_val).strip() if email_val else ""
-        if not email:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=missing_email", status_code=303)
-
-        auth_service = EmailAuthService(db)
-        result = await auth_service.request_password_reset(email=email, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
-        if result.rate_limited:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=rate_limited", status_code=303)
-        return RedirectResponse(url=f"{root_path}/admin/login?notice=reset_email_sent", status_code=303)
-    except Exception as exc:
-        LOGGER.warning("Forgot-password request failed: %s", exc)
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=server_error", status_code=303)
-
-
-@admin_router.get("/reset-password/{token}")
-async def admin_reset_password_page(token: str, request: Request, db: Session = Depends(get_db)) -> Response:
-    """Render password reset form for a token.
-
-    Args:
-        token: One-time reset token.
-        request: Incoming HTTP request.
-        db: Database session dependency.
-
-    Returns:
-        Response: Reset-password page response.
-    """
-    root_path = settings.app_root_path
-    if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
-    if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
-
-    auth_service = EmailAuthService(db)
-    token_valid = False
-    token_error = None
-    try:
-        await auth_service.validate_password_reset_token(token=token, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
-        token_valid = True
-    except AuthenticationError as exc:
-        token_error = str(exc)
-
-    return request.app.state.templates.TemplateResponse(
-        request,
-        "reset-password.html",
-        {
-            "request": request,
-            "root_path": root_path,
-            "token": token,
-            "token_valid": token_valid,
-            "token_error": token_error,
-            "password_min_length": settings.password_min_length,
-            "ui_airgapped": settings.mcpgateway_ui_airgapped,
-        },
-    )
-
-
-@admin_router.post("/reset-password/{token}")
-async def admin_reset_password_handler(token: str, request: Request, db: Session = Depends(get_db)) -> RedirectResponse:
-    """Handle password reset form submission.
-
-    Args:
-        token: One-time reset token.
-        request: Incoming HTTP request with reset form data.
-        db: Database session dependency.
-
-    Returns:
-        RedirectResponse: Redirect to login or reset page with status.
-    """
-    root_path = request.scope.get("root_path", "")
-    if not getattr(settings, "email_auth_enabled", False):
-        return RedirectResponse(url=f"{root_path}/admin/login", status_code=303)
-    if not getattr(settings, "password_reset_enabled", True):
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=password_reset_disabled", status_code=303)
-
-    try:
-        form = await request.form()
-        password = str(form.get("password", ""))
-        confirm_password = str(form.get("confirm_password", ""))
-        if not password or not confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=missing_fields", status_code=303)
-        if password != confirm_password:
-            return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=password_mismatch", status_code=303)
-
-        auth_service = EmailAuthService(db)
-        await auth_service.reset_password_with_token(token=token, new_password=password, ip_address=get_client_ip(request), user_agent=get_user_agent(request))
-        return RedirectResponse(url=f"{root_path}/admin/login?notice=password_reset_success", status_code=303)
-    except PasswordValidationError as exc:
-        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error={urllib.parse.quote(str(exc))}", status_code=303)
-    except AuthenticationError as exc:
-        msg = str(exc).lower()
-        if "expired" in msg:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_expired", status_code=303)
-        if "used" in msg:
-            return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_used", status_code=303)
-        return RedirectResponse(url=f"{root_path}/admin/forgot-password?error=reset_link_invalid", status_code=303)
-    except Exception as exc:
-        LOGGER.warning("Password reset failed: %s", exc)
-        return RedirectResponse(url=f"{root_path}/admin/reset-password/{urllib.parse.quote(token)}?error=server_error", status_code=303)
 
 
 async def _admin_logout(request: Request) -> Response:
@@ -4463,7 +3817,7 @@ async def admin_search_teams(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
-    """Search teams by name/slug/description.
+    """Search teams by name/slug.
 
     Args:
         q (str): Search query string.
@@ -4476,7 +3830,6 @@ async def admin_search_teams(
     Returns:
         JSONResponse: List of matching teams with basic info.
     """
-    search_query = _normalize_search_query(q)
     team_service = TeamManagementService(db)
     user_email = get_user_email(user)
 
@@ -4495,7 +3848,7 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=search_query)
+        result = await team_service.list_teams(page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=True, search_query=q)
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
     else:
@@ -4509,17 +3862,16 @@ async def admin_search_teams(
                 continue
             if visibility and t.visibility != visibility:
                 continue
-            if search_query:
-                description_text = (t.description or "").lower()
-                if search_query not in t.name.lower() and search_query not in t.slug.lower() and search_query not in description_text:
+            if q:
+                if q.lower() not in t.name.lower() and q.lower() not in t.slug.lower():
                     continue
             filtered.append(t)
 
         # Paginate manually
         teams = filtered[:limit]
 
-    serialized_teams = [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "visibility": t.visibility, "is_active": t.is_active} for t in teams]
-    return serialized_teams
+    # Serialize
+    return [{"id": t.id, "name": t.name, "slug": t.slug, "description": t.description, "visibility": t.visibility, "is_active": t.is_active} for t in teams]
 
 
 @admin_router.get("/teams/partial")
@@ -6275,10 +5627,6 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
 
     is_current_user = user_obj.email == current_user_email
     is_last_admin = bool(user_obj.is_admin and user_obj.is_active and admin_count == 1)
-    locked_until = getattr(user_obj, "locked_until", None)
-    is_locked = bool(locked_until and locked_until > utc_now())
-    failed_attempts = int(getattr(user_obj, "failed_login_attempts", 0) or 0)
-    lock_until_text = locked_until.strftime("%Y-%m-%d %H:%M") if locked_until else "N/A"
 
     badges = []
     if user_obj.is_admin:
@@ -6296,8 +5644,6 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             '<span class="px-2 py-1 text-xs font-semibold bg-orange-100 text-orange-800 rounded-full '
             'dark:bg-orange-900 dark:text-orange-200"><i class="fas fa-key mr-1"></i>Password Change Required</span>'
         )
-    if is_locked:
-        badges.append('<span class="px-2 py-1 text-xs font-semibold bg-red-100 text-red-800 rounded-full ' + 'dark:bg-red-900 dark:text-red-200"><i class="fas fa-lock mr-1"></i>Locked</span>')
 
     actions = [
         f'<button class="px-3 py-1 text-sm font-medium text-blue-600 dark:text-blue-400 hover:text-blue-800 '
@@ -6308,15 +5654,6 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
     ]
 
     if not is_current_user and not is_last_admin:
-        if is_locked:
-            actions.append(
-                f'<button class="px-3 py-1 text-sm font-medium text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 '
-                f"dark:hover:text-indigo-300 border border-indigo-300 dark:border-indigo-600 hover:border-indigo-500 "
-                f"dark:hover:border-indigo-400 rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2 "
-                f'focus:ring-indigo-500" hx-post="{root_path}/admin/users/{encoded_email}/unlock" '
-                f'hx-confirm="Unlock this user account?" hx-target="closest .user-card" hx-swap="outerHTML">Unlock</button>'
-            )
-
         if user_obj.is_active:
             actions.append(
                 f'<button class="px-3 py-1 text-sm font-medium text-orange-600 dark:text-orange-400 hover:text-orange-800 '
@@ -6368,8 +5705,6 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
           </div>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">📧 {safe_email}</p>
           <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔐 Provider: {auth_provider}</p>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">⚠️ Failed attempts: {failed_attempts}</p>
-          <p class="text-sm text-gray-600 dark:text-gray-400 mb-2">🔒 Locked until: {lock_until_text}</p>
           <p class="text-sm text-gray-600 dark:text-gray-400">📅 Created: {created_at}</p>
         </div>
         <div class="flex gap-2 ml-4">
@@ -6507,9 +5842,6 @@ async def admin_users_partial_html(
                     "auth_provider": user_obj.auth_provider,
                     "created_at": user_obj.created_at,
                     "password_change_required": user_obj.password_change_required,
-                    "failed_login_attempts": int(getattr(user_obj, "failed_login_attempts", 0) or 0),
-                    "locked_until": getattr(user_obj, "locked_until", None),
-                    "is_locked": bool(getattr(user_obj, "locked_until", None) and getattr(user_obj, "locked_until", None) > utc_now()),
                     "is_current_user": is_current_user,
                     "is_last_admin": is_last_admin,
                 }
@@ -6792,14 +6124,15 @@ async def admin_search_users(
     Returns:
         JSONResponse: Dictionary containing list of matching users and count
     """
-    search_query = _normalize_search_query(q)
     if not settings.email_auth_enabled:
-        return _build_search_response(entity_key="users", entity_type="users", items=[], query=search_query, tags="", tag_groups=[])
+        return {"users": [], "count": 0}
 
     user_email = get_user_email(user)
+    search_query = q.strip().lower()
 
     if not search_query:
-        return _build_search_response(entity_key="users", entity_type="users", items=[], query=search_query, tags="", tag_groups=[])
+        # If no search query, return empty list
+        return {"users": [], "count": 0}
 
     LOGGER.debug(f"User {user_email} searching users with query: {search_query}")
 
@@ -6812,8 +6145,6 @@ async def admin_search_users(
     # Format results for JSON response
     results = [
         {
-            "id": user_obj.email,
-            "name": user_obj.full_name or user_obj.email,
             "email": user_obj.email,
             "full_name": user_obj.full_name or "",
             "is_active": user_obj.is_active,
@@ -6822,7 +6153,7 @@ async def admin_search_users(
         for user_obj in users_list
     ]
 
-    return _build_search_response(entity_key="users", entity_type="users", items=results, query=search_query, tags="", tag_groups=[])
+    return {"users": results, "count": len(results)}
 
 
 @admin_router.post("/users")
@@ -7284,44 +6615,6 @@ async def admin_delete_user(
         return HTMLResponse(content=f'<div class="text-red-500">Error deleting user: {html.escape(str(e))}</div>', status_code=400)
 
 
-@admin_router.post("/users/{user_email}/unlock")
-@require_permission("admin.user_management", allow_admin_bypass=False)
-async def admin_unlock_user(
-    user_email: str,
-    _request: Request,
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-) -> HTMLResponse:
-    """Unlock a user account from the admin UI.
-
-    Args:
-        user_email: URL-encoded email for the user to unlock.
-        _request: Incoming HTTP request.
-        db: Database session dependency.
-        user: Current authenticated user context.
-
-    Returns:
-        HTMLResponse: Updated user card HTML or error snippet.
-    """
-    if not settings.email_auth_enabled:
-        return HTMLResponse(content='<div class="text-red-500">Email authentication is disabled</div>', status_code=403)
-
-    try:
-        root_path = _request.scope.get("root_path", "") if _request else ""
-        auth_service = EmailAuthService(db)
-        decoded_email = urllib.parse.unquote(user_email)
-        current_user_email = get_user_email(user)
-
-        user_obj = await auth_service.unlock_user_account(decoded_email, unlocked_by=current_user_email)
-        admin_count = await auth_service.count_active_admin_users()
-        return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
-    except ValueError as exc:
-        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(exc))}</div>', status_code=404)
-    except Exception as exc:
-        LOGGER.error("Error unlocking user %s: %s", user_email, exc)
-        return HTMLResponse(content=f'<div class="text-red-500">Error unlocking user: {html.escape(str(exc))}</div>', status_code=400)
-
-
 @admin_router.post("/users/{user_email}/force-password-change")
 @require_permission("admin.user_management", allow_admin_bypass=False)
 async def admin_force_password_change(
@@ -7459,8 +6752,6 @@ async def admin_tools_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -7478,8 +6769,6 @@ async def admin_tools_partial_html(
         request (Request): FastAPI request object.
         page (int): Page number (1-indexed). Default: 1.
         per_page (int): Items per page. Default: 50.
-        q (str): Free-text query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): Whether to include inactive tools in the results.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
         team_id (Optional[str]): Filter by team ID.
@@ -7491,13 +6780,12 @@ async def admin_tools_partial_html(
         HTMLResponse with tools table rows and pagination controls.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
     LOGGER.debug(f"🔧 TOOLS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
 
     # Build base query using tool_service's team filtering logic
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
 
     # Build query with eager loading for email_team to avoid N+1 queries
     query = select(DbTool).options(joinedload(DbTool.email_team))
@@ -7546,7 +6834,7 @@ async def admin_tools_partial_html(
         access_conditions = []
 
         # 1. User's personal tools (owner_email matches)
-        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbTool.owner_email == user_email)
 
         # 2. Team tools where user is member
         if team_ids:
@@ -7556,20 +6844,6 @@ async def admin_tools_partial_html(
         access_conditions.append(DbTool.visibility == "public")
 
         query = query.where(or_(*access_conditions))
-
-    if search_query:
-        query = query.where(
-            or_(
-                _like_contains(func.lower(DbTool.id), search_query),
-                _like_contains(func.lower(DbTool.original_name), search_query),
-                _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
-                _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
-                _like_contains(func.lower(coalesce(DbTool.description, "")), search_query),
-                _like_contains(func.lower(coalesce(DbTool.url, "")), search_query),
-            )
-        )
-
-    query = _apply_tag_filter_groups(query, db, DbTool.tags, tag_groups)
 
     # Apply sorting: alphabetical by URL, then name, then ID (for UI display)
     # Different from JSON endpoint which uses created_at DESC
@@ -7585,10 +6859,6 @@ async def admin_tools_partial_html(
         query_params_dict["gateway_id"] = gateway_id
     if team_id:
         query_params_dict["team_id"] = team_id
-    if search_query:
-        query_params_dict["q"] = search_query
-    if normalized_tags:
-        query_params_dict["tags"] = normalized_tags
 
     paginated_result = await paginate_query(
         db=db,
@@ -7677,7 +6947,6 @@ async def admin_tools_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
-            "query_params": query_params_dict,
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -7715,7 +6984,10 @@ async def admin_tool_ops_partial(
     """
     user_email = get_user_email(user)
     LOGGER.debug(f"Tool ops partial request - team_id: {team_id}, page: {page}")
-    team_ids = await _get_user_team_ids(user, db)
+
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
 
     query = select(DbTool).options(joinedload(DbTool.email_team))
 
@@ -7750,7 +7022,7 @@ async def admin_tool_ops_partial(
             query = query.where(false())
     else:
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbTool.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
         access_conditions.append(DbTool.visibility == "public")
@@ -7830,7 +7102,9 @@ async def admin_get_all_tool_ids(
     user_email = get_user_email(user)
 
     # Build base query
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
 
     query = select(DbTool.id)
 
@@ -7872,7 +7146,7 @@ async def admin_get_all_tool_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbTool.owner_email == user_email)
         access_conditions.append(DbTool.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
@@ -7888,7 +7162,6 @@ async def admin_get_all_tool_ids(
 @require_permission("tools.read", allow_admin_bypass=False)
 async def admin_search_tools(
     q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -7904,7 +7177,6 @@ async def admin_search_tools(
 
     Args:
         q (str): Search query string to match against tool names, IDs, or descriptions.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): Whether to include inactive tools in the search results.
         limit (int): Maximum number of results to return.
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
@@ -7916,15 +7188,16 @@ async def admin_search_tools(
         JSONResponse: A JSON response containing a list of matching tools.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
+    search_query = q.strip().lower()
 
-    if not search_query and not tag_groups:
-        return _build_search_response(entity_key="tools", entity_type="tools", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    if not search_query:
+        # If no search query, return empty list
+        return {"tools": [], "count": 0}
 
     # Build base query
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [team.id for team in user_teams]
 
     query = select(DbTool.id, DbTool.original_name, DbTool.custom_name, DbTool.display_name, DbTool.description)
 
@@ -7967,7 +7240,7 @@ async def admin_search_tools(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbTool.owner_email, DbTool.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbTool.owner_email == user_email)
         access_conditions.append(DbTool.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
@@ -7975,33 +7248,25 @@ async def admin_search_tools(
 
     # Add search conditions - search in display fields and description
     # Using the same priority as display: displayName -> customName -> original_name
-    if search_query:
-        search_conditions = [
-            _like_contains(func.lower(DbTool.id), search_query),
-            _like_contains(func.lower(DbTool.original_name), search_query),
-            _like_contains(func.lower(coalesce(DbTool.display_name, "")), search_query),
-            _like_contains(func.lower(coalesce(DbTool.custom_name, "")), search_query),
-            _like_contains(func.lower(coalesce(DbTool.description, "")), search_query),
-            _like_contains(func.lower(coalesce(DbTool.url, "")), search_query),
-        ]
-        query = query.where(or_(*search_conditions))
+    search_conditions = [
+        func.lower(coalesce(DbTool.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbTool.custom_name, "")).contains(search_query),
+        func.lower(DbTool.original_name).contains(search_query),
+        func.lower(coalesce(DbTool.description, "")).contains(search_query),
+    ]
 
-    query = _apply_tag_filter_groups(query, db, DbTool.tags, tag_groups)
+    query = query.where(or_(*search_conditions))
 
     # Order by relevance - prioritize matches at start of names
-    if search_query:
-        query = query.order_by(
-            case(
-                (func.lower(DbTool.original_name).startswith(search_query), 1),
-                (func.lower(coalesce(DbTool.custom_name, "")).startswith(search_query), 1),
-                (func.lower(coalesce(DbTool.display_name, "")).startswith(search_query), 1),
-                else_=2,
-            ),
-            func.lower(DbTool.original_name),
-        )
-    else:
-        query = query.order_by(func.lower(DbTool.original_name))
-    query = query.limit(limit)
+    query = query.order_by(
+        case(
+            (func.lower(DbTool.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbTool.custom_name, "")).startswith(search_query), 1),
+            (func.lower(coalesce(DbTool.display_name, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbTool.original_name),
+    ).limit(limit)
 
     # Execute query
     results = db.execute(query).all()
@@ -8011,7 +7276,7 @@ async def admin_search_tools(
     for row in results:
         tools.append({"id": row.id, "name": row.original_name, "display_name": row.display_name, "custom_name": row.custom_name})  # original_name for search matching
 
-    return _build_search_response(entity_key="tools", entity_type="tools", items=tools, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    return {"tools": tools, "count": len(tools)}
 
 
 @admin_router.get("/prompts/partial", response_class=HTMLResponse)
@@ -8020,8 +7285,6 @@ async def admin_prompts_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -8042,8 +7305,6 @@ async def admin_prompts_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        q (str): Free-text query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): If True, include inactive prompts in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
@@ -8060,16 +7321,15 @@ async def admin_prompts_partial_html(
     LOGGER.debug(
         f"User {get_user_email(user)} requested prompts HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
     )
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
     user_email = get_user_email(user)
 
     # Team scoping
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     # Build base query
     query = select(DbPrompt)
@@ -8113,23 +7373,11 @@ async def admin_prompts_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbPrompt.owner_email, DbPrompt.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbPrompt.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
         access_conditions.append(DbPrompt.visibility == "public")
         query = query.where(or_(*access_conditions))
-
-    if search_query:
-        query = query.where(
-            or_(
-                _like_contains(func.lower(DbPrompt.id), search_query),
-                _like_contains(func.lower(DbPrompt.original_name), search_query),
-                _like_contains(func.lower(coalesce(DbPrompt.display_name, "")), search_query),
-                _like_contains(func.lower(coalesce(DbPrompt.description, "")), search_query),
-            )
-        )
-
-    query = _apply_tag_filter_groups(query, db, DbPrompt.tags, tag_groups)
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbPrompt.created_at), desc(DbPrompt.id))
@@ -8142,10 +7390,6 @@ async def admin_prompts_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if search_query:
-        query_params["q"] = search_query
-    if normalized_tags:
-        query_params["tags"] = normalized_tags
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -8234,7 +7478,6 @@ async def admin_prompts_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
-            "query_params": query_params,
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -8248,8 +7491,6 @@ async def admin_gateways_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -8269,8 +7510,6 @@ async def admin_gateways_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        q (str): Free-text query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): If True, include inactive gateways in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         team_id (Optional[str]): Filter by team ID.
@@ -8284,15 +7523,14 @@ async def admin_gateways_partial_html(
         encoded gateway data when templates expect it.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
     LOGGER.debug(f"🔷 GATEWAYS PARTIAL REQUEST - User: {user_email}, team_id: {team_id}, page: {page}, render: {render}, referer: {request.headers.get('referer', 'none')}")
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
     # Team scoping
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     # Build base query
     query = select(DbGateway).options(joinedload(DbGateway.email_team))
@@ -8320,24 +7558,12 @@ async def admin_gateways_partial_html(
     else:
         # All Teams view: apply standard access conditions
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbGateway.owner_email, DbGateway.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbGateway.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
         access_conditions.append(DbGateway.visibility == "public")
 
         query = query.where(or_(*access_conditions))
-
-    if search_query:
-        query = query.where(
-            or_(
-                _like_contains(func.lower(DbGateway.id), search_query),
-                _like_contains(func.lower(DbGateway.name), search_query),
-                _like_contains(func.lower(coalesce(DbGateway.url, "")), search_query),
-                _like_contains(func.lower(coalesce(DbGateway.description, "")), search_query),
-            )
-        )
-
-    query = _apply_tag_filter_groups(query, db, DbGateway.tags, tag_groups)
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbGateway.created_at), desc(DbGateway.id))
@@ -8348,10 +7574,6 @@ async def admin_gateways_partial_html(
         query_params["include_inactive"] = "true"
     if team_id:
         query_params["team_id"] = team_id
-    if search_query:
-        query_params["q"] = search_query
-    if normalized_tags:
-        query_params["tags"] = normalized_tags
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -8424,7 +7646,6 @@ async def admin_gateways_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
-            "query_params": query_params,
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -8457,7 +7678,9 @@ async def admin_get_all_gateways_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbGateway.id)
 
@@ -8482,7 +7705,7 @@ async def admin_get_all_gateways_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbGateway.owner_email, DbGateway.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbGateway.owner_email == user_email)
         access_conditions.append(DbGateway.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
@@ -8496,7 +7719,6 @@ async def admin_get_all_gateways_ids(
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def admin_search_gateways(
     q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -8511,7 +7733,6 @@ async def admin_search_gateways(
 
     Args:
         q (str): Search query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): When True include gateways that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
@@ -8524,13 +7745,13 @@ async def admin_search_gateways(
             - "count": int number of matched gateways returned.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
-    if not search_query and not tag_groups:
-        return _build_search_response(entity_key="gateways", entity_type="gateways", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"gateways": [], "count": 0}
 
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbGateway.id, DbGateway.name, DbGateway.url, DbGateway.description)
 
@@ -8555,35 +7776,27 @@ async def admin_search_gateways(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbGateway.owner_email, DbGateway.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbGateway.owner_email == user_email)
         access_conditions.append(DbGateway.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbGateway.team_id.in_(team_ids), DbGateway.visibility.in_(["team", "public"])))
         query = query.where(or_(*access_conditions))
 
-    if search_query:
-        search_conditions = [
-            _like_contains(func.lower(DbGateway.id), search_query),
-            _like_contains(func.lower(DbGateway.name), search_query),
-            _like_contains(func.lower(coalesce(DbGateway.url, "")), search_query),
-            _like_contains(func.lower(coalesce(DbGateway.description, "")), search_query),
-        ]
-        query = query.where(or_(*search_conditions))
+    search_conditions = [
+        func.lower(DbGateway.name).contains(search_query),
+        func.lower(coalesce(DbGateway.url, "")).contains(search_query),
+        func.lower(coalesce(DbGateway.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
 
-    query = _apply_tag_filter_groups(query, db, DbGateway.tags, tag_groups)
-
-    if search_query:
-        query = query.order_by(
-            case(
-                (func.lower(DbGateway.name).startswith(search_query), 1),
-                (func.lower(coalesce(DbGateway.url, "")).startswith(search_query), 1),
-                else_=2,
-            ),
-            func.lower(DbGateway.name),
-        )
-    else:
-        query = query.order_by(func.lower(DbGateway.name))
-    query = query.limit(limit)
+    query = query.order_by(
+        case(
+            (func.lower(DbGateway.name).startswith(search_query), 1),
+            (func.lower(coalesce(DbGateway.url, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbGateway.name),
+    ).limit(limit)
 
     results = db.execute(query).all()
     gateways = []
@@ -8597,7 +7810,7 @@ async def admin_search_gateways(
             }
         )
 
-    return _build_search_response(entity_key="gateways", entity_type="gateways", items=gateways, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    return {"gateways": gateways, "count": len(gateways)}
 
 
 @admin_router.get("/servers/ids", response_class=JSONResponse)
@@ -8625,7 +7838,9 @@ async def admin_get_all_server_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbServer.id)
 
@@ -8652,7 +7867,7 @@ async def admin_get_all_server_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbServer.owner_email, DbServer.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbServer.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
         access_conditions.append(DbServer.visibility == "public")
@@ -8666,7 +7881,6 @@ async def admin_get_all_server_ids(
 @require_permission("servers.read", allow_admin_bypass=False)
 async def admin_search_servers(
     q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -8681,7 +7895,6 @@ async def admin_search_servers(
 
     Args:
         q (str): Search query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): When True include servers that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
@@ -8694,13 +7907,13 @@ async def admin_search_servers(
             - "count": int number of matched servers returned.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
-    if not search_query and not tag_groups:
-        return _build_search_response(entity_key="servers", entity_type="servers", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"servers": [], "count": 0}
 
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbServer.id, DbServer.name, DbServer.description)
 
@@ -8727,33 +7940,25 @@ async def admin_search_servers(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbServer.owner_email, DbServer.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbServer.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
         access_conditions.append(DbServer.visibility == "public")
         query = query.where(or_(*access_conditions))
 
-    if search_query:
-        search_conditions = [
-            _like_contains(func.lower(DbServer.id), search_query),
-            _like_contains(func.lower(DbServer.name), search_query),
-            _like_contains(func.lower(coalesce(DbServer.description, "")), search_query),
-        ]
-        query = query.where(or_(*search_conditions))
+    search_conditions = [
+        func.lower(DbServer.name).contains(search_query),
+        func.lower(coalesce(DbServer.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
 
-    query = _apply_tag_filter_groups(query, db, DbServer.tags, tag_groups)
-
-    if search_query:
-        query = query.order_by(
-            case(
-                (func.lower(DbServer.name).startswith(search_query), 1),
-                else_=2,
-            ),
-            func.lower(DbServer.name),
-        )
-    else:
-        query = query.order_by(func.lower(DbServer.name))
-    query = query.limit(limit)
+    query = query.order_by(
+        case(
+            (func.lower(DbServer.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbServer.name),
+    ).limit(limit)
 
     results = db.execute(query).all()
     servers = []
@@ -8766,7 +7971,7 @@ async def admin_search_servers(
             }
         )
 
-    return _build_search_response(entity_key="servers", entity_type="servers", items=servers, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    return {"servers": servers, "count": len(servers)}
 
 
 @admin_router.get("/resources/partial", response_class=HTMLResponse)
@@ -8775,8 +7980,6 @@ async def admin_resources_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None, description="Render mode: 'controls' for pagination controls only"),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -8794,8 +7997,6 @@ async def admin_resources_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        q (str): Free-text query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): If True, include inactive resources in results.
         render (Optional[str]): Render mode; when set to "controls" returns only
             pagination controls. Other supported value: "selector" for selector
@@ -8814,9 +8015,6 @@ async def admin_resources_partial_html(
     LOGGER.debug(
         f"[RESOURCES FILTER DEBUG] User {get_user_email(user)} requested resources HTML partial (page={page}, per_page={per_page}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
     )
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
 
     # Normalize per_page
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
@@ -8824,7 +8022,9 @@ async def admin_resources_partial_html(
     user_email = get_user_email(user)
 
     # Team scoping
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     # Build base query
     query = select(DbResource)
@@ -8871,23 +8071,11 @@ async def admin_resources_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbResource.owner_email, DbResource.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbResource.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
         access_conditions.append(DbResource.visibility == "public")
         query = query.where(or_(*access_conditions))
-
-    if search_query:
-        query = query.where(
-            or_(
-                _like_contains(func.lower(DbResource.id), search_query),
-                _like_contains(func.lower(DbResource.name), search_query),
-                _like_contains(func.lower(coalesce(DbResource.uri, "")), search_query),
-                _like_contains(func.lower(coalesce(DbResource.description, "")), search_query),
-            )
-        )
-
-    query = _apply_tag_filter_groups(query, db, DbResource.tags, tag_groups)
 
     # Add sorting for consistent pagination
     query = query.order_by(desc(DbResource.created_at), desc(DbResource.id))
@@ -8900,10 +8088,6 @@ async def admin_resources_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if search_query:
-        query_params["q"] = search_query
-    if normalized_tags:
-        query_params["tags"] = normalized_tags
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -8991,7 +8175,6 @@ async def admin_resources_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
-            "query_params": query_params,
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -9026,7 +8209,9 @@ async def admin_get_all_prompt_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbPrompt.id)
 
@@ -9069,7 +8254,7 @@ async def admin_get_all_prompt_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbPrompt.owner_email, DbPrompt.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbPrompt.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
         access_conditions.append(DbPrompt.visibility == "public")
@@ -9106,7 +8291,9 @@ async def admin_get_all_resource_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbResource.id)
 
@@ -9149,7 +8336,7 @@ async def admin_get_all_resource_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbResource.owner_email, DbResource.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbResource.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
         access_conditions.append(DbResource.visibility == "public")
@@ -9163,7 +8350,6 @@ async def admin_get_all_resource_ids(
 @require_permission("resources.read", allow_admin_bypass=False)
 async def admin_search_resources(
     q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -9179,7 +8365,6 @@ async def admin_search_resources(
 
     Args:
         q (str): Search query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): When True include resources that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
@@ -9193,13 +8378,13 @@ async def admin_search_resources(
             - "count": int number of matched resources returned.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
-    if not search_query and not tag_groups:
-        return _build_search_response(entity_key="resources", entity_type="resources", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"resources": [], "count": 0}
 
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbResource.id, DbResource.name, DbResource.description)
 
@@ -9242,48 +8427,35 @@ async def admin_search_resources(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbResource.owner_email, DbResource.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbResource.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
         access_conditions.append(DbResource.visibility == "public")
         query = query.where(or_(*access_conditions))
 
-    if search_query:
-        search_conditions = [
-            _like_contains(func.lower(DbResource.id), search_query),
-            _like_contains(func.lower(DbResource.name), search_query),
-            _like_contains(func.lower(coalesce(DbResource.uri, "")), search_query),
-            _like_contains(func.lower(coalesce(DbResource.description, "")), search_query),
-        ]
-        query = query.where(or_(*search_conditions))
+    search_conditions = [func.lower(DbResource.name).contains(search_query), func.lower(coalesce(DbResource.description, "")).contains(search_query)]
+    query = query.where(or_(*search_conditions))
 
-    query = _apply_tag_filter_groups(query, db, DbResource.tags, tag_groups)
-
-    if search_query:
-        query = query.order_by(
-            case(
-                (func.lower(DbResource.name).startswith(search_query), 1),
-                else_=2,
-            ),
-            func.lower(DbResource.name),
-        )
-    else:
-        query = query.order_by(func.lower(DbResource.name))
-    query = query.limit(limit)
+    query = query.order_by(
+        case(
+            (func.lower(DbResource.name).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbResource.name),
+    ).limit(limit)
 
     results = db.execute(query).all()
     resources = []
     for row in results:
         resources.append({"id": row.id, "name": row.name, "description": row.description})
 
-    return _build_search_response(entity_key="resources", entity_type="resources", items=resources, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    return {"resources": resources, "count": len(resources)}
 
 
 @admin_router.get("/prompts/search", response_class=JSONResponse)
 @require_permission("prompts.read", allow_admin_bypass=False)
 async def admin_search_prompts(
     q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -9299,7 +8471,6 @@ async def admin_search_prompts(
 
     Args:
         q (str): Search query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): When True include prompts that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
@@ -9313,13 +8484,13 @@ async def admin_search_prompts(
             - "count": int number of matched prompts returned.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
-    if not search_query and not tag_groups:
-        return _build_search_response(entity_key="prompts", entity_type="prompts", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"prompts": [], "count": 0}
 
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbPrompt.id, DbPrompt.original_name, DbPrompt.display_name, DbPrompt.description)
 
@@ -9362,35 +8533,27 @@ async def admin_search_prompts(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbPrompt.owner_email, DbPrompt.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbPrompt.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbPrompt.team_id.in_(team_ids), DbPrompt.visibility.in_(["team", "public"])))
         access_conditions.append(DbPrompt.visibility == "public")
         query = query.where(or_(*access_conditions))
 
-    if search_query:
-        search_conditions = [
-            _like_contains(func.lower(DbPrompt.id), search_query),
-            _like_contains(func.lower(DbPrompt.original_name), search_query),
-            _like_contains(func.lower(coalesce(DbPrompt.display_name, "")), search_query),
-            _like_contains(func.lower(coalesce(DbPrompt.description, "")), search_query),
-        ]
-        query = query.where(or_(*search_conditions))
+    search_conditions = [
+        func.lower(DbPrompt.original_name).contains(search_query),
+        func.lower(coalesce(DbPrompt.display_name, "")).contains(search_query),
+        func.lower(coalesce(DbPrompt.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
 
-    query = _apply_tag_filter_groups(query, db, DbPrompt.tags, tag_groups)
-
-    if search_query:
-        query = query.order_by(
-            case(
-                (func.lower(DbPrompt.original_name).startswith(search_query), 1),
-                (func.lower(coalesce(DbPrompt.display_name, "")).startswith(search_query), 1),
-                else_=2,
-            ),
-            func.lower(DbPrompt.original_name),
-        )
-    else:
-        query = query.order_by(func.lower(DbPrompt.original_name))
-    query = query.limit(limit)
+    query = query.order_by(
+        case(
+            (func.lower(DbPrompt.original_name).startswith(search_query), 1),
+            (func.lower(coalesce(DbPrompt.display_name, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbPrompt.original_name),
+    ).limit(limit)
 
     results = db.execute(query).all()
     prompts = []
@@ -9405,7 +8568,7 @@ async def admin_search_prompts(
             }
         )
 
-    return _build_search_response(entity_key="prompts", entity_type="prompts", items=prompts, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    return {"prompts": prompts, "count": len(prompts)}
 
 
 @admin_router.get("/tokens/partial", response_class=HTMLResponse)
@@ -9468,7 +8631,9 @@ async def admin_tokens_partial_html(
 
     # Apply search filter on name (case-insensitive)
     if q and isinstance(q, str):
-        query = query.where(EmailApiToken.name.ilike(f"%{_escape_like(q.strip().lower())}%", escape="\\"))
+        # Escape LIKE wildcards to prevent injection
+        safe_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(EmailApiToken.name.ilike(f"%{safe_q}%"))
 
     query = query.order_by(desc(EmailApiToken.created_at))
 
@@ -9620,7 +8785,9 @@ async def admin_search_tokens(
 
     # Apply search filter on name (case-insensitive)
     if q and isinstance(q, str):
-        query = query.where(EmailApiToken.name.ilike(f"%{_escape_like(q.strip().lower())}%", escape="\\"))
+        # Escape LIKE wildcards to prevent injection
+        safe_q = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        query = query.where(EmailApiToken.name.ilike(f"%{safe_q}%"))
 
     query = query.order_by(desc(EmailApiToken.created_at)).limit(limit)
 
@@ -9660,8 +8827,6 @@ async def admin_a2a_partial_html(
     request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     render: Optional[str] = Query(None),
     gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
@@ -9682,8 +8847,6 @@ async def admin_a2a_partial_html(
         request (Request): FastAPI request object used by the template engine.
         page (int): Page number (1-indexed).
         per_page (int): Number of items per page (bounded by settings).
-        q (str): Free-text query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): If True, include inactive a2a agents in results.
         render (Optional[str]): Render mode; one of None, "controls", "selector".
         gateway_id (Optional[str]): Filter by gateway ID(s), comma-separated.
@@ -9700,16 +8863,15 @@ async def admin_a2a_partial_html(
     LOGGER.debug(
         f"User {get_user_email(user)} requested a2a_agents HTML partial (page={page}, per_page={per_page}, include_inactive={include_inactive}, render={render}, gateway_id={gateway_id}, team_id={team_id})"
     )
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
     # Normalize per_page within configured bounds
     per_page = max(settings.pagination_min_page_size, min(per_page, settings.pagination_max_page_size))
 
     user_email = get_user_email(user)
 
     # Team scoping
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     # Build base query
     query = select(DbA2AAgent)
@@ -9740,23 +8902,11 @@ async def admin_a2a_partial_html(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbA2AAgent.owner_email, DbA2AAgent.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbA2AAgent.owner_email == user_email)
         if team_ids:
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
         access_conditions.append(DbA2AAgent.visibility == "public")
         query = query.where(or_(*access_conditions))
-
-    if search_query:
-        query = query.where(
-            or_(
-                _like_contains(func.lower(DbA2AAgent.id), search_query),
-                _like_contains(func.lower(DbA2AAgent.name), search_query),
-                _like_contains(func.lower(coalesce(DbA2AAgent.endpoint_url, "")), search_query),
-                _like_contains(func.lower(coalesce(DbA2AAgent.description, "")), search_query),
-            )
-        )
-
-    query = _apply_tag_filter_groups(query, db, DbA2AAgent.tags, tag_groups)
 
     # Apply pagination ordering for cursor support
     query = query.order_by(desc(DbA2AAgent.created_at), desc(DbA2AAgent.id))
@@ -9769,10 +8919,6 @@ async def admin_a2a_partial_html(
         query_params["gateway_id"] = gateway_id
     if team_id:
         query_params["team_id"] = team_id
-    if search_query:
-        query_params["q"] = search_query
-    if normalized_tags:
-        query_params["tags"] = normalized_tags
 
     # Use unified pagination function
     root_path = request.scope.get("root_path", "")
@@ -9860,7 +9006,6 @@ async def admin_a2a_partial_html(
             "links": links.model_dump() if links else None,
             "root_path": request.scope.get("root_path", ""),
             "include_inactive": include_inactive,
-            "query_params": query_params,
             "current_user_email": user_email,
             "is_admin": _is_admin,
             "user_team_roles": _team_roles,
@@ -9893,7 +9038,9 @@ async def admin_get_all_agent_ids(
             - "count": int number of IDs returned.
     """
     user_email = get_user_email(user)
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbA2AAgent.id)
 
@@ -9918,7 +9065,7 @@ async def admin_get_all_agent_ids(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbA2AAgent.owner_email, DbA2AAgent.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbA2AAgent.owner_email == user_email)
         access_conditions.append(DbA2AAgent.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
@@ -9932,7 +9079,6 @@ async def admin_get_all_agent_ids(
 @require_permission("a2a.read", allow_admin_bypass=False)
 async def admin_search_a2a_agents(
     q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
     include_inactive: bool = False,
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size),
     team_id: Optional[str] = Depends(_validated_team_id_param),
@@ -9947,7 +9093,6 @@ async def admin_search_a2a_agents(
 
     Args:
         q (str): Search query string.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         include_inactive (bool): When True include a2a agents that are inactive.
         limit (int): Maximum number of results to return (bounded by the query parameter).
         team_id (Optional[str]): Filter by team ID.
@@ -9960,13 +9105,13 @@ async def admin_search_a2a_agents(
             - "count": int number of matched a2a agents returned.
     """
     user_email = get_user_email(user)
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
-    if not search_query and not tag_groups:
-        return _build_search_response(entity_key="agents", entity_type="agents", items=[], query=search_query, tags=normalized_tags, tag_groups=tag_groups)
+    search_query = q.strip().lower()
+    if not search_query:
+        return {"agents": [], "count": 0}
 
-    team_ids = await _get_user_team_ids(user, db)
+    team_service = TeamManagementService(db)
+    user_teams = await team_service.get_user_teams(user_email)
+    team_ids = [t.id for t in user_teams]
 
     query = select(DbA2AAgent.id, DbA2AAgent.name, DbA2AAgent.endpoint_url, DbA2AAgent.description)
 
@@ -9991,35 +9136,27 @@ async def admin_search_a2a_agents(
     else:
         # All Teams view: apply standard access conditions (owner, team, public)
         access_conditions = []
-        access_conditions.append(_owner_access_condition(DbA2AAgent.owner_email, DbA2AAgent.team_id, user_email=user_email, team_ids=team_ids, user=user))
+        access_conditions.append(DbA2AAgent.owner_email == user_email)
         access_conditions.append(DbA2AAgent.visibility == "public")
         if team_ids:
             access_conditions.append(and_(DbA2AAgent.team_id.in_(team_ids), DbA2AAgent.visibility.in_(["team", "public"])))
         query = query.where(or_(*access_conditions))
 
-    if search_query:
-        search_conditions = [
-            _like_contains(func.lower(DbA2AAgent.id), search_query),
-            _like_contains(func.lower(DbA2AAgent.name), search_query),
-            _like_contains(func.lower(coalesce(DbA2AAgent.endpoint_url, "")), search_query),
-            _like_contains(func.lower(coalesce(DbA2AAgent.description, "")), search_query),
-        ]
-        query = query.where(or_(*search_conditions))
+    search_conditions = [
+        func.lower(DbA2AAgent.name).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.endpoint_url, "")).contains(search_query),
+        func.lower(coalesce(DbA2AAgent.description, "")).contains(search_query),
+    ]
+    query = query.where(or_(*search_conditions))
 
-    query = _apply_tag_filter_groups(query, db, DbA2AAgent.tags, tag_groups)
-
-    if search_query:
-        query = query.order_by(
-            case(
-                (func.lower(DbA2AAgent.name).startswith(search_query), 1),
-                (func.lower(coalesce(DbA2AAgent.endpoint_url, "")).startswith(search_query), 1),
-                else_=2,
-            ),
-            func.lower(DbA2AAgent.name),
-        )
-    else:
-        query = query.order_by(func.lower(DbA2AAgent.name))
-    query = query.limit(limit)
+    query = query.order_by(
+        case(
+            (func.lower(DbA2AAgent.name).startswith(search_query), 1),
+            (func.lower(coalesce(DbA2AAgent.endpoint_url, "")).startswith(search_query), 1),
+            else_=2,
+        ),
+        func.lower(DbA2AAgent.name),
+    ).limit(limit)
 
     results = db.execute(query).all()
     agents = []
@@ -10033,251 +9170,7 @@ async def admin_search_a2a_agents(
             }
         )
 
-    return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
-
-
-@admin_router.get("/search", response_class=JSONResponse)
-@require_permission("admin.dashboard", allow_admin_bypass=False)
-async def admin_unified_search(
-    q: str = Query("", description="Search query"),
-    tags: Optional[str] = Query(None, description="Tag filter expression (comma=OR, plus=AND)"),
-    entity_types: Optional[str] = Query(
-        None,
-        description="Comma-separated entity types to include (servers,gateways,tools,resources,prompts,agents,teams,users)",
-    ),
-    include_inactive: bool = False,
-    limit: int = Query(8, ge=1, le=settings.pagination_max_page_size, description="Per-entity result limit"),
-    limit_per_type: Optional[int] = Query(
-        None,
-        ge=1,
-        le=settings.pagination_max_page_size,
-        description="Optional alias for per-entity result limit",
-    ),
-    gateway_id: Optional[str] = Query(None, description="Filter by gateway ID(s), comma-separated"),
-    team_id: Optional[str] = Depends(_validated_team_id_param),
-    db: Session = Depends(get_db),
-    user=Depends(get_current_user_with_permissions),
-):
-    """Unified search across primary admin entities.
-
-    Args:
-        q (str): Free-text search query.
-        tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
-        entity_types (Optional[str]): Optional comma-separated entity type list.
-        include_inactive (bool): Whether to include inactive entities.
-        limit (int): Default per-entity limit for returned items.
-        limit_per_type (Optional[int]): Optional alias overriding ``limit``.
-        gateway_id (Optional[str]): Gateway filter for tools/resources/prompts.
-        team_id (Optional[str]): Team scope filter.
-        db (Session): Database session.
-        user: Authenticated user context.
-
-    Returns:
-        dict[str, Any]: Grouped and flattened search results with metadata.
-
-    Raises:
-        HTTPException: If ``entity_types`` is provided but contains no supported values.
-    """
-    search_query = _normalize_search_query(q)
-    normalized_tags = _normalize_tags_query(tags)
-    normalized_entity_types = _normalize_tags_query(entity_types)
-    tag_groups = _parse_tag_filter_groups(normalized_tags)
-
-    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users"]
-    default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams"]
-    selected_entity_types: list[str] = []
-    if normalized_entity_types:
-        for raw_entity_type in normalized_entity_types.split(","):
-            candidate = raw_entity_type.strip().lower()
-            if not candidate:
-                continue
-            if candidate == "a2a":
-                candidate = "agents"
-            if candidate in supported_entity_types and candidate not in selected_entity_types:
-                selected_entity_types.append(candidate)
-    else:
-        selected_entity_types = default_entity_types.copy()
-
-    users_explicitly_requested = bool(normalized_entity_types and "users" in selected_entity_types)
-    if "users" in selected_entity_types:
-        can_search_users = await _has_permission(db=db, user=user, permission="admin.user_management")
-        if not can_search_users:
-            selected_entity_types = [entity_type for entity_type in selected_entity_types if entity_type != "users"]
-            if users_explicitly_requested and not selected_entity_types:
-                raise HTTPException(status_code=403, detail="Insufficient permissions. Required: admin.user_management")
-
-    if not selected_entity_types:
-        raise HTTPException(status_code=400, detail="No valid entity_types requested")
-
-    resolved_limit = _normalize_int_query(limit, 8)
-    effective_limit = _normalize_int_query(limit_per_type, resolved_limit)
-    effective_limit = max(1, min(effective_limit, settings.pagination_max_page_size))
-
-    if not search_query and not tag_groups:
-        return {
-            "query": search_query,
-            "tags": normalized_tags,
-            "entity_types": selected_entity_types,
-            "limit_per_type": effective_limit,
-            "filters_applied": {"q": search_query, "tags": normalized_tags, "tag_groups": tag_groups},
-            "results": {key: [] for key in selected_entity_types},
-            "groups": [],
-            "items": [],
-            "count": 0,
-        }
-
-    async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
-        try:
-            return await search_callable(**kwargs)
-        except HTTPException as exc:
-            if exc.status_code in {401, 403}:
-                return {empty_key: [], "items": [], "count": 0}
-            raise
-
-    # Pre-fetch team IDs once and inject into the user context so that
-    # individual search functions reuse them via _get_user_team_ids().
-    _team_ids = await _get_user_team_ids(user, db)
-    user = dict(user)  # shallow copy to avoid mutating the caller's dict
-    user["_cached_team_ids"] = _team_ids
-
-    grouped_results: dict[str, list[dict[str, Any]]] = {entity_type: [] for entity_type in selected_entity_types}
-
-    if "servers" in selected_entity_types:
-        servers_result = await _safe_entity_search(
-            admin_search_servers,
-            "servers",
-            q=search_query,
-            tags=normalized_tags,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            team_id=team_id,
-            db=db,
-            user=user,
-        )
-        grouped_results["servers"] = typing_cast(list[dict[str, Any]], servers_result.get("servers", servers_result.get("items", [])))
-
-    if "gateways" in selected_entity_types:
-        gateways_result = await _safe_entity_search(
-            admin_search_gateways,
-            "gateways",
-            q=search_query,
-            tags=normalized_tags,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            team_id=team_id,
-            db=db,
-            user=user,
-        )
-        grouped_results["gateways"] = typing_cast(list[dict[str, Any]], gateways_result.get("gateways", gateways_result.get("items", [])))
-
-    if "tools" in selected_entity_types:
-        tools_result = await _safe_entity_search(
-            admin_search_tools,
-            "tools",
-            q=search_query,
-            tags=normalized_tags,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            gateway_id=gateway_id,
-            team_id=team_id,
-            db=db,
-            user=user,
-        )
-        grouped_results["tools"] = typing_cast(list[dict[str, Any]], tools_result.get("tools", tools_result.get("items", [])))
-
-    if "resources" in selected_entity_types:
-        resources_result = await _safe_entity_search(
-            admin_search_resources,
-            "resources",
-            q=search_query,
-            tags=normalized_tags,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            gateway_id=gateway_id,
-            team_id=team_id,
-            db=db,
-            user=user,
-        )
-        grouped_results["resources"] = typing_cast(list[dict[str, Any]], resources_result.get("resources", resources_result.get("items", [])))
-
-    if "prompts" in selected_entity_types:
-        prompts_result = await _safe_entity_search(
-            admin_search_prompts,
-            "prompts",
-            q=search_query,
-            tags=normalized_tags,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            gateway_id=gateway_id,
-            team_id=team_id,
-            db=db,
-            user=user,
-        )
-        grouped_results["prompts"] = typing_cast(list[dict[str, Any]], prompts_result.get("prompts", prompts_result.get("items", [])))
-
-    if "agents" in selected_entity_types:
-        agents_result = await _safe_entity_search(
-            admin_search_a2a_agents,
-            "agents",
-            q=search_query,
-            tags=normalized_tags,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            team_id=team_id,
-            db=db,
-            user=user,
-        )
-        grouped_results["agents"] = typing_cast(list[dict[str, Any]], agents_result.get("agents", agents_result.get("items", [])))
-
-    # Teams and users do not support tag filtering; only include when a text query exists.
-    if "teams" in selected_entity_types and search_query:
-        teams_result = await _safe_entity_search(
-            admin_search_teams,
-            "teams",
-            q=search_query,
-            include_inactive=include_inactive,
-            limit=effective_limit,
-            visibility=None,
-            db=db,
-            user=user,
-        )
-        if isinstance(teams_result, list):
-            grouped_results["teams"] = typing_cast(list[dict[str, Any]], teams_result)
-        else:
-            grouped_results["teams"] = typing_cast(list[dict[str, Any]], teams_result.get("teams", teams_result.get("items", [])))
-
-    if "users" in selected_entity_types and search_query:
-        users_result = await _safe_entity_search(
-            admin_search_users,
-            "users",
-            q=search_query,
-            limit=effective_limit,
-            db=db,
-            user=user,
-        )
-        grouped_results["users"] = typing_cast(list[dict[str, Any]], users_result.get("users", users_result.get("items", [])))
-
-    groups = []
-    flat_items: list[dict[str, Any]] = []
-    for entity_type in selected_entity_types:
-        items = grouped_results.get(entity_type, [])
-        groups.append({"entity_type": entity_type, "count": len(items), "items": items})
-        for item in items:
-            enriched_item = dict(item)
-            enriched_item["entity_type"] = entity_type
-            flat_items.append(enriched_item)
-
-    return {
-        "query": search_query,
-        "tags": normalized_tags,
-        "entity_types": selected_entity_types,
-        "limit_per_type": effective_limit,
-        "filters_applied": {"q": search_query, "tags": normalized_tags, "tag_groups": tag_groups},
-        "results": grouped_results,
-        "groups": groups,
-        "items": flat_items,
-        "count": len(flat_items),
-    }
+    return {"agents": agents, "count": len(agents)}
 
 
 @admin_router.get("/tools/{tool_id}", response_model=ToolRead)
@@ -10433,7 +9326,7 @@ async def admin_add_tool(
         # Extract creation metadata
         metadata = MetadataCapture.extract_creation_metadata(request, user)
 
-        await tool_service.register_tool(
+        result = await tool_service.register_tool(
             db,
             tool,
             created_by=metadata["created_by"],
@@ -10443,6 +9336,11 @@ async def admin_add_tool(
             import_batch_id=metadata["import_batch_id"],
             federation_source=metadata["federation_source"],
         )
+        
+        # Trigger auto-indexing if enabled
+        if settings.embedding_auto_index_enabled:
+            asyncio.create_task(index_tool_fire_and_forget(result.id))
+        
         return ORJSONResponse(
             content={"message": "Tool registered successfully!", "success": True},
             status_code=200,
@@ -10572,7 +9470,7 @@ async def admin_edit_tool(
         # Extract modification metadata
         mod_metadata = MetadataCapture.extract_modification_metadata(request, user, current_version)
 
-        await tool_service.update_tool(
+        result = await tool_service.update_tool(
             db,
             tool_id,
             tool,
@@ -10582,6 +9480,11 @@ async def admin_edit_tool(
             modified_user_agent=mod_metadata["modified_user_agent"],
             user_email=user_email,
         )
+        
+        # Trigger auto-indexing if enabled
+        if settings.embedding_auto_index_enabled:
+            asyncio.create_task(index_tool_fire_and_forget(result.id))
+        
         return ORJSONResponse(content={"message": "Edit tool successfully", "success": True}, status_code=200)
     except PermissionError as e:
         LOGGER.info(f"Permission denied for user {get_user_email(user)}: {e}")
@@ -13001,7 +11904,7 @@ async def admin_import_tools(
             name = (item or {}).get("name")
             try:
                 tool = ToolCreate(**item)  # pydantic validation
-                await tool_service.register_tool(
+                result = await tool_service.register_tool(
                     db,
                     tool,
                     created_by=base_metadata["created_by"],
@@ -13011,6 +11914,11 @@ async def admin_import_tools(
                     import_batch_id=import_batch_id,
                     federation_source=base_metadata["federation_source"],
                 )
+                
+                # Trigger auto-indexing if enabled
+                if settings.embedding_auto_index_enabled:
+                    asyncio.create_task(index_tool_fire_and_forget(result.id))
+                
                 created.append({"index": i, "name": name})
             except IntegrityError as ex:
                 # The formatter can itself throw; guard it.
