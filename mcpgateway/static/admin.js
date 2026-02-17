@@ -8703,6 +8703,70 @@ function runtimeParseJsonInput(value, label) {
     return parsed.value || {};
 }
 
+function runtimeIsValidDockerImageReference(image) {
+    const imageRef = String(image || "").trim();
+    if (!imageRef || /\s/.test(imageRef)) {
+        return false;
+    }
+    if (imageRef.startsWith("http://") || imageRef.startsWith("https://")) {
+        return false;
+    }
+
+    const digestParts = imageRef.split("@");
+    if (digestParts.length > 2) {
+        return false;
+    }
+    const [nameAndTag, digest] = digestParts;
+    if (digest && !/^sha256:[a-f0-9]{64}$/.test(digest)) {
+        return false;
+    }
+
+    let name = nameAndTag;
+    const lastSlash = nameAndTag.lastIndexOf("/");
+    const lastColon = nameAndTag.lastIndexOf(":");
+    if (lastColon > lastSlash) {
+        const tag = nameAndTag.slice(lastColon + 1);
+        if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/.test(tag)) {
+            return false;
+        }
+        name = nameAndTag.slice(0, lastColon);
+    }
+
+    if (!name) {
+        return false;
+    }
+
+    const segments = name.split("/");
+    if (segments.length === 0 || segments.some((segment) => !segment)) {
+        return false;
+    }
+
+    let repositorySegments = segments;
+    const firstSegment = segments[0];
+    const hasExplicitRegistry =
+        firstSegment.includes(".") ||
+        firstSegment.includes(":") ||
+        firstSegment === "localhost";
+    if (hasExplicitRegistry) {
+        if (
+            !/^(localhost|[a-z0-9]+(?:[.-][a-z0-9]+)*(?::[0-9]+)?)$/.test(
+                firstSegment,
+            )
+        ) {
+            return false;
+        }
+        repositorySegments = segments.slice(1);
+        if (repositorySegments.length === 0) {
+            return false;
+        }
+    }
+
+    const repositorySegmentPattern = /^[a-z0-9]+(?:[._-][a-z0-9]+)*$/;
+    return repositorySegments.every((segment) =>
+        repositorySegmentPattern.test(segment),
+    );
+}
+
 function runtimeBuildDeployPayload() {
     const nameElement = safeGetElement("runtime-deploy-name");
     const backendElement = safeGetElement("runtime-deploy-backend");
@@ -8811,6 +8875,11 @@ function runtimeBuildDeployPayload() {
         if (!image) {
             throw new Error(
                 "Docker image is required when source type is docker",
+            );
+        }
+        if (!runtimeIsValidDockerImageReference(image)) {
+            throw new Error(
+                "Docker image must be a valid container reference (for example ghcr.io/ibm/fast-time-server:0.8.0)",
             );
         }
         source.image = image;

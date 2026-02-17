@@ -15798,12 +15798,15 @@ class TestTemplateButtonGating:
             query_params={
                 "q": "x' );alert(1);//",
                 "tags": "</script><script>alert(2)</script>",
+                "entity_type": "tools",
             },
         )
 
         assert "url.searchParams.set('q', 'x' );alert(1);//');" not in html
-        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' in html
+        assert 'url.searchParams.set("q", "x\\u0027 );alert(1);//");' not in html
+        assert "url.searchParams.set(&#34;q&#34;, &#34;x\\u0027 );alert(1);//&#34;);" in html
         assert "\\u003c/script\\u003e\\u003cscript\\u003ealert(2)\\u003c/script\\u003e" in html
+        assert "url.searchParams.set(&#34;entity_type&#34;, &#34;tools&#34;);" in html
 
     def test_prompts_hides_buttons_for_non_owner(self, jinja_env):
         """Non-owner: no editPrompt in HTML."""

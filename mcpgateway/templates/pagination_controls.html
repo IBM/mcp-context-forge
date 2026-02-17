@@ -116,7 +116,7 @@
     {% if query_params %}
     {% for key, value in query_params.items() %}
     {% if key != 'include_inactive' and value is not none %}
-    url.searchParams.set({{ key | tojson }}, {{ value | tojson }});
+    url.searchParams.set({{ key | tojson | forceescape }}, {{ value | tojson | forceescape }});
     {% endif %}
     {% endfor %}
     {% endif %}
