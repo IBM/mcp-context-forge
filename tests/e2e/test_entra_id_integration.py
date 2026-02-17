@@ -50,7 +50,7 @@ import os
 import tempfile
 import time
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from unittest.mock import patch as mock_patch
 import uuid
 
@@ -71,27 +71,13 @@ from sqlalchemy.pool import StaticPool
 logger = logging.getLogger(__name__)
 
 # First-Party
-# Replace RBAC decorators with no-ops BEFORE importing app
+# NOTE: Do NOT replace RBAC decorators with no-ops at module level.
+# Module-level patching poisons sys.modules under xdist: once main.py is
+# imported with noop decorators, every test in the same worker sees endpoint
+# functions without __wrapped__, breaking 45+ unit tests.
+# Instead, the entra_test_db fixture mocks PermissionService at request time.
 import mcpgateway.middleware.rbac as rbac_module  # noqa: E402
 
-
-def noop_decorator(*args, **kwargs):
-    """No-op decorator that just returns the function unchanged."""
-
-    def decorator(func):
-        return func
-
-    if len(args) == 1 and callable(args[0]) and not kwargs:
-        return args[0]
-    else:
-        return decorator
-
-
-rbac_module.require_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_admin_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-rbac_module.require_any_permission = noop_decorator  # pyrefly: ignore[bad-assignment]
-
-# Now import app after patching RBAC
 with mock_patch("mcpgateway.bootstrap_db.main"):
     # First-Party
     from mcpgateway.config import settings
@@ -895,6 +881,16 @@ async def entra_test_db():
     app.dependency_overrides[get_current_user_with_permissions] = simple_mock_user_with_permissions
     app.dependency_overrides[get_permission_service] = mock_get_permission_service
 
+    # Mock PermissionService on the rbac module so RBAC decorators (which
+    # instantiate PermissionService directly, not via dependency injection)
+    # always grant permissions during e2e tests.
+    mock_ps_instance = MagicMock()
+    mock_ps_instance.check_permission = AsyncMock(return_value=True)
+    mock_ps_instance.check_admin_permission = AsyncMock(return_value=True)
+    mock_ps_class = MagicMock(return_value=mock_ps_instance)
+    rbac_ps_patcher = mock_patch.object(rbac_module, "PermissionService", mock_ps_class)
+    rbac_ps_patcher.start()
+
     # Mock security_logger to prevent database access issues
     mock_sec_logger = MagicMock()
     mock_sec_logger.log_authentication_attempt = MagicMock(return_value=None)
@@ -905,6 +901,7 @@ async def entra_test_db():
     yield {"engine": engine, "session_local": TestSessionLocal}
 
     # Cleanup
+    rbac_ps_patcher.stop()
     sec_patcher.stop()
     app.dependency_overrides.clear()
     os.close(db_fd)
@@ -1052,6 +1049,7 @@ class TestEntraIDRoleMapping:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1108,6 +1106,7 @@ class TestEntraIDRoleMapping:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1176,6 +1175,7 @@ class TestEntraIDRoleMapping:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1227,6 +1227,7 @@ class TestEntraIDRoleMapping:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1313,6 +1314,7 @@ class TestEntraIDEndToEndHTTP:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1430,6 +1432,7 @@ class TestEntraIDAdminRoleRetention:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1501,6 +1504,7 @@ class TestEntraIDAdminRoleRetention:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1569,6 +1573,7 @@ class TestEntraIDMultipleAdminGroups:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1627,6 +1632,7 @@ class TestEntraIDMultipleAdminGroups:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
@@ -1852,6 +1858,7 @@ class TestEntraIDSyncDisabled:
                 mock_settings.sso_github_admin_orgs = []
                 mock_settings.sso_google_admin_domains = []
                 mock_settings.sso_require_admin_approval = False
+                mock_settings.default_admin_role = "platform_admin"
                 mock_settings.jwt_secret_key = settings.jwt_secret_key
                 mock_settings.jwt_algorithm = settings.jwt_algorithm
                 mock_settings.jwt_expiration_minutes = 60
