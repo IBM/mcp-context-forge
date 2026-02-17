@@ -32,6 +32,7 @@ from .pages.mcp_registry_page import MCPRegistryPage
 from .pages.metrics_page import MetricsPage
 from .pages.prompts_page import PromptsPage
 from .pages.resources_page import ResourcesPage
+from .pages.runtime_page import RuntimePage
 from .pages.servers_page import ServersPage
 from .pages.team_page import TeamPage
 from .pages.tokens_page import TokensPage
@@ -365,6 +366,13 @@ def mcp_registry_page(page: Page, base_url: str) -> MCPRegistryPage:
     """Provide a logged-in MCPRegistryPage instance for MCP Registry tests."""
     _ensure_admin_logged_in(page, base_url)
     return MCPRegistryPage(page)
+
+
+@pytest.fixture
+def runtime_page(page: Page, base_url: str) -> RuntimePage:
+    """Provide a logged-in RuntimePage instance for runtime UI tests."""
+    _ensure_admin_logged_in(page, base_url)
+    return RuntimePage(page, base_url)
 
 
 @pytest.fixture

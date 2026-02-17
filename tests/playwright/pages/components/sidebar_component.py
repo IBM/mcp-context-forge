@@ -70,6 +70,11 @@ class SidebarComponent:
         return self.page.locator("#tab-logs")
 
     @property
+    def runtime_tab(self) -> Locator:
+        """Runtime tab button."""
+        return self.page.locator("#tab-runtime")
+
+    @property
     def version_tab(self) -> Locator:
         """Version Info tab button."""
         return self.page.locator("#tab-version-info")
@@ -134,6 +139,11 @@ class SidebarComponent:
         """Click on logs tab and wait for panel."""
         self.logs_tab.click()
         self.page.wait_for_selector("#logs-panel:not(.hidden)")
+
+    def click_runtime_tab(self) -> None:
+        """Click on runtime tab and wait for panel."""
+        self.runtime_tab.click()
+        self.page.wait_for_selector("#runtime-panel:not(.hidden)")
 
     def click_version_tab(self) -> None:
         """Click on version info tab and wait for panel."""

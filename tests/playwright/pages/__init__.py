@@ -21,6 +21,7 @@ from .prompts_page import PromptsPage
 from .servers_page import ServersPage
 from .version_page import VersionPage
 from .mcp_registry_page import MCPRegistryPage
+from .runtime_page import RuntimePage
 
 __all__ = [
     "BasePage",
@@ -37,4 +38,5 @@ __all__ = [
     "ServersPage",
     "VersionPage",
     "MCPRegistryPage",
+    "RuntimePage",
 ]
