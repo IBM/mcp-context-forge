@@ -261,14 +261,15 @@ class SSOService:
             seen_groups.add(normalized_group_id)
             deduped_groups.append(normalized_group_id)
 
-        if graph_api_max_groups > 0 and len(deduped_groups) > graph_api_max_groups:
-            logger.warning(
-                "Graph API returned %d groups for %s; applying configured cap (%d)",
-                len(deduped_groups),
-                user_email,
-                graph_api_max_groups,
-            )
-            deduped_groups = deduped_groups[:graph_api_max_groups]
+        if graph_api_max_groups > 0:
+            if len(deduped_groups) > graph_api_max_groups:
+                logger.warning(
+                    "Graph API returned %d groups for %s; applying configured cap (%d)",
+                    len(deduped_groups),
+                    user_email,
+                    graph_api_max_groups,
+                )
+                deduped_groups = deduped_groups[:graph_api_max_groups]
 
         logger.info("Retrieved %d groups from Graph API for %s", len(deduped_groups), user_email)
         return deduped_groups
