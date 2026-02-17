@@ -757,6 +757,7 @@ async def test_list_resources_exception_no_server_id(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_list_resource_templates_public_only_token(monkeypatch):
     """Test list_resource_templates passes empty token_teams for public-only access."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
 
     mock_db = MagicMock()
@@ -797,6 +798,7 @@ async def test_list_resource_templates_public_only_token(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resource_templates_admin_unrestricted(monkeypatch):
     """Test list_resource_templates passes token_teams=None for admin users without team restrictions."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
 
     mock_db = MagicMock()
@@ -836,6 +838,7 @@ async def test_list_resource_templates_admin_unrestricted(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resource_templates_team_scoped(monkeypatch):
     """Test list_resource_templates passes token_teams for team-scoped access."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
 
     mock_db = MagicMock()
@@ -1557,6 +1560,7 @@ async def test_stream_buffer_len():
 @pytest.mark.asyncio
 async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
     """Auth sets user context with email, teams, and is_admin from JWT payload."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -1595,6 +1599,7 @@ async def test_streamable_http_auth_sets_user_context_with_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_streamable_http_auth_normalizes_dict_teams(monkeypatch):
     """Auth normalizes team dicts to string IDs."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -1656,6 +1661,7 @@ async def test_streamable_http_auth_handles_empty_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_streamable_http_auth_uses_email_field_fallback(monkeypatch):
     """Auth uses email field when sub is not present."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -1712,6 +1718,7 @@ async def test_streamable_http_auth_handles_missing_teams_key(monkeypatch):
 @pytest.mark.asyncio
 async def test_streamable_http_auth_rejects_removed_team_member(monkeypatch):
     """Auth rejects tokens for users no longer in the team (cached rejection)."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -1744,6 +1751,7 @@ async def test_streamable_http_auth_rejects_removed_team_member(monkeypatch):
 @pytest.mark.asyncio
 async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monkeypatch):
     """Auth validates team membership via DB when cache misses."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -2366,7 +2374,9 @@ async def test_event_store_replay_skips_overwritten_slot():
     entry = buffer.entries[idx]
     if entry is not None:
         # Create a new entry with a different seq_num to simulate overwrite
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import EventEntry
+
         buffer.entries[idx] = EventEntry(
             event_id=entry.event_id,
             stream_id=entry.stream_id,
@@ -2411,12 +2421,14 @@ async def test_event_store_replay_skips_none_entry():
 @pytest.mark.asyncio
 async def test_get_db_cancelled_error():
     """get_db rolls back and closes session on CancelledError."""
+    # Standard
     import asyncio
 
     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal") as mock_session_local:
         mock_db = MagicMock()
         mock_session_local.return_value = mock_db
 
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(asyncio.CancelledError):
@@ -2430,6 +2442,7 @@ async def test_get_db_cancelled_error():
 @pytest.mark.asyncio
 async def test_get_db_cancelled_error_rollback_fails():
     """get_db handles rollback failure during CancelledError."""
+    # Standard
     import asyncio
 
     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal") as mock_session_local:
@@ -2437,6 +2450,7 @@ async def test_get_db_cancelled_error_rollback_fails():
         mock_db.rollback.side_effect = Exception("rollback fail")
         mock_session_local.return_value = mock_db
 
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(asyncio.CancelledError):
@@ -2449,6 +2463,7 @@ async def test_get_db_cancelled_error_rollback_fails():
 @pytest.mark.asyncio
 async def test_get_db_cancelled_error_close_fails():
     """get_db handles close failure during CancelledError."""
+    # Standard
     import asyncio
 
     with patch("mcpgateway.transports.streamablehttp_transport.SessionLocal") as mock_session_local:
@@ -2458,6 +2473,7 @@ async def test_get_db_cancelled_error_close_fails():
         mock_db.close.side_effect = [Exception("close fail"), None]
         mock_session_local.return_value = mock_db
 
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(asyncio.CancelledError):
@@ -2473,6 +2489,7 @@ async def test_get_db_exception_rollback_fails_then_invalidate():
         mock_db.rollback.side_effect = Exception("rollback fail")
         mock_session_local.return_value = mock_db
 
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(ValueError, match="test error"):
@@ -2493,6 +2510,7 @@ async def test_get_db_exception_rollback_and_invalidate_both_fail():
         mock_db.invalidate.side_effect = Exception("invalidate fail")
         mock_session_local.return_value = mock_db
 
+        # First-Party
         from mcpgateway.transports.streamablehttp_transport import get_db
 
         with pytest.raises(ValueError, match="test error"):
@@ -2511,6 +2529,7 @@ async def test_get_db_exception_rollback_and_invalidate_both_fail():
 
 def test_get_user_email_from_context_non_dict():
     """get_user_email_from_context returns str(user) for non-dict user context."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_user_email_from_context, user_context_var
 
     token = user_context_var.set("someuser@test.com")
@@ -2523,6 +2542,7 @@ def test_get_user_email_from_context_non_dict():
 
 def test_get_user_email_from_context_empty():
     """get_user_email_from_context returns 'unknown' for empty/falsy user context."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_user_email_from_context, user_context_var
 
     token = user_context_var.set("")
@@ -2535,6 +2555,7 @@ def test_get_user_email_from_context_empty():
 
 def test_get_user_email_from_context_sub_fallback():
     """get_user_email_from_context uses sub when email is not present."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_user_email_from_context, user_context_var
 
     token = user_context_var.set({"sub": "sub@test.com"})
@@ -2547,6 +2568,7 @@ def test_get_user_email_from_context_sub_fallback():
 
 def test_get_user_email_from_context_no_email_no_sub():
     """get_user_email_from_context returns 'unknown' when dict has no email or sub."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_user_email_from_context, user_context_var
 
     token = user_context_var.set({"teams": []})
@@ -2565,7 +2587,8 @@ def test_get_user_email_from_context_no_email_no_sub():
 @pytest.mark.asyncio
 async def test_call_tool_with_request_context_meta(monkeypatch):
     """Test call_tool extracts _meta from request context when available."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types, mcp_app
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service, types
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2605,7 +2628,8 @@ async def test_call_tool_with_request_context_meta(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_with_request_context_no_meta(monkeypatch):
     """Test call_tool tolerates an active request context that has no meta."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, mcp_app, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service, types
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2645,7 +2669,8 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_admin_bypass(monkeypatch):
     """Test call_tool admin bypass sets user_email=None for unrestricted admin."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2686,7 +2711,8 @@ async def test_call_tool_admin_bypass(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_non_admin_no_teams_gets_public_only(monkeypatch):
     """Test call_tool sets token_teams=[] for non-admin without teams (line 534-535)."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, user_context_var, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2726,9 +2752,8 @@ async def test_call_tool_non_admin_no_teams_gets_public_only(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_with_mcp_session_header(monkeypatch):
     """Test call_tool extracts mcp-session-id from request headers (lines 543-544)."""
-    from mcpgateway.transports.streamablehttp_transport import (
-        call_tool, tool_service, user_context_var, request_headers_var, types
-    )
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, tool_service, types, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -2769,6 +2794,7 @@ async def test_call_tool_with_mcp_session_header(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_tools_admin_bypass(monkeypatch):
     """Test list_tools admin bypass with teams=None."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
 
     mock_db = MagicMock()
@@ -2809,6 +2835,7 @@ async def test_list_tools_admin_bypass(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_tools_non_admin_no_teams(monkeypatch):
     """Test list_tools non-admin with teams=None gets public-only (line 791->794)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
 
     mock_db = MagicMock()
@@ -2852,7 +2879,8 @@ async def test_list_tools_non_admin_no_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_prompts_admin_bypass(monkeypatch):
     """Test list_prompts admin bypass with teams=None."""
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service, user_context_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
@@ -2893,8 +2921,11 @@ async def test_list_prompts_admin_bypass(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_prompt_admin_bypass(monkeypatch):
     """Test get_prompt admin bypass with teams=None (line 897)."""
+    # Third-Party
     from mcp.types import PromptMessage, TextContent
-    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, user_context_var, types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, types, user_context_var
 
     mock_db = MagicMock()
     mock_message = PromptMessage(role="user", content=TextContent(type="text", text="admin prompt"))
@@ -2928,8 +2959,11 @@ async def test_get_prompt_admin_bypass(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_prompt_non_admin_no_teams(monkeypatch):
     """Test get_prompt non-admin with teams=None gets public-only (line 899->902)."""
+    # Third-Party
     from mcp.types import PromptMessage, TextContent
-    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, user_context_var, types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, types, user_context_var
 
     mock_db = MagicMock()
     mock_message = PromptMessage(role="user", content=TextContent(type="text", text="public"))
@@ -2967,7 +3001,8 @@ async def test_get_prompt_non_admin_no_teams(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resources_admin_bypass(monkeypatch):
     """Test list_resources admin bypass with teams=None (line 966)."""
-    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service, user_context_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_resource = MagicMock()
@@ -3009,7 +3044,10 @@ async def test_list_resources_admin_bypass(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_admin_bypass(monkeypatch):
     """Test read_resource admin bypass with teams=None (line 1021)."""
+    # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service, user_context_var
 
     mock_db = MagicMock()
@@ -3044,7 +3082,10 @@ async def test_read_resource_admin_bypass(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_returns_blob(monkeypatch):
     """Test read_resource returns blob content when available (line 1053)."""
+    # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service
 
     mock_db = MagicMock()
@@ -3072,6 +3113,7 @@ async def test_read_resource_returns_blob(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resource_templates_inner_exception(monkeypatch):
     """Test list_resource_templates returns [] on inner service exception (line 1106-1108)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resource_templates, resource_service, user_context_var
 
     mock_db = MagicMock()
@@ -3094,6 +3136,7 @@ async def test_list_resource_templates_inner_exception(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resource_templates_outer_exception(monkeypatch, caplog):
     """Test list_resource_templates returns [] on outer exception (line 1109-1111)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_resource_templates, user_context_var
 
     @asynccontextmanager
@@ -3121,8 +3164,11 @@ async def test_list_resource_templates_outer_exception(monkeypatch, caplog):
 @pytest.mark.asyncio
 async def test_set_logging_level_debug():
     """Test set_logging_level with debug level."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock()
@@ -3134,8 +3180,11 @@ async def test_set_logging_level_debug():
 @pytest.mark.asyncio
 async def test_set_logging_level_warning():
     """Test set_logging_level with warning level."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock()
@@ -3147,8 +3196,11 @@ async def test_set_logging_level_warning():
 @pytest.mark.asyncio
 async def test_set_logging_level_error():
     """Test set_logging_level with error level."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock()
@@ -3159,8 +3211,11 @@ async def test_set_logging_level_error():
 @pytest.mark.asyncio
 async def test_set_logging_level_critical():
     """Test set_logging_level with critical level."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock()
@@ -3171,9 +3226,12 @@ async def test_set_logging_level_critical():
 @pytest.mark.asyncio
 async def test_set_logging_level_notice():
     """Test set_logging_level with notice maps to INFO."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
-    from mcpgateway.common.models import LogLevel
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.common.models import LogLevel
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock()
@@ -3185,9 +3243,12 @@ async def test_set_logging_level_notice():
 @pytest.mark.asyncio
 async def test_set_logging_level_unknown_defaults_to_info():
     """Test set_logging_level with unknown level defaults to INFO."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
-    from mcpgateway.common.models import LogLevel
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.common.models import LogLevel
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock()
@@ -3199,8 +3260,11 @@ async def test_set_logging_level_unknown_defaults_to_info():
 @pytest.mark.asyncio
 async def test_set_logging_level_exception():
     """Test set_logging_level returns EmptyResult on exception."""
-    from mcpgateway.transports.streamablehttp_transport import set_logging_level
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import set_logging_level
 
     with patch("mcpgateway.transports.streamablehttp_transport.logging_service") as mock_ls:
         mock_ls.set_level = AsyncMock(side_effect=Exception("level error"))
@@ -3216,8 +3280,11 @@ async def test_set_logging_level_exception():
 @pytest.mark.asyncio
 async def test_complete_dict_result(monkeypatch):
     """Test complete returns Completion from dict result (line 1188-1190)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3243,8 +3310,11 @@ async def test_complete_dict_result(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_nested_completion(monkeypatch):
     """Test complete handles nested completion result (line 1200-1202)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3275,8 +3345,11 @@ async def test_complete_nested_completion(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_completion_is_dict(monkeypatch):
     """Test complete handles when result.completion is a dict (line 1196-1197)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3304,8 +3377,11 @@ async def test_complete_completion_is_dict(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_already_completion_type(monkeypatch):
     """Test complete returns result directly when it is already types.Completion (line 1213-1214)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3332,8 +3408,11 @@ async def test_complete_already_completion_type(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_completion_obj_is_completion_type(monkeypatch):
     """Test complete handles result.completion being types.Completion (line 1205-1206)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3364,8 +3443,11 @@ async def test_complete_completion_obj_is_completion_type(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_pydantic_model_completion(monkeypatch):
     """Test complete handles result.completion being a Pydantic model with model_dump (line 1209-1210)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3401,8 +3483,11 @@ async def test_complete_pydantic_model_completion(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_completion_obj_without_model_dump_falls_back(monkeypatch):
     """Test complete falls back to empty Completion when result.completion is an unhandled type (line 1209->1213)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3431,8 +3516,11 @@ async def test_complete_completion_obj_without_model_dump_falls_back(monkeypatch
 @pytest.mark.asyncio
 async def test_complete_fallback_empty(monkeypatch):
     """Test complete returns empty Completion on unhandled result type (line 1217)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     mock_db = MagicMock()
 
@@ -3461,8 +3549,11 @@ async def test_complete_fallback_empty(monkeypatch):
 @pytest.mark.asyncio
 async def test_complete_exception(monkeypatch):
     """Test complete returns empty Completion on exception (line 1219-1221)."""
-    from mcpgateway.transports.streamablehttp_transport import complete
+    # Third-Party
     from mcp import types as mcp_types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import complete
 
     @asynccontextmanager
     async def failing_get_db():
@@ -3523,6 +3614,7 @@ async def test_streamable_http_auth_proxy_user_when_client_auth_disabled(monkeyp
 @pytest.mark.asyncio
 async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypatch):
     """Test auth falls back to proxy user when JWT verification fails (lines 1875-1883)."""
+
     async def fake_verify(token):
         raise ValueError("invalid token")
 
@@ -3555,6 +3647,7 @@ async def test_streamable_http_auth_proxy_user_fallback_on_jwt_failure(monkeypat
 @pytest.mark.asyncio
 async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch):
     """Test auth uses proxy_user for context when user_payload is not a dict (line 1862-1864)."""
+
     async def fake_verify(token):
         # Return something that is truthy but not a dict
         return "string_payload"
@@ -3590,6 +3683,7 @@ async def test_streamable_http_auth_proxy_user_context_on_valid_jwt(monkeypatch)
 @pytest.mark.asyncio
 async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch):
     """Test auth caches positive team membership after DB check (line 1844)."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -3640,6 +3734,7 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
 @pytest.mark.asyncio
 async def test_streamable_http_auth_rollback_exception_ignored(monkeypatch):
     """Test auth ignores rollback exception in finally block (lines 1850-1851)."""
+    # Standard
     from unittest.mock import MagicMock, patch
 
     async def fake_verify(token):
@@ -3689,6 +3784,7 @@ async def test_streamable_http_auth_rollback_exception_ignored(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_structured_content_getattr_exception(monkeypatch):
     """Test call_tool handles getattr exception for structured_content (lines 737-738)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -3729,6 +3825,7 @@ async def test_call_tool_structured_content_getattr_exception(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_structured_content_model_dump_exception(monkeypatch):
     """Test call_tool handles model_dump exception for structuredContent (lines 744-745)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -3762,6 +3859,7 @@ async def test_call_tool_structured_content_model_dump_exception(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_meta_with_model_dump(monkeypatch):
     """Test call_tool converts meta with model_dump (lines 675-677)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -3799,6 +3897,7 @@ async def test_call_tool_meta_with_model_dump(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_annotations_not_convertible(monkeypatch):
     """Test call_tool handles annotations that are not dict, None, or model_dump (line 660)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -3836,7 +3935,10 @@ async def test_call_tool_annotations_not_convertible(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_non_admin_no_teams(monkeypatch):
     """Test read_resource non-admin with teams=None gets public-only (line 1023)."""
+    # Third-Party
     from pydantic import AnyUrl
+
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service, user_context_var
 
     mock_db = MagicMock()
@@ -3900,8 +4002,11 @@ async def test_streamable_http_auth_no_proxy_user_when_client_auth_disabled(monk
 @pytest.mark.asyncio
 async def test_get_prompt_with_meta_from_request_context(monkeypatch):
     """Test get_prompt extracts _meta from request context (lines 906-907)."""
+    # Third-Party
     from mcp.types import PromptMessage, TextContent
-    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, user_context_var, mcp_app, types
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app, prompt_service, types, user_context_var
 
     mock_db = MagicMock()
     mock_message = PromptMessage(role="user", content=TextContent(type="text", text="test"))
@@ -3942,8 +4047,11 @@ async def test_get_prompt_with_meta_from_request_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_get_prompt_with_request_context_no_meta(monkeypatch):
     """Test get_prompt handles an active request context without meta (line 906->912)."""
+    # Third-Party
     from mcp.types import PromptMessage, TextContent
-    from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service, user_context_var, mcp_app
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app, prompt_service, user_context_var
 
     mock_db = MagicMock()
     mock_message = PromptMessage(role="user", content=TextContent(type="text", text="test"))
@@ -3976,6 +4084,7 @@ async def test_get_prompt_with_request_context_no_meta(monkeypatch):
         user_context_var.reset(user_token)
         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
 
+
 # ---------------------------------------------------------------------------
 # read_resource: _meta extraction from request context (Lines 1030-1031)
 # ---------------------------------------------------------------------------
@@ -3984,8 +4093,11 @@ async def test_get_prompt_with_request_context_no_meta(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_with_meta_from_request_context(monkeypatch):
     """Test read_resource extracts _meta from request context (lines 1030-1031)."""
+    # Third-Party
     from pydantic import AnyUrl
-    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service, user_context_var, mcp_app
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import mcp_app, read_resource, resource_service, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -4026,8 +4138,11 @@ async def test_read_resource_with_meta_from_request_context(monkeypatch):
 @pytest.mark.asyncio
 async def test_read_resource_with_request_context_no_meta(monkeypatch):
     """Test read_resource handles an active request context without meta (line 1030->1036)."""
+    # Third-Party
     from pydantic import AnyUrl
-    from mcpgateway.transports.streamablehttp_transport import read_resource, resource_service, user_context_var, mcp_app
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import mcp_app, read_resource, resource_service, user_context_var
 
     mock_db = MagicMock()
     mock_result = MagicMock()
@@ -4074,6 +4189,7 @@ async def test_read_resource_with_request_context_no_meta(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_tools_team_scoped_user(monkeypatch):
     """Test list_tools with team-scoped user context (token_teams not None) (line 791->794)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import list_tools, server_id_var, tool_service, user_context_var
 
     mock_db = MagicMock()
@@ -4116,7 +4232,8 @@ async def test_list_tools_team_scoped_user(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_prompts_team_scoped_user(monkeypatch):
     """Test list_prompts with team-scoped user (token_teams not None) (line 843->846)."""
-    from mcpgateway.transports.streamablehttp_transport import list_prompts, server_id_var, prompt_service, user_context_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_prompts, prompt_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_prompt = MagicMock()
@@ -4156,7 +4273,8 @@ async def test_list_prompts_team_scoped_user(monkeypatch):
 @pytest.mark.asyncio
 async def test_list_resources_team_scoped_user(monkeypatch):
     """Test list_resources with team-scoped user (token_teams not None) (line 968->971)."""
-    from mcpgateway.transports.streamablehttp_transport import list_resources, server_id_var, resource_service, user_context_var
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, resource_service, server_id_var, user_context_var
 
     mock_db = MagicMock()
     mock_resource = MagicMock()
@@ -4192,6 +4310,7 @@ async def test_list_resources_team_scoped_user(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_meta_not_convertible(monkeypatch):
     """Test _convert_meta returns None when meta is not dict, None, or has model_dump (line 677)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
     mock_db = MagicMock()
@@ -4280,11 +4399,12 @@ def _make_send_collector():
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_forwarded_success(monkeypatch):
     """Test call_tool forwards to owner worker via session pool and returns unstructured content."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
-        user_context_var,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4294,9 +4414,7 @@ async def test_call_tool_session_affinity_forwarded_success(monkeypatch):
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"result": {"content": [{"type": "text", "text": "forwarded result"}]}}
-    )
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "forwarded result"}]}})
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -4324,6 +4442,7 @@ async def test_call_tool_session_affinity_forwarded_success(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_forwarded_with_structured(monkeypatch):
     """Test call_tool returns tuple when forwarded response has structuredContent."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
@@ -4336,9 +4455,7 @@ async def test_call_tool_session_affinity_forwarded_with_structured(monkeypatch)
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"result": {"content": [{"type": "text", "text": "r"}], "structuredContent": {"key": "val"}}}
-    )
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "r"}], "structuredContent": {"key": "val"}}})
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -4364,6 +4481,7 @@ async def test_call_tool_session_affinity_forwarded_with_structured(monkeypatch)
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_forwarded_error(monkeypatch):
     """Test call_tool raises when forwarded response contains an error."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
@@ -4376,9 +4494,7 @@ async def test_call_tool_session_affinity_forwarded_error(monkeypatch):
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"error": {"message": "remote error"}}
-    )
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"error": {"message": "remote error"}})
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -4405,11 +4521,12 @@ async def test_call_tool_session_affinity_forwarded_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_rehydrate_image(monkeypatch):
     """Test _rehydrate_content_items converts image items."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
-        user_context_var,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4418,9 +4535,7 @@ async def test_call_tool_session_affinity_rehydrate_image(monkeypatch):
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"result": {"content": [{"type": "image", "data": "abc", "mimeType": "image/png"}]}}
-    )
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "image", "data": "abc", "mimeType": "image/png"}]}})
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -4445,11 +4560,12 @@ async def test_call_tool_session_affinity_rehydrate_image(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_rehydrate_audio(monkeypatch):
     """Test _rehydrate_content_items converts audio items."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
-        user_context_var,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4458,9 +4574,7 @@ async def test_call_tool_session_affinity_rehydrate_audio(monkeypatch):
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"result": {"content": [{"type": "audio", "data": "aud", "mimeType": "audio/mp3"}]}}
-    )
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "audio", "data": "aud", "mimeType": "audio/mp3"}]}})
     mock_pool.register_session_mapping = AsyncMock()
 
     mock_cache = AsyncMock()
@@ -4485,11 +4599,12 @@ async def test_call_tool_session_affinity_rehydrate_audio(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_rehydrate_unknown_and_invalid(monkeypatch):
     """Test _rehydrate_content_items handles unknown type and invalid (non-dict) items."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
-        user_context_var,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4534,12 +4649,13 @@ async def test_call_tool_session_affinity_rehydrate_unknown_and_invalid(monkeypa
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_invalid_session_id_fallthrough(monkeypatch):
     """Test call_tool falls through to local execution when session ID is invalid."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
-        tool_service,
         request_headers_var,
-        user_context_var,
+        tool_service,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4581,12 +4697,13 @@ async def test_call_tool_session_affinity_invalid_session_id_fallthrough(monkeyp
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_pool_not_initialized(monkeypatch):
     """Test call_tool falls through when pool is not initialized (RuntimeError)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
-        tool_service,
         request_headers_var,
-        user_context_var,
+        tool_service,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4631,11 +4748,12 @@ async def test_call_tool_session_affinity_pool_not_initialized(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_registration_failure(monkeypatch, caplog):
     """Test call_tool logs error when session mapping registration fails."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
         request_headers_var,
-        user_context_var,
         types,
+        user_context_var,
     )
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4644,9 +4762,7 @@ async def test_call_tool_session_affinity_registration_failure(monkeypatch, capl
     u_token = user_context_var.set({"email": "user@test.com", "teams": ["t1"], "is_admin": False})
 
     mock_pool = MagicMock()
-    mock_pool.forward_request_to_owner = AsyncMock(
-        return_value={"result": {"content": [{"type": "text", "text": "ok"}]}}
-    )
+    mock_pool.forward_request_to_owner = AsyncMock(return_value={"result": {"content": [{"type": "text", "text": "ok"}]}})
     mock_pool.register_session_mapping = AsyncMock(side_effect=Exception("register fail"))
 
     mock_cache = AsyncMock()
@@ -4673,7 +4789,8 @@ async def test_call_tool_session_affinity_registration_failure(monkeypatch, capl
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_cached_gateway_missing(monkeypatch):
     """Session mapping pre-registration should be skipped when cached gateway info is missing (line 564->573)."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, user_context_var, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
 
@@ -4708,7 +4825,8 @@ async def test_call_tool_session_affinity_cached_gateway_missing(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_cached_gateway_no_url(monkeypatch):
     """Session mapping pre-registration should be skipped when cached gateway URL is missing (line 568->573)."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, user_context_var, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
 
@@ -4743,7 +4861,8 @@ async def test_call_tool_session_affinity_cached_gateway_no_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_forwarded_none_falls_back_local(monkeypatch):
     """When forwarding returns None, call_tool should fall back to local tool execution (line 577->625)."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, request_headers_var, user_context_var, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, tool_service, types, user_context_var
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
 
@@ -4796,6 +4915,7 @@ async def test_call_tool_session_affinity_forwarded_none_falls_back_local(monkey
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_forwarded_non_list_content(monkeypatch):
     """_rehydrate_content_items should return [] when forwarded content is not a list (line 593)."""
+    # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, user_context_var
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
@@ -4829,7 +4949,8 @@ async def test_call_tool_session_affinity_forwarded_non_list_content(monkeypatch
 @pytest.mark.asyncio
 async def test_call_tool_session_affinity_rehydrate_resource_types_fallback(monkeypatch):
     """Invalid resource_link/resource payloads should fall back to TextContent (lines 607, 609, 612-613)."""
-    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, user_context_var, types
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, request_headers_var, types, user_context_var
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
 
@@ -4898,6 +5019,7 @@ async def test_session_manager_wrapper_redis_event_store(monkeypatch):
 
     assert captured_config["stateless"] is False
     assert captured_config["event_store"] is not None
+    # First-Party
     from mcpgateway.transports.redis_event_store import RedisEventStore
 
     assert isinstance(captured_config["event_store"], RedisEventStore)
@@ -5078,6 +5200,7 @@ async def test_forwarded_non_post_returns_200(monkeypatch):
 @pytest.mark.asyncio
 async def test_forwarded_post_routes_to_rpc(monkeypatch):
     """Test forwarded POST routes to /rpc via httpx (lines 1393-1461)."""
+    # Third-Party
     import httpx
 
     class DummySessionManager:
@@ -5909,11 +6032,13 @@ async def test_send_with_capture_registers_session(monkeypatch):
 
         async def handle_request(self, scope, receive, send_func):
             # Simulate SDK returning a session ID in response headers
-            await send_func({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"mcp-session-id", b"new-session-id")],
-            })
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
             await send_func({"type": "http.response.body", "body": b"ok"})
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
@@ -5992,11 +6117,13 @@ async def test_send_with_capture_registration_failure_logged(monkeypatch, caplog
             yield self
 
         async def handle_request(self, scope, receive, send_func):
-            await send_func({
-                "type": "http.response.start",
-                "status": 200,
-                "headers": [(b"mcp-session-id", b"new-session-id")],
-            })
+            await send_func(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [(b"mcp-session-id", b"new-session-id")],
+                }
+            )
             await send_func({"type": "http.response.body", "body": b"ok"})
 
     monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
@@ -6063,6 +6190,7 @@ async def test_send_with_capture_no_session_id_no_registration(monkeypatch):
 @pytest.mark.asyncio
 async def test_handle_streamable_http_closed_resource_error_swallowed(monkeypatch):
     """ClosedResourceError from session manager should be swallowed as a normal disconnect (line 1673)."""
+    # Third-Party
     import anyio
 
     class DummySessionManager:
@@ -6886,6 +7014,7 @@ class TestDirectProxyMode:
     @pytest.mark.asyncio
     async def test_list_tools_direct_proxy_with_meta_extraction(self):
         """Test list_tools extracts _meta from request context in direct_proxy mode."""
+        # Standard
         from unittest.mock import PropertyMock
 
         mock_gateway = MagicMock()
@@ -6923,6 +7052,7 @@ class TestDirectProxyMode:
     @pytest.mark.asyncio
     async def test_list_resources_direct_proxy_with_meta_extraction(self):
         """Test list_resources extracts _meta from request context in direct_proxy mode."""
+        # Standard
         from unittest.mock import PropertyMock
 
         mock_gateway = MagicMock()
@@ -7001,6 +7131,7 @@ class TestDirectProxyMode:
     @pytest.mark.asyncio
     async def test_read_resource_direct_proxy_with_meta_extraction(self):
         """Test read_resource extracts _meta from request context in direct_proxy mode."""
+        # Standard
         from unittest.mock import PropertyMock
 
         mock_gateway = MagicMock()
@@ -7099,6 +7230,7 @@ class TestCallToolDirectProxy:
     async def test_call_tool_direct_proxy_success(self):
         """Test call_tool returns CallToolResult from invoke_tool_direct when
         gateway header is present, gateway is direct_proxy, and access is granted."""
+        # Third-Party
         from mcp import types as mcp_types
 
         mock_gateway = MagicMock()
@@ -7106,9 +7238,7 @@ class TestCallToolDirectProxy:
         mock_gateway.gateway_mode = "direct_proxy"
 
         mock_db = MagicMock()
-        mock_db.execute = MagicMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway))
-        )
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
 
         @asynccontextmanager
         async def mock_get_db():
@@ -7144,6 +7274,7 @@ class TestCallToolDirectProxy:
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_access_denied(self):
         """Test call_tool returns isError=True with 'Tool not found' when access is denied."""
+        # Third-Party
         from mcp import types as mcp_types
 
         mock_gateway = MagicMock()
@@ -7151,9 +7282,7 @@ class TestCallToolDirectProxy:
         mock_gateway.gateway_mode = "direct_proxy"
 
         mock_db = MagicMock()
-        mock_db.execute = MagicMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway))
-        )
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
 
         @asynccontextmanager
         async def mock_get_db():
@@ -7176,6 +7305,7 @@ class TestCallToolDirectProxy:
     @pytest.mark.asyncio
     async def test_call_tool_direct_proxy_exception_returns_error(self):
         """Test call_tool returns error when invoke_tool_direct raises (no fallback to cache mode)."""
+        # Third-Party
         from mcp import types as mcp_types
 
         mock_gateway = MagicMock()
@@ -7183,9 +7313,7 @@ class TestCallToolDirectProxy:
         mock_gateway.gateway_mode = "direct_proxy"
 
         mock_db = MagicMock()
-        mock_db.execute = MagicMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway))
-        )
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
 
         @asynccontextmanager
         async def mock_get_db():
@@ -7219,9 +7347,7 @@ class TestCallToolDirectProxy:
         mock_gateway.gateway_mode = "cache"  # Not direct_proxy
 
         mock_db = MagicMock()
-        mock_db.execute = MagicMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway))
-        )
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
 
         @asynccontextmanager
         async def mock_get_db():
@@ -7261,9 +7387,7 @@ class TestCallToolDirectProxy:
         mock_gateway.gateway_mode = "direct_proxy"
 
         mock_db = MagicMock()
-        mock_db.execute = MagicMock(
-            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway))
-        )
+        mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
 
         @asynccontextmanager
         async def mock_get_db():
@@ -7298,3 +7422,837 @@ class TestCallToolDirectProxy:
         mock_invoke_direct.assert_not_awaited()
         # Normal mode was used instead
         mock_invoke_normal.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# list_resources & direct proxy edge cases
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_resources_gateway_found_not_direct_proxy_mode(monkeypatch):
+    """Test list_resources when gateway is found but not in direct_proxy mode."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, resource_service, server_id_var
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-cache"
+    mock_gateway.gateway_mode = "cache"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-cache"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+            mock_rs.list_server_resources = AsyncMock(return_value=[])
+
+            # This triggers the "Gateway found but not in direct_proxy mode" log path
+            await list_resources()
+
+            # Should fall back to cache mode
+            mock_rs.list_server_resources.assert_called_once()
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_direct_proxy_disabled_setting(monkeypatch):
+    """Test list_resources when gateway is direct_proxy but setting is disabled."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, resource_service, server_id_var
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-direct"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcpgateway_direct_proxy_enabled = False
+            with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+                mock_rs.list_server_resources = AsyncMock(return_value=[])
+
+                # This triggers the check failing on settings.mcpgateway_direct_proxy_enabled
+                await list_resources()
+
+                # Should fall back to cache mode
+                mock_rs.list_server_resources.assert_called_once()
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_gateway_not_found_log(monkeypatch, caplog):
+    """Test list_resources logs warning when gateway ID provided but not found."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, request_headers_var, resource_service, server_id_var
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-missing"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.resource_service") as mock_rs:
+            mock_rs.list_server_resources = AsyncMock(return_value=[])
+
+            with caplog.at_level("WARNING"):
+                await list_resources()
+                # Case-insensitive check or matching the exact log output
+                assert "Gateway gw-missing specified in X-Context-Forge-Gateway-Id header not found" in caplog.text
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+@pytest.mark.asyncio
+async def test_list_resources_direct_proxy_meta_lookup_error(monkeypatch):
+    """Test list_resources in direct_proxy mode when request_context raises LookupError."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import list_resources, mcp_app, request_headers_var, server_id_var
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-direct"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=mock_gateway)))
+
+    @asynccontextmanager
+    async def mock_get_db():
+        yield mock_db
+
+    server_token = server_id_var.set("server-123")
+    headers_token = request_headers_var.set({"x-context-forge-gateway-id": "gw-direct"})
+
+    with patch("mcpgateway.transports.streamablehttp_transport.get_db", mock_get_db):
+        with patch("mcpgateway.transports.streamablehttp_transport.settings") as mock_settings:
+            mock_settings.mcpgateway_direct_proxy_enabled = True
+            with patch("mcpgateway.transports.streamablehttp_transport.check_gateway_access", return_value=True):
+                with patch("mcpgateway.transports.streamablehttp_transport._proxy_list_resources_to_gateway") as mock_proxy:
+                    mock_proxy.return_value = []
+
+                    # Force LookupError when accessing request_context
+                    original_prop = type(mcp_app).__dict__.get("request_context")
+                    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError("No context")))
+
+                    try:
+                        await list_resources()
+
+                        # Verify called with meta=None
+                        mock_proxy.assert_awaited_once()
+                        args = mock_proxy.call_args[0]
+                        # signature: (gateway, request_headers, user_context, meta)
+                        assert args[3] is None
+                    finally:
+                        if original_prop is not None:
+                            type(mcp_app).request_context = original_prop
+                        elif "request_context" in type(mcp_app).__dict__:
+                            delattr(type(mcp_app), "request_context")
+
+    server_id_var.reset(server_token)
+    request_headers_var.reset(headers_token)
+
+
+# ---------------------------------------------------------------------------
+# _get_request_context_or_default
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_no_request_object(monkeypatch, caplog):
+    """Test _get_request_context_or_default when context exists but request is None (lines 985-986)."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = None
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with caplog.at_level("WARNING"):
+                sid, headers, user = await _get_request_context_or_default()
+
+                assert sid == "default_server_id"
+                assert "No request object found in MCP context" in caplog.text
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_stateful_success(monkeypatch):
+    """Test _get_request_context_or_default success path with server_id and auth (lines 988-1010)."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    # Use a HEX server ID because the regex enforces [a-fA-F0-9\-]+
+    valid_hex_id = "abc-123-def-456"
+
+    mock_request = MagicMock()
+    mock_request.url.path = f"/servers/{valid_hex_id}/mcp"
+    mock_request.headers = {"authorization": "Bearer token"}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    # Use realistic JWT payload shape (raw from require_auth_override)
+    raw_jwt = {"sub": "test_user@example.com", "token_use": "api", "teams": ["team-1"]}
+    mock_auth_override = AsyncMock(return_value=raw_jwt)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+
+    # Mock normalization to avoid DB/cache dependencies
+    normalized = {"email": "test_user@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+
+            # Verify server_id extracted from URL
+            assert sid == valid_hex_id
+            assert headers["authorization"] == "Bearer token"
+            assert user == normalized
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_auth_failure(monkeypatch, caplog):
+    """Test _get_request_context_or_default handles auth exception (lines 1006-1008)."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/mcp"  # No server ID
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    mock_auth_override = AsyncMock(side_effect=Exception("Auth failed"))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with caplog.at_level("WARNING"):
+                sid, headers, user = await _get_request_context_or_default()
+
+                assert sid == "default_server_id"
+                assert user == {}
+                assert "Failed to recover user context" in caplog.text
+    finally:
+        server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# handle_streamable_http injection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_injects_server_id(monkeypatch):
+    """Test handle_streamable_http injects server_id into params for local affinity (lines 1956-1960)."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
+
+    # Setup mocks for SessionManagerWrapper
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    # Use a HEX server ID because the regex enforces [a-fA-F0-9\-]+
+    server_id = "abc-123-def-456"
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+
+    original_body = orjson.dumps({"jsonrpc": "2.0", "method": "test", "params": {}})
+    receive = _make_receive(original_body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"{}"
+
+    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+            with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class):
+                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+                    mock_client = AsyncMock()
+                    mock_client.post = AsyncMock(return_value=mock_response)
+                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                    mock_client.__aexit__ = AsyncMock(return_value=None)
+                    mock_client_cls.return_value = mock_client
+
+                    await wrapper.handle_streamable_http(scope, receive, send)
+
+                    mock_client.post.assert_called_once()
+                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    posted_json = orjson.loads(posted_content)
+
+                    assert "server_id" in posted_json["params"]
+                    assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# streamable_http_auth exception fallbacks
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_streamable_http_auth_verify_exception_fallback_permissive(monkeypatch):
+    """Test auth exception fallback when permissive mode enabled and no proxy user."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import streamable_http_auth, user_context_var
+
+    # Force verify_credentials to raise Exception
+    monkeypatch.setattr(tr, "verify_credentials", AsyncMock(side_effect=Exception("Auth Service Down")))
+
+    # Settings: Trust proxy is ON, but we won't provide header. Require auth is OFF (permissive).
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.trust_proxy_auth", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.proxy_user_header", "x-user")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    scope = _make_scope("/servers/abc-123/mcp", headers=[(b"authorization", b"Bearer bad-token")])
+    sent = []
+
+    async def send(msg):
+        sent.append(msg)
+
+    # Should catch exception, fail proxy check (no header), then succeed via permissive check
+    result = await streamable_http_auth(scope, None, send)
+
+    assert result is True
+    assert sent == []
+
+    ctx = user_context_var.get()
+    assert ctx["is_authenticated"] is False
+    assert ctx["teams"] == []
+
+
+# ---------------------------------------------------------------------------
+# _get_request_context_or_default: additional coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_fast_path():
+    """Fast path: returns ContextVars directly when server_id is not the default."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+    )
+
+    s_tok = server_id_var.set("real-server-abc123")
+    h_tok = request_headers_var.set({"authorization": "Bearer xyz"})
+    u_tok = user_context_var.set({"email": "user@test.com", "teams": ["t1"]})
+
+    try:
+        sid, headers, user = await _get_request_context_or_default()
+        assert sid == "real-server-abc123"
+        assert headers == {"authorization": "Bearer xyz"}
+        assert user == {"email": "user@test.com", "teams": ["t1"]}
+    finally:
+        server_id_var.reset(s_tok)
+        request_headers_var.reset(h_tok)
+        user_context_var.reset(u_tok)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_anonymous_user(monkeypatch):
+    """Auth returning 'anonymous' string is converted to empty dict."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/servers/abc-def-123/mcp"
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    mock_auth = AsyncMock(return_value="anonymous")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+            assert sid == "abc-def-123"
+            assert user == {}  # "anonymous" string converted to empty dict
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_url_without_server_id(monkeypatch):
+    """Fallback path with URL that doesn't contain a server_id keeps default."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/mcp"  # No /servers/{id}/mcp pattern
+    mock_request.headers = {"x-custom": "value"}
+    mock_request.cookies = {}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    # Use realistic JWT payload shape (raw from require_auth_override)
+    raw_jwt = {"sub": "test@example.com", "token_use": "api"}
+    mock_auth = AsyncMock(return_value=raw_jwt)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+
+    # Mock normalization to avoid DB/cache dependencies
+    normalized = {"email": "test@example.com", "teams": [], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+            assert sid == "default_server_id"  # No match, keeps default
+            assert headers["x-custom"] == "value"
+            assert user == normalized
+    finally:
+        server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_lookup_error_fallback():
+    """LookupError from mcp_app.request_context returns ContextVar defaults."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+    )
+
+    s_tok = server_id_var.set("default_server_id")
+    h_tok = request_headers_var.set({"x-fallback": "true"})
+    u_tok = user_context_var.set({"fallback": True})
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, side_effect=LookupError("No context")):
+            sid, headers, user = await _get_request_context_or_default()
+            assert sid == "default_server_id"
+            assert headers == {"x-fallback": "true"}
+            assert user == {"fallback": True}
+    finally:
+        server_id_var.reset(s_tok)
+        request_headers_var.reset(h_tok)
+        user_context_var.reset(u_tok)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_generic_exception_fallback(caplog):
+    """Generic exception from request_context access returns defaults and logs error."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import (
+        _get_request_context_or_default,
+        mcp_app,
+        request_headers_var,
+        server_id_var,
+        user_context_var,
+    )
+
+    s_tok = server_id_var.set("default_server_id")
+    h_tok = request_headers_var.set({"x-default": "yes"})
+    u_tok = user_context_var.set({})
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, side_effect=RuntimeError("Unexpected")):
+            with caplog.at_level("ERROR"):
+                sid, headers, user = await _get_request_context_or_default()
+                assert sid == "default_server_id"
+                assert headers == {"x-default": "yes"}
+                assert user == {}
+                assert "Error recovering context in stateful session" in caplog.text
+    finally:
+        server_id_var.reset(s_tok)
+        request_headers_var.reset(h_tok)
+        user_context_var.reset(u_tok)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_cookie_token_used(monkeypatch):
+    """Cookie JWT token is passed to require_auth_override when present."""
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    token = server_id_var.set("default_server_id")
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/servers/aabbcc-112233/mcp"
+    mock_request.headers = {}  # No authorization header
+    mock_request.cookies = {"jwt_token": "cookie-jwt-value"}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    # Use realistic JWT payload shape (raw from require_auth_override)
+    raw_jwt = {"sub": "cookie-user@test.com", "token_use": "session"}
+    mock_auth = AsyncMock(return_value=raw_jwt)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+
+    # Mock normalization to avoid DB/cache dependencies
+    normalized = {"email": "cookie-user@test.com", "teams": [], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+            assert sid == "aabbcc-112233"
+            assert user == normalized
+            # Verify cookie token was passed
+            mock_auth.assert_awaited_once_with(auth_header=None, jwt_token="cookie-jwt-value", request=mock_request)
+    finally:
+        server_id_var.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _normalize_jwt_payload tests
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_jwt_payload_api_token(monkeypatch):
+    """API token (no token_use or token_use != 'session') uses normalize_token_teams."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
+
+    raw = {"sub": "user@example.com", "token_use": "api", "teams": ["team-a"]}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": "user@example.com", "teams": ["team-a"], "is_admin": False, "is_authenticated": True}
+
+
+def test_normalize_jwt_payload_session_token_admin(monkeypatch):
+    """Session token with is_admin=True gets admin bypass (teams=None)."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"sub": "admin@example.com", "token_use": "session", "is_admin": True}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": "admin@example.com", "teams": None, "is_admin": True, "is_authenticated": True}
+
+
+def test_normalize_jwt_payload_session_token_non_admin(monkeypatch):
+    """Session token without admin resolves teams from DB."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db_sync", lambda email, is_admin: ["team-x"])
+
+    raw = {"sub": "dev@example.com", "token_use": "session"}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": "dev@example.com", "teams": ["team-x"], "is_admin": False, "is_authenticated": True}
+
+
+def test_normalize_jwt_payload_nested_is_admin():
+    """Nested user.is_admin is detected when top-level is_admin is absent."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"sub": "nested-admin@example.com", "token_use": "session", "user": {"is_admin": True}}
+    result = _normalize_jwt_payload(raw)
+    assert result["is_admin"] is True
+    assert result["teams"] is None  # Admin bypass
+
+
+def test_normalize_jwt_payload_email_fallback():
+    """Falls back to 'email' key when 'sub' is missing."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"email": "legacy@example.com", "token_use": "session", "is_admin": True}
+    result = _normalize_jwt_payload(raw)
+    assert result["email"] == "legacy@example.com"
+
+
+def test_normalize_jwt_payload_session_no_email():
+    """Session token without email/sub gets public-only teams."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+
+    raw = {"token_use": "session"}
+    result = _normalize_jwt_payload(raw)
+    assert result == {"email": None, "teams": [], "is_admin": False, "is_authenticated": True}
+
+
+# ---------------------------------------------------------------------------
+# call_tool: recovered context propagation regression test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_tool_uses_recovered_email_not_stale_contextvar(monkeypatch):
+    """call_tool passes app_user_email from recovered fallback context, not stale ContextVar.
+
+    Regression test: previously call_tool used get_user_email_from_context()
+    which reads from user_context_var (stale in stateful sessions). Now it
+    extracts email from the already-recovered user_context dict.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, server_id_var, tool_service, types, user_context_var
+
+    # Set ContextVar to a STALE email that should NOT be used
+    stale_ctx = {"email": "stale-user@old.com", "teams": [], "is_admin": False, "is_authenticated": True}
+    u_tok = user_context_var.set(stale_ctx)
+
+    # The recovered context should provide a DIFFERENT email
+    recovered_ctx = {"email": "recovered-user@new.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True}
+
+    # Mock _get_request_context_or_default to return the recovered context
+    async def fake_get_context():
+        return "test-server-id", {"authorization": "Bearer token"}, recovered_ctx
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", fake_get_context)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: None)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "ok"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    invoke_mock = AsyncMock(return_value=mock_result)
+    monkeypatch.setattr(tool_service, "invoke_tool", invoke_mock)
+
+    try:
+        await call_tool("test-tool", {"arg": "val"})
+
+        # Assert invoke_tool was called with the RECOVERED email, not the stale one
+        invoke_mock.assert_awaited_once()
+        call_kwargs = invoke_mock.call_args.kwargs
+        assert call_kwargs["app_user_email"] == "recovered-user@new.com", f"Expected recovered email but got: {call_kwargs['app_user_email']}"
+        assert call_kwargs["user_email"] == "recovered-user@new.com"
+        assert call_kwargs["token_teams"] == ["team-1"]
+    finally:
+        user_context_var.reset(u_tok)
+
+
+# ---------------------------------------------------------------------------
+# handle_streamable_http injection: additional coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_injects_server_id_when_params_missing(monkeypatch):
+    """server_id injection creates params dict when absent from JSON-RPC body."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-123-def-456"
+    # JSON-RPC body WITHOUT params key
+    original_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+    receive = _make_receive(original_body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"{}"
+
+    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+            with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class):
+                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+                    mock_client = AsyncMock()
+                    mock_client.post = AsyncMock(return_value=mock_response)
+                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                    mock_client.__aexit__ = AsyncMock(return_value=None)
+                    mock_client_cls.return_value = mock_client
+
+                    await wrapper.handle_streamable_http(scope, receive, send)
+
+                    mock_client.post.assert_called_once()
+                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    posted_json = orjson.loads(posted_content)
+
+                    # params was created and server_id injected
+                    assert "params" in posted_json
+                    assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_no_injection_without_server_url(monkeypatch):
+    """No server_id injection when URL does not match /servers/{id}/mcp pattern."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    # URL without /servers/{id}/mcp pattern
+    original_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    scope = _make_scope("/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+    receive = _make_receive(original_body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"{}"
+
+    with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool):
+        with patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"):
+            with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class):
+                with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+                    mock_client = AsyncMock()
+                    mock_client.post = AsyncMock(return_value=mock_response)
+                    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+                    mock_client.__aexit__ = AsyncMock(return_value=None)
+                    mock_client_cls.return_value = mock_client
+
+                    await wrapper.handle_streamable_http(scope, receive, send)
+
+                    mock_client.post.assert_called_once()
+                    posted_content = mock_client.post.call_args.kwargs["content"]
+                    posted_json = orjson.loads(posted_content)
+
+                    # No server_id injected
+                    assert "server_id" not in posted_json.get("params", {})
+
+    await wrapper.shutdown()
