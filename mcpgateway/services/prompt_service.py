@@ -581,7 +581,6 @@ class PromptService:
                     "prompt_name": db_prompt.name,
                     "visibility": visibility,
                 },
-                db=db,
             )
 
             db_prompt.team = self._get_team_name(db, db_prompt.team_id)
@@ -615,7 +614,6 @@ class PromptService:
                 user_email=owner_email,
                 error=ie,
                 custom_fields={"prompt_name": prompt.name},
-                db=db,
             )
             raise ie
         except PromptNameConflictError as se:
@@ -629,7 +627,6 @@ class PromptService:
                 user_id=created_by,
                 user_email=owner_email,
                 custom_fields={"prompt_name": prompt.name, "visibility": visibility},
-                db=db,
             )
             raise se
         except Exception as e:
@@ -644,7 +641,6 @@ class PromptService:
                 user_email=owner_email,
                 error=e,
                 custom_fields={"prompt_name": prompt.name},
-                db=db,
             )
             raise PromptError(f"Failed to register prompt: {str(e)}")
 
@@ -961,7 +957,6 @@ class PromptService:
                 "visibility": visibility,
                 "conflict_strategy": conflict_strategy,
             },
-            db=db,
         )
 
         return stats
@@ -1672,7 +1667,6 @@ class PromptService:
                         "tenant_id": tenant_id,
                         "server_id": server_id,
                     },
-                    db=db,
                 )
 
                 # Set success attributes on span
@@ -1904,7 +1898,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt.id),
                 custom_fields={"prompt_name": prompt.name, "version": prompt.version},
-                db=db,
             )
 
             prompt.team = self._get_team_name(db, prompt.team_id)
@@ -1932,7 +1925,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=pe,
-                db=db,
             )
             raise
         except IntegrityError as ie:
@@ -1948,7 +1940,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=ie,
-                db=db,
             )
             raise ie
         except PromptNotFoundError as e:
@@ -1964,7 +1955,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=e,
-                db=db,
             )
             raise e
         except PromptNameConflictError as pnce:
@@ -1980,7 +1970,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=pnce,
-                db=db,
             )
             raise pnce
         except Exception as e:
@@ -1995,7 +1984,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=e,
-                db=db,
             )
             raise PromptError(f"Failed to update prompt: {str(e)}")
 
@@ -2097,7 +2085,6 @@ class PromptService:
                     resource_type="prompt",
                     resource_id=str(prompt.id),
                     custom_fields={"prompt_name": prompt.name, "enabled": prompt.enabled},
-                    db=db,
                 )
 
             prompt.team = self._get_team_name(db, prompt.team_id)
@@ -2112,7 +2099,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=e,
-                db=db,
             )
             raise e
         except PromptLockConflictError:
@@ -2133,7 +2119,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=e,
-                db=db,
             )
             raise PromptError(f"Failed to set prompt state: {str(e)}")
 
@@ -2197,7 +2182,6 @@ class PromptService:
                 "prompt_name": prompt.name,
                 "include_inactive": include_inactive,
             },
-            db=db,
         )
 
         return prompt_data
@@ -2289,7 +2273,6 @@ class PromptService:
                     "prompt_name": prompt_name,
                     "purge_metrics": purge_metrics,
                 },
-                db=db,
             )
 
             # Invalidate cache after successful deletion
@@ -2313,7 +2296,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=pe,
-                db=db,
             )
             raise
         except Exception as e:
@@ -2329,7 +2311,6 @@ class PromptService:
                     resource_type="prompt",
                     resource_id=str(prompt_id),
                     error=e,
-                    db=db,
                 )
                 raise e
 
@@ -2343,7 +2324,6 @@ class PromptService:
                 resource_type="prompt",
                 resource_id=str(prompt_id),
                 error=e,
-                db=db,
             )
             raise PromptError(f"Failed to delete prompt: {str(e)}")
 

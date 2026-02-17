@@ -12568,7 +12568,6 @@ async def admin_test_gateway(
                 "status_code": response.status_code,
                 "latency_ms": latency_ms,
             },
-            db=db,
         )
 
         return GatewayTestResponse(status_code=response.status_code, latency_ms=latency_ms, body=response_body)
@@ -12596,7 +12595,6 @@ async def admin_test_gateway(
                 "test_path": request.path,
                 "latency_ms": latency_ms,
             },
-            db=db,
         )
 
         return GatewayTestResponse(status_code=502, latency_ms=latency_ms, body={"error": "Request failed", "details": str(e)})
@@ -15194,16 +15192,13 @@ async def list_plugins(
                 "disabled_count": disabled_count,
                 "has_filters": any([search, mode, hook, tag]),
             },
-            db=db,
         )
 
         return PluginListResponse(plugins=plugins, total=len(plugins), enabled_count=enabled_count, disabled_count=disabled_count)
 
     except Exception as e:
         LOGGER.error(f"Error listing plugins: {e}")
-        structured_logger.error(
-            "Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
-        )
+        structured_logger.error("Failed to list plugins in marketplace", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -15255,7 +15250,6 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
                 "tags_count": len(stats.get("plugins_by_tag", {})),
                 "authors_count": len(stats.get("plugins_by_author", {})),
             },
-            db=db,
         )
 
         return PluginStatsResponse(**stats)
@@ -15263,7 +15257,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
     except Exception as e:
         LOGGER.error(f"Error getting plugin statistics: {e}")
         structured_logger.error(
-            "Failed to get plugin marketplace statistics", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+            "Failed to get plugin marketplace statistics", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -15309,7 +15303,6 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
                 component="plugin_marketplace",
                 category="business_logic",
                 custom_fields={"plugin_name": name, "action": "view_details"},
-                db=db,
             )
             raise HTTPException(status_code=404, detail=f"Plugin '{name}' not found")
 
@@ -15332,7 +15325,6 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
                 "plugin_hooks": plugin.get("hooks", []),
                 "plugin_tags": plugin.get("tags", []),
             },
-            db=db,
         )
 
         # Create audit trail for plugin access
@@ -15347,7 +15339,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
     except Exception as e:
         LOGGER.error(f"Error getting plugin details: {e}")
         structured_logger.error(
-            f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic", db=db
+            f"Failed to get plugin details: '{name}'", user_id=get_user_id(user), user_email=get_user_email(user), error=e, component="plugin_marketplace", category="business_logic"
         )
         raise HTTPException(status_code=500, detail=str(e))
 
