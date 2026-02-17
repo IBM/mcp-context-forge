@@ -108,6 +108,7 @@ impl URLReputationPlugin {
                 }),
             };
         }
+        // check blocked domains
         if self
             .config
             .blocked_domains
@@ -210,14 +211,14 @@ mod tests {
         let config = URLReputationConfig {
             whitelist_domains: HashSet::new(),
             allowed_patterns: Vec::new(),
-            blocked_domains: HashSet::from(["idontlikethisdomain.com".to_string()]),
+            blocked_domains: HashSet::from(["bad.example".to_string()]),
             blocked_patterns: Vec::new(),
             use_heuristic_check: false,
             entropy_threshold: 0.0,
             block_non_secure_http: true,
         };
         let plugin = URLReputationPlugin::new(config);
-        let url = "https://api.idontlikethisdomain.com";
+        let url = "https://api.bad.example/v1";
 
         let result = plugin.validate_url(url);
         assert!(!result.continue_processing);

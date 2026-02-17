@@ -43,7 +43,6 @@ except Exception as e:
     _RUST_AVAILABLE = False
     logger.warning(f"⚠️  Unexpected error loading Rust module: {e}", exc_info=True)
 
-
 class URLReputationConfig(BaseModel):
     """Configuration for URL reputation checks.
     """
@@ -104,10 +103,8 @@ class URLReputationPlugin(Plugin):
         """
         if _RUST_AVAILABLE:
             result = self.rust_plugin.validate_url(payload.uri)
-
             violation_dict = None
             if result.violation is not None:
-                # Convert PyO3 PluginViolation to dictionary for Pydantic
                 violation_dict = {
                     "reason": result.violation.reason,
                     "description": result.violation.description,
