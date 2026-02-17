@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
@@ -3476,9 +3475,7 @@ class TestNormalizeUiHideValues:
         assert result == {"tools", "prompts"}
 
     def test_alias_resolution(self):
-        result = _normalize_ui_hide_values(
-            "catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
-        )
+        result = _normalize_ui_hide_values("catalog,a2a,api_tokens", UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES)
         assert result == {"servers", "agents", "tokens"}
 
     def test_no_aliases_when_none(self):
@@ -3521,9 +3518,7 @@ class TestUIVisibilityConfig:
         request.query_params = {"ui_hide": "prompts,tools,invalid"}
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
 
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", ["teams"], raising=False)
         monkeypatch.setattr(
             settings,
             "mcpgateway_ui_hide_header_items",
@@ -3553,12 +3548,8 @@ class TestUIVisibilityConfig:
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources,catalog"}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_embedded", False, raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
 
@@ -3574,12 +3565,8 @@ class TestUIVisibilityConfig:
         request.cookies = {UI_HIDE_SECTIONS_COOKIE_NAME: "resources"}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_embedded", False, raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
+        monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
 
@@ -3594,9 +3581,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3614,9 +3599,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3635,9 +3618,7 @@ class TestUIVisibilityConfig:
         request.cookies = {}
 
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
 
         config = get_ui_visibility_config(request)
@@ -3693,7 +3674,11 @@ class TestAdminUIRoute:
 
         # Ensure no sections are hidden (env may set MCPGATEWAY_UI_HIDE_SECTIONS)
         # Patch logger to verify logging occurred
-        with patch("mcpgateway.admin.LOGGER.exception") as mock_log, patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources), patch.object(settings, "mcpgateway_ui_hide_sections", []):
+        with (
+            patch("mcpgateway.admin.LOGGER.exception") as mock_log,
+            patch("mcpgateway.admin.resource_service.list_resources", new=mock_resources),
+            patch.object(settings, "mcpgateway_ui_hide_sections", []),
+        ):
             response = await admin_ui(
                 request=mock_request,
                 team_id=None,
@@ -3843,7 +3828,7 @@ class TestAdminUIRoute:
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
@@ -3912,16 +3897,14 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
@@ -3962,16 +3945,14 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
@@ -4011,16 +3992,14 @@ class TestAdminUIRoute:
         monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_embedded", False, raising=False)
         monkeypatch.setattr(settings, "mcpgateway_ui_hide_sections", [], raising=False)
-        monkeypatch.setattr(
-            settings, "mcpgateway_ui_hide_header_items", [], raising=False
-        )
+        monkeypatch.setattr(settings, "mcpgateway_ui_hide_header_items", [], raising=False)
 
         response = await admin_ui(
             request=mock_request,
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
@@ -4079,7 +4058,7 @@ class TestAdminUIRoute:
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
@@ -4134,7 +4113,7 @@ class TestAdminUIRoute:
             team_id=None,
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
@@ -4189,7 +4168,7 @@ class TestAdminUIRoute:
             team_id="some-team-id",
             include_inactive=False,
             db=mock_db,
-            user={"email": "admin@example.com", "db": mock_db},
+            user={"email": "admin@example.com", "db": mock_db, "permissions": ["*"]},
         )
 
         assert isinstance(response, HTMLResponse)
