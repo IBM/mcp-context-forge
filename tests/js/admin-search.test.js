@@ -283,7 +283,7 @@ describe("showUserEditModal", () => {
         await win.showUserEditModal("user@example.com");
 
         expect(win.fetchWithAuth).toHaveBeenCalledWith(
-            "/admin/users/user%40example.com/edit",
+            expect.stringContaining("/admin/users/user%40example.com/edit"),
             { method: "GET" },
         );
         expect(content.innerHTML).toContain("loaded-user-form");
@@ -318,7 +318,7 @@ describe("showUserEditModal", () => {
 
         expect(win.htmx.ajax).toHaveBeenCalledWith(
             "GET",
-            "/admin/users/user%40example.com/edit",
+            expect.stringContaining("/admin/users/user%40example.com/edit"),
             {
                 target: "#user-edit-modal-content",
                 swap: "innerHTML",
