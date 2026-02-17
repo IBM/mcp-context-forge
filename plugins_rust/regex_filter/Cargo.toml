@@ -1,0 +1,32 @@
+[package]
+name = "regex_filter"
+version = "1.0.0-BETA-2"
+edition = "2024"
+authors = ["MCP Gateway Contributors"]
+license = "Apache-2.0"
+repository = "https://github.com/IBM/mcp-context-forge"
+description = "Regex filter plugin"
+
+[lib]
+name = "regex_filter"
+crate-type = ["rlib"]
+
+[dependencies]
+pyo3 = { version = "0.28", features = ["abi3-py311"] }
+regex = "1.12"
+
+[dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+
+[profile.bench]
+inherits = "release"
+debug = true
+
+[[bench]]
+name = "regex_filter"
+harness = false
