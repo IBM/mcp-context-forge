@@ -451,6 +451,20 @@
         >
           {{ server.category }}
         </span>
+        {% if server.source_type %}
+        <span
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+        >
+          {{ server.source_type }}
+        </span>
+        {% endif %}
+        {% if server.deprecated %}
+        <span
+          class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
+        >
+          deprecated
+        </span>
+        {% endif %}
       </div>
 
       <!-- Description -->
@@ -467,6 +481,11 @@
         <div class="truncate">
           <span class="font-semibold">URL:</span> {{ server.url }}
         </div>
+        {% if server.supported_backends %}
+        <div class="truncate">
+          <span class="font-semibold">Backends:</span> {{ server.supported_backends|join(", ") }}
+        </div>
+        {% endif %}
       </div>
 
       <!-- Tags -->

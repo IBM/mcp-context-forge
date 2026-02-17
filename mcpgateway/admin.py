@@ -15364,8 +15364,11 @@ async def list_catalog_servers(
     provider: Optional[str] = None,
     search: Optional[str] = None,
     tags: Optional[List[str]] = Query(None),
+    supported_backends: Optional[List[str]] = Query(None),
+    source_type: Optional[str] = None,
     show_registered_only: bool = False,
     show_available_only: bool = True,
+    show_deprecated: bool = False,
     limit: int = 100,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -15380,8 +15383,11 @@ async def list_catalog_servers(
         provider: Filter by provider
         search: Search in name/description
         tags: Filter by tags
+        supported_backends: Filter by backend compatibility
+        source_type: Filter by source type
         show_registered_only: Show only already registered servers
         show_available_only: Show only available servers
+        show_deprecated: Include deprecated entries
         limit: Maximum results
         offset: Pagination offset
         db: Database session
@@ -15402,8 +15408,11 @@ async def list_catalog_servers(
         provider=provider,
         search=search,
         tags=tags or [],
+        supported_backends=supported_backends or [],
+        source_type=source_type,
         show_registered_only=show_registered_only,
         show_available_only=show_available_only,
+        show_deprecated=show_deprecated,
         limit=limit,
         offset=offset,
     )
@@ -15570,6 +15579,7 @@ async def catalog_partial(
     request: Request,
     category: Optional[str] = None,
     auth_type: Optional[str] = None,
+    source_type: Optional[str] = None,
     search: Optional[str] = None,
     page: int = 1,
     db: Session = Depends(get_db),
@@ -15581,6 +15591,7 @@ async def catalog_partial(
         request: FastAPI request object
         category: Filter by category
         auth_type: Filter by authentication type
+        source_type: Filter by source type
         search: Search term
         page: Page number (1-indexed)
         db: Database session
@@ -15601,7 +15612,7 @@ async def catalog_partial(
     page_size = settings.mcpgateway_catalog_page_size
     offset = (page - 1) * page_size
 
-    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
+    catalog_request = CatalogListRequest(category=category, auth_type=auth_type, source_type=source_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
     response = await catalog_service.get_catalog_servers(catalog_request, db)
 
@@ -15613,6 +15624,7 @@ async def catalog_partial(
     filter_params = {
         "category": category,
         "auth_type": auth_type,
+        "source_type": source_type,
         "search": search,
     }
 

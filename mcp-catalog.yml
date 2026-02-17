@@ -2,6 +2,49 @@
 # This file contains a curated list of public MCP servers that can be easily added to the gateway
 
 catalog_servers:
+  # Runtime-deployable reference entries
+  - id: runtime-filesystem-reference
+    name: "Filesystem Server (Runtime Reference)"
+    category: "Storage"
+    url: "http://localhost:8080/mcp"
+    auth_type: "Open"
+    provider: "ContextForge"
+    description: "Reference runtime-deployable filesystem MCP server."
+    requires_api_key: false
+    tags: ["filesystem", "storage", "runtime"]
+    source_type: "docker"
+    supported_backends: ["docker", "ibm_code_engine"]
+    source:
+      type: "docker"
+      image: "ghcr.io/ibm/mcp-context-forge/mcp-filesystem:latest"
+    guardrails_profile: "restricted"
+    featured: true
+
+  - id: runtime-rag-compose-reference
+    name: "RAG Stack (Compose Reference)"
+    category: "AI"
+    url: "http://localhost:8081/mcp"
+    auth_type: "Open"
+    provider: "ContextForge"
+    description: "Reference Docker Compose deployment with MCP app and vector store."
+    requires_api_key: false
+    tags: ["rag", "compose", "runtime"]
+    source_type: "compose"
+    supported_backends: ["docker"]
+    source:
+      type: "compose"
+      main_service: "mcp-rag"
+      compose_file: |
+        services:
+          mcp-rag:
+            image: ghcr.io/example/mcp-rag:latest
+            environment:
+              QDRANT_URL: http://qdrant:6333
+          qdrant:
+            image: qdrant/qdrant:latest
+    guardrails_profile: "standard"
+    requires_approval: true
+
   # Project Management
   - id: asana
     name: "Asana"

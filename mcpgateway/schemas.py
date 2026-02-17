@@ -7102,6 +7102,12 @@ class CatalogServer(BaseModel):
     transport: Optional[str] = Field(None, description="Transport type: SSE, STREAMABLEHTTP, or WEBSOCKET")
     logo_url: Optional[str] = Field(None, description="URL to server logo/icon")
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
+    source_type: Optional[str] = Field(None, description="Deployment source type (docker, github, compose)")
+    source: Optional[Dict[str, Any]] = Field(None, description="Deployment source metadata")
+    supported_backends: List[str] = Field(default_factory=list, description="Runtime backends that can deploy this entry")
+    requires_approval: bool = Field(default=False, description="Whether deployment requires approval by default")
+    featured: bool = Field(default=False, description="Whether this entry is featured in the catalog")
+    deprecated: bool = Field(default=False, description="Whether this entry is deprecated")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
     is_available: bool = Field(default=True, description="Whether server is currently available")
     requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
@@ -7151,8 +7157,11 @@ class CatalogListRequest(BaseModel):
     provider: Optional[str] = Field(None, description="Filter by provider")
     search: Optional[str] = Field(None, description="Search term for name/description")
     tags: Optional[List[str]] = Field(None, description="Filter by tags")
+    supported_backends: Optional[List[str]] = Field(None, description="Filter by runtime backend compatibility")
+    source_type: Optional[str] = Field(None, description="Filter by deployment source type")
     show_registered_only: bool = Field(default=False, description="Show only registered servers")
     show_available_only: bool = Field(default=True, description="Show only available servers")
+    show_deprecated: bool = Field(default=False, description="Include deprecated entries")
     limit: int = Field(default=100, description="Maximum number of results")
     offset: int = Field(default=0, description="Offset for pagination")
 
@@ -7166,6 +7175,8 @@ class CatalogListResponse(BaseModel):
     auth_types: List[str] = Field(..., description="Available auth types")
     providers: List[str] = Field(..., description="Available providers")
     all_tags: List[str] = Field(default_factory=list, description="All available tags")
+    supported_backends: List[str] = Field(default_factory=list, description="All runtime backends referenced by catalog entries")
+    source_types: List[str] = Field(default_factory=list, description="All source types referenced by catalog entries")
 
 
 class CatalogBulkRegisterRequest(BaseModel):

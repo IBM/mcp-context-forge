@@ -42,5 +42,7 @@ This page tracks all significant design decisions made for the MCP Gateway proje
 | 0037  | External Plugin STDIO Launch with Command/Env Overrides | Accepted | Extensibility | 2026-01-28 |
 | 0038  | Experimental Rust Transport Backend (Streamable HTTP) | Proposed | Performance | 2025-12-26 |
 | 0039  | Adopt Fully Independent Plugin Crates Architecture | Accepted | Architecture | 2026-02-13 |
+| 0040  | Flexible Admin UI Section Visibility | Accepted | User Interface | 2026-02-16 |
+| 0041  | Secure MCP Runtime Deployment and Catalog Integration | Accepted | Runtime | 2026-02-17 |
 
 > ✳️ Add new decisions chronologically and link to them from this table.
