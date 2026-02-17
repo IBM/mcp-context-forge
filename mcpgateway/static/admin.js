@@ -8658,7 +8658,9 @@ async function runtimeLoadApprovals() {
     query.set("limit", "100");
 
     const payload = await runtimeApiRequest(`/approvals?${query.toString()}`);
-    const approvals = Array.isArray(payload?.approvals) ? payload.approvals : [];
+    const approvals = Array.isArray(payload?.approvals)
+        ? payload.approvals
+        : [];
     runtimeUiState.approvals = [...approvals].sort((left, right) => {
         const leftPending = String(left?.status || "") === "pending";
         const rightPending = String(right?.status || "") === "pending";
@@ -8830,6 +8832,8 @@ function runtimeBuildDeployPayload() {
     const gatewayTransportElement = safeGetElement(
         "runtime-deploy-gateway-transport",
     );
+    const endpointPortElement = safeGetElement("runtime-deploy-endpoint-port");
+    const endpointPathElement = safeGetElement("runtime-deploy-endpoint-path");
     const tagsElement = safeGetElement("runtime-deploy-tags");
     const environmentElement = safeGetElement(
         "runtime-deploy-environment-json",
@@ -8882,6 +8886,32 @@ function runtimeBuildDeployPayload() {
     const gatewayTransport = gatewayTransportElement?.value?.trim();
     if (gatewayTransport) {
         payload.gateway_transport = gatewayTransport;
+    }
+    const endpointPortRaw = endpointPortElement?.value?.trim();
+    if (endpointPortRaw) {
+        const endpointPort = Number.parseInt(endpointPortRaw, 10);
+        if (
+            Number.isNaN(endpointPort) ||
+            endpointPort < 1 ||
+            endpointPort > 65535
+        ) {
+            throw new Error("Endpoint port must be between 1 and 65535");
+        }
+        payload.endpoint_port = endpointPort;
+    }
+    const endpointPathRaw = endpointPathElement?.value?.trim() || "";
+    if (endpointPathRaw) {
+        if (
+            endpointPathRaw.includes("://") ||
+            endpointPathRaw.includes("?") ||
+            endpointPathRaw.includes("#")
+        ) {
+            throw new Error("Endpoint path must be a relative path like /http");
+        }
+        const endpointPath = endpointPathRaw.startsWith("/")
+            ? endpointPathRaw
+            : `/${endpointPathRaw}`;
+        payload.endpoint_path = endpointPath;
     }
 
     const cpu = cpuElement?.value?.trim();
@@ -9224,9 +9254,21 @@ async function runtimeHandleDeploySubmit(event) {
     }
 }
 
+function runtimeBindEventOnce(element, eventName, bindingKey, handler) {
+    if (!element) {
+        return;
+    }
+    const datasetKey = `runtime${bindingKey}Bound`;
+    if (element.dataset[datasetKey] === "true") {
+        return;
+    }
+    element.addEventListener(eventName, handler);
+    element.dataset[datasetKey] = "true";
+}
+
 function bindRuntimePanelEventHandlers() {
     const panel = safeGetElement("runtime-panel", true);
-    if (!panel || panel.dataset.runtimeBound === "true") {
+    if (!panel) {
         return;
     }
     panel.dataset.runtimeBound = "true";
@@ -9235,12 +9277,12 @@ function bindRuntimePanelEventHandlers() {
         "runtime-deploy-source-type",
         true,
     );
-    if (sourceTypeElement) {
-        sourceTypeElement.addEventListener(
-            "change",
-            runtimeHandleSourceTypeChange,
-        );
-    }
+    runtimeBindEventOnce(
+        sourceTypeElement,
+        "change",
+        "SourceTypeChange",
+        runtimeHandleSourceTypeChange,
+    );
 
     const deployForm = safeGetElement("runtime-deploy-form", true);
     if (deployForm) {
@@ -9248,29 +9290,39 @@ function bindRuntimePanelEventHandlers() {
         // This keeps behavior consistent even if templates are served from
         // older images without a `novalidate` attribute on the form.
         deployForm.noValidate = true;
-        deployForm.addEventListener("submit", runtimeHandleDeploySubmit);
+        runtimeBindEventOnce(
+            deployForm,
+            "submit",
+            "DeploySubmit",
+            runtimeHandleDeploySubmit,
+        );
     }
 
     const resetButton = safeGetElement("runtime-deploy-reset", true);
-    if (resetButton && deployForm) {
-        resetButton.addEventListener("click", () => {
+    if (resetButton) {
+        runtimeBindEventOnce(resetButton, "click", "DeployReset", () => {
             runtimeResetDeployForm();
         });
     }
 
     const refreshAllButton = safeGetElement("runtime-refresh-all-btn", true);
     if (refreshAllButton) {
-        refreshAllButton.addEventListener("click", async () => {
-            try {
-                await runtimeRefreshAll();
-                showNotification("Runtime data refreshed", "success");
-            } catch (error) {
-                showNotification(
-                    `Failed to refresh runtime data: ${error.message}`,
-                    "error",
-                );
-            }
-        });
+        runtimeBindEventOnce(
+            refreshAllButton,
+            "click",
+            "RefreshAll",
+            async () => {
+                try {
+                    await runtimeRefreshAll();
+                    showNotification("Runtime data refreshed", "success");
+                } catch (error) {
+                    showNotification(
+                        `Failed to refresh runtime data: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
     }
 
     const refreshRuntimesButton = safeGetElement(
@@ -9278,16 +9330,21 @@ function bindRuntimePanelEventHandlers() {
         true,
     );
     if (refreshRuntimesButton) {
-        refreshRuntimesButton.addEventListener("click", async () => {
-            try {
-                await runtimeLoadRuntimes();
-            } catch (error) {
-                showNotification(
-                    `Failed to refresh runtimes: ${error.message}`,
-                    "error",
-                );
-            }
-        });
+        runtimeBindEventOnce(
+            refreshRuntimesButton,
+            "click",
+            "RefreshRuntimes",
+            async () => {
+                try {
+                    await runtimeLoadRuntimes();
+                } catch (error) {
+                    showNotification(
+                        `Failed to refresh runtimes: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
     }
 
     const refreshApprovalsButton = safeGetElement(
@@ -9295,16 +9352,21 @@ function bindRuntimePanelEventHandlers() {
         true,
     );
     if (refreshApprovalsButton) {
-        refreshApprovalsButton.addEventListener("click", async () => {
-            try {
-                await runtimeLoadApprovals();
-            } catch (error) {
-                showNotification(
-                    `Failed to refresh approvals: ${error.message}`,
-                    "error",
-                );
-            }
-        });
+        runtimeBindEventOnce(
+            refreshApprovalsButton,
+            "click",
+            "RefreshApprovals",
+            async () => {
+                try {
+                    await runtimeLoadApprovals();
+                } catch (error) {
+                    showNotification(
+                        `Failed to refresh approvals: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
     }
 
     const runtimesTableBody = safeGetElement(
@@ -9312,24 +9374,34 @@ function bindRuntimePanelEventHandlers() {
         true,
     );
     if (runtimesTableBody) {
-        runtimesTableBody.addEventListener("click", async (event) => {
-            const button = event.target.closest("button[data-runtime-action]");
-            if (!button) {
-                return;
-            }
-            try {
-                await runtimeExecuteRuntimeAction(
-                    button.dataset.runtimeId,
-                    button.dataset.runtimeAction,
-                    button,
+        runtimeBindEventOnce(
+            runtimesTableBody,
+            "click",
+            "RuntimeActionsClick",
+            async (event) => {
+                if (!(event.target instanceof Element)) {
+                    return;
+                }
+                const button = event.target.closest(
+                    "button[data-runtime-action]",
                 );
-            } catch (error) {
-                showNotification(
-                    `Runtime action failed: ${error.message}`,
-                    "error",
-                );
-            }
-        });
+                if (!button) {
+                    return;
+                }
+                try {
+                    await runtimeExecuteRuntimeAction(
+                        button.dataset.runtimeId,
+                        button.dataset.runtimeAction,
+                        button,
+                    );
+                } catch (error) {
+                    showNotification(
+                        `Runtime action failed: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
     }
 
     const approvalsTableBody = safeGetElement(
@@ -9337,48 +9409,68 @@ function bindRuntimePanelEventHandlers() {
         true,
     );
     if (approvalsTableBody) {
-        approvalsTableBody.addEventListener("click", async (event) => {
-            const button = event.target.closest("button[data-approval-action]");
-            if (!button) {
-                return;
-            }
-            try {
-                await runtimeExecuteApprovalAction(
-                    button.dataset.approvalId,
-                    button.dataset.approvalAction,
-                    button,
+        runtimeBindEventOnce(
+            approvalsTableBody,
+            "click",
+            "ApprovalActionsClick",
+            async (event) => {
+                if (!(event.target instanceof Element)) {
+                    return;
+                }
+                const button = event.target.closest(
+                    "button[data-approval-action]",
                 );
-            } catch (error) {
-                showNotification(
-                    `Approval action failed: ${error.message}`,
-                    "error",
-                );
-            }
-        });
+                if (!button) {
+                    return;
+                }
+                try {
+                    await runtimeExecuteApprovalAction(
+                        button.dataset.approvalId,
+                        button.dataset.approvalAction,
+                        button,
+                    );
+                } catch (error) {
+                    showNotification(
+                        `Approval action failed: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
     }
 
     const backendFilter = safeGetElement("runtime-filter-backend", true);
     if (backendFilter) {
-        backendFilter.addEventListener("change", () => {
-            runtimeLoadRuntimes().catch((error) => {
-                showNotification(
-                    `Failed to apply backend filter: ${error.message}`,
-                    "error",
-                );
-            });
-        });
+        runtimeBindEventOnce(
+            backendFilter,
+            "change",
+            "BackendFilterChange",
+            () => {
+                runtimeLoadRuntimes().catch((error) => {
+                    showNotification(
+                        `Failed to apply backend filter: ${error.message}`,
+                        "error",
+                    );
+                });
+            },
+        );
     }
 
     const statusFilter = safeGetElement("runtime-filter-status", true);
     if (statusFilter) {
-        statusFilter.addEventListener("change", () => {
-            runtimeLoadRuntimes().catch((error) => {
-                showNotification(
-                    `Failed to apply status filter: ${error.message}`,
-                    "error",
-                );
-            });
-        });
+        runtimeBindEventOnce(
+            statusFilter,
+            "change",
+            "StatusFilterChange",
+            () => {
+                runtimeLoadRuntimes().catch((error) => {
+                    showNotification(
+                        `Failed to apply status filter: ${error.message}`,
+                        "error",
+                    );
+                });
+            },
+        );
     }
 
     const approvalFilter = safeGetElement(
@@ -9386,14 +9478,19 @@ function bindRuntimePanelEventHandlers() {
         true,
     );
     if (approvalFilter) {
-        approvalFilter.addEventListener("change", () => {
-            runtimeLoadApprovals().catch((error) => {
-                showNotification(
-                    `Failed to apply approval filter: ${error.message}`,
-                    "error",
-                );
-            });
-        });
+        runtimeBindEventOnce(
+            approvalFilter,
+            "change",
+            "ApprovalFilterChange",
+            () => {
+                runtimeLoadApprovals().catch((error) => {
+                    showNotification(
+                        `Failed to apply approval filter: ${error.message}`,
+                        "error",
+                    );
+                });
+            },
+        );
     }
 
     const compatibilityButton = safeGetElement(
@@ -9401,21 +9498,26 @@ function bindRuntimePanelEventHandlers() {
         true,
     );
     if (compatibilityButton) {
-        compatibilityButton.addEventListener("click", async () => {
-            try {
-                await runtimeCheckCompatibility();
-            } catch (error) {
-                showNotification(
-                    `Compatibility check failed: ${error.message}`,
-                    "error",
-                );
-            }
-        });
+        runtimeBindEventOnce(
+            compatibilityButton,
+            "click",
+            "CompatibilityCheckClick",
+            async () => {
+                try {
+                    await runtimeCheckCompatibility();
+                } catch (error) {
+                    showNotification(
+                        `Compatibility check failed: ${error.message}`,
+                        "error",
+                    );
+                }
+            },
+        );
     }
 
     const clearLogsButton = safeGetElement("runtime-clear-logs-btn", true);
     if (clearLogsButton) {
-        clearLogsButton.addEventListener("click", () => {
+        runtimeBindEventOnce(clearLogsButton, "click", "ClearLogsClick", () => {
             runtimeSetLogs([], "");
         });
     }

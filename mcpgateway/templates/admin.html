@@ -216,7 +216,7 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
     {% endif %}
-    <script src="{{ root_path }}/static/admin.js"></script>
+    <script src="{{ root_path }}/static/admin.js?v={{ admin_js_asset_version | default('1') }}"></script>
     {% if is_admin %}
     <script src="{{ root_path }}/static/gantt-chart.js?v=3"></script>
     <script src="{{ root_path }}/static/flame-graph.js?v=1"></script>
@@ -247,7 +247,7 @@
     {% else %}
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     {% endif %}
-    <link href="{{ root_path }}/static/admin.css" rel="stylesheet" />
+    <link href="{{ root_path }}/static/admin.css?v={{ admin_css_asset_version | default('1') }}" rel="stylesheet" />
     <link href="{{ root_path }}/static/gantt-chart.css" rel="stylesheet" />
     <link href="{{ root_path }}/static/flame-graph.css" rel="stylesheet" />
     <style>

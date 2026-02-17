@@ -7,6 +7,7 @@ from copy import deepcopy
 from datetime import timedelta, timezone
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 import uuid
 
 # Third-Party
@@ -175,6 +176,21 @@ class RuntimeService:
         profile_name, merged_guardrails = await self._resolve_guardrails(request, db, guardrails_profile_override=profile_override)
         guardrail_warnings = self._guardrail_warnings_for_backend(merged_guardrails, request.backend, caps)
         approval_required, rule_snapshot = self._approval_required(request, source, profile_name, catalog_entry)
+        endpoint_port, endpoint_path = self._resolve_endpoint_preferences(request, catalog_entry)
+
+        runtime_metadata: Dict[str, Any] = {
+            **request.metadata,
+            "register_gateway": request.register_gateway,
+            "gateway_name": request.gateway_name,
+            "gateway_transport": request.gateway_transport,
+            "visibility": request.visibility,
+            "tags": request.tags,
+            "team_id": request.team_id,
+        }
+        if endpoint_port is not None:
+            runtime_metadata["endpoint_port"] = endpoint_port
+        if endpoint_path:
+            runtime_metadata["endpoint_path"] = endpoint_path
 
         runtime = RuntimeDeployment(
             id=str(uuid.uuid4()),
@@ -190,15 +206,7 @@ class RuntimeService:
             guardrails_profile=profile_name,
             guardrails_config=merged_guardrails,
             guardrails_warnings=[warning.model_dump() for warning in guardrail_warnings],
-            runtime_metadata={
-                **request.metadata,
-                "register_gateway": request.register_gateway,
-                "gateway_name": request.gateway_name,
-                "gateway_transport": request.gateway_transport,
-                "visibility": request.visibility,
-                "tags": request.tags,
-                "team_id": request.team_id,
-            },
+            runtime_metadata=runtime_metadata,
             catalog_server_id=request.catalog_server_id,
             team_id=request.team_id,
             created_by=requested_by,
@@ -720,34 +728,61 @@ class RuntimeService:
             db: Database session used for gateway registration.
         """
         gateway_name = runtime.runtime_metadata.get("gateway_name") or runtime.name
-        gateway_transport = runtime.runtime_metadata.get("gateway_transport") or self._infer_transport(runtime.endpoint_url or "")
+        endpoint_port = self._normalize_endpoint_port(runtime.runtime_metadata.get("endpoint_port"))
+        endpoint_path = self._normalize_endpoint_path(runtime.runtime_metadata.get("endpoint_path"))
+        resolved_endpoint_url = runtime.endpoint_url or ""
+        if not resolved_endpoint_url and endpoint_port:
+            container_name = (runtime.backend_response or {}).get("container_name")
+            if container_name:
+                resolved_endpoint_url = f"http://{container_name}:{endpoint_port}"
+        elif resolved_endpoint_url and endpoint_port:
+            resolved_endpoint_url = self._set_url_port(resolved_endpoint_url, endpoint_port)
+
+        transport_hint_url = self._set_url_path(resolved_endpoint_url, endpoint_path) if endpoint_path else resolved_endpoint_url
+        gateway_transport = runtime.runtime_metadata.get("gateway_transport") or self._infer_transport(transport_hint_url or resolved_endpoint_url)
         visibility = runtime.runtime_metadata.get("visibility") or "public"
         tags = runtime.runtime_metadata.get("tags") or []
+        candidate_urls = self._candidate_gateway_urls(resolved_endpoint_url, gateway_transport, preferred_path=endpoint_path)
+        last_error: Optional[Exception] = None
 
-        gateway_request = GatewayCreate(
-            name=gateway_name,
-            url=runtime.endpoint_url or "",
-            description=f"Runtime deployment for {runtime.name}",
-            transport=gateway_transport,
-            tags=tags,
-        )
-
-        try:
-            gateway = await self.gateway_service.register_gateway(
-                db=db,
-                gateway=gateway_request,
-                created_via="runtime",
-                team_id=runtime.team_id if visibility == "team" else None,
-                owner_email=runtime.created_by,
-                visibility=visibility,
-                initialize_timeout=min(settings.httpx_admin_read_timeout, 30),
+        for candidate_url in candidate_urls:
+            gateway_request = GatewayCreate(
+                name=gateway_name,
+                url=candidate_url,
+                description=f"Runtime deployment for {runtime.name}",
+                transport=gateway_transport,
+                tags=tags,
             )
-            runtime.gateway_id = str(gateway.id)
-            runtime.status = "connected"
-        except Exception as exc:  # pragma: no cover - integration behavior depends on target server.
-            logger.warning("Failed to auto-register runtime %s as gateway: %s", runtime.id, exc)
+            try:
+                gateway = await self.gateway_service.register_gateway(
+                    db=db,
+                    gateway=gateway_request,
+                    created_via="runtime",
+                    team_id=runtime.team_id if visibility == "team" else None,
+                    owner_email=runtime.created_by,
+                    visibility=visibility,
+                    initialize_timeout=min(settings.httpx_admin_read_timeout, 30),
+                )
+                runtime.gateway_id = str(gateway.id)
+                runtime.status = "connected"
+                runtime.endpoint_url = candidate_url
+                return
+            except Exception as exc:  # pragma: no cover - integration behavior depends on target server.
+                last_error = exc
+                logger.warning(
+                    "Failed to auto-register runtime %s as gateway using %s: %s",
+                    runtime.id,
+                    candidate_url,
+                    exc,
+                )
+
+        if last_error:
             runtime.guardrails_warnings = (runtime.guardrails_warnings or []) + [
-                RuntimeGuardrailWarning(field="gateway_registration", message=f"Gateway registration failed: {exc}", backend=runtime.backend).model_dump()
+                RuntimeGuardrailWarning(
+                    field="gateway_registration",
+                    message=f"Gateway registration failed: {last_error}",
+                    backend=runtime.backend,
+                ).model_dump()
             ]
 
     async def _resolve_source(self, request: RuntimeDeployRequest) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
@@ -971,6 +1006,182 @@ class RuntimeService:
         if endpoint.endswith("/sse") or "/sse/" in endpoint:
             return "SSE"
         return "STREAMABLEHTTP"
+
+    @staticmethod
+    def _normalize_endpoint_port(raw_value: Any) -> Optional[int]:
+        """Normalize endpoint port value to an integer within valid TCP range.
+
+        Args:
+            raw_value: Raw endpoint port value.
+
+        Returns:
+            Optional[int]: Normalized endpoint port or ``None`` when invalid/missing.
+        """
+        if raw_value is None or isinstance(raw_value, bool):
+            return None
+        if isinstance(raw_value, int):
+            port = raw_value
+        elif isinstance(raw_value, str) and raw_value.strip().isdigit():
+            port = int(raw_value.strip())
+        else:
+            return None
+        return port if 1 <= port <= 65535 else None
+
+    @staticmethod
+    def _normalize_endpoint_path(raw_value: Any) -> Optional[str]:
+        """Normalize endpoint path to a slash-prefixed path segment.
+
+        Args:
+            raw_value: Raw endpoint path value.
+
+        Returns:
+            Optional[str]: Normalized endpoint path, or ``None`` when missing/invalid.
+        """
+        if raw_value is None:
+            return None
+        path = str(raw_value).strip()
+        if not path:
+            return None
+        if "://" in path or "?" in path or "#" in path:
+            return None
+        if not path.startswith("/"):
+            path = f"/{path}"
+        if len(path) > 1 and path.endswith("/"):
+            path = path.rstrip("/")
+        return path
+
+    @staticmethod
+    def _set_url_port(endpoint_url: str, port: int) -> str:
+        """Return a URL with an overridden port while preserving other components.
+
+        Args:
+            endpoint_url: Base endpoint URL.
+            port: Desired endpoint port.
+
+        Returns:
+            str: URL with updated port, or original URL if parsing fails.
+        """
+        parsed = urlparse(endpoint_url)
+        if not parsed.scheme or not parsed.hostname:
+            return endpoint_url
+        host = parsed.hostname
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        auth_part = ""
+        if parsed.username:
+            auth_part = parsed.username
+            if parsed.password:
+                auth_part = f"{auth_part}:{parsed.password}"
+            auth_part = f"{auth_part}@"
+        return urlunparse(parsed._replace(netloc=f"{auth_part}{host}:{port}"))
+
+    @staticmethod
+    def _set_url_path(endpoint_url: str, path: Optional[str]) -> str:
+        """Return a URL with an explicit path override.
+
+        Args:
+            endpoint_url: Base endpoint URL.
+            path: Desired endpoint path.
+
+        Returns:
+            str: URL with updated path.
+        """
+        normalized_path = RuntimeService._normalize_endpoint_path(path)
+        if not normalized_path:
+            return endpoint_url
+        parsed = urlparse(endpoint_url)
+        return urlunparse(parsed._replace(path=normalized_path))
+
+    def _resolve_endpoint_preferences(self, request: RuntimeDeployRequest, catalog_entry: Optional[Dict[str, Any]]) -> Tuple[Optional[int], Optional[str]]:
+        """Resolve endpoint port/path preferences from request metadata and catalog defaults.
+
+        Args:
+            request: Runtime deployment request.
+            catalog_entry: Optional catalog entry metadata.
+
+        Returns:
+            Tuple[Optional[int], Optional[str]]: Normalized endpoint port and path preferences.
+        """
+        metadata = request.metadata or {}
+        catalog_runtime = catalog_entry.get("runtime", {}) if isinstance(catalog_entry, dict) else {}
+        if not isinstance(catalog_runtime, dict):
+            catalog_runtime = {}
+
+        endpoint_port = (
+            self._normalize_endpoint_port(request.endpoint_port)
+            or self._normalize_endpoint_port(metadata.get("endpoint_port"))
+            or self._normalize_endpoint_port(catalog_runtime.get("endpoint_port"))
+        )
+        endpoint_path = (
+            self._normalize_endpoint_path(request.endpoint_path)
+            or self._normalize_endpoint_path(metadata.get("endpoint_path"))
+            or self._normalize_endpoint_path(catalog_runtime.get("endpoint_path"))
+        )
+        return endpoint_port, endpoint_path
+
+    @staticmethod
+    def _append_path(endpoint_url: str, suffix: str) -> str:
+        """Append a path suffix to a URL while preserving query/fragment parts.
+
+        Args:
+            endpoint_url: Base endpoint URL.
+            suffix: Path suffix (for example ``/http``).
+
+        Returns:
+            str: URL with appended suffix.
+        """
+        parsed = urlparse(endpoint_url)
+        if not suffix.startswith("/"):
+            suffix = f"/{suffix}"
+        base_path = parsed.path.rstrip("/")
+        merged_path = f"{base_path}{suffix}" if base_path else suffix
+        if not merged_path.startswith("/"):
+            merged_path = f"/{merged_path}"
+        return urlunparse(parsed._replace(path=merged_path))
+
+    @staticmethod
+    def _candidate_gateway_urls(endpoint_url: str, transport: str, preferred_path: Optional[str] = None) -> List[str]:
+        """Build candidate URLs for gateway auto-registration.
+
+        Args:
+            endpoint_url: Runtime-reported endpoint URL.
+            transport: Requested or inferred gateway transport.
+            preferred_path: Optional preferred path to try first.
+
+        Returns:
+            List[str]: Ordered deduplicated candidate URLs.
+        """
+        if not endpoint_url:
+            return []
+        parsed = urlparse(endpoint_url)
+        has_explicit_path = bool(parsed.path and parsed.path not in {"", "/"})
+
+        candidates: List[str] = []
+        normalized_preferred_path = RuntimeService._normalize_endpoint_path(preferred_path)
+        if normalized_preferred_path:
+            preferred_url = RuntimeService._set_url_path(endpoint_url, normalized_preferred_path)
+            if preferred_url not in candidates:
+                candidates.append(preferred_url)
+        if has_explicit_path:
+            if endpoint_url not in candidates:
+                candidates.append(endpoint_url)
+            return candidates
+
+        normalized_transport = str(transport or "").upper()
+        if normalized_transport == "SSE":
+            suffixes = ["/sse"]
+        elif normalized_transport == "STREAMABLEHTTP":
+            suffixes = ["/http", "/mcp"]
+        else:
+            suffixes = ["/http", "/mcp", "/sse"]
+
+        for suffix in suffixes:
+            candidate = RuntimeService._append_path(endpoint_url, suffix)
+            if candidate not in candidates:
+                candidates.append(candidate)
+        if endpoint_url not in candidates:
+            candidates.append(endpoint_url)
+        return candidates
 
     def _get_runtime_row(self, runtime_id: str, db: Session) -> RuntimeDeployment:
         """Load runtime deployment row by identifier.

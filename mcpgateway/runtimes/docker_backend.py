@@ -87,6 +87,10 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
 
         guardrails = request.guardrails or {}
         network = guardrails.get("network", {})
+        ingress_ports = self._normalize_ingress_ports(network.get("ingress_ports"))
+        configured_endpoint_port = self._normalize_endpoint_port(request.metadata.get("endpoint_port"))
+        if configured_endpoint_port and configured_endpoint_port not in ingress_ports:
+            ingress_ports.insert(0, configured_endpoint_port)
         filesystem = guardrails.get("filesystem", {})
         caps = guardrails.get("capabilities", {})
         selected_network: Optional[str] = None
@@ -110,6 +114,10 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         max_pids = resources.get("max_pids")
         if max_pids:
             cmd.extend(["--pids-limit", str(max_pids)])
+
+        for ingress_port in ingress_ports:
+            # Publish to loopback on a random host port so the runtime is not exposed publicly.
+            cmd.extend(["-p", f"127.0.0.1::{ingress_port}"])
 
         seccomp = guardrails.get("seccomp")
         if seccomp:
@@ -154,28 +162,60 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         except RuntimeBackendError as exc:
             message = str(exc).lower()
             if selected_network and selected_network != "none" and "network" in message and "not found" in message:
-                cmd_without_network = self._without_network_option(cmd)
-                container_name = self._container_name_from_run_command(cmd)
-                if container_name:
-                    try:
-                        await self._run([self.docker_binary, "rm", "-f", container_name], timeout=120)
-                    except RuntimeBackendError:
-                        logger.debug(
-                            "Ignoring cleanup failure for retry container %s",
-                            container_name,
+                inferred_network = await self._detect_gateway_network()
+                retry_attempts: List[tuple[List[str], Optional[str], str]] = []
+                if inferred_network and inferred_network != selected_network:
+                    retry_attempts.append(
+                        (
+                            self._replace_network_option(cmd, inferred_network),
+                            inferred_network,
+                            f"Docker network '{selected_network}' not found. Retrying deployment with gateway network '{inferred_network}'.",
                         )
-                warnings.append(
-                    {
-                        "field": "guardrails.network",
-                        "message": f"Docker network '{selected_network}' not found. Retrying deployment without explicit network.",
-                        "backend": "docker",
-                    }
+                    )
+                retry_attempts.append(
+                    (
+                        self._without_network_option(cmd),
+                        None,
+                        f"Docker network '{selected_network}' not found. Retrying deployment without explicit network.",
+                    )
                 )
-                stdout = await self._run(cmd_without_network, timeout=900)
+
+                last_retry_error: Optional[RuntimeBackendError] = None
+                for retry_cmd, retry_network, warning_message in retry_attempts:
+                    retry_container_name = self._container_name_from_run_command(cmd)
+                    if retry_container_name:
+                        try:
+                            await self._run([self.docker_binary, "rm", "-f", retry_container_name], timeout=120)
+                        except RuntimeBackendError:
+                            logger.debug(
+                                "Ignoring cleanup failure for retry container %s",
+                                retry_container_name,
+                            )
+                    warnings.append(
+                        {
+                            "field": "guardrails.network",
+                            "message": warning_message,
+                            "backend": "docker",
+                        }
+                    )
+                    try:
+                        stdout = await self._run(retry_cmd, timeout=900)
+                        selected_network = retry_network
+                        break
+                    except RuntimeBackendError as retry_exc:
+                        last_retry_error = retry_exc
+                else:
+                    if last_retry_error:
+                        raise last_retry_error
+                    raise
             else:
                 raise
         runtime_ref = stdout.strip().splitlines()[-1]
-        endpoint_url = await self._resolve_container_endpoint(runtime_ref)
+        endpoint_url = await self._resolve_container_endpoint(
+            runtime_ref,
+            ingress_ports=ingress_ports,
+            container_host=container_name if selected_network and selected_network != "none" else None,
+        )
 
         return RuntimeBackendDeployResult(
             status="running",
@@ -184,7 +224,13 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
             image=image,
             logs=logs,
             warnings=warnings,
-            backend_response={"deployment_mode": "container", "container_name": container_name},
+            backend_response={
+                "deployment_mode": "container",
+                "container_name": container_name,
+                "network": selected_network,
+                "ingress_ports": ingress_ports,
+                "endpoint_port": configured_endpoint_port,
+            },
         )
 
     async def get_status(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> RuntimeBackendStatus:
@@ -216,7 +262,15 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         status = await self._run([self.docker_binary, "inspect", "-f", "{{.State.Status}}", runtime_ref], timeout=60)
         normalized = status.strip().lower()
         mapped = "running" if normalized == "running" else "stopped" if normalized in {"created", "restarting", "paused", "exited"} else "error"
-        endpoint_url = await self._resolve_container_endpoint(runtime_ref)
+        ingress_ports = self._normalize_ingress_ports(metadata.get("ingress_ports"))
+        configured_endpoint_port = self._normalize_endpoint_port(metadata.get("endpoint_port"))
+        if configured_endpoint_port and configured_endpoint_port not in ingress_ports:
+            ingress_ports.insert(0, configured_endpoint_port)
+        endpoint_url = await self._resolve_container_endpoint(
+            runtime_ref,
+            ingress_ports=ingress_ports,
+            container_host=metadata.get("container_name") if metadata.get("network") and metadata.get("network") != "none" else None,
+        )
         return RuntimeBackendStatus(status=mapped, endpoint_url=endpoint_url, backend_response={"raw_status": normalized})
 
     async def start(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> RuntimeBackendStatus:
@@ -523,15 +577,118 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         prefix = f"{profile_name} "
         return any(entry.startswith(prefix) for entry in entries)
 
-    async def _resolve_container_endpoint(self, runtime_ref: str) -> Optional[str]:
+    @staticmethod
+    def _normalize_ingress_ports(raw_ports: Any) -> List[int]:
+        """Normalize ingress ports into a unique validated integer list.
+
+        Args:
+            raw_ports: Input port list from guardrails.
+
+        Returns:
+            List[int]: Ordered list of valid ports between 1 and 65535.
+        """
+        if not isinstance(raw_ports, list):
+            return []
+        result: List[int] = []
+        for raw_port in raw_ports:
+            port: Optional[int]
+            if isinstance(raw_port, bool):
+                continue
+            if isinstance(raw_port, int):
+                port = raw_port
+            elif isinstance(raw_port, str) and raw_port.strip().isdigit():
+                port = int(raw_port.strip())
+            else:
+                continue
+            if 1 <= port <= 65535 and port not in result:
+                result.append(port)
+        return result
+
+    @staticmethod
+    def _normalize_endpoint_port(raw_port: Any) -> Optional[int]:
+        """Normalize endpoint port override into an integer value.
+
+        Args:
+            raw_port: Endpoint port candidate value.
+
+        Returns:
+            Optional[int]: Normalized endpoint port when valid.
+        """
+        if raw_port is None or isinstance(raw_port, bool):
+            return None
+        if isinstance(raw_port, int):
+            port = raw_port
+        elif isinstance(raw_port, str) and raw_port.strip().isdigit():
+            port = int(raw_port.strip())
+        else:
+            return None
+        return port if 1 <= port <= 65535 else None
+
+    @staticmethod
+    def _replace_network_option(cmd: List[str], network_name: str) -> List[str]:
+        """Return a command list with ``--network`` set to a specific network.
+
+        Args:
+            cmd: Docker command arguments.
+            network_name: Network name to enforce.
+
+        Returns:
+            List[str]: Command arguments with updated network option.
+        """
+        updated = DockerRuntimeBackend._without_network_option(cmd)
+        try:
+            run_index = updated.index("run")
+        except ValueError:
+            return updated
+        insertion_index = run_index + 1
+        updated[insertion_index:insertion_index] = ["--network", network_name]
+        return updated
+
+    async def _detect_gateway_network(self) -> Optional[str]:
+        """Best-effort detection of the gateway container network name.
+
+        Returns:
+            Optional[str]: Preferred network name for runtime sidecars, if discoverable.
+        """
+        container_hint = os.environ.get("HOSTNAME", "").strip()
+        if not container_hint:
+            return None
+        try:
+            out = await self._run(
+                [
+                    self.docker_binary,
+                    "inspect",
+                    "-f",
+                    "{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}",
+                    container_hint,
+                ],
+                timeout=30,
+            )
+        except RuntimeBackendError:
+            return None
+        network_names = [name for name in out.split() if name]
+        if not network_names:
+            return None
+        for network_name in network_names:
+            if network_name != "bridge":
+                return network_name
+        return network_names[0]
+
+    async def _resolve_container_endpoint(self, runtime_ref: str, ingress_ports: Optional[List[int]] = None, container_host: Optional[str] = None) -> Optional[str]:
         """Resolve an HTTP endpoint URL from Docker port mappings when available.
 
         Args:
             runtime_ref: Container identifier to inspect.
+            ingress_ports: Optional preferred container ingress ports.
+            container_host: Optional internal host name reachable from gateway network.
 
         Returns:
             Optional[str]: Local endpoint URL if a host port is discovered, else None.
         """
+        normalized_ingress_ports = self._normalize_ingress_ports(ingress_ports)
+        if container_host and normalized_ingress_ports:
+            return f"http://{container_host}:{normalized_ingress_ports[0]}"
+
         try:
             out = await self._run([self.docker_binary, "port", runtime_ref], timeout=30)
             for line in out.splitlines():
@@ -542,7 +699,25 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
                 if host_port.isdigit():
                     return f"http://127.0.0.1:{host_port}"
         except RuntimeBackendError:
-            return None
+            pass
+
+        if normalized_ingress_ports:
+            try:
+                inspect_out = await self._run(
+                    [
+                        self.docker_binary,
+                        "inspect",
+                        "-f",
+                        "{{range .NetworkSettings.Networks}}{{.IPAddress}} {{end}}",
+                        runtime_ref,
+                    ],
+                    timeout=30,
+                )
+            except RuntimeBackendError:
+                return None
+            for ip_addr in inspect_out.split():
+                if ip_addr:
+                    return f"http://{ip_addr}:{normalized_ingress_ports[0]}"
         return None
 
     async def _run(self, cmd: List[str], timeout: int = 300) -> str:

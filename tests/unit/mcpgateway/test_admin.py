@@ -29,7 +29,6 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.admin import (  # admin_get_metrics,
-    UI_HIDE_SECTIONS_COOKIE_MAX_AGE,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     _normalize_ui_hide_values,
     _adjust_pagination_for_conversion_failures,
@@ -232,6 +231,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     get_top_error_endpoints,
     get_top_slow_endpoints,
     get_top_volume_endpoints,
+    get_ui_asset_version,
     get_ui_visibility_config,
     get_user_agent,
     get_user_email,
@@ -3030,6 +3030,22 @@ class TestUIVisibilityConfig:
             "version-info",
         ]
         assert config["cookie_action"] == "set"
+
+
+class TestUiAssetVersion:
+    """Test cache-busting token generation for admin UI assets."""
+
+    def test_get_ui_asset_version_for_existing_asset(self):
+        get_ui_asset_version.cache_clear()
+        token = get_ui_asset_version("admin.js")
+        assert token.isdigit()
+
+    def test_get_ui_asset_version_falls_back_to_version_when_asset_missing(self):
+        from mcpgateway import __version__ as package_version
+
+        get_ui_asset_version.cache_clear()
+        token = get_ui_asset_version("does-not-exist.js")
+        assert token == package_version
 
 
 class TestAdminUIRoute:

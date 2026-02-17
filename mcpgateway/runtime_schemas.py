@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
 # Third-Party
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 RuntimeBackendName = Literal["docker", "ibm_code_engine"]
 RuntimeSourceType = Literal["docker", "github", "compose"]
@@ -177,10 +177,41 @@ class RuntimeDeployRequest(BaseModel):
     register_gateway: bool = True
     gateway_name: Optional[str] = None
     gateway_transport: Optional[str] = None
+    endpoint_port: Optional[int] = Field(default=None, ge=1, le=65535, description="Preferred container port for runtime endpoint resolution")
+    endpoint_path: Optional[str] = Field(default=None, max_length=256, description="Preferred MCP endpoint path for gateway registration (for example /http)")
     visibility: Literal["public", "team", "private"] = "public"
     team_id: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("endpoint_path")
+    @classmethod
+    def validate_endpoint_path(cls, value: Optional[str]) -> Optional[str]:
+        """Validate and normalize endpoint path override.
+
+        Args:
+            value: Raw endpoint path override.
+
+        Returns:
+            Optional[str]: Normalized endpoint path with a leading slash.
+
+        Raises:
+            ValueError: If the path is absolute URL-like or contains query/fragment components.
+        """
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            return None
+        if "://" in normalized:
+            raise ValueError("endpoint_path must be a relative path (for example /http), not a full URL")
+        if "?" in normalized or "#" in normalized:
+            raise ValueError("endpoint_path must not include query or fragment components")
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        if len(normalized) > 1 and normalized.endswith("/"):
+            normalized = normalized.rstrip("/")
+        return normalized
 
     @model_validator(mode="after")
     def validate_deploy_source(self):

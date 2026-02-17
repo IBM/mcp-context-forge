@@ -77,9 +77,24 @@ class RuntimePage(BasePage):
         return self.page.locator("#runtime-source-image")
 
     @property
+    def deploy_endpoint_port_input(self) -> Locator:
+        """Optional endpoint port input for runtime deploy."""
+        return self.page.locator("#runtime-deploy-endpoint-port")
+
+    @property
+    def deploy_endpoint_path_input(self) -> Locator:
+        """Optional endpoint path input for runtime deploy."""
+        return self.page.locator("#runtime-deploy-endpoint-path")
+
+    @property
     def deploy_submit_button(self) -> Locator:
         """Deploy runtime submit button."""
         return self.page.locator("#runtime-deploy-submit")
+
+    @property
+    def deploy_metadata_input(self) -> Locator:
+        """Metadata JSON textarea used for deploy payload overrides."""
+        return self.page.locator("#runtime-deploy-metadata-json")
 
     @property
     def deploy_message(self) -> Locator:
@@ -221,11 +236,46 @@ class RuntimePage(BasePage):
 
     # ==================== Deploy Helpers ====================
 
-    def fill_docker_deploy_form(self, name: str, image: str) -> None:
+    def fill_docker_deploy_form(
+        self,
+        name: str,
+        image: str,
+        endpoint_port: int | None = None,
+        endpoint_path: str | None = None,
+    ) -> None:
         """Populate deploy form with Docker source values."""
         self.deploy_name_input.fill(name)
         self.deploy_source_type_select.select_option("docker")
         self.deploy_image_input.fill(image)
+        metadata_overrides: Dict[str, Any] = {}
+        if endpoint_port is not None:
+            if self.deploy_endpoint_port_input.count() > 0:
+                self.deploy_endpoint_port_input.fill(str(endpoint_port))
+            else:
+                metadata_overrides["endpoint_port"] = endpoint_port
+        if endpoint_path is not None:
+            if self.deploy_endpoint_path_input.count() > 0:
+                self.deploy_endpoint_path_input.fill(endpoint_path)
+            else:
+                metadata_overrides["endpoint_path"] = endpoint_path
+        if metadata_overrides:
+            self._merge_metadata_overrides(metadata_overrides)
+
+    def _merge_metadata_overrides(self, overrides: Dict[str, Any]) -> None:
+        """Merge deployment metadata overrides into metadata JSON textarea."""
+        if self.deploy_metadata_input.count() == 0:
+            return
+        raw = self.deploy_metadata_input.input_value().strip()
+        metadata: Dict[str, Any] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    metadata = parsed
+            except json.JSONDecodeError:
+                metadata = {}
+        metadata.update(overrides)
+        self.deploy_metadata_input.fill(json.dumps(metadata))
 
     def wait_for_deploy_message(self, timeout: int = 15000) -> str:
         """Wait for deploy status text and return normalized message."""

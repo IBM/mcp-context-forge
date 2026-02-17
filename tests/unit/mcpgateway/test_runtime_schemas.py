@@ -35,10 +35,18 @@ def test_runtime_source_requires_fields_by_type(payload, error_fragment):
 
 
 def test_runtime_deploy_request_accepts_source_or_catalog_id():
-    with_source = RuntimeDeployRequest(name="runtime-with-source", backend="docker", source=RuntimeSource(type="docker", image="docker.io/acme/runtime:1"))
+    with_source = RuntimeDeployRequest(
+        name="runtime-with-source",
+        backend="docker",
+        source=RuntimeSource(type="docker", image="docker.io/acme/runtime:1"),
+        endpoint_port=8080,
+        endpoint_path="http",
+    )
     with_catalog = RuntimeDeployRequest(name="runtime-with-catalog", backend="docker", catalog_server_id="catalog-entry-1")
 
     assert with_source.source is not None
+    assert with_source.endpoint_port == 8080
+    assert with_source.endpoint_path == "/http"
     assert with_catalog.catalog_server_id == "catalog-entry-1"
 
 
@@ -46,3 +54,15 @@ def test_runtime_deploy_request_requires_source_or_catalog_id():
     with pytest.raises(ValidationError) as exc_info:
         RuntimeDeployRequest(name="invalid-runtime", backend="docker")
     assert "Either 'source' or 'catalog_server_id' is required" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("endpoint_path", ["http://bad.example/path", "/http?x=1", "/http#fragment"])
+def test_runtime_deploy_request_rejects_invalid_endpoint_path(endpoint_path):
+    with pytest.raises(ValidationError) as exc_info:
+        RuntimeDeployRequest(
+            name="runtime-invalid-path",
+            backend="docker",
+            source=RuntimeSource(type="docker", image="docker.io/acme/runtime:1"),
+            endpoint_path=endpoint_path,
+        )
+    assert "endpoint_path" in str(exc_info.value)

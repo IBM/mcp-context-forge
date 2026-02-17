@@ -373,11 +373,7 @@ describe("runtime panel data loading and rendering", () => {
     });
 
     test("loads approvals with all-status filter", async () => {
-        addSelect(
-            "runtime-approval-filter-status",
-            ["pending", "all"],
-            "all",
-        );
+        addSelect("runtime-approval-filter-status", ["pending", "all"], "all");
         addElement("tbody", "runtime-approvals-table-body");
         const runtimeApiSpy = vi
             .spyOn(win, "runtimeApiRequest")
@@ -393,11 +389,7 @@ describe("runtime panel data loading and rendering", () => {
     });
 
     test("sorts pending approvals before non-pending rows", async () => {
-        addSelect(
-            "runtime-approval-filter-status",
-            ["pending", "all"],
-            "all",
-        );
+        addSelect("runtime-approval-filter-status", ["pending", "all"], "all");
         addElement("tbody", "runtime-approvals-table-body");
         vi.spyOn(win, "runtimeApiRequest").mockResolvedValue({
             approvals: [
@@ -724,7 +716,11 @@ describe("runtime deploy submit, bindings, and panel loading", () => {
         const submitButton = addElement("button", "runtime-deploy-submit");
         const deployForm = addElement("form", "runtime-deploy-form");
         addElement("span", "runtime-deploy-message");
-        addSelect("runtime-filter-backend", ["", "ibm_code_engine"], "ibm_code_engine");
+        addSelect(
+            "runtime-filter-backend",
+            ["", "ibm_code_engine"],
+            "ibm_code_engine",
+        );
         addSelect("runtime-filter-status", ["", "rejected"], "rejected");
         addSelect(
             "runtime-approval-filter-status",
@@ -921,6 +917,56 @@ describe("runtime deploy submit, bindings, and panel loading", () => {
 
         doc.getElementById("runtime-clear-logs-btn").click();
         expect(setLogsSpy).toHaveBeenCalledWith([], "");
+    });
+
+    test("rebinds runtime handlers when action table bodies are replaced", async () => {
+        addElement("div", "runtime-panel");
+        const initialRuntimeTbody = addElement(
+            "tbody",
+            "runtime-runtimes-table-body",
+        );
+        const initialApprovalTbody = addElement(
+            "tbody",
+            "runtime-approvals-table-body",
+        );
+
+        const runtimeActionSpy = vi
+            .spyOn(win, "runtimeExecuteRuntimeAction")
+            .mockResolvedValue(undefined);
+        const approvalActionSpy = vi
+            .spyOn(win, "runtimeExecuteApprovalAction")
+            .mockResolvedValue(undefined);
+
+        win.bindRuntimePanelEventHandlers();
+
+        const replacementRuntimeTbody = doc.createElement("tbody");
+        replacementRuntimeTbody.id = "runtime-runtimes-table-body";
+        initialRuntimeTbody.replaceWith(replacementRuntimeTbody);
+
+        const replacementApprovalTbody = doc.createElement("tbody");
+        replacementApprovalTbody.id = "runtime-approvals-table-body";
+        initialApprovalTbody.replaceWith(replacementApprovalTbody);
+
+        win.bindRuntimePanelEventHandlers();
+
+        replacementRuntimeTbody.innerHTML =
+            '<tr><td><button data-runtime-action="refresh" data-runtime-id="runtime-replaced"></button></td></tr>';
+        replacementRuntimeTbody
+            .querySelector("button")
+            .dispatchEvent(new win.Event("click", { bubbles: true }));
+
+        replacementApprovalTbody.innerHTML =
+            '<tr><td><button data-approval-action="approve" data-approval-id="approval-replaced"></button></td></tr>';
+        replacementApprovalTbody
+            .querySelector("button")
+            .dispatchEvent(new win.Event("click", { bubbles: true }));
+
+        await nextTick();
+
+        expect(runtimeActionSpy).toHaveBeenCalledTimes(1);
+        expect(runtimeActionSpy.mock.calls[0][0]).toBe("runtime-replaced");
+        expect(approvalActionSpy).toHaveBeenCalledTimes(1);
+        expect(approvalActionSpy.mock.calls[0][0]).toBe("approval-replaced");
     });
 
     test("loads runtime panel for success, cached mode, and errors", async () => {
