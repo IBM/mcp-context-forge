@@ -750,7 +750,8 @@ class SSOService:
                     if has_group_overage:
                         user_email = user_data.get("email") or user_data.get("preferred_username") or "unknown"
                         logger.warning(
-                            f"Group overage detected for user {user_email} - token contains too many groups (>200). " "Attempting Microsoft Graph fallback to resolve complete group membership."
+                            "Group overage detected for user %s - token contains too many groups (>200). Attempting Microsoft Graph fallback to resolve complete group membership.",
+                            user_email,
                         )
                         entra_groups_from_graph = await self._fetch_entra_groups_from_graph_api(access_token, user_email, provider.provider_metadata)
                         if entra_groups_from_graph is None:

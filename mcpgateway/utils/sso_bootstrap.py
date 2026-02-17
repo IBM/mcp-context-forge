@@ -217,9 +217,9 @@ def get_predefined_sso_providers() -> List[Dict]:
                 "provider_metadata": {
                     "groups_claim": settings.sso_entra_groups_claim,
                     "role_mappings": settings.sso_entra_role_mappings,
-                    "graph_api_enabled": getattr(settings, "sso_entra_graph_api_enabled", True),
-                    "graph_api_timeout": getattr(settings, "sso_entra_graph_api_timeout", 10),
-                    "graph_api_max_groups": getattr(settings, "sso_entra_graph_api_max_groups", 0),
+                    "graph_api_enabled": settings.sso_entra_graph_api_enabled,
+                    "graph_api_timeout": settings.sso_entra_graph_api_timeout,
+                    "graph_api_max_groups": settings.sso_entra_graph_api_max_groups,
                 },
             }
         )

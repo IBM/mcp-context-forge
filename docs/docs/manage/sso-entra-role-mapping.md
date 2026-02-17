@@ -316,13 +316,19 @@ Group overage detected for user user@example.com - token contains too many group
 Attempting Microsoft Graph fallback to resolve complete group membership.
 ```
 
-**Recommended settings:**
+**Prevent overage at the source (preferred):**
+
+1. **Use App Roles** (Recommended) — App roles are always included in the token and not subject to overage limits
+2. **Azure group filtering** — In Azure Portal → App Registration → Token Configuration, filter groups to only include specific security groups
+3. **Claims transformation** — Use Azure claims mapping policies to reduce group claims
+4. **Direct group assignment** — Assign groups directly to the application instead of user-level membership
+
+**Runtime fallback (when overage still occurs):**
 
 1. `SSO_ENTRA_GRAPH_API_ENABLED=true` (default)
 2. `SSO_ENTRA_GRAPH_API_TIMEOUT=10` (adjust for network latency)
 3. `SSO_ENTRA_GRAPH_API_MAX_GROUPS=0` for unlimited (or set a cap for large tenants)
 4. Ensure delegated `User.Read` permission is granted to the app (required for `/me/getMemberObjects`)
-5. Continue using App Roles for clean semantic mapping when possible
 
 **Reference:** [Microsoft Groups Overage Claim](https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#groups-overage-claim)
 
@@ -404,12 +410,17 @@ grep "Revoked SSO role" /var/log/mcpgateway.log
 **Cause:**
 User belongs to more than ~200 security groups. EntraID cannot fit all groups in the token and instead includes a "groups overage" indicator.
 
-**Solutions:**
+**Solutions (prevent overage):**
+
+1. **Use App Roles** (Recommended) — Not subject to token size limits
+2. **Configure group filtering** — In Azure Portal, limit which groups are included in the token
+3. **Assign groups to the application** — Use application-assigned groups instead of user memberships
+
+**Solutions (runtime fallback):**
 
 1. Ensure `SSO_ENTRA_GRAPH_API_ENABLED=true`
-2. Increase `SSO_ENTRA_GRAPH_API_TIMEOUT` if calls are timing out
+2. Increase `SSO_ENTRA_GRAPH_API_TIMEOUT` if Graph calls are timing out
 3. Raise or disable `SSO_ENTRA_GRAPH_API_MAX_GROUPS` if group lists are being truncated
-4. Use App Roles for stable semantic mappings where possible
 
 **Debug:**
 ```bash
