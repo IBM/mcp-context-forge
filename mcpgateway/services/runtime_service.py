@@ -249,7 +249,8 @@ class RuntimeService:
         if backend:
             stmt = stmt.where(RuntimeDeployment.backend == backend)
             total_query = total_query.filter(RuntimeDeployment.backend == backend)
-        if status:
+        normalized_status = status.lower() if isinstance(status, str) else None
+        if normalized_status and normalized_status != "all":
             stmt = stmt.where(RuntimeDeployment.status == status)
             total_query = total_query.filter(RuntimeDeployment.status == status)
 
@@ -559,7 +560,8 @@ class RuntimeService:
         """
         stmt = select(RuntimeDeploymentApproval)
         total_query = db.query(RuntimeDeploymentApproval)
-        if status:
+        normalized_status = status.lower() if isinstance(status, str) else None
+        if normalized_status and normalized_status != "all":
             stmt = stmt.where(RuntimeDeploymentApproval.status == status)
             total_query = total_query.filter(RuntimeDeploymentApproval.status == status)
         stmt = stmt.order_by(RuntimeDeploymentApproval.created_at.desc()).offset(offset).limit(limit)

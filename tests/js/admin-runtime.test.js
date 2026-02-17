@@ -300,6 +300,39 @@ describe("runtime panel data loading and rendering", () => {
         ).toContain('data-runtime-action="start"');
     });
 
+    test("sorts deleted runtimes after non-deleted rows", async () => {
+        addSelect("runtime-filter-backend", [""], "");
+        addSelect("runtime-filter-status", [""], "");
+        addElement("tbody", "runtime-runtimes-table-body");
+        vi.spyOn(win, "runtimeApiRequest").mockResolvedValue({
+            runtimes: [
+                {
+                    id: "runtime-deleted",
+                    name: "deleted-runtime",
+                    backend: "docker",
+                    source_type: "docker",
+                    status: "deleted",
+                    approval_status: "rejected",
+                },
+                {
+                    id: "runtime-pending",
+                    name: "pending-runtime",
+                    backend: "docker",
+                    source_type: "docker",
+                    status: "pending_approval",
+                    approval_status: "pending",
+                },
+            ],
+        });
+
+        await win.runtimeLoadRuntimes();
+
+        const firstName = doc.querySelector(
+            "#runtime-runtimes-table-body tr:first-child div.font-medium",
+        )?.textContent;
+        expect(firstName).toContain("pending-runtime");
+    });
+
     test("loads approvals with status filtering and pending actions", async () => {
         addSelect(
             "runtime-approval-filter-status",
@@ -337,6 +370,58 @@ describe("runtime panel data loading and rendering", () => {
         expect(
             doc.getElementById("runtime-approvals-table-body").innerHTML,
         ).toContain(">n/a<");
+    });
+
+    test("loads approvals with all-status filter", async () => {
+        addSelect(
+            "runtime-approval-filter-status",
+            ["pending", "all"],
+            "all",
+        );
+        addElement("tbody", "runtime-approvals-table-body");
+        const runtimeApiSpy = vi
+            .spyOn(win, "runtimeApiRequest")
+            .mockResolvedValue({
+                approvals: [],
+            });
+
+        await win.runtimeLoadApprovals();
+
+        expect(runtimeApiSpy).toHaveBeenCalledWith(
+            expect.stringContaining("status_filter=all"),
+        );
+    });
+
+    test("sorts pending approvals before non-pending rows", async () => {
+        addSelect(
+            "runtime-approval-filter-status",
+            ["pending", "all"],
+            "all",
+        );
+        addElement("tbody", "runtime-approvals-table-body");
+        vi.spyOn(win, "runtimeApiRequest").mockResolvedValue({
+            approvals: [
+                {
+                    id: "approval-rejected",
+                    runtime_deployment_id: "runtime-1",
+                    requested_by: "dev@example.com",
+                    status: "rejected",
+                },
+                {
+                    id: "approval-pending",
+                    runtime_deployment_id: "runtime-2",
+                    requested_by: "dev@example.com",
+                    status: "pending",
+                },
+            ],
+        });
+
+        await win.runtimeLoadApprovals();
+
+        const firstRowStatusText = doc
+            .querySelector("#runtime-approvals-table-body tr:first-child")
+            ?.textContent?.toLowerCase();
+        expect(firstRowStatusText).toContain("pending");
     });
 });
 

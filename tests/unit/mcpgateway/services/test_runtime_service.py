@@ -339,6 +339,26 @@ async def test_runtime_crud_operations(monkeypatch, test_db, docker_caps):
 
 
 @pytest.mark.asyncio
+async def test_runtime_list_all_status_filter_returns_all_rows(monkeypatch, test_db, docker_caps):
+    monkeypatch.setattr("mcpgateway.services.runtime_service.settings", _runtime_settings(runtime_docker_enabled=False))
+    service = RuntimeService()
+    backend = MagicMock()
+    backend.get_capabilities.return_value = docker_caps
+    service.backends = {"docker": backend}
+
+    running_runtime = _runtime_row(name="all-running", slug="all-running", status="running")
+    deleted_runtime = _runtime_row(name="all-deleted", slug="all-deleted", status="deleted")
+    test_db.add_all([running_runtime, deleted_runtime])
+    test_db.flush()
+
+    runtimes, total = await service.list_runtimes(test_db, backend="docker", status="all", limit=50, offset=0)
+    assert total == 2
+    runtime_ids = {item.id for item in runtimes}
+    assert running_runtime.id in runtime_ids
+    assert deleted_runtime.id in runtime_ids
+
+
+@pytest.mark.asyncio
 async def test_runtime_crud_error_paths(monkeypatch, test_db, docker_caps):
     monkeypatch.setattr("mcpgateway.services.runtime_service.settings", _runtime_settings(runtime_docker_enabled=False))
     service = RuntimeService()
@@ -450,6 +470,10 @@ async def test_approval_listing_and_decisions(monkeypatch, test_db, docker_caps)
     approvals, total = await service.list_approvals(test_db, status="pending", limit=50, offset=0)
     assert total >= 1
     assert any(item.id == approval.id for item in approvals)
+
+    all_approvals, all_total = await service.list_approvals(test_db, status="all", limit=50, offset=0)
+    assert all_total >= total
+    assert any(item.id == approval.id for item in all_approvals)
 
     approved_runtime = await service.approve(approval.id, test_db, reviewer="security@example.com", reason="ok")
     assert approved_runtime.approval_status == "approved"
