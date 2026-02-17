@@ -1,5 +1,5 @@
-use std::collections::{HashMap, HashSet};
 use pyo3::prelude::*;
+use std::collections::{HashMap, HashSet};
 
 #[pyclass]
 #[derive(FromPyObject)]
@@ -13,6 +13,7 @@ pub struct URLReputationConfig {
     pub block_non_secure_http: bool,
 }
 
+#[allow(dead_code)]
 #[pyclass]
 pub struct PluginViolation {
     pub reason: String,
@@ -21,9 +22,9 @@ pub struct PluginViolation {
     pub details: Option<HashMap<String, String>>,
 }
 
+#[allow(dead_code)]
 #[pyclass]
 pub struct URLPluginResult {
     pub continue_processing: bool,
     pub violation: Option<PluginViolation>,
 }
-

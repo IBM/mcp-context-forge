@@ -71,7 +71,7 @@ pub fn is_domain_unicode_secure(domain: &str) -> bool {
         // Reject invisible or invalid identifier characters
         if !cleaned
             .chars()
-            .all(|ch| GeneralSecurityProfile::identifier_allowed(ch))
+            .all(GeneralSecurityProfile::identifier_allowed)
         {
             return false;
         } else {

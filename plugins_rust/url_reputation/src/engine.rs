@@ -2,7 +2,6 @@ use crate::{
     filters::{heuristic, patterns},
     types::{PluginViolation, URLPluginResult, URLReputationConfig},
 };
-use anyhow;
 use pyo3::prelude::*;
 use regex::Regex;
 use std::{
@@ -10,7 +9,6 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr},
 };
 use url::Url;
-
 
 #[pyclass]
 pub struct URLReputationPlugin {
@@ -40,11 +38,11 @@ impl URLReputationPlugin {
         }
     }
 
-    fn validate_url(&self, url: &str) -> anyhow::Result<URLPluginResult> {
+    fn validate_url(&self, url: &str) -> URLPluginResult {
         let parsed_url = match Url::parse(&url.trim().to_lowercase()) {
             Ok(url) => url,
             Err(_) => {
-                return Ok(URLPluginResult {
+                return URLPluginResult {
                     continue_processing: false,
                     violation: Some(PluginViolation {
                         reason: "Could not parse url".to_string(),
@@ -52,13 +50,13 @@ impl URLReputationPlugin {
                         code: "URL_REPUTATION_BLOCK".to_string(),
                         details: Some(HashMap::from([("url".to_string(), url.to_string())])),
                     }),
-                });
+                };
             }
         };
         let domain = match parsed_url.host_str() {
             Some(domain) => domain,
             None => {
-                return Ok(URLPluginResult {
+                return URLPluginResult {
                     continue_processing: false,
                     violation: Some(PluginViolation {
                         reason: "Could not parse domain".to_string(),
@@ -66,7 +64,7 @@ impl URLReputationPlugin {
                         code: "URL_REPUTATION_BLOCK".to_string(),
                         details: Some(HashMap::from([("url".to_string(), url.to_string())])),
                     }),
-                });
+                };
             }
         };
 
@@ -81,21 +79,21 @@ impl URLReputationPlugin {
 
         // check whitelisted domains
         if self.config.whitelist_domains.contains(domain) {
-            return Ok(URLPluginResult {
+            return URLPluginResult {
                 continue_processing: true,
                 violation: None,
-            });
+            };
         }
 
         if patterns::in_allow_patterns_regex(url, &self.allowed_patterns) {
-            return Ok(URLPluginResult {
+            return URLPluginResult {
                 continue_processing: true,
                 violation: None,
-            });
+            };
         }
         // check non secure http
         if self.config.block_non_secure_http && scheme != "https" {
-            return Ok(URLPluginResult {
+            return URLPluginResult {
                 continue_processing: false,
                 violation: Some(PluginViolation {
                     reason: "Blocked non secure http url".to_string(),
@@ -103,10 +101,10 @@ impl URLReputationPlugin {
                     code: "URL_REPUTATION_BLOCK".to_string(),
                     details: Some(HashMap::from([("url".to_string(), url.to_string())])),
                 }),
-            });
+            };
         }
-        if self.config.blocked_domains.contains(domain)  {
-            return Ok(URLPluginResult {
+        if self.config.blocked_domains.contains(domain) {
+            return URLPluginResult {
                 continue_processing: false,
                 violation: Some(PluginViolation {
                     reason: "Domain in blocked set".to_string(),
@@ -114,25 +112,25 @@ impl URLReputationPlugin {
                     code: "URL_REPUTATION_BLOCK".to_string(),
                     details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
                 }),
-            });
+            };
         }
 
         // check for patterns in the url
         if patterns::in_blocked_patterns_regex(url, &self.blocked_patterns) {
-            return Ok(URLPluginResult {
+            return URLPluginResult {
                 continue_processing: false,
                 violation: Some(PluginViolation {
                     reason: "Blocked pattern".to_string(),
-                    description: format!("URL matches blocked pattern"),
+                    description: "URL matches blocked pattern".to_string(),
                     code: "URL_REPUTATION_BLOCK".to_string(),
                     details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
                 }),
-            });
+            };
         }
         // skip heuristic checks if the domain is an IP address
         if !ip_domain && self.config.use_heuristic_check {
             if !heuristic::passed_entropy(domain, self.config.entropy_threshold) {
-                return Ok(URLPluginResult {
+                return URLPluginResult {
                     continue_processing: false,
                     violation: Some(PluginViolation {
                         reason: "High entropy domain".to_string(),
@@ -140,11 +138,11 @@ impl URLReputationPlugin {
                         code: "URL_REPUTATION_BLOCK".to_string(),
                         details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
                     }),
-                });
+                };
             }
             // check for valid tld
             if !heuristic::is_tld_legal(domain) {
-                return Ok(URLPluginResult {
+                return URLPluginResult {
                     continue_processing: false,
                     violation: Some(PluginViolation {
                         reason: "Illegal TLD".to_string(),
@@ -152,11 +150,11 @@ impl URLReputationPlugin {
                         code: "URL_REPUTATION_BLOCK".to_string(),
                         details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
                     }),
-                });
+                };
             }
             // check for unicode security
             if !heuristic::is_domain_unicode_secure(domain) {
-                return Ok(URLPluginResult {
+                return URLPluginResult {
                     continue_processing: false,
                     violation: Some(PluginViolation {
                         reason: "Domain unicode is not secure".to_string(),
@@ -164,13 +162,13 @@ impl URLReputationPlugin {
                         code: "URL_REPUTATION_BLOCK".to_string(),
                         details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
                     }),
-                });
+                };
             }
         }
-        Ok(URLPluginResult {
+        URLPluginResult {
             continue_processing: true,
             violation: None,
-        })
+        }
     }
 }
 
@@ -193,7 +191,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://example.com";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(true == result.continue_processing);
     }
 
@@ -211,12 +209,9 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://idontlikethisdomain.com";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(false == result.continue_processing);
-        assert_eq!(
-            result.violation.unwrap().reason,
-            "Domain in blocked set"
-        );
+        assert_eq!(result.violation.unwrap().reason, "Domain in blocked set");
     }
 
     #[test]
@@ -233,7 +228,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "http://ibm.com";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(result.continue_processing == false);
         assert_eq!(
             result.violation.unwrap().reason,
@@ -255,7 +250,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://safe.com/allowed";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(result.continue_processing);
     }
 
@@ -273,7 +268,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://safe.com/crypto-invest";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(result.continue_processing == false);
         assert_eq!(result.violation.unwrap().reason, "Blocked pattern");
     }
@@ -292,7 +287,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://rust-lang.org";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(result.continue_processing);
     }
 
@@ -309,7 +304,7 @@ mod tests {
         };
         let plugin = URLReputationPlugin::new(config);
         let url = "ht!tp://example.com"; // Zero-width joiner U+200D
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(false == result.continue_processing);
         assert!(result.violation.unwrap().reason == "Could not parse url".to_string())
     }
@@ -327,7 +322,7 @@ mod tests {
         };
         let plugin = URLReputationPlugin::new(config);
         let url = "mailto:user@example.com"; // Zero-width joiner U+200D
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(false == result.continue_processing);
         assert!(result.violation.unwrap().reason == "Could not parse domain".to_string())
     }
@@ -345,7 +340,7 @@ mod tests {
         };
         let plugin = URLReputationPlugin::new(config);
         let url = "https://axb12c34d56ef.com";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(false == result.continue_processing);
         assert!(result.violation.unwrap().reason == "High entropy domain");
     }
@@ -364,7 +359,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
         let url = "https://test.daks/test";
 
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
         assert!(false == result.continue_processing);
         assert!(result.violation.unwrap().reason == "Illegal TLD");
     }
@@ -384,7 +379,7 @@ mod tests {
 
         let domain_label = "long_domain".repeat(30);
         let url = format!("https://{}.com", domain_label);
-        let result = plugin.validate_url(&url).unwrap();
+        let result = plugin.validate_url(&url);
 
         assert!(result.continue_processing == false);
         assert_eq!(
@@ -407,7 +402,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://pаypal.com/test"; // Cyrillic 'а'
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing == false);
         assert_eq!(
@@ -430,7 +425,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://domain.com";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing);
     }
@@ -449,7 +444,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://my..com";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing == false);
         assert_eq!(
@@ -472,7 +467,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://exa!mple.com";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing == false);
         assert_eq!(
@@ -495,7 +490,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://192.168.0.1:442";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing);
     }
@@ -514,7 +509,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://332.168.0.1:442";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing == false);
     }
@@ -533,7 +528,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://[2001:0db8:020c:0001:0000:0000:0000:0bbb]:442/";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing);
     }
@@ -552,7 +547,7 @@ mod tests {
         let plugin = URLReputationPlugin::new(config);
 
         let url = "https://[2001:db8::85a3::8a2e:370:7334 ]:442/";
-        let result = plugin.validate_url(url).unwrap();
+        let result = plugin.validate_url(url);
 
         assert!(result.continue_processing == false);
     }

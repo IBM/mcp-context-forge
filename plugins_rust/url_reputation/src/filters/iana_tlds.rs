@@ -1,5 +1,4 @@
-use phf::{phf_set, Set};
-
+use phf::{Set, phf_set};
 
 // # Version 2026021400, Last Updated Sat Feb 14 07:07:01 2026 UTC
 pub static VALID_TLD_SET: Set<&'static str> = phf_set! {
