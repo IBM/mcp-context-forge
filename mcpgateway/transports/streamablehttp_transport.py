@@ -659,9 +659,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
         >>> sig.parameters['arguments'].annotation
         <class 'dict'>
     """
-    request_headers = request_headers_var.get()
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
     # Extract _meta from request context if available
@@ -1054,7 +1052,7 @@ async def list_tools() -> List[types.Tool]:
         # token_teams stays None (unrestricted)
     elif token_teams is None:
         token_teams = []  # Non-admin without teams = public-only (secure default)
-    logger.info(f"DEBUG: list_tools called with server_id: {server_id}, request_headers: {request_headers}, user_context: {user_context}")
+
     if server_id:
         try:
             async with get_db() as db:
@@ -1280,7 +1278,6 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
-
                 gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
@@ -1352,8 +1349,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         >>> sig.return_annotation
         typing.Union[str, bytes]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1380,8 +1376,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     try:
         async with get_db() as db:
             # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
-            request_headers = request_headers_var.get()
-
             gateway_id = extract_gateway_id_from_headers(request_headers)
 
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
@@ -1470,7 +1464,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         'list'
     """
     # Extract filtering parameters from user context (same pattern as list_resources)
-    user_context = user_context_var.get()
+    _, _, user_context = await _get_request_context_or_default()
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1951,9 +1945,11 @@ class SessionManagerWrapper:
                             await send({"type": "http.response.body", "body": b""})
                             return
 
-                        # Inject server_id from URL path into params if present
-                        if match and "params" in json_body:
+                        # Inject server_id from URL path into params for /rpc routing
+                        if match:
                             server_id = match.group("server_id")
+                            if "params" not in json_body:
+                                json_body["params"] = {}
                             json_body["params"]["server_id"] = server_id
                             # Re-serialize body with injected server_id
                             body = orjson.dumps(json_body)
