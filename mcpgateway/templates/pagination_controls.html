@@ -109,36 +109,37 @@
       }
     });
 
-    // Dynamically read current search query from search input (fixes #3128)
-    // This ensures pagination preserves the user's search filter across all pages
+    // Read live search/tag filters: DOM inputs are primary (always current),
+    // URL params (written by updatePanelSearchStateInUrl) are fallback for
+    // bookmarked URLs where inputs may not yet be populated.
+    const currentUrlParams = new URLSearchParams(window.location.search);
     if (this.tableName) {
-      const searchInputId = this.tableName + '-search-input';
-      const searchInput = document.getElementById(searchInputId);
-      if (searchInput) {
-        const trimmedQuery = searchInput.value.trim();
-        if (trimmedQuery) {
-          url.searchParams.set('q', trimmedQuery);
-        } else {
-          url.searchParams.delete('q');
-        }
-      }
+      const searchInput = document.getElementById(this.tableName + '-search-input');
+      const tagInput = document.getElementById(this.tableName + '-tag-filter');
+      const domQuery = searchInput ? searchInput.value.trim() : '';
+      const domTags = tagInput ? tagInput.value.trim() : '';
 
-      // Also preserve tag filter if present
-      const tagInputId = this.tableName + '-tag-filter';
-      const tagInput = document.getElementById(tagInputId);
-      if (tagInput) {
-        const trimmedTags = tagInput.value.trim();
-        if (trimmedTags) {
-          url.searchParams.set('tags', trimmedTags);
-        } else {
-          url.searchParams.delete('tags');
-        }
+      const livePrefix = this.tableName + '_';
+      const urlQuery = currentUrlParams.get(livePrefix + 'q') || '';
+      const urlTags = currentUrlParams.get(livePrefix + 'tags') || '';
+
+      const finalQuery = domQuery || urlQuery;
+      const finalTags = domTags || urlTags;
+
+      if (finalQuery) {
+        url.searchParams.set('q', finalQuery);
+      } else {
+        url.searchParams.delete('q');
+      }
+      if (finalTags) {
+        url.searchParams.set('tags', finalTags);
+      } else {
+        url.searchParams.delete('tags');
       }
     }
 
-    // Also pick up team_id if the parent app injects it into the browser URL
-    // (e.g. when the gateway is embedded in an iframe).
-    const currentUrlParams = new URLSearchParams(window.location.search);
+    // Preserve team_id from current URL (if present) - this ensures team filter
+    // is maintained during pagination
     const teamIdFromUrl = currentUrlParams.get('team_id');
     if (teamIdFromUrl && !extraParams.team_id) {
       url.searchParams.set('team_id', teamIdFromUrl);
