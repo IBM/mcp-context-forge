@@ -337,6 +337,46 @@ class TestGetCurrentUser:
                         mock_resolve_teams.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_session_token_with_single_team_calls_normalize_token_teams(self):
+        """Test that session tokens with exactly one team call normalize_token_teams (line 1057)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_single_team")
+
+        # Session token with exactly one team
+        jwt_payload = {
+            "sub": "test@example.com",
+            "token_use": "session",
+            "teams": ["team-456"],
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
+                    with patch("mcpgateway.auth.normalize_token_teams", return_value=["team-456"]) as mock_normalize:
+                        with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                            user = await get_current_user(credentials=credentials)
+
+                            # Verify user was authenticated
+                            assert user.email == mock_user.email
+
+                            # Verify normalize_token_teams WAS called (line 1057)
+                            mock_normalize.assert_called_once_with(jwt_payload)
+
+                            # Verify _resolve_teams_from_db was NOT called
+                            mock_resolve_teams.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_session_token_without_teams_claim_resolves_from_db(self):
         """Test that session tokens without 'teams' claim resolve teams from DB."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_no_teams")
