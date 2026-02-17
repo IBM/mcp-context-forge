@@ -17,12 +17,14 @@ Set these variables (for example in `.env`):
 
 ```bash
 MCPGATEWAY_RUNTIME_ENABLED=true
+RUNTIME_PLATFORM_ADMIN_ONLY=true
 RUNTIME_DEFAULT_BACKEND=docker
 RUNTIME_DOCKER_ENABLED=true
 RUNTIME_IBM_CODE_ENGINE_ENABLED=false
 ```
 
 When disabled, runtime endpoints are not exposed.
+By default, runtime endpoints are platform-admin-only. Set `RUNTIME_PLATFORM_ADMIN_ONLY=false` to use route-level RBAC checks instead.
 
 ---
 

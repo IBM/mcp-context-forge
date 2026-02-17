@@ -2704,6 +2704,12 @@
       "description": "Registry secret used for Code Engine app deploys",
       "title": "Runtime Ibm Code Engine Registry Secret"
     },
+    "runtime_platform_admin_only": {
+      "default": true,
+      "description": "Restrict runtime APIs to platform administrators",
+      "title": "Runtime Platform Admin Only",
+      "type": "boolean"
+    },
     "sanitize_output": {
       "default": true,
       "description": "Sanitize output to remove control characters",

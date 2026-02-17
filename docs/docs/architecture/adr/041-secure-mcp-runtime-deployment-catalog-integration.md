@@ -47,6 +47,7 @@ Introduce a Secure MCP Runtime subsystem with:
    - Runtime deployment approvals
 
 Feature is gated by `MCPGATEWAY_RUNTIME_ENABLED`.
+Runtime access is restricted to platform administrators by default (`RUNTIME_PLATFORM_ADMIN_ONLY=true`) and can be relaxed to route-level RBAC checks if needed.
 
 ## Consequences
 
@@ -55,6 +56,7 @@ Feature is gated by `MCPGATEWAY_RUNTIME_ENABLED`.
 - Unified deployment workflow directly in gateway APIs.
 - Backend-specific enforcement with explicit compatibility warnings instead of silent failures.
 - Approval and guardrail policies are centrally managed.
+- Sensitive runtime deployment operations are locked to platform-admin context by default.
 - Catalog becomes deployable metadata, not only discovery metadata.
 - Enables incremental extension for future runtime backends.
 

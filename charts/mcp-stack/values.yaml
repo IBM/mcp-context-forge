@@ -302,6 +302,7 @@ mcpContextForge:
 
     # ─ Secure MCP Runtime Configuration ─
     MCPGATEWAY_RUNTIME_ENABLED: "false" # enable /runtimes API and runtime deployment workflows
+    RUNTIME_PLATFORM_ADMIN_ONLY: "true" # when true, only platform admins can use /runtimes APIs
     RUNTIME_DEFAULT_BACKEND: "docker" # default backend: docker or ibm_code_engine
     RUNTIME_DOCKER_ENABLED: "true" # enable Docker runtime backend
     RUNTIME_DOCKER_BINARY: "docker" # docker CLI binary path
