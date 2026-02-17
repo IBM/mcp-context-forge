@@ -40,6 +40,17 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         )
 
     async def deploy(self, request: RuntimeBackendDeployRequest) -> RuntimeBackendDeployResult:
+        """Deploy a runtime as a Docker container or compose project.
+
+        Args:
+            request: Runtime deployment request with source, resources, and guardrails.
+
+        Returns:
+            RuntimeBackendDeployResult: Backend deployment metadata and endpoint details.
+
+        Raises:
+            RuntimeBackendError: If source data is invalid or Docker commands fail.
+        """
         source_type = request.source_type
         if source_type == "compose":
             return await self._deploy_compose(request)
@@ -154,6 +165,15 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         return RuntimeBackendStatus(status=mapped, endpoint_url=endpoint_url, backend_response={"raw_status": normalized})
 
     async def start(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> RuntimeBackendStatus:
+        """Start a stopped runtime deployment.
+
+        Args:
+            runtime_ref: Runtime identifier (container id/name or compose main service ref).
+            metadata: Optional backend metadata with deployment mode information.
+
+        Returns:
+            RuntimeBackendStatus: Updated runtime status after start operation.
+        """
         metadata = metadata or {}
         if metadata.get("deployment_mode") == "compose":
             project_name = metadata.get("compose_project")
@@ -165,6 +185,15 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         return RuntimeBackendStatus(status="running")
 
     async def stop(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> RuntimeBackendStatus:
+        """Stop a running runtime deployment.
+
+        Args:
+            runtime_ref: Runtime identifier (container id/name or compose main service ref).
+            metadata: Optional backend metadata with deployment mode information.
+
+        Returns:
+            RuntimeBackendStatus: Updated runtime status after stop operation.
+        """
         metadata = metadata or {}
         if metadata.get("deployment_mode") == "compose":
             project_name = metadata.get("compose_project")
@@ -176,6 +205,12 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         return RuntimeBackendStatus(status="stopped")
 
     async def delete(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Delete runtime resources for container or compose deployment.
+
+        Args:
+            runtime_ref: Runtime identifier (container id/name or compose main service ref).
+            metadata: Optional backend metadata with deployment mode information.
+        """
         metadata = metadata or {}
         if metadata.get("deployment_mode") == "compose":
             project_name = metadata.get("compose_project")
@@ -186,6 +221,16 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         await self._run([self.docker_binary, "rm", "-f", runtime_ref], timeout=120)
 
     async def logs(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None, tail: int = 200) -> List[str]:
+        """Fetch runtime logs from Docker container or compose project.
+
+        Args:
+            runtime_ref: Runtime identifier (container id/name or compose main service ref).
+            metadata: Optional backend metadata with deployment mode information.
+            tail: Maximum number of log lines to request from the backend.
+
+        Returns:
+            List[str]: Log lines returned by Docker.
+        """
         metadata = metadata or {}
         if metadata.get("deployment_mode") == "compose":
             project_name = metadata.get("compose_project")
@@ -250,6 +295,17 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         return final_tag, logs
 
     async def _deploy_compose(self, request: RuntimeBackendDeployRequest) -> RuntimeBackendDeployResult:
+        """Deploy a runtime from a compose file and return runtime metadata.
+
+        Args:
+            request: Runtime deployment request containing compose source details.
+
+        Returns:
+            RuntimeBackendDeployResult: Runtime deployment metadata for compose mode.
+
+        Raises:
+            RuntimeBackendError: If compose source configuration is missing or invalid.
+        """
         source = request.source
         compose_content = source.get("compose_file")
         main_service = source.get("main_service")
@@ -289,6 +345,14 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         )
 
     def _is_registry_allowed(self, image: str) -> bool:
+        """Validate whether an image registry is included in the allowlist.
+
+        Args:
+            image: Docker image reference to validate.
+
+        Returns:
+            bool: True when the registry is allowed, otherwise False.
+        """
         if not self.allowed_registries:
             return True
 
@@ -303,6 +367,14 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
 
     @staticmethod
     def _extract_registry(image: str) -> str:
+        """Extract normalized registry hostname from a Docker image reference.
+
+        Args:
+            image: Docker image reference.
+
+        Returns:
+            str: Registry hostname or the default Docker Hub registry.
+        """
         first = image.split("/", 1)[0].lower()
         if "." in first or ":" in first or first == "localhost":
             return first
@@ -310,13 +382,40 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
 
     @staticmethod
     def _container_name(runtime_id: str, name: str) -> str:
+        """Create a deterministic Docker container name for a runtime.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            name: Runtime display name.
+
+        Returns:
+            str: Docker-safe container name with runtime id suffix.
+        """
         normalized = re.sub(r"[^a-zA-Z0-9_.-]", "-", name.lower()).strip("-")
         return f"mcpruntime-{normalized[:40]}-{runtime_id[:8]}"
 
     def _compose_cmd(self, compose_file: str, project_name: str, args: List[str]) -> List[str]:
+        """Build a docker compose command for the runtime project.
+
+        Args:
+            compose_file: Path to the compose file.
+            project_name: Compose project name.
+            args: Additional compose subcommand arguments.
+
+        Returns:
+            List[str]: Full docker compose command argument list.
+        """
         return [self.docker_binary, "compose", "-p", project_name, "-f", compose_file, *args]
 
     async def _resolve_container_endpoint(self, runtime_ref: str) -> Optional[str]:
+        """Resolve an HTTP endpoint URL from Docker port mappings when available.
+
+        Args:
+            runtime_ref: Container identifier to inspect.
+
+        Returns:
+            Optional[str]: Local endpoint URL if a host port is discovered, else None.
+        """
         try:
             out = await self._run([self.docker_binary, "port", runtime_ref], timeout=30)
             for line in out.splitlines():
@@ -331,6 +430,18 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         return None
 
     async def _run(self, cmd: List[str], timeout: int = 300) -> str:
+        """Run a Docker CLI command and return stdout or raise on failure.
+
+        Args:
+            cmd: Command tokens to execute.
+            timeout: Maximum command runtime in seconds.
+
+        Returns:
+            str: Decoded stdout from the command.
+
+        Raises:
+            RuntimeBackendError: If command times out or exits with non-zero status.
+        """
         logger.debug("Docker runtime command: %s", " ".join(cmd))
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:

@@ -124,6 +124,17 @@ class RuntimeService:
         return result
 
     def _get_backend(self, backend_name: str) -> RuntimeBackend:
+        """Resolve an enabled runtime backend by name.
+
+        Args:
+            backend_name: Runtime backend key.
+
+        Returns:
+            RuntimeBackend: Enabled runtime backend implementation.
+
+        Raises:
+            RuntimeBackendError: If the backend is not enabled.
+        """
         backend = self.backends.get(backend_name)
         if not backend:
             raise RuntimeBackendError(f"Runtime backend '{backend_name}' is not enabled")
@@ -254,6 +265,15 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def refresh_runtime_status(self, runtime_id: str, db: Session) -> RuntimeRead:
+        """Refresh and persist runtime status from backend state.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup and updates.
+
+        Returns:
+            RuntimeRead: Updated runtime deployment state.
+        """
         runtime = self._get_runtime_row(runtime_id, db)
         if not runtime.runtime_ref or runtime.status in {"pending_approval", "deleted"}:
             return self._to_runtime_read(runtime)
@@ -267,6 +287,18 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def start_runtime(self, runtime_id: str, db: Session) -> RuntimeRead:
+        """Start a runtime deployment in the selected backend.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup and updates.
+
+        Returns:
+            RuntimeRead: Updated runtime deployment state.
+
+        Raises:
+            RuntimeBackendError: If runtime cannot be started.
+        """
         runtime = self._get_runtime_row(runtime_id, db)
         if runtime.status == "deleted":
             raise RuntimeBackendError("Cannot start deleted runtime")
@@ -280,6 +312,18 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def stop_runtime(self, runtime_id: str, db: Session) -> RuntimeRead:
+        """Stop a runtime deployment in the selected backend.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup and updates.
+
+        Returns:
+            RuntimeRead: Updated runtime deployment state.
+
+        Raises:
+            RuntimeBackendError: If runtime cannot be stopped.
+        """
         runtime = self._get_runtime_row(runtime_id, db)
         if runtime.status == "deleted":
             raise RuntimeBackendError("Cannot stop deleted runtime")
@@ -293,6 +337,15 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def delete_runtime(self, runtime_id: str, db: Session) -> RuntimeRead:
+        """Delete a runtime deployment from backend and local state.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup and updates.
+
+        Returns:
+            RuntimeRead: Updated runtime deployment state.
+        """
         runtime = self._get_runtime_row(runtime_id, db)
         if runtime.status != "deleted" and runtime.runtime_ref:
             backend = self._get_backend(runtime.backend)
@@ -302,6 +355,16 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def logs(self, runtime_id: str, db: Session, tail: int = 200) -> List[str]:
+        """Fetch runtime log lines from backend.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup.
+            tail: Number of trailing log lines requested.
+
+        Returns:
+            List[str]: Runtime log lines.
+        """
         runtime = self._get_runtime_row(runtime_id, db)
         if not runtime.runtime_ref:
             return []
@@ -309,6 +372,14 @@ class RuntimeService:
         return await backend.logs(runtime.runtime_ref, runtime.backend_response or {}, tail=tail)
 
     async def list_guardrail_profiles(self, db: Session) -> List[RuntimeGuardrailProfileRead]:
+        """List built-in and custom guardrail profiles.
+
+        Args:
+            db: Database session used for custom profile lookup.
+
+        Returns:
+            List[RuntimeGuardrailProfileRead]: Available guardrail profiles.
+        """
         now = utc_now()
         profiles: List[RuntimeGuardrailProfileRead] = []
         for name, value in self._BUILTIN_PROFILES.items():
@@ -350,6 +421,19 @@ class RuntimeService:
         return self._to_guardrail_profile_read(row)
 
     async def create_guardrail_profile(self, payload: RuntimeGuardrailProfileCreate, db: Session, created_by: Optional[str]) -> RuntimeGuardrailProfileRead:
+        """Create a custom guardrail profile.
+
+        Args:
+            payload: Guardrail profile create payload.
+            db: Database session used for persistence.
+            created_by: Identity that created the profile.
+
+        Returns:
+            RuntimeGuardrailProfileRead: Created guardrail profile.
+
+        Raises:
+            RuntimeBackendError: If profile already exists or conflicts with built-ins.
+        """
         if payload.name in self._BUILTIN_PROFILES:
             raise RuntimeBackendError(f"Cannot overwrite built-in profile '{payload.name}'")
 
@@ -371,6 +455,19 @@ class RuntimeService:
         return self._to_guardrail_profile_read(row)
 
     async def update_guardrail_profile(self, name: str, payload: RuntimeGuardrailProfileUpdate, db: Session) -> RuntimeGuardrailProfileRead:
+        """Update a persisted custom guardrail profile.
+
+        Args:
+            name: Guardrail profile name.
+            payload: Partial update payload.
+            db: Database session used for persistence.
+
+        Returns:
+            RuntimeGuardrailProfileRead: Updated guardrail profile.
+
+        Raises:
+            RuntimeBackendError: If profile is missing or built-in.
+        """
         if name in self._BUILTIN_PROFILES:
             raise RuntimeBackendError("Built-in profiles cannot be updated")
 
@@ -388,6 +485,15 @@ class RuntimeService:
         return self._to_guardrail_profile_read(row)
 
     async def delete_guardrail_profile(self, name: str, db: Session) -> None:
+        """Delete a persisted custom guardrail profile.
+
+        Args:
+            name: Guardrail profile name.
+            db: Database session used for deletion.
+
+        Raises:
+            RuntimeBackendError: If profile is missing or built-in.
+        """
         if name in self._BUILTIN_PROFILES:
             raise RuntimeBackendError("Built-in profiles cannot be deleted")
         row = db.execute(select(RuntimeGuardrailProfile).where(RuntimeGuardrailProfile.name == name)).scalar_one_or_none()
@@ -396,6 +502,19 @@ class RuntimeService:
         db.delete(row)
 
     async def guardrail_compatibility(self, profile_name: str, backend_name: str, db: Session) -> RuntimeGuardrailCompatibilityResponse:
+        """Evaluate guardrail compatibility for a backend.
+
+        Args:
+            profile_name: Guardrail profile name.
+            backend_name: Runtime backend name.
+            db: Database session used for profile lookup.
+
+        Returns:
+            RuntimeGuardrailCompatibilityResponse: Compatibility result with warnings.
+
+        Raises:
+            RuntimeBackendError: If profile or backend is invalid.
+        """
         profile = await self.get_guardrail_profile(profile_name, db)
         backend = self._get_backend(backend_name)
         caps = backend.get_capabilities()
@@ -403,6 +522,17 @@ class RuntimeService:
         return RuntimeGuardrailCompatibilityResponse(profile=profile_name, backend=backend_name, compatible=len(warnings) == 0, warnings=warnings)
 
     async def list_approvals(self, db: Session, status: Optional[str] = "pending", limit: int = 100, offset: int = 0) -> Tuple[List[RuntimeApprovalRead], int]:
+        """List runtime approval requests.
+
+        Args:
+            db: Database session used for query execution.
+            status: Optional approval status filter.
+            limit: Maximum number of approvals to return.
+            offset: Pagination offset.
+
+        Returns:
+            Tuple[List[RuntimeApprovalRead], int]: Approval list and total count.
+        """
         stmt = select(RuntimeDeploymentApproval)
         count_stmt = select(func.count(RuntimeDeploymentApproval.id))
         if status:
@@ -420,6 +550,20 @@ class RuntimeService:
         return self._to_approval_read(approval)
 
     async def approve(self, approval_id: str, db: Session, reviewer: Optional[str], reason: Optional[str]) -> RuntimeRead:
+        """Approve a pending runtime deployment request.
+
+        Args:
+            approval_id: Runtime approval identifier.
+            db: Database session used for persistence.
+            reviewer: Reviewer identity.
+            reason: Optional decision reason.
+
+        Returns:
+            RuntimeRead: Updated runtime deployment state.
+
+        Raises:
+            RuntimeBackendError: If approval is invalid or expired.
+        """
         approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id)).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
@@ -456,6 +600,20 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def reject(self, approval_id: str, db: Session, reviewer: Optional[str], reason: Optional[str]) -> RuntimeRead:
+        """Reject a pending runtime deployment request.
+
+        Args:
+            approval_id: Runtime approval identifier.
+            db: Database session used for persistence.
+            reviewer: Reviewer identity.
+            reason: Optional decision reason.
+
+        Returns:
+            RuntimeRead: Updated runtime deployment state.
+
+        Raises:
+            RuntimeBackendError: If approval is invalid.
+        """
         approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id)).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
@@ -474,6 +632,13 @@ class RuntimeService:
         return self._to_runtime_read(runtime)
 
     async def _execute_deployment(self, runtime: RuntimeDeployment, backend: RuntimeBackend, db: Session) -> None:
+        """Execute deployment on backend and persist runtime outcome.
+
+        Args:
+            runtime: Runtime deployment row.
+            backend: Runtime backend implementation.
+            db: Database session used for side effects.
+        """
         deploy_request = RuntimeBackendDeployRequest(
             runtime_id=runtime.id,
             name=runtime.name,
@@ -509,6 +674,12 @@ class RuntimeService:
             await self._register_gateway(runtime, db)
 
     async def _register_gateway(self, runtime: RuntimeDeployment, db: Session) -> None:
+        """Register a successful runtime endpoint as a gateway entry.
+
+        Args:
+            runtime: Runtime deployment row.
+            db: Database session used for gateway registration.
+        """
         gateway_name = runtime.runtime_metadata.get("gateway_name") or runtime.name
         gateway_transport = runtime.runtime_metadata.get("gateway_transport") or self._infer_transport(runtime.endpoint_url or "")
         visibility = runtime.runtime_metadata.get("visibility") or "public"
@@ -541,6 +712,17 @@ class RuntimeService:
             ]
 
     async def _resolve_source(self, request: RuntimeDeployRequest) -> Tuple[Dict[str, Any], Optional[Dict[str, Any]]]:
+        """Resolve deploy source from request or catalog metadata.
+
+        Args:
+            request: Runtime deployment request.
+
+        Returns:
+            Tuple[Dict[str, Any], Optional[Dict[str, Any]]]: Source payload and optional catalog entry.
+
+        Raises:
+            RuntimeBackendError: If catalog entry is missing or not deployable.
+        """
         if request.source:
             return request.source.model_dump(mode="json"), None
 
@@ -557,6 +739,19 @@ class RuntimeService:
         raise RuntimeBackendError(f"Catalog server '{request.catalog_server_id}' not found")
 
     async def _resolve_guardrails(self, request: RuntimeDeployRequest, db: Session, guardrails_profile_override: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
+        """Resolve effective guardrail profile and merged configuration.
+
+        Args:
+            request: Runtime deployment request.
+            db: Database session used for profile lookup.
+            guardrails_profile_override: Optional profile override.
+
+        Returns:
+            Tuple[str, Dict[str, Any]]: Effective profile name and merged guardrail config.
+
+        Raises:
+            RuntimeBackendError: If guardrail profile lookup fails.
+        """
         profile_name = guardrails_profile_override or request.guardrails_profile
         profile = await self.get_guardrail_profile(profile_name, db)
         profile_config = profile.config.model_dump(mode="json")
@@ -572,6 +767,16 @@ class RuntimeService:
         return profile.name, merged
 
     def _guardrail_warnings_for_backend(self, guardrails: Dict[str, Any], backend: str, capabilities: RuntimeBackendCapabilities) -> List[RuntimeGuardrailWarning]:
+        """Compute backend-specific guardrail compatibility warnings.
+
+        Args:
+            guardrails: Effective guardrail configuration.
+            backend: Runtime backend name.
+            capabilities: Backend capability matrix.
+
+        Returns:
+            List[RuntimeGuardrailWarning]: Non-fatal compatibility warnings.
+        """
         warnings: List[RuntimeGuardrailWarning] = []
         network = guardrails.get("network", {})
         filesystem = guardrails.get("filesystem", {})
@@ -591,6 +796,17 @@ class RuntimeService:
         return warnings
 
     def _approval_required(self, request: RuntimeDeployRequest, source: Dict[str, Any], profile_name: str, catalog_entry: Optional[Dict[str, Any]]) -> Tuple[bool, Dict[str, Any]]:
+        """Evaluate whether deployment must enter approval workflow.
+
+        Args:
+            request: Runtime deployment request.
+            source: Resolved source payload.
+            profile_name: Effective guardrail profile name.
+            catalog_entry: Optional catalog entry metadata.
+
+        Returns:
+            Tuple[bool, Dict[str, Any]]: Required flag and rule snapshot details.
+        """
         if not settings.runtime_approval_enabled:
             return False, {}
 
@@ -621,6 +837,14 @@ class RuntimeService:
         return required, reasons
 
     def _image_allowlisted(self, image: str) -> bool:
+        """Check whether image reference matches approval allowlist prefixes.
+
+        Args:
+            image: Container image reference.
+
+        Returns:
+            bool: True when image prefix is allowlisted.
+        """
         allowlist = settings.runtime_approval_registry_allowlist or []
         if not allowlist:
             return False
@@ -628,6 +852,15 @@ class RuntimeService:
         return any(image_lower.startswith(prefix.lower()) for prefix in allowlist)
 
     def _validate_source_backend_compatibility(self, source_type: str, capabilities: RuntimeBackendCapabilities) -> None:
+        """Validate source type is supported by selected backend.
+
+        Args:
+            source_type: Runtime source type.
+            capabilities: Backend capability matrix.
+
+        Raises:
+            RuntimeBackendError: If source type is unsupported by backend.
+        """
         if source_type == "compose" and not capabilities.supports_compose:
             raise RuntimeBackendError(f"Backend '{capabilities.backend}' does not support compose sources")
         if source_type == "github" and not capabilities.supports_github_build:
@@ -635,6 +868,15 @@ class RuntimeService:
 
     @staticmethod
     def _validate_catalog_backend_compatibility(catalog_entry: Optional[Dict[str, Any]], backend_name: str) -> None:
+        """Validate catalog entry backend support constraints.
+
+        Args:
+            catalog_entry: Optional catalog entry metadata.
+            backend_name: Requested runtime backend name.
+
+        Raises:
+            RuntimeBackendError: If catalog entry disallows the requested backend.
+        """
         if not catalog_entry:
             return
         supported_backends = catalog_entry.get("supported_backends")
@@ -647,6 +889,12 @@ class RuntimeService:
 
     @staticmethod
     def _deep_merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
+        """Deep-merge source dictionary into target dictionary.
+
+        Args:
+            target: Mutable merge target.
+            source: Merge source values.
+        """
         for key, value in source.items():
             if key in target and isinstance(target[key], dict) and isinstance(value, dict):
                 RuntimeService._deep_merge(target[key], value)
@@ -655,12 +903,29 @@ class RuntimeService:
 
     @staticmethod
     def _merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+        """Create deep-merged dictionary from base and override payloads.
+
+        Args:
+            base: Base dictionary.
+            override: Override dictionary.
+
+        Returns:
+            Dict[str, Any]: Merged dictionary.
+        """
         merged = deepcopy(base)
         RuntimeService._deep_merge(merged, override)
         return merged
 
     @staticmethod
     def _infer_transport(endpoint_url: str) -> str:
+        """Infer gateway transport type from endpoint URL pattern.
+
+        Args:
+            endpoint_url: Runtime endpoint URL.
+
+        Returns:
+            str: Inferred transport identifier.
+        """
         endpoint = endpoint_url.lower()
         if endpoint.startswith("ws://") or endpoint.startswith("wss://"):
             return "SSE"
@@ -669,6 +934,18 @@ class RuntimeService:
         return "STREAMABLEHTTP"
 
     def _get_runtime_row(self, runtime_id: str, db: Session) -> RuntimeDeployment:
+        """Load runtime deployment row by identifier.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            db: Database session used for lookup.
+
+        Returns:
+            RuntimeDeployment: Runtime deployment row.
+
+        Raises:
+            RuntimeBackendError: If runtime deployment is not found.
+        """
         runtime = db.execute(select(RuntimeDeployment).where(RuntimeDeployment.id == runtime_id)).scalar_one_or_none()
         if not runtime:
             raise RuntimeBackendError(f"Runtime deployment '{runtime_id}' not found")
@@ -676,6 +953,14 @@ class RuntimeService:
 
     @staticmethod
     def _to_runtime_read(runtime: RuntimeDeployment) -> RuntimeRead:
+        """Convert runtime ORM row into API response schema.
+
+        Args:
+            runtime: Runtime deployment ORM row.
+
+        Returns:
+            RuntimeRead: Runtime response schema.
+        """
         warning_models = [RuntimeGuardrailWarning.model_validate(item) for item in (runtime.guardrails_warnings or [])]
         return RuntimeRead(
             id=runtime.id,
@@ -703,6 +988,14 @@ class RuntimeService:
 
     @staticmethod
     def _to_approval_read(approval: RuntimeDeploymentApproval) -> RuntimeApprovalRead:
+        """Convert approval ORM row into API response schema.
+
+        Args:
+            approval: Runtime approval ORM row.
+
+        Returns:
+            RuntimeApprovalRead: Approval response schema.
+        """
         return RuntimeApprovalRead(
             id=approval.id,
             runtime_deployment_id=approval.runtime_deployment_id,
@@ -720,6 +1013,14 @@ class RuntimeService:
 
     @staticmethod
     def _to_guardrail_profile_read(profile: RuntimeGuardrailProfile) -> RuntimeGuardrailProfileRead:
+        """Convert guardrail profile ORM row into API response schema.
+
+        Args:
+            profile: Guardrail profile ORM row.
+
+        Returns:
+            RuntimeGuardrailProfileRead: Guardrail profile response schema.
+        """
         return RuntimeGuardrailProfileRead(
             id=profile.id,
             name=profile.name,
@@ -733,6 +1034,15 @@ class RuntimeService:
 
     @staticmethod
     def _capabilities_to_schema(backend_name: str, caps: RuntimeBackendCapabilities) -> RuntimeBackendCapabilitiesRead:
+        """Convert backend capabilities dataclass into API response schema.
+
+        Args:
+            backend_name: Runtime backend name.
+            caps: Runtime backend capability matrix.
+
+        Returns:
+            RuntimeBackendCapabilitiesRead: Backend capability response schema.
+        """
         return RuntimeBackendCapabilitiesRead(
             backend=backend_name,  # type: ignore[arg-type]
             supports_compose=caps.supports_compose,
