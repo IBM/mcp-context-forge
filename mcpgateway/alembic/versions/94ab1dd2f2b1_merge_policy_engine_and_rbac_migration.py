@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """merge policy engine and rbac migration
 
 Revision ID: 94ab1dd2f2b1

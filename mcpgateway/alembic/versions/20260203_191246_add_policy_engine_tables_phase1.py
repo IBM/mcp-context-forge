@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """add policy engine tables phase1 #2019
 
 Revision ID: policy_engine_phase1

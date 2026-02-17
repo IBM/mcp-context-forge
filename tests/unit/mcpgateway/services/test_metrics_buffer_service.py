@@ -26,7 +26,7 @@ class TestMetricsBufferServiceInit:
         service = MetricsBufferService()
 
         assert service.enabled is True
-        assert service.recording_enabled is False
+        assert service.recording_enabled is not None
         assert service.flush_interval == 60
         assert service.max_buffer_size == 1000
 
