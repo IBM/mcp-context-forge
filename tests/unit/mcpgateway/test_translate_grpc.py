@@ -1061,8 +1061,8 @@ class TestGrpcEndpointLoadFileDescriptors:
         endpoint.load_file_descriptors([proto_bytes])
         endpoint.load_file_descriptors([proto_bytes])
 
-    def test_load_file_descriptors_skips_corrupt_bytes(self):
-        """Test that corrupt/invalid bytes are silently skipped."""
+    def test_load_file_descriptors_error_corrupt_bytes(self):
+        """Test that corrupt/invalid bytes raise an error."""
         endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
-        # Should not raise
-        endpoint.load_file_descriptors([b"not-valid-protobuf-data"])
+        with pytest.raises(ValueError):
+            endpoint.load_file_descriptors([b"not-valid-protobuf-data"])
