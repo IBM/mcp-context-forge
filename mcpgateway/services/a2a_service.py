@@ -274,22 +274,22 @@ class A2AAgentService:
         # Public-only tokens can ONLY see public resources - no owner access
         is_public_only_token = len(token_teams) == 0
 
+        # General access: public + team (+ owner if not public-only token)
+        access_conditions = [DbA2AAgent.visibility == "public"]
+
         if team_id:
             # User requesting specific team - verify access
             if team_id not in token_teams:
                 # Return query that matches nothing (will return empty result)
                 return query.where(False)
 
-            access_conditions = [
-                and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])),
-            ]
+            access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.visibility.in_(["team", "public"])))
+            
             # Only include owner access for non-public-only tokens with user_email
             if not is_public_only_token and user_email:
                 access_conditions.append(and_(DbA2AAgent.team_id == team_id, DbA2AAgent.owner_email == user_email))
             return query.where(or_(*access_conditions))
 
-        # General access: public + team (+ owner if not public-only token)
-        access_conditions = [DbA2AAgent.visibility == "public"]
 
         # Only include owner access for non-public-only tokens with user_email
         if not is_public_only_token and user_email:

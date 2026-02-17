@@ -709,6 +709,60 @@ class ServerService:
                 user_email=created_by,
             )
             raise ServerError(f"Failed to register server: {str(ex)}")
+    def _apply_visibility_filter(
+        self,
+        query,
+        user_email: Optional[str],
+        token_teams: List[str],
+        team_id: Optional[str] = None,
+    ) -> Any:
+        """Apply visibility-based access control to query.
+
+        Access rules (matching tools/resources/prompts/agents/gateways):
+        - public: visible to all
+        - team: visible to team members (token_teams contains team_id)
+        - private: visible only to owner, BUT NOT for public-only tokens
+
+        Args:
+            query: SQLAlchemy query to filter
+            user_email: User's email for owner matching
+            token_teams: Teams from JWT. [] = public-only (no owner access)
+            team_id: Optional specific team filter
+
+        Returns:
+            Filtered query
+        """
+        # Check if this is a public-only token (empty teams array)
+        # Public-only tokens can ONLY see public resources - no owner access
+        is_public_only_token = len(token_teams) == 0
+
+        # General access: public + team (+ owner if not public-only token)
+        access_conditions = [DbServer.visibility == "public"]
+
+        if team_id:
+            # User requesting specific team - verify access
+            if team_id not in token_teams:
+                # Return query that matches nothing (will return empty result)
+                return query.where(False)
+
+            access_conditions.append(and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])))
+            
+            # Only include owner access for non-public-only tokens with user_email
+            if not is_public_only_token and user_email:
+                access_conditions.append(and_(DbServer.team_id == team_id, DbServer.owner_email == user_email))
+            return query.where(or_(*access_conditions))
+
+        
+
+        # Only include owner access for non-public-only tokens with user_email
+        if not is_public_only_token and user_email:
+            access_conditions.append(DbServer.owner_email == user_email)
+
+        if token_teams:
+            access_conditions.append(and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])))
+
+        return query.where(or_(*access_conditions))
+
 
     async def list_servers(
         self,
@@ -790,51 +844,21 @@ class ServerService:
         if not include_inactive:
             query = query.where(DbServer.enabled)
 
-        # SECURITY: Apply token-based access control based on normalized token_teams
-        # - token_teams is None: admin bypass (is_admin=true with explicit null teams) - sees all
-        # - token_teams is []: public-only access (missing teams or explicit empty)
-        # - token_teams is [...]: access to specified teams + public + user's own
-        if token_teams is not None:
-            if len(token_teams) == 0:
-                # Public-only token: only access public servers
-                query = query.where(DbServer.visibility == "public")
-            else:
-                # Team-scoped token: public servers + servers in allowed teams + user's own
-                access_conditions = [
-                    DbServer.visibility == "public",
-                    and_(DbServer.team_id.in_(token_teams), DbServer.visibility.in_(["team", "public"])),
-                ]
-                if user_email:
-                    access_conditions.append(and_(DbServer.owner_email == user_email, DbServer.visibility == "private"))
-                query = query.where(or_(*access_conditions))
+        # Apply team-based access control if user_email is provided OR token_teams is explicitly set
+        # This ensures unauthenticated requests with token_teams=[] only see public servers
+        if user_email or token_teams is not None:
+            # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            # Default is public-only access (empty teams) when no teams are available.
+            effective_teams: List[str] = []
+            if token_teams is not None:
+                effective_teams = token_teams
+            elif user_email:
+                # Look up user's teams from DB (for admin UI / first-party access)
+                team_service = TeamManagementService(db)
+                user_teams = await team_service.get_user_teams(user_email)
+                effective_teams = [team.id for team in user_teams]
 
-            if visibility:
-                query = query.where(DbServer.visibility == visibility)
-
-        # Apply team-based access control if user_email is provided (and no token_teams filtering)
-        elif user_email:
-            team_service = TeamManagementService(db)
-            user_teams = await team_service.get_user_teams(user_email)
-            team_ids = [team.id for team in user_teams]
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbServer.team_id == team_id, DbServer.visibility.in_(["team", "public"])),
-                    and_(DbServer.team_id == team_id, DbServer.owner_email == user_email),
-                ]
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: user's servers + public servers + team servers
-                access_conditions = [
-                    DbServer.owner_email == user_email,
-                    DbServer.visibility == "public",
-                ]
-                if team_ids:
-                    access_conditions.append(and_(DbServer.team_id.in_(team_ids), DbServer.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
+            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
 
             if visibility:
                 query = query.where(DbServer.visibility == visibility)

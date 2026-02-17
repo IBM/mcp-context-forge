@@ -1707,6 +1707,57 @@ class ToolService:
             plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
             plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
         )
+    def _apply_visibility_filter(
+        self,
+        query,
+        user_email: Optional[str],
+        token_teams: List[str],
+        team_id: Optional[str] = None,
+    ) -> Any:
+        """Apply visibility-based access control to query.
+
+        Access rules (matching resources/prompts/agents/gateways/servers):
+        - public: visible to all
+        - team: visible to team members (token_teams contains team_id)
+        - private: visible only to owner, BUT NOT for public-only tokens
+
+        Args:
+            query: SQLAlchemy query to filter
+            user_email: User's email for owner matching
+            token_teams: Teams from JWT. [] = public-only (no owner access)
+            team_id: Optional specific team filter
+
+        Returns:
+            Filtered query
+        """
+        # Check if this is a public-only token (empty teams array)
+        # Public-only tokens can ONLY see public resources - no owner access
+        is_public_only_token = len(token_teams) == 0
+
+        # General access: public + team (+ owner if not public-only token)
+        access_conditions = [DbTool.visibility == "public"]
+
+        if team_id:
+            # User requesting specific team - verify access
+            if team_id not in token_teams:
+                # Return query that matches nothing (will return empty result)
+                return query.where(False)
+
+            access_conditions.append(and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])))            
+            # Only include owner access for non-public-only tokens with user_email
+            if not is_public_only_token and user_email:
+                access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
+            return query.where(or_(*access_conditions))
+
+        # Only include owner access for non-public-only tokens with user_email
+        if not is_public_only_token and user_email:
+            access_conditions.append(DbTool.owner_email == user_email)
+
+        if token_teams:
+            access_conditions.append(and_(DbTool.team_id.in_(token_teams), DbTool.visibility.in_(["team", "public"])))
+
+        return query.where(or_(*access_conditions))
+
 
     async def list_tools(
         self,
@@ -1804,41 +1855,17 @@ class ToolService:
         # This ensures unauthenticated requests with token_teams=[] only see public tools
         if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            # Default is public-only access (empty teams) when no teams are available.
+            effective_teams: List[str] = []
             if token_teams is not None:
-                team_ids = token_teams
+                effective_teams = token_teams
             elif user_email:
+                # Look up user's teams from DB (for admin UI / first-party access)
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+                effective_teams = [team.id for team in user_teams]
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)
-                access_conditions = [
-                    and_(DbTool.team_id == team_id, DbTool.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbTool.team_id == team_id, DbTool.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public tools + team tools (+ owner tools if not public-only token)
-                access_conditions = [
-                    DbTool.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbTool.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbTool.team_id.in_(team_ids), DbTool.visibility.in_(["team", "public"])))
-                query = query.where(or_(*access_conditions))
+            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
 
             if visibility:
                 query = query.where(DbTool.visibility == visibility)

@@ -914,6 +914,59 @@ class ResourceService:
                 return True
 
         return False
+    def _apply_visibility_filter(
+        self,
+        query,
+        user_email: Optional[str],
+        token_teams: List[str],
+        team_id: Optional[str] = None,
+    ) -> Any:
+        """Apply visibility-based access control to query.
+
+        Access rules (matching tools/prompts/agents/gateways/servers):
+        - public: visible to all
+        - team: visible to team members (token_teams contains team_id)
+        - private: visible only to owner, BUT NOT for public-only tokens
+
+        Args:
+            query: SQLAlchemy query to filter
+            user_email: User's email for owner matching
+            token_teams: Teams from JWT. [] = public-only (no owner access)
+            team_id: Optional specific team filter
+
+        Returns:
+            Filtered query
+        """
+        # Check if this is a public-only token (empty teams array)
+        # Public-only tokens can ONLY see public resources - no owner access
+        is_public_only_token = len(token_teams) == 0
+
+        # General access: public + team (+ owner if not public-only token)
+        access_conditions = [DbResource.visibility == "public"]
+
+        if team_id:
+            # User requesting specific team - verify access
+            if team_id not in token_teams:
+                # Return query that matches nothing (will return empty result)
+                return query.where(False)
+
+            access_conditions.append(and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])))
+            # Only include owner access for non-public-only tokens with user_email
+            if not is_public_only_token and user_email:
+                access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
+            return query.where(or_(*access_conditions))
+
+        
+
+        # Only include owner access for non-public-only tokens with user_email
+        if not is_public_only_token and user_email:
+            access_conditions.append(DbResource.owner_email == user_email)
+
+        if token_teams:
+            access_conditions.append(and_(DbResource.team_id.in_(token_teams), DbResource.visibility.in_(["team", "public"])))
+
+        return query.where(or_(*access_conditions))
+
 
     async def list_resources(
         self,
@@ -1007,46 +1060,20 @@ class ResourceService:
         # This ensures unauthenticated requests with token_teams=[] only see public resources
         if user_email is not None or token_teams is not None:  # empty-string user_email -> public-only filtering (secure default)
             # Use token_teams if provided (for MCP/API token access), otherwise look up from DB
+            # Default is public-only access (empty teams) when no teams are available.
+            effective_teams: List[str] = []
             if token_teams is not None:
-                team_ids = token_teams
+                effective_teams = token_teams
             elif user_email:
+                # Look up user's teams from DB (for admin UI / first-party access)
                 # First-Party
                 from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)
-                team_ids = [team.id for team in user_teams]
-            else:
-                team_ids = []
+                effective_teams = [team.id for team in user_teams]
 
-            # Check if this is a public-only token (empty teams array)
-            # Public-only tokens can ONLY see public resources - no owner access
-            is_public_only_token = token_teams is not None and len(token_teams) == 0
-
-            if team_id:
-                # User requesting specific team - verify access
-                if team_id not in team_ids:
-                    return ([], None)  # No access to this team
-
-                access_conditions = [
-                    and_(DbResource.team_id == team_id, DbResource.visibility.in_(["team", "public"])),
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(and_(DbResource.team_id == team_id, DbResource.owner_email == user_email))
-                query = query.where(or_(*access_conditions))
-            else:
-                # General access: public resources + team resources (+ owner resources if not public-only token)
-                access_conditions = [
-                    DbResource.visibility == "public",
-                ]
-                # Only include owner access for non-public-only tokens with user_email
-                if not is_public_only_token and user_email:
-                    access_conditions.append(DbResource.owner_email == user_email)
-                if team_ids:
-                    access_conditions.append(and_(DbResource.team_id.in_(team_ids), DbResource.visibility.in_(["team", "public"])))
-
-                query = query.where(or_(*access_conditions))
+            query = self._apply_visibility_filter(query, user_email, effective_teams, team_id)
 
             # Apply visibility filter if specified
             if visibility:

@@ -738,12 +738,13 @@ class TestGatewayService:
 
         monkeypatch.setattr("mcpgateway.services.gateway_service.TeamManagementService", DummyTeamService)
 
-        test_db.execute = Mock()
+        test_db.execute = Mock(return_value=_make_execute_result(scalars_list=[]))
         result, next_cursor = await gateway_service.list_gateways(test_db, user_email="user@example.com", team_id="team-2")
 
         assert result == []
         assert next_cursor is None
-        test_db.execute.assert_not_called()
+        # Query IS executed but returns empty due to WHERE FALSE condition
+        test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_gateway(self, gateway_service, mock_gateway, test_db):
