@@ -36,7 +36,11 @@ logger = logging.getLogger(__name__)
 
 
 def _get_observability_skip_exact() -> FrozenSet[str]:
-    """Get observability skip exact paths, using configurable UI base path."""
+    """Get observability skip exact paths, using configurable UI base path.
+
+    Returns:
+        FrozenSet[str]: Set of exact paths to skip for observability.
+    """
     ui_base = settings.mcpgateway_ui_base_path
     return frozenset(
         [
@@ -50,7 +54,11 @@ def _get_observability_skip_exact() -> FrozenSet[str]:
 
 
 def _get_observability_skip_prefixes() -> Tuple[str, ...]:
-    """Get observability skip prefixes, using configurable UI base path."""
+    """Get observability skip prefixes, using configurable UI base path.
+
+    Returns:
+        Tuple[str, ...]: Tuple of path prefixes to skip for observability.
+    """
     ui_base = settings.mcpgateway_ui_base_path
     return ("/static/", f"{ui_base}/observability/")
 
