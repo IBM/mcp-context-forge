@@ -88,6 +88,7 @@ from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
+from mcpgateway import schemas
 from mcpgateway.schemas import (
     A2AAgentCreate,
     A2AAgentRead,
@@ -138,6 +139,7 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
+from mcpgateway.services.embedding_service import index_tool_fire_and_forget
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper, streamable_http_auth
@@ -1441,8 +1443,6 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     Exempts login-related paths and static assets:
     - /admin/login - login page
     - /admin/logout - logout action
-    - /admin/forgot-password - self-service password reset request page
-    - /admin/reset-password/* - self-service password reset completion page
     - /admin/static/* - static assets
 
     All other /admin/* routes require the user to be authenticated AND be an admin.
@@ -1453,14 +1453,8 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
     and relies on endpoint-level authentication which can be mocked in tests.
     """
 
-    # Public paths under /admin that do not require prior authentication.
-    EXEMPT_PATHS = [
-        "/admin/login",
-        "/admin/logout",
-        "/admin/forgot-password",
-        "/admin/reset-password",
-        "/admin/static",
-    ]
+    # Paths under /admin that don't require admin privileges
+    EXEMPT_PATHS = ["/admin/login", "/admin/logout", "/admin/static"]
 
     @staticmethod
     def _error_response(request: Request, root_path: str, status_code: int, detail: str, error_param: str = None):
@@ -1600,7 +1594,7 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
                         logger.info(f"Platform admin bootstrap authentication for {username}")
                         # Allow platform admin through - they have implicit admin privileges
                     else:
-                        return self._error_response(request, root_path, 401, "User not found")
+                        return ORJSONResponse(status_code=401, content={"detail": "User not found"})
                 else:
                     # User exists in DB - check active status
                     if not user.is_active:
@@ -1879,18 +1873,6 @@ if settings.security_logging_enabled:
     logger.info("🔐 Authentication context middleware enabled - logging security events")
 else:
     logger.info("🔐 Security event logging disabled")
-
-# Add token usage logging middleware
-# This tracks API token usage for analytics and security monitoring
-# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
-if settings.token_usage_logging_enabled:
-    # First-Party
-    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
-
-    app.add_middleware(TokenUsageMiddleware)
-    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
-else:
-    logger.info("📊 Token usage logging middleware disabled")
 
 # Add observability middleware if enabled
 # Note: Middleware runs in REVERSE order (last added runs first)
@@ -3653,6 +3635,66 @@ async def list_tools(
     return jsonpath_modifier(tools_dict_list, apijsonpath.jsonpath, apijsonpath.mapping)
 
 
+@tool_router.get("/semantic", response_model=schemas.SemanticSearchResponse)
+@require_permission("tools.read")
+async def semantic_tool_search(
+    query: str = Query(..., min_length=1, description="Natural language search query"),
+    limit: int = Query(10, ge=1, le=50, description="Maximum number of results to return"),
+    threshold: Optional[float] = Query(None, ge=0.0, le=1.0, description="Optional similarity threshold (0-1)"),
+    user=Depends(get_current_user_with_permissions),
+) -> schemas.SemanticSearchResponse:
+    """Semantic search for tools using natural language queries.
+
+    This endpoint enables semantic tool discovery by converting the query to an embedding
+    and searching for similar tools using vector similarity.
+
+    Args:
+        query: Natural language search query (required, non-empty)
+        limit: Maximum number of results (1-50, default: 10)
+        threshold: Optional similarity threshold (0-1). Only return results >= threshold
+        user: Authenticated user context
+
+    Returns:
+        SemanticSearchResponse containing ranked tool results with similarity scores
+
+    Raises:
+        HTTPException 400: If query is empty or parameters are invalid
+        HTTPException 422: If validation fails
+        HTTPException 500: If search operation fails
+
+    Example:
+        GET /tools/semantic?query=fetch%20weather%20data&limit=5&threshold=0.7
+    """
+    # First-Party
+    from mcpgateway.services.semantic_search_service import get_semantic_search_service
+
+    try:
+        # Get semantic search service
+        search_service = get_semantic_search_service()
+
+        # Perform semantic search
+        results = await search_service.search_tools(
+            query=query,
+            limit=limit,
+            threshold=threshold,
+        )
+
+        # Build response
+        return schemas.SemanticSearchResponse(
+            results=results,
+            query=query,
+            total_results=len(results),
+        )
+
+    except ValueError as e:
+        # Invalid parameters (e.g., empty query, out-of-range values)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        # Unexpected errors during search
+        logger.error(f"Semantic search failed: {e}", exc_info=True)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Semantic search failed: {str(e)}")
+
+
 @tool_router.post("", response_model=ToolRead)
 @tool_router.post("/", response_model=ToolRead)
 @require_permission("tools.create")
@@ -3726,6 +3768,10 @@ async def create_tool(
         )
         db.commit()
         db.close()
+
+        if settings.embedding_auto_index_enabled:
+            asyncio.create_task(index_tool_fire_and_forget(result.id))
+
         return result
     except Exception as ex:
         logger.error(f"Error while creating tool: {ex}")
@@ -3836,6 +3882,10 @@ async def update_tool(
         )
         db.commit()
         db.close()
+
+        if settings.embedding_auto_index_enabled:
+            asyncio.create_task(index_tool_fire_and_forget(result.id))
+
         return result
     except Exception as ex:
         if isinstance(ex, PermissionError):

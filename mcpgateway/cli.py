@@ -343,6 +343,20 @@ def main() -> None:  # noqa: D401 - imperative mood is fine here
             )
             return
 
+        if cmd == "--reindex-embeddings":
+            import asyncio  # pylint: disable=import-outside-toplevel
+
+            from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.embedding_service import reindex_all_tools  # pylint: disable=import-outside-toplevel
+
+            db = SessionLocal()
+            try:
+                result = asyncio.run(reindex_all_tools(db))
+                print(f"Reindexing complete: {result['succeeded']} succeeded, {result['failed']} failed out of {result['total']} tools")
+            finally:
+                db.close()
+            return
+
     # Discard the program name and inspect the rest.
     user_args = sys.argv[1:]
     uvicorn_argv = _insert_defaults(user_args)
