@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # NOTE: /healthz is included for translate.py compatibility (gateway uses /health, /ready)
 # See: mcpgateway/translate.py, mcpgateway/config.py:observability_include_paths/observability_exclude_paths
 
+
 def _get_observability_skip_exact() -> FrozenSet[str]:
     """Get observability skip exact paths, using configurable UI base path."""
     ui_base = settings.mcpgateway_ui_base_path
