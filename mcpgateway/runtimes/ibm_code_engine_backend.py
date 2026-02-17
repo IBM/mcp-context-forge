@@ -51,6 +51,17 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
         )
 
     async def deploy(self, request: RuntimeBackendDeployRequest) -> RuntimeBackendDeployResult:
+        """Deploy or update an IBM Code Engine application runtime.
+
+        Args:
+            request: Runtime deployment request with source and resource settings.
+
+        Returns:
+            RuntimeBackendDeployResult: Backend deployment metadata and endpoint details.
+
+        Raises:
+            RuntimeBackendError: If source is invalid or the CLI operation fails.
+        """
         await self._ensure_project_selected()
 
         source = request.source
@@ -127,11 +138,29 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
         return RuntimeBackendStatus(status=mapped, endpoint_url=self._extract_endpoint(info), backend_response=info)
 
     async def start(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> RuntimeBackendStatus:
+        """Start a Code Engine runtime by setting its minimum scale to one.
+
+        Args:
+            runtime_ref: Code Engine application name.
+            metadata: Optional runtime metadata (unused by this backend).
+
+        Returns:
+            RuntimeBackendStatus: Updated runtime status after scaling up.
+        """
         await self._ensure_project_selected()
         await self._run([self.ibmcloud_binary, "ce", "application", "update", "--name", runtime_ref, "--min-scale", "1"], timeout=300)
         return await self.get_status(runtime_ref)
 
     async def stop(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> RuntimeBackendStatus:
+        """Stop a Code Engine runtime by scaling it down to zero.
+
+        Args:
+            runtime_ref: Code Engine application name.
+            metadata: Optional runtime metadata (unused by this backend).
+
+        Returns:
+            RuntimeBackendStatus: Runtime status normalized to stopped semantics.
+        """
         await self._ensure_project_selected()
         await self._run([self.ibmcloud_binary, "ce", "application", "update", "--name", runtime_ref, "--min-scale", "0"], timeout=300)
         status = await self.get_status(runtime_ref)
@@ -139,10 +168,26 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
         return RuntimeBackendStatus(status="stopped", endpoint_url=status.endpoint_url, backend_response=status.backend_response)
 
     async def delete(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None) -> None:
+        """Delete a Code Engine runtime application.
+
+        Args:
+            runtime_ref: Code Engine application name.
+            metadata: Optional runtime metadata (unused by this backend).
+        """
         await self._ensure_project_selected()
         await self._run([self.ibmcloud_binary, "ce", "application", "delete", "--name", runtime_ref, "-f"], timeout=300)
 
     async def logs(self, runtime_ref: str, metadata: Optional[Dict[str, Any]] = None, tail: int = 200) -> List[str]:
+        """Return recent application logs from Code Engine.
+
+        Args:
+            runtime_ref: Code Engine application name.
+            metadata: Optional runtime metadata (unused by this backend).
+            tail: Maximum number of log lines to request.
+
+        Returns:
+            List[str]: Log lines returned by the Code Engine CLI.
+        """
         await self._ensure_project_selected()
         out = await self._run([self.ibmcloud_binary, "ce", "application", "logs", "--name", runtime_ref, "--tail", str(tail)], timeout=240)
         return out.splitlines()
@@ -252,6 +297,14 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
         raise RuntimeBackendError(f"Timed out waiting for buildrun {buildrun_name}")
 
     async def _application_exists(self, app_name: str) -> bool:
+        """Check whether a Code Engine application currently exists.
+
+        Args:
+            app_name: Code Engine application name.
+
+        Returns:
+            bool: True when the application exists, otherwise False.
+        """
         try:
             await self._run([self.ibmcloud_binary, "ce", "application", "get", "--name", app_name], timeout=120)
             return True
@@ -259,6 +312,14 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
             return False
 
     async def _build_exists(self, build_name: str) -> bool:
+        """Check whether a Code Engine build configuration currently exists.
+
+        Args:
+            build_name: Code Engine build configuration name.
+
+        Returns:
+            bool: True when the build configuration exists, otherwise False.
+        """
         try:
             await self._run([self.ibmcloud_binary, "ce", "build", "get", "--name", build_name], timeout=120)
             return True
@@ -266,6 +327,14 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
             return False
 
     async def _get_application_json(self, app_name: str) -> Dict[str, Any]:
+        """Fetch application details as JSON, falling back to raw output when needed.
+
+        Args:
+            app_name: Code Engine application name.
+
+        Returns:
+            Dict[str, Any]: Parsed application payload or raw command output payload.
+        """
         out = await self._run([self.ibmcloud_binary, "ce", "application", "get", "--name", app_name, "--output", "json"], timeout=120)
         try:
             payload = json.loads(out)
@@ -277,6 +346,14 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
 
     @staticmethod
     def _extract_endpoint(payload: Dict[str, Any]) -> Optional[str]:
+        """Extract a reachable endpoint URL from Code Engine application payload.
+
+        Args:
+            payload: Application JSON payload from the Code Engine CLI.
+
+        Returns:
+            Optional[str]: Public endpoint URL when present, else None.
+        """
         direct_keys = ["endpoint", "url", "publicUrl", "public_url"]
         for key in direct_keys:
             value = payload.get(key)
@@ -291,14 +368,36 @@ class IBMCodeEngineRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercis
 
     @staticmethod
     def _app_name(runtime_id: str, name: str) -> str:
+        """Build a deterministic Code Engine application name from runtime metadata.
+
+        Args:
+            runtime_id: Runtime deployment identifier.
+            name: Runtime display name.
+
+        Returns:
+            str: Sanitized application name with runtime id suffix.
+        """
         clean_name = re.sub(r"[^a-zA-Z0-9-]", "-", name.lower()).strip("-")
         return f"{clean_name[:40]}-{runtime_id[:8]}"
 
     async def _ensure_project_selected(self) -> None:
+        """Select configured Code Engine project before issuing CLI operations."""
         if self.project_name:
             await self._run([self.ibmcloud_binary, "ce", "project", "select", "--name", self.project_name], timeout=120)
 
     async def _run(self, cmd: List[str], timeout: int = 300) -> str:
+        """Run an ibmcloud CLI command and return stdout or raise on failure.
+
+        Args:
+            cmd: Command tokens to execute.
+            timeout: Maximum command runtime in seconds.
+
+        Returns:
+            str: Decoded stdout from the command.
+
+        Raises:
+            RuntimeBackendError: If command times out or exits with non-zero status.
+        """
         logger.debug("Code Engine command: %s", " ".join(cmd))
         process = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         try:
