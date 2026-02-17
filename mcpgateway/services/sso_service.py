@@ -176,7 +176,7 @@ class SSOService:
         if metadata_timeout is not None:
             try:
                 timeout_candidate = int(metadata_timeout)
-                if timeout_candidate >= 1:
+                if 1 <= timeout_candidate <= 120:
                     timeout = timeout_candidate
                 else:
                     logger.warning("Invalid provider_metadata.graph_api_timeout=%s; using configured default %s", metadata_timeout, timeout)
@@ -221,7 +221,7 @@ class SSOService:
             response = await client.post(
                 "https://graph.microsoft.com/v1.0/me/getMemberObjects",
                 headers={"Authorization": f"Bearer {access_token}"},
-                json={"securityEnabledOnly": False},
+                json={"securityEnabledOnly": True},
                 timeout=graph_api_timeout,
             )
         except Exception as e:
