@@ -914,6 +914,44 @@ async def test_docker_backend_run_sets_docker_host_when_socket_configured(monkey
 
 
 @pytest.mark.asyncio
+async def test_docker_backend_run_can_return_stderr_on_success(monkeypatch):
+    backend = DockerRuntimeBackend(docker_binary="docker")
+
+    class _Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"", b"line-1\nline-2\n"
+
+    async def _create_subprocess_exec(*_args, **_kwargs):
+        return _Process()
+
+    monkeypatch.setattr(
+        "mcpgateway.runtimes.docker_backend.asyncio.create_subprocess_exec",
+        _create_subprocess_exec,
+    )
+
+    output = await backend._run(["docker", "logs", "--tail", "20", "container-123"], include_stderr=True)
+    assert output == "line-1\nline-2"
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_logs_uses_combined_output(monkeypatch):
+    backend = DockerRuntimeBackend(docker_binary="docker")
+
+    async def _fake_run(cmd, timeout=300, include_stderr=False):  # noqa: ANN001
+        assert cmd == ["docker", "logs", "--tail", "5", "container-abc"]
+        assert timeout == 120
+        assert include_stderr is True
+        return "startup line\nrequest line"
+
+    monkeypatch.setattr(backend, "_run", _fake_run)
+
+    lines = await backend.logs("container-abc", tail=5)
+    assert lines == ["startup line", "request line"]
+
+
+@pytest.mark.asyncio
 async def test_docker_backend_deploy_ignores_k8s_seccomp_and_missing_apparmor(monkeypatch):
     backend = DockerRuntimeBackend(docker_binary="docker")
     seen_run_cmd: list[str] = []

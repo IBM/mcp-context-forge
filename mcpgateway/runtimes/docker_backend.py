@@ -345,10 +345,18 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
             project_name = metadata.get("compose_project")
             compose_path = metadata.get("compose_file_path")
             if project_name and compose_path:
-                out = await self._run(self._compose_cmd(compose_path, project_name, ["logs", "--tail", str(tail)]), timeout=120)
+                out = await self._run(
+                    self._compose_cmd(compose_path, project_name, ["logs", "--tail", str(tail)]),
+                    timeout=120,
+                    include_stderr=True,
+                )
                 return out.splitlines()
 
-        out = await self._run([self.docker_binary, "logs", "--tail", str(tail), runtime_ref], timeout=120)
+        out = await self._run(
+            [self.docker_binary, "logs", "--tail", str(tail), runtime_ref],
+            timeout=120,
+            include_stderr=True,
+        )
         return out.splitlines()
 
     async def _build_image_from_github(self, request: RuntimeBackendDeployRequest) -> tuple[str, List[str]]:
@@ -720,15 +728,16 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
                     return f"http://{ip_addr}:{normalized_ingress_ports[0]}"
         return None
 
-    async def _run(self, cmd: List[str], timeout: int = 300) -> str:
+    async def _run(self, cmd: List[str], timeout: int = 300, include_stderr: bool = False) -> str:
         """Run a Docker CLI command and return stdout or raise on failure.
 
         Args:
             cmd: Command tokens to execute.
             timeout: Maximum command runtime in seconds.
+            include_stderr: Include stderr output in successful command output.
 
         Returns:
-            str: Decoded stdout from the command.
+            str: Decoded command output.
 
         Raises:
             RuntimeBackendError: If command times out or exits with non-zero status.
@@ -762,4 +771,8 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
         err = stderr.decode("utf-8", errors="replace").strip()
         if process.returncode != 0:
             raise RuntimeBackendError(f"Command failed ({process.returncode}): {' '.join(cmd)}\n{err or out}")
+        if include_stderr:
+            if out and err:
+                return f"{out}\n{err}"
+            return out or err
         return out
