@@ -161,7 +161,7 @@
             <!-- Email/Password Form -->
             <form
               class="space-y-4"
-              action="{{ root_path }}/admin/login"
+              action="{{ root_path }}{{ ui_base_path }}/login"
               method="post"
             >
               <input type="hidden" name="csrf_token" value="" />
@@ -215,7 +215,7 @@
               {% if password_reset_enabled %}
               <div class="text-right">
                 <a
-                  href="{{ root_path }}/admin/forgot-password"
+                  href="{{ root_path }}{{ ui_base_path }}/forgot-password"
                   class="text-sm text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300"
                 >
                   Forgot password?
@@ -739,7 +739,7 @@
       if (urlParams.get("sso") === "success") {
         // Redirect to admin panel after successful SSO
         setTimeout(() => {
-          window.location.href = window.ROOT_PATH + "/admin";
+          window.location.href = window.ROOT_PATH + "{{ ui_base_path }}";
         }, 1000);
       }
     </script>

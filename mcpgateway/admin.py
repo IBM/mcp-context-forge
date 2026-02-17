@@ -1017,6 +1017,7 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
     return True, ""
 
 
+<<<<<<< HEAD
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
 ADMIN_CSRF_FORM_FIELD = "csrf_token"
@@ -1213,6 +1214,11 @@ admin_router = APIRouter(
     tags=["Admin UI"],
     dependencies=[Depends(enforce_admin_csrf)],
 )
+=======
+# Create router with configurable UI base path (default: /ui)
+# Note: The prefix is set at import time from settings.mcpgateway_ui_base_path
+admin_router = APIRouter(prefix=settings.mcpgateway_ui_base_path, tags=["Admin UI"])
+>>>>>>> fcf55dc2f (epic/ui-rename-admin-to-ui-2972)
 
 ####################
 # Admin UI Routes  #
@@ -3651,8 +3657,13 @@ async def admin_ui(
 
     cookie_action = ui_visibility_config.get("cookie_action")
     if cookie_action:
+<<<<<<< HEAD
         scope_root_path = _resolve_root_path(request)
         ui_cookie_path = f"{scope_root_path}/admin" if scope_root_path else "/admin"
+=======
+        scope_root_path = request.scope.get("root_path", "") or ""
+        ui_cookie_path = f"{scope_root_path}{settings.mcpgateway_ui_base_path}" if scope_root_path else settings.mcpgateway_ui_base_path
+>>>>>>> fcf55dc2f (epic/ui-rename-admin-to-ui-2972)
         use_secure = (settings.environment == "production") or settings.secure_cookies
         samesite = settings.cookie_samesite
         if cookie_action == "set":

@@ -33,6 +33,7 @@ import os
 os.environ["MCPGATEWAY_ADMIN_API_ENABLED"] = "true"
 os.environ["MCPGATEWAY_UI_ENABLED"] = "true"
 os.environ["MCPGATEWAY_A2A_ENABLED"] = "false"  # Disable A2A for e2e tests
+os.environ["MCPGATEWAY_UI_BASE_PATH"] = "/ui"  # Keep using /admin for backward-compatible tests
 
 # Standard
 import logging  # noqa: E402
@@ -254,7 +255,7 @@ class TestAdminUIMainPage:
 
     async def test_admin_ui_home(self, client: AsyncClient, mock_settings):
         """Test the admin UI home page renders correctly."""
-        response = await client.get("/admin/", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/html; charset=utf-8"
@@ -263,7 +264,7 @@ class TestAdminUIMainPage:
 
     async def test_admin_ui_home_with_inactive(self, client: AsyncClient, mock_settings):
         """Test the admin UI home page with include_inactive parameter."""
-        response = await client.get("/admin/?include_inactive=true", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/?include_inactive=true", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
 
 
@@ -275,7 +276,7 @@ class TestAdminServerAPIs:
 
     async def test_admin_list_servers_empty(self, client: AsyncClient, mock_settings):
         """Test GET /admin/servers returns list of servers."""
-        response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/servers", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Don't assume empty - accept either the legacy list response
         # or the newer paginated dict response with 'data' key.
@@ -300,13 +301,13 @@ class TestAdminServerAPIs:
             "visibility": "public",  # Make public to allow access with public-only token
         }
 
-        # POST to /admin/servers should redirect
-        response = await client.post("/admin/servers", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        # POST to /ui/servers should redirect
+        response = await client.post("/ui/servers", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
-        # assert "/admin#catalog" in response.headers["location"]
+        # assert "/ui#catalog" in response.headers["location"]
 
         # Get all servers and find our server
-        response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/servers", headers=TEST_AUTH_HEADER)
         resp_json = response.json()
         # Handle paginated response
         servers = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
@@ -315,7 +316,7 @@ class TestAdminServerAPIs:
         server_id = server["id"]
 
         # Get individual server
-        response = await client.get(f"/admin/servers/{server_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/servers/{server_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["name"] == unique_name
 
@@ -329,15 +330,15 @@ class TestAdminServerAPIs:
             "associatedPrompts": "",
             "visibility": "public",  # Keep public visibility
         }
-        response = await client.post(f"/admin/servers/{server_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/servers/{server_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
         # Set server state
-        response = await client.post(f"/admin/servers/{server_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/servers/{server_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete server
-        response = await client.post(f"/admin/servers/{server_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/servers/{server_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
 
@@ -349,7 +350,7 @@ class TestAdminToolAPIs:
 
     async def test_admin_list_tools_empty(self, client: AsyncClient, mock_settings):
         """Test GET /admin/tools returns list of tools."""
-        response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/tools", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         # Don't assume empty - accept either the legacy list response
         # or the newer paginated dict response with 'data' key.
@@ -378,20 +379,20 @@ class TestAdminToolAPIs:
     #     }
 
     #     # POST to /admin/tools returns JSON response
-    #     response = await client.post("/admin/tools/", data=form_data, headers=TEST_AUTH_HEADER)
+    #     response = await client.post("/ui/tools/", data=form_data, headers=TEST_AUTH_HEADER)
     #     assert response.status_code == 200
     #     result = response.json()
     #     assert result["success"] is True
 
     #     # List tools to get ID
-    #     response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+    #     response = await client.get("/ui/tools", headers=TEST_AUTH_HEADER)
     #     tools = response.json()
     #     tool = next((t for t in tools if t["originalName"] == unique_name), None)
     #     assert tool is not None
     #     tool_id = tool["id"]
 
     #     # Get individual tool
-    #     response = await client.get(f"/admin/tools/{tool_id}", headers=TEST_AUTH_HEADER)
+    #     response = await client.get(f"/ui/tools/{tool_id}", headers=TEST_AUTH_HEADER)
     #     assert response.status_code == 200
 
     #     # Edit tool
@@ -403,15 +404,15 @@ class TestAdminToolAPIs:
     #         "headers": "{}",
     #         "input_schema": "{}",
     #     }
-    #     response = await client.post(f"/admin/tools/{tool_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/ui/tools/{tool_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
     #     # Set tool state
-    #     response = await client.post(f"/admin/tools/{tool_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/ui/tools/{tool_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
     #     # Delete tool
-    #     response = await client.post(f"/admin/tools/{tool_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/ui/tools/{tool_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
     async def test_admin_tool_name_conflict(self, client: AsyncClient, mock_settings):
@@ -453,11 +454,11 @@ class TestAdminToolAPIs:
             "user_email": "admin@example.com",
             "team_id": new_team.id,
         }
-        response = await client.post("/admin/tools/", data=form_data_private, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/tools/", data=form_data_private, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["success"] is True
         # Try to create duplicate private tool (same name, same owner)
-        response = await client.post("/admin/tools/", data=form_data_private, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/tools/", data=form_data_private, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
         assert response.json()["success"] is False
 
@@ -475,11 +476,11 @@ class TestAdminToolAPIs:
             "user_email": "admin@example.com",
         }
         print("DEBUG: form_data_team before request:", form_data_team, "team_id type:", type(form_data_team["team_id"]))
-        response = await client.post("/admin/tools/", data=form_data_team, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/tools/", data=form_data_team, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["success"] is True
         # Try to create duplicate team tool (same name, same team)
-        response = await client.post("/admin/tools/", data=form_data_team, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/tools/", data=form_data_team, headers=TEST_AUTH_HEADER)
         # If uniqueness is enforced at the application level, expect 409 error
         assert response.status_code == 409
         assert response.json()["success"] is False
@@ -496,11 +497,11 @@ class TestAdminToolAPIs:
             "user_email": "admin@example.com",
             "team_id": new_team.id,
         }
-        response = await client.post("/admin/tools/", data=form_data_public, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/tools/", data=form_data_public, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["success"] is True
         # Try to create duplicate public tool (same name, public)
-        response = await client.post("/admin/tools/", data=form_data_public, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/tools/", data=form_data_public, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
         assert response.json()["success"] is False
 
@@ -547,25 +548,25 @@ class TestAdminToolOpsAPIs:
         }
 
         # Create the tools
-        await client.post("/admin/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
-        await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
+        await client.post("/ui/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
+        await client.post("/ui/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
 
         # Test filtering by team1 - should only return tool1
-        response = await client.get(f"/admin/tool-ops/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tool-ops/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool1_name in html
         assert tool2_name not in html
 
         # Test filtering by team2 - should only return tool2
-        response = await client.get(f"/admin/tool-ops/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tool-ops/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool2_name in html
         assert tool1_name not in html
 
         # Test without team_id filter - should return both
-        response = await client.get("/admin/tool-ops/partial", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/tool-ops/partial", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool1_name in html
@@ -590,7 +591,7 @@ class TestAdminResourceAPIs:
         }
 
         # Test successful resource creation
-        response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         result = response.json()
         assert result["success"] is True
@@ -602,7 +603,7 @@ class TestAdminResourceAPIs:
             "description": "A test resource",
             # Missing 'uri', 'mimeType', and 'content'
         }
-        response = await client.post("/admin/resources", data=invalid_form_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/resources", data=invalid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 500
 
         # Test ValidationError (422)
@@ -613,11 +614,11 @@ class TestAdminResourceAPIs:
             "mimeType": "",
             "content": "",
         }
-        response = await client.post("/admin/resources", data=invalid_validation_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/resources", data=invalid_validation_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 422
 
         # Test duplicate URI
-        response = await client.post("/admin/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/resources", data=valid_form_data, headers=TEST_AUTH_HEADER)
         assert response.status_code == 409
 
 
@@ -629,7 +630,7 @@ class TestAdminPromptAPIs:
 
     async def test_admin_list_prompts_empty(self, client: AsyncClient, mock_settings):
         """Test GET /admin/prompts returns empty list initially."""
-        response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/prompts", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         resp_json = response.json()
         # Handle paginated response
@@ -648,11 +649,11 @@ class TestAdminPromptAPIs:
         }
 
         # POST to /admin/prompts should redirect
-        response = await client.post("/admin/prompts", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post("/ui/prompts", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
         # List prompts to verify creation
-        response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/prompts", headers=TEST_AUTH_HEADER)
         resp_json = response.json()
         # Handle paginated response
         prompts = resp_json["data"] if isinstance(resp_json, dict) and "data" in resp_json else resp_json
@@ -662,7 +663,7 @@ class TestAdminPromptAPIs:
         prompt_id = prompt["id"]
 
         # Get individual prompt
-        response = await client.get(f"/admin/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/prompts/{prompt_id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         assert response.json()["originalName"] == form_data["name"]
 
@@ -674,15 +675,15 @@ class TestAdminPromptAPIs:
             "arguments": '[{"name": "greeting", "description": "Greeting", "required": false}]',
             "visibility": "public",  # Keep public visibility
         }
-        response = await client.post(f"/admin/prompts/{prompt_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/prompts/{prompt_id}/edit", data=edit_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 200
 
         # Set prompt state
-        response = await client.post(f"/admin/prompts/{prompt_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/prompts/{prompt_id}/state", data={"activate": "false"}, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete prompt (use updated name)
-        response = await client.post(f"/admin/prompts/{prompt_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/prompts/{prompt_id}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
 
@@ -694,7 +695,7 @@ class TestAdminGatewayAPIs:
 
     async def test_admin_list_gateways_empty(self, client: AsyncClient, mock_settings):
         """Test GET /admin/gateways returns list of gateways."""
-        response = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/gateways", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         resp_json = response.json()
         # Handle paginated response
@@ -732,7 +733,7 @@ class TestAdminGatewayAPIs:
     #             "body": None,
     #         }
 
-    #         response = await client.post("/admin/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
+    #         response = await client.post("/ui/gateways/test", json=request_data, headers=TEST_AUTH_HEADER)
 
     #         assert response.status_code == 200
     #         data = response.json()
@@ -754,13 +755,13 @@ class TestAdminRootAPIs:
             "name": "Test Admin Root",
         }
 
-        response = await client.post("/admin/roots", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post("/ui/roots", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
         # Delete the root - use the normalized URI with file:// prefix
         normalized_uri = f"file://{form_data['uri']}"
         encoded_uri = quote(normalized_uri, safe="")
-        response = await client.post(f"/admin/roots/{encoded_uri}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
+        response = await client.post(f"/ui/roots/{encoded_uri}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
 
@@ -772,7 +773,7 @@ class TestAdminMetricsAPIs:
 
     async def test_admin_get_metrics(self, client: AsyncClient, mock_settings):
         """Test GET /admin/metrics."""
-        response = await client.get("/admin/metrics", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/metrics", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
 
@@ -784,7 +785,7 @@ class TestAdminMetricsAPIs:
 
     async def test_admin_reset_metrics(self, client: AsyncClient, mock_settings):
         """Test POST /admin/metrics/reset."""
-        response = await client.post("/admin/metrics/reset", headers=TEST_AUTH_HEADER)
+        response = await client.post("/ui/metrics/reset", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
@@ -799,35 +800,35 @@ class TestAdminErrorHandling:
 
     async def test_admin_server_not_found(self, client: AsyncClient, mock_settings):
         """Test accessing non-existent server."""
-        response = await client.get("/admin/servers/non-existent-id", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/servers/non-existent-id", headers=TEST_AUTH_HEADER)
         # API returns 400 for invalid ID format (TODO: should be 404?)
         assert response.status_code in [400, 404]
 
     # FIXME: This test should be updated to check for 404 instead of 500
     # async def test_admin_tool_not_found(self, client: AsyncClient, mock_settings):
     #     """Test accessing non-existent tool."""
-    #     response = await client.get("/admin/tools/non-existent-id", headers=TEST_AUTH_HEADER)
+    #     response = await client.get("/ui/tools/non-existent-id", headers=TEST_AUTH_HEADER)
     #     # Unhandled exception returns 500
     #     assert response.status_code == 500
 
     # FIXME: This test should be updated to check for 404 instead of 500
     # async def test_admin_resource_not_found(self, client: AsyncClient, mock_settings):
     #     """Test accessing non-existent resource."""
-    #     response = await client.get("/admin/resources/non/existent/uri", headers=TEST_AUTH_HEADER)
+    #     response = await client.get("/ui/resources/non/existent/uri", headers=TEST_AUTH_HEADER)
     #     # Unhandled exception returns 500
     #     assert response.status_code == 500
 
     # FIXME: This test should be updated to check for 404 instead of 500
     # async def test_admin_prompt_not_found(self, client: AsyncClient, mock_settings):
     #     """Test accessing non-existent prompt."""
-    #     response = await client.get("/admin/prompts/non-existent-prompt", headers=TEST_AUTH_HEADER)
+    #     response = await client.get("/ui/prompts/non-existent-prompt", headers=TEST_AUTH_HEADER)
     #     # Unhandled exception returns 500
     #     assert response.status_code == 500
 
     # FIXME: This test should be updated to check for 404 instead of 500
     # async def test_admin_gateway_not_found(self, client: AsyncClient, mock_settings):
     #     """Test accessing non-existent gateway."""
-    #     response = await client.get("/admin/gateways/non-existent-id", headers=TEST_AUTH_HEADER)
+    #     response = await client.get("/ui/gateways/non-existent-id", headers=TEST_AUTH_HEADER)
     #     # Unhandled exception returns 500
     #     assert response.status_code == 500
 
@@ -847,11 +848,11 @@ class TestAdminIncludeInactive:
     #         "description": "Test inactive handling",
     #     }
 
-    #     response = await client.post("/admin/servers", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post("/ui/servers", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
     #     assert response.status_code == 303
 
     #     # Get server ID
-    #     response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+    #     response = await client.get("/ui/servers", headers=TEST_AUTH_HEADER)
     #     server_id = response.json()[0]["id"]
 
     #     # Toggle with include_inactive flag
@@ -860,7 +861,7 @@ class TestAdminIncludeInactive:
     #         "is_inactive_checked": "true",
     #     }
 
-    #     response = await client.post(f"/admin/servers/{server_id}/state", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
+    #     response = await client.post(f"/ui/servers/{server_id}/state", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
 
     #     assert response.status_code == 303
     #     assert "include_inactive=true" in response.headers["location"]
@@ -906,25 +907,25 @@ class TestTeamFiltering:
         }
 
         # Create the tools
-        await client.post("/admin/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
-        await client.post("/admin/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
+        await client.post("/ui/tools/", data=tool1_data, headers=TEST_AUTH_HEADER)
+        await client.post("/ui/tools/", data=tool2_data, headers=TEST_AUTH_HEADER)
 
         # Test filtering by team1 - should only return tool1
-        response = await client.get(f"/admin/tools/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool1_name in html
         assert tool2_name not in html
 
         # Test filtering by team2 - should only return tool2
-        response = await client.get(f"/admin/tools/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/partial?team_id={team2.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool2_name in html
         assert tool1_name not in html
 
         # Test without team_id filter - should return both
-        response = await client.get("/admin/tools/partial", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/tools/partial", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool1_name in html
@@ -978,14 +979,14 @@ class TestTeamFiltering:
         db.commit()
 
         # Test filtering by team1 - should return ONLY team1 tools (strict team scoping)
-        response = await client.get(f"/admin/tools/ids?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/ids?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert team1_tool_id in data["tool_ids"]
         assert team2_tool_id not in data["tool_ids"], "team2 tool should NOT appear when filtering by team1"
 
         # Test without filter - should return both
-        response = await client.get("/admin/tools/ids", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/tools/ids", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert team1_tool_id in data["tool_ids"]
@@ -1024,11 +1025,11 @@ class TestTeamFiltering:
             "team_id": team2.id,
         }
 
-        await client.post("/admin/tools/", data=team1_tool_data, headers=TEST_AUTH_HEADER)
-        await client.post("/admin/tools/", data=team2_tool_data, headers=TEST_AUTH_HEADER)
+        await client.post("/ui/tools/", data=team1_tool_data, headers=TEST_AUTH_HEADER)
+        await client.post("/ui/tools/", data=team2_tool_data, headers=TEST_AUTH_HEADER)
 
         # Test search with team filter - returns ONLY team1 tools (strict team scoping)
-        response = await client.get(f"/admin/tools/search?q={search_term}&team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/search?q={search_term}&team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         tool_names = [tool["name"] for tool in data["tools"]]
@@ -1036,7 +1037,7 @@ class TestTeamFiltering:
         assert team2_tool_data["name"] not in tool_names, "team2 tool should NOT appear when filtering by team1"
 
         # Test search without team filter - returns both
-        response = await client.get(f"/admin/tools/search?q={search_term}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/search?q={search_term}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         tool_names = [tool["name"] for tool in data["tools"]]
@@ -1087,13 +1088,13 @@ class TestTeamFiltering:
         db.commit()
 
         # Try to filter by the other team - returns empty results (user is not a member)
-        response = await client.get(f"/admin/tools/partial?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/partial?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert tool_data["name"] not in html
 
         # Same for /ids endpoint - the specific tool from other team should not be in results
-        response = await client.get(f"/admin/tools/ids?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/ids?team_id={other_team.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         data = response.json()
         assert db_tool.id not in data["tool_ids"], f"Tool from other team should not be accessible: {db_tool.id}"
@@ -1132,13 +1133,13 @@ class TestTeamFiltering:
             "content": "Test content for team2",
         }
 
-        resp1 = await client.post("/admin/resources", data=team1_resource, headers=TEST_AUTH_HEADER)
+        resp1 = await client.post("/ui/resources", data=team1_resource, headers=TEST_AUTH_HEADER)
         assert resp1.status_code == 200, f"Failed to create team1 resource: {resp1.text}"
-        resp2 = await client.post("/admin/resources", data=team2_resource, headers=TEST_AUTH_HEADER)
+        resp2 = await client.post("/ui/resources", data=team2_resource, headers=TEST_AUTH_HEADER)
         assert resp2.status_code == 200, f"Failed to create team2 resource: {resp2.text}"
 
         # Test with team1 filter - returns ONLY team1 resources (strict team scoping)
-        response = await client.get(f"/admin/resources/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/resources/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_resource["name"] in html, f"team1_resource not found in HTML. First 500 chars: {html[:500]}"
@@ -1176,13 +1177,13 @@ class TestTeamFiltering:
             "template": "Hello {{name}}!",
         }
 
-        resp1 = await client.post("/admin/prompts", data=team1_prompt, headers=TEST_AUTH_HEADER)
+        resp1 = await client.post("/ui/prompts", data=team1_prompt, headers=TEST_AUTH_HEADER)
         assert resp1.status_code == 200, f"Failed to create team1 prompt: {resp1.text}"
-        resp2 = await client.post("/admin/prompts", data=team2_prompt, headers=TEST_AUTH_HEADER)
+        resp2 = await client.post("/ui/prompts", data=team2_prompt, headers=TEST_AUTH_HEADER)
         assert resp2.status_code == 200, f"Failed to create team2 prompt: {resp2.text}"
 
         # Test with team1 filter - returns ONLY team1 prompts (strict team scoping)
-        response = await client.get(f"/admin/prompts/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/prompts/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_prompt["name"] in html
@@ -1216,13 +1217,13 @@ class TestTeamFiltering:
             "team_id": team2.id,
         }
 
-        resp1 = await client.post("/admin/servers", data=team1_server, headers=TEST_AUTH_HEADER)
+        resp1 = await client.post("/ui/servers", data=team1_server, headers=TEST_AUTH_HEADER)
         assert resp1.status_code == 200, f"Failed to create team1 server: {resp1.text}"
-        resp2 = await client.post("/admin/servers", data=team2_server, headers=TEST_AUTH_HEADER)
+        resp2 = await client.post("/ui/servers", data=team2_server, headers=TEST_AUTH_HEADER)
         assert resp2.status_code == 200, f"Failed to create team2 server: {resp2.text}"
 
         # Test with team1 filter - returns ONLY team1 servers (strict team scoping)
-        response = await client.get(f"/admin/servers/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/servers/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_server["name"] in html
@@ -1280,7 +1281,7 @@ class TestTeamFiltering:
         db.commit()
 
         # Test with team1 filter - returns ONLY team1 gateways (strict team scoping)
-        response = await client.get(f"/admin/gateways/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/gateways/partial?team_id={team1.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         assert team1_gw_name in html
@@ -1317,7 +1318,7 @@ class TestTeamFiltering:
         db.commit()
 
         # Filter by team - admin should NOT see the private tool owned by other_user
-        response = await client.get(f"/admin/tools/partial?team_id={team.id}", headers=TEST_AUTH_HEADER)
+        response = await client.get(f"/ui/tools/partial?team_id={team.id}", headers=TEST_AUTH_HEADER)
         assert response.status_code == 200
         html = response.text
         # The private tool should NOT be visible because it's owned by another user
@@ -1403,7 +1404,7 @@ class TestAdminListingGracefulErrorHandling:
         # Patch the convert method to simulate corruption for one tool
         with patch.object(ToolService, "convert_tool_to_read", mock_convert):
             # Request tools listing
-            response = await client.get("/admin/tools", headers=TEST_AUTH_HEADER)
+            response = await client.get("/ui/tools", headers=TEST_AUTH_HEADER)
 
         # Should succeed even with one corrupted tool
         assert response.status_code == 200
@@ -1421,7 +1422,7 @@ class TestAdminListingGracefulErrorHandling:
     async def test_admin_tools_partial_returns_200(self, client: AsyncClient, app_with_temp_db, mock_settings):
         """Test that /admin/tools/partial (HTMX endpoint) returns 200 and handles the request gracefully."""
         # Request partial tools listing (used by HTMX for pagination)
-        response = await client.get("/admin/tools/partial", headers=TEST_AUTH_HEADER)
+        response = await client.get("/ui/tools/partial", headers=TEST_AUTH_HEADER)
 
         # Should succeed
         assert response.status_code == 200
@@ -1484,7 +1485,7 @@ class TestAdminListingGracefulErrorHandling:
             return original_convert(self, resource, include_metrics=include_metrics)
 
         with patch.object(ResourceService, "convert_resource_to_read", mock_convert):
-            response = await client.get("/admin/resources", headers=TEST_AUTH_HEADER)
+            response = await client.get("/ui/resources", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         resp_json = response.json()
@@ -1566,7 +1567,7 @@ class TestAdminListingGracefulErrorHandling:
             return original_convert(self, prompt, include_metrics=include_metrics)
 
         with patch.object(PromptService, "convert_prompt_to_read", mock_convert):
-            response = await client.get("/admin/prompts", headers=TEST_AUTH_HEADER)
+            response = await client.get("/ui/prompts", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         resp_json = response.json()
@@ -1630,7 +1631,7 @@ class TestAdminListingGracefulErrorHandling:
             return original_convert(self, server, include_metrics=include_metrics)
 
         with patch.object(ServerService, "convert_server_to_read", mock_convert):
-            response = await client.get("/admin/servers", headers=TEST_AUTH_HEADER)
+            response = await client.get("/ui/servers", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         resp_json = response.json()
@@ -1706,7 +1707,7 @@ class TestAdminListingGracefulErrorHandling:
             return original_convert(self, gateway)
 
         with patch.object(GatewayService, "convert_gateway_to_read", mock_convert):
-            response = await client.get("/admin/gateways", headers=TEST_AUTH_HEADER)
+            response = await client.get("/ui/gateways", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         resp_json = response.json()
@@ -1779,7 +1780,7 @@ class TestAdminListingGracefulErrorHandling:
             return original_convert(self, agent, include_metrics=include_metrics, db=db, team_map=team_map)
 
         with patch.object(A2AAgentService, "convert_agent_to_read", mock_convert):
-            response = await client.get("/admin/a2a", headers=TEST_AUTH_HEADER)
+            response = await client.get("/ui/a2a", headers=TEST_AUTH_HEADER)
 
         assert response.status_code == 200
         resp_json = response.json()
@@ -1799,13 +1800,13 @@ async def test_observability_endpoints_with_database(client: AsyncClient):
     by testing all affected observability endpoints.
     """
     endpoints = [
-        "/admin/observability/tools/usage",
-        "/admin/observability/tools/errors",
-        "/admin/observability/tools/chains",
-        "/admin/observability/prompts/usage",
-        "/admin/observability/prompts/errors",
-        "/admin/observability/resources/usage",
-        "/admin/observability/resources/errors",
+        "/ui/observability/tools/usage",
+        "/ui/observability/tools/errors",
+        "/ui/observability/tools/chains",
+        "/ui/observability/prompts/usage",
+        "/ui/observability/prompts/errors",
+        "/ui/observability/resources/usage",
+        "/ui/observability/resources/errors",
     ]
 
     for endpoint in endpoints:

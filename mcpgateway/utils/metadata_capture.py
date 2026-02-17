@@ -34,6 +34,9 @@ from typing import Dict, Optional
 # Third-Party
 from fastapi import Request
 
+# First-Party
+from mcpgateway.config import settings
+
 
 class MetadataCapture:
     """Utilities for capturing comprehensive metadata during entity operations."""
@@ -56,7 +59,7 @@ class MetadataCapture:
             >>> mock_request.client.host = "192.168.1.100"
             >>> mock_request.headers = {"user-agent": "Mozilla/5.0"}
             >>> mock_request.url = SimpleNamespace()
-            >>> mock_request.url.path = "/admin/tools"
+            >>> mock_request.url.path = "/ui/tools"  # UI base path is /ui by default
             >>> context = MetadataCapture.extract_request_context(mock_request)
             >>> context["from_ip"]
             '192.168.1.100'
@@ -81,7 +84,9 @@ class MetadataCapture:
         via = "api"  # default
         if hasattr(request, "url") and hasattr(request.url, "path"):
             path = str(request.url.path)
-            if "/admin/" in path:
+            # Check if path is under the configurable UI base path
+            ui_base = settings.mcpgateway_ui_base_path
+            if f"{ui_base}/" in path or path == ui_base:
                 via = "ui"
 
         return {
