@@ -37,7 +37,7 @@ def mock_db():
 
 @pytest.fixture
 def ctx(mock_db):
-    return {"db": mock_db, "email": "user@example.com"}
+    return {"db": mock_db, "email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"]}
 
 
 def _provider():
@@ -180,7 +180,9 @@ async def test_set_provider_state(monkeypatch: pytest.MonkeyPatch, ctx, mock_db)
 
 @pytest.mark.asyncio
 async def test_check_provider_health(monkeypatch: pytest.MonkeyPatch, ctx, mock_db):
-    health = ProviderHealthCheck(provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.HEALTHY, response_time_ms=1.0, error=None, checked_at=datetime.now(timezone.utc))
+    health = ProviderHealthCheck(
+        provider_id="p1", provider_name="Provider", provider_type="openai", status=HealthStatus.HEALTHY, response_time_ms=1.0, error=None, checked_at=datetime.now(timezone.utc)
+    )
     monkeypatch.setattr(llm_config_router.llm_provider_service, "check_provider_health", AsyncMock(return_value=health))
 
     result = await llm_config_router.check_provider_health("p1", current_user_ctx=ctx, db=mock_db)

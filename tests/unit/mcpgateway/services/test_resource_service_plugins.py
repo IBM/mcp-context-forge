@@ -16,7 +16,6 @@ import pytest
 from sqlalchemy.orm import Session
 from fastapi.responses import HTMLResponse
 from fastapi import Request
-from typing import Dict
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
@@ -26,13 +25,16 @@ from mcpgateway.services.resource_service import ResourceNotFoundError, Resource
 from mcpgateway.plugins.framework import PluginError, PluginErrorModel, PluginViolation, PluginViolationError
 from mcpgateway.admin import admin_add_resource
 
+
 @pytest.fixture
 def mock_db():
     """Create a mock database session."""
     return MagicMock(spec=Session)
 
+
 class FakeForm(dict):
     """Enhanced fake form with better list handling."""
+
     def getlist(self, key):
         value = self.get(key, [])
         if isinstance(value, list):
@@ -96,10 +98,9 @@ def mock_request():
     request.query_params = {"include_inactive": "false"}
     return request
 
+
 class TestResourceServicePluginIntegration:
     """Test ResourceService integration with plugin framework."""
-
-
 
     @pytest.fixture
     def resource_service(self):
@@ -119,12 +120,7 @@ class TestResourceServicePluginIntegration:
                 mock_manager._initialized = False
                 mock_manager.initialize = AsyncMock()
                 # Add default invoke_hook mock that returns success
-                mock_manager.invoke_hook = AsyncMock(
-                    return_value=(
-                        PluginResult(continue_processing=True, modified_payload=None),
-                        None  # contexts
-                    )
-                )
+                mock_manager.invoke_hook = AsyncMock(return_value=(PluginResult(continue_processing=True, modified_payload=None), None))  # contexts
                 MockPluginManager.return_value = mock_manager
                 service = ResourceService()
                 service._plugin_manager = mock_manager
@@ -135,18 +131,11 @@ class TestResourceServicePluginIntegration:
     async def test_admin_add_resource_with_valid_mime_type(self, mock_register_resource, mock_request, mock_db):
         """Test adding resource with valid MIME type."""
         # Use a valid MIME type
-        form_data = FakeForm(
-            {
-                        "uri": "greetme://morning/{name}",
-                        "name": "test_doc",
-                        "content": "Test content",
-                        "mimeType": "text/plain"
-            }
-        )
+        form_data = FakeForm({"uri": "greetme://morning/{name}", "name": "test_doc", "content": "Test content", "mimeType": "text/plain"})
 
         mock_request.form = AsyncMock(return_value=form_data)
 
-        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+        result = await admin_add_resource(mock_request, mock_db, user={"email": "test-user", "db": mock_db, "permissions": ["*"]})
         # Assert
         mock_register_resource.assert_called_once()
         assert result.status_code == 200
@@ -200,7 +189,13 @@ class TestResourceServicePluginIntegration:
                     continue_processing=True,
                     modified_payload=modified_payload,
                 ), {"request_id": "test-123", "user": "testuser"}
-            return PluginResult( continue_processing=True, modified_payload=None,), None
+            return (
+                PluginResult(
+                    continue_processing=True,
+                    modified_payload=None,
+                ),
+                None,
+            )
 
         mock_manager.invoke_hook = AsyncMock(side_effect=plugin_side_effect)
 
@@ -227,15 +222,15 @@ class TestResourceServicePluginIntegration:
         # Check first call was pre-fetch and global context was passed correctly
         first_call = mock_manager.invoke_hook.call_args_list[0]
 
-        assert first_call[0][0] == ResourceHookType.RESOURCE_PRE_FETCH # hook_type
+        assert first_call[0][0] == ResourceHookType.RESOURCE_PRE_FETCH  # hook_type
         assert first_call[0][1].uri == "test://resource"  # payload.uri
         assert first_call[0][2].request_id == "test-123"
-
 
     @pytest.mark.asyncio
     async def test_read_resource_blocked_by_plugin(self, resource_service_with_plugins, mock_db):
         """Test read_resource blocked by pre-fetch hook."""
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -257,13 +252,9 @@ class TestResourceServicePluginIntegration:
 
         # Setup invoke_hook to raise PluginViolationError
         mock_manager.invoke_hook = AsyncMock(
-            side_effect=PluginViolationError(message="Protocol not allowed",
-                violation=PluginViolation(
-                    reason="Protocol not allowed",
-                    code="PROTOCOL_BLOCKED",
-                    description="file:// protocol is blocked",
-                    details={"protocol": "file", "uri": "file:///etc/passwd"}
-                ),
+            side_effect=PluginViolationError(
+                message="Protocol not allowed",
+                violation=PluginViolation(reason="Protocol not allowed", code="PROTOCOL_BLOCKED", description="file:// protocol is blocked", details={"protocol": "file", "uri": "file:///etc/passwd"}),
             ),
         )
 
@@ -315,10 +306,13 @@ class TestResourceServicePluginIntegration:
                     continue_processing=True,
                     modified_payload=modified_payload,
                 ), {"context": "data"}
-            return PluginResult(
-                continue_processing=True,
-                modified_payload=None,
-            ), None
+            return (
+                PluginResult(
+                    continue_processing=True,
+                    modified_payload=None,
+                ),
+                None,
+            )
 
         mock_manager.invoke_hook = AsyncMock(side_effect=plugin_side_effect)
         # Call read_resource with URI that will be processed by plugin
@@ -332,8 +326,6 @@ class TestResourceServicePluginIntegration:
         mock_db.execute.assert_called()
         mock_manager.invoke_hook.assert_awaited()
 
-
-
     @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.ssl.create_default_context")
     async def test_read_resource_content_filtered_by_plugin(self, mock_ssl, resource_service_with_plugins, mock_db):
@@ -343,6 +335,7 @@ class TestResourceServicePluginIntegration:
         from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -354,7 +347,7 @@ class TestResourceServicePluginIntegration:
         mock_resource = MagicMock()
         original_content = ResourceContent(
             type="resource",
-            id ="original-1",
+            id="original-1",
             uri="test://config",
             text="password: mysecret123\napi_key: sk-12345",
         )
@@ -363,9 +356,11 @@ class TestResourceServicePluginIntegration:
         mock_resource.visibility = "public"
         mock_resource.owner_email = None
         mock_resource.team_id = None
+
         # Return the mock resource for both original and filtered id lookups
         def scalar_one_or_none_side_effect(*args, **kwargs):
             return mock_resource
+
         mock_db.execute.return_value.scalar_one_or_none.side_effect = scalar_one_or_none_side_effect
         mock_db.get.return_value = mock_resource
 
@@ -411,6 +406,7 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_plugin_error_handling(self, resource_service_with_plugins, mock_db):
         """Test read_resource handles plugin errors gracefully."""
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -434,9 +430,8 @@ class TestResourceServicePluginIntegration:
         # Setup pre-fetch hook to raise an error
         mock_manager.invoke_hook = AsyncMock(side_effect=PluginError(error=PluginErrorModel(message="Plugin error", plugin_name="mock_plugin")))
 
-        with pytest.raises(PluginError) as exc_info:
+        with pytest.raises(PluginError):
             await service.read_resource(mock_db, resource_id)
-
 
         mock_manager.invoke_hook.assert_called_once()
 
@@ -448,6 +443,7 @@ class TestResourceServicePluginIntegration:
         from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -455,11 +451,11 @@ class TestResourceServicePluginIntegration:
         # Setup mock resource
         mock_resource = MagicMock()
         mock_resource.content = ResourceContent(
-                type="resource",
-                id="test://resource",
-                uri="test://resource",
-                text="Sensitive content",
-            )
+            type="resource",
+            id="test://resource",
+            uri="test://resource",
+            text="Sensitive content",
+        )
         mock_resource.uri = "test://resource"  # Ensure uri is set at the top level
         mock_resource.visibility = "public"
         mock_resource.owner_email = None
@@ -481,8 +477,8 @@ class TestResourceServicePluginIntegration:
                     reason="Content contains sensitive data",
                     description="The resource content was flagged as containing sensitive information",
                     code="SENSITIVE_CONTENT",
-                    details={"uri": "test://resource"}
-                )
+                    details={"uri": "test://resource"},
+                ),
             )
 
         mock_manager.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
@@ -499,6 +495,7 @@ class TestResourceServicePluginIntegration:
     async def test_read_resource_with_template(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource with template resource and plugins."""
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -535,13 +532,14 @@ class TestResourceServicePluginIntegration:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.ssl.create_default_context")
-    async def test_read_resource_context_propagation(self,mock_ssl, resource_service_with_plugins, mock_db):
+    async def test_read_resource_context_propagation(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test context propagation from pre-fetch to post-fetch."""
         # First-Party
         from mcpgateway.plugins.framework.models import PluginResult
         from mcpgateway.plugins.framework import ResourceHookType
 
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager
@@ -631,9 +629,10 @@ class TestResourceServicePluginIntegration:
 
     @pytest.mark.asyncio
     @patch("mcpgateway.services.resource_service.ssl.create_default_context")
-    async def test_read_resource_no_request_id(self, mock_ssl,resource_service_with_plugins, mock_db):
+    async def test_read_resource_no_request_id(self, mock_ssl, resource_service_with_plugins, mock_db):
         """Test read_resource generates request_id if not provided."""
         import mcpgateway.services.resource_service as resource_service_mod
+
         resource_service_mod.PLUGINS_AVAILABLE = True
         service = resource_service_with_plugins
         mock_manager = service._plugin_manager

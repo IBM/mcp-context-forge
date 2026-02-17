@@ -43,12 +43,24 @@ def db():
 
 @pytest.fixture
 def user_ctx(db):
-    return {"email": "user@test.com", "full_name": "User", "is_admin": False, "db": db}
+    return {
+        "email": "user@test.com",
+        "full_name": "User",
+        "is_admin": False,
+        "db": db,
+        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+    }
 
 
 @pytest.fixture
 def admin_ctx(db):
-    return {"email": "admin@test.com", "full_name": "Admin", "is_admin": True, "db": db}
+    return {
+        "email": "admin@test.com",
+        "full_name": "Admin",
+        "is_admin": True,
+        "db": db,
+        "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*", "tags.*", "tokens.*"],
+    }
 
 
 @pytest.fixture
@@ -204,9 +216,7 @@ class TestListTeamMembersEdge:
             get_user_role_in_team=AsyncMock(return_value="member"),
             get_team_members=AsyncMock(return_value=(members, "next-cursor")),
         ):
-            result = await teams.list_team_members(
-                "tid", cursor="abc", limit=10, include_pagination=False, current_user=user_ctx, db=db
-            )
+            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=False, current_user=user_ctx, db=db)
             assert isinstance(result, list)
             assert len(result) == 1
 
@@ -218,9 +228,7 @@ class TestListTeamMembersEdge:
             get_user_role_in_team=AsyncMock(return_value="member"),
             get_team_members=AsyncMock(return_value=(members, "nc")),
         ):
-            result = await teams.list_team_members(
-                "tid", cursor="abc", limit=10, include_pagination=True, current_user=user_ctx, db=db
-            )
+            result = await teams.list_team_members("tid", cursor="abc", limit=10, include_pagination=True, current_user=user_ctx, db=db)
             assert hasattr(result, "members")
             assert result.next_cursor == "nc"
 
@@ -332,8 +340,11 @@ class TestRemoveTeamMemberErrors:
 class TestInviteTeamMemberErrors:
     @pytest.mark.asyncio
     async def test_invitation_creation_failed(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(return_value="owner")), _inv_svc(
-            create_invitation=AsyncMock(return_value=None),
+        with (
+            _svc(get_user_role_in_team=AsyncMock(return_value="owner")),
+            _inv_svc(
+                create_invitation=AsyncMock(return_value=None),
+            ),
         ):
             from mcpgateway.schemas import TeamInviteRequest
 
@@ -344,8 +355,11 @@ class TestInviteTeamMemberErrors:
 
     @pytest.mark.asyncio
     async def test_value_error(self, user_ctx, db):
-        with _svc(get_user_role_in_team=AsyncMock(return_value="owner")), _inv_svc(
-            create_invitation=AsyncMock(side_effect=ValueError("dup")),
+        with (
+            _svc(get_user_role_in_team=AsyncMock(return_value="owner")),
+            _inv_svc(
+                create_invitation=AsyncMock(side_effect=ValueError("dup")),
+            ),
         ):
             from mcpgateway.schemas import TeamInviteRequest
 
@@ -447,8 +461,11 @@ class TestCancelTeamInvitationErrors:
         mock_filter.first = MagicMock(return_value=mock_invitation)
         db.query = MagicMock(return_value=mock_query)
 
-        with _svc(get_user_role_in_team=AsyncMock(return_value="owner")), _inv_svc(
-            revoke_invitation=AsyncMock(return_value=False),
+        with (
+            _svc(get_user_role_in_team=AsyncMock(return_value="owner")),
+            _inv_svc(
+                revoke_invitation=AsyncMock(return_value=False),
+            ),
         ):
             with pytest.raises(HTTPException) as exc:
                 await teams.cancel_team_invitation(mock_invitation.id, current_user=user_ctx, db=db)

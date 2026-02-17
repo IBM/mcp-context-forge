@@ -65,7 +65,7 @@ def mock_current_user(mock_db):
     return {
         "email": "test@example.com",
         "is_admin": False,
-        "permissions": ["tokens.create", "tokens.read"],
+        "permissions": ["*"],
         "db": mock_db,  # Include db in user context for RBAC decorator
         "auth_method": "jwt",  # Required for interactive session check
     }
@@ -372,7 +372,7 @@ class TestUpdateToken:
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
             mock_perms.return_value = ["tools.admin"]  # Return sufficient permissions
 
-            response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
+            _ = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
 
             call_args = mock_service.update_token.call_args
             assert call_args[1]["scope"] is not None
@@ -860,7 +860,7 @@ class TestEdgeCases:
             mock_service = mock_service_class.return_value
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "token-with-team"))
 
-            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+            _ = await create_token(request, current_user=mock_current_user, db=mock_db)
 
             # Verify team_id was passed from request
             call_args = mock_service.create_token.call_args

@@ -94,7 +94,7 @@ async def test_create_role_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     request = RoleCreateRequest(name="role", description="desc", scope="global", permissions=["p1"])
-    result = await rbac_router.create_role(request, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.create_role(request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result.id == "r1"
 
 
@@ -106,7 +106,7 @@ async def test_create_role_validation_error(monkeypatch):
 
     request = RoleCreateRequest(name="role", description="desc", scope="global", permissions=["p1"])
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.create_role(request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.create_role(request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 400
 
 
@@ -118,7 +118,7 @@ async def test_create_role_generic_error(monkeypatch):
 
     request = RoleCreateRequest(name="role", description="desc", scope="global", permissions=["p1"])
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.create_role(request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.create_role(request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -129,7 +129,7 @@ async def test_list_roles(monkeypatch):
     service.list_roles = AsyncMock(return_value=[role])
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
-    result = await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result[0].id == "r1"
 
 
@@ -140,7 +140,7 @@ async def test_get_role_not_found(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_role("missing", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_role("missing", user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 404
 
 
@@ -152,7 +152,7 @@ async def test_get_role_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     db = MagicMock()
-    result = await rbac_router.get_role("r1", user={"email": "admin@example.com"}, db=db)
+    result = await rbac_router.get_role("r1", user={"email": "admin@example.com", "permissions": ["*"]}, db=db)
     assert result.id == "r1"
     db.commit.assert_called_once()
     db.close.assert_called_once()
@@ -165,7 +165,7 @@ async def test_get_role_generic_error(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_role("r1", user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -178,7 +178,7 @@ async def test_update_role_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     request = RoleUpdateRequest(description="updated", permissions=["p1"])
-    result = await rbac_router.update_role("r1", request, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.update_role("r1", request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result.description == "updated"
 
 
@@ -190,7 +190,7 @@ async def test_update_role_generic_error(monkeypatch):
 
     request = RoleUpdateRequest(description="updated")
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.update_role("r1", request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.update_role("r1", request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -200,7 +200,7 @@ async def test_delete_role_success(monkeypatch):
     service.delete_role = AsyncMock(return_value=True)
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
-    result = await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.delete_role("r1", user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result["message"] == "Role deleted successfully"
 
 
@@ -211,7 +211,7 @@ async def test_delete_role_value_error(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.delete_role("r1", user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 400
     assert "Cannot delete system role" in excinfo.value.detail
 
@@ -223,7 +223,7 @@ async def test_delete_role_generic_error(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.delete_role("r1", user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -236,10 +236,10 @@ async def test_assign_and_revoke_role(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
-    result = await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result.user_email == "user@example.com"
 
-    result = await rbac_router.revoke_user_role("user@example.com", "r1", scope="global", scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.revoke_user_role("user@example.com", "r1", scope="global", scope_id=None, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result["message"] == "Role revoked successfully"
 
 
@@ -251,7 +251,7 @@ async def test_assign_role_generic_error(monkeypatch):
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -262,7 +262,7 @@ async def test_get_user_roles_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     db = MagicMock()
-    result = await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=db)
+    result = await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com", "permissions": ["*"]}, db=db)
     assert result[0].role_id == "r1"
     db.commit.assert_called_once()
     db.close.assert_called_once()
@@ -275,7 +275,7 @@ async def test_revoke_role_generic_error(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -287,11 +287,11 @@ async def test_check_permission_and_user_permissions(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     check_request = PermissionCheckRequest(user_email="user@example.com", permission="p1")
-    result = await rbac_router.check_permission(check_request, user={"email": "admin@example.com"}, db=MagicMock())
+    result = await rbac_router.check_permission(check_request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert result.granted is True
     assert result.checked_at <= datetime.now(tz=timezone.utc)
 
-    perms = await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+    perms = await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert sorted(perms) == ["p1", "p2"]
 
 
@@ -300,7 +300,7 @@ async def test_available_and_my_permissions(monkeypatch):
     monkeypatch.setattr(rbac_router.Permissions, "get_all_permissions", lambda: ["p1"])
     monkeypatch.setattr(rbac_router.Permissions, "get_permissions_by_resource", lambda: {"tools": ["p1"]})
 
-    result = await rbac_router.get_available_permissions(user={"email": "admin@example.com"})
+    result = await rbac_router.get_available_permissions(user={"email": "admin@example.com", "permissions": ["*"]})
     assert result.total_count == 1
 
     perm_service = MagicMock()
@@ -320,10 +320,14 @@ async def test_available_and_my_permissions(monkeypatch):
     perm_service.get_user_permissions = AsyncMock(return_value={"p1"})
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
-    roles = await rbac_router.get_my_roles(user={"email": "user@example.com"}, db=MagicMock())
+    roles = await rbac_router.get_my_roles(
+        user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}, db=MagicMock()
+    )
     assert roles[0].role_name == "role"
 
-    perms = await rbac_router.get_my_permissions(team_id=None, user={"email": "user@example.com"}, db=MagicMock())
+    perms = await rbac_router.get_my_permissions(
+        team_id=None, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}, db=MagicMock()
+    )
     assert perms == ["p1"]
 
 
@@ -334,7 +338,7 @@ async def test_list_roles_error(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.list_roles(scope=None, active_only=True, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -346,7 +350,7 @@ async def test_update_role_not_found(monkeypatch):
 
     request = RoleUpdateRequest(description="updated")
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.update_role("missing", request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.update_role("missing", request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 404
 
 
@@ -358,7 +362,7 @@ async def test_update_role_validation_error(monkeypatch):
 
     request = RoleUpdateRequest(description="updated")
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.update_role("r1", request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.update_role("r1", request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 400
 
 
@@ -369,7 +373,7 @@ async def test_delete_role_not_found(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.delete_role("r1", user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.delete_role("r1", user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 404
 
 
@@ -381,7 +385,7 @@ async def test_assign_role_validation_error(monkeypatch):
 
     assign_request = UserRoleAssignRequest(role_id="r1", scope="global", scope_id=None)
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.assign_role_to_user("user@example.com", assign_request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 400
 
 
@@ -392,7 +396,7 @@ async def test_revoke_role_not_found(monkeypatch):
     monkeypatch.setattr(rbac_router, "RoleService", lambda db: service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.revoke_user_role("user@example.com", "r1", scope=None, scope_id=None, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 404
 
 
@@ -405,16 +409,16 @@ async def test_permission_service_errors(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
     check_request = PermissionCheckRequest(user_email="user@example.com", permission="p1")
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.check_permission(check_request, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.check_permission(check_request, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_user_permissions("user@example.com", team_id=None, user={"email": "admin@example.com", "permissions": ["*"]}, db=MagicMock())
     assert excinfo.value.status_code == 500
 
 
@@ -424,7 +428,7 @@ async def test_available_permissions_error(monkeypatch):
     monkeypatch.setattr(rbac_router.Permissions, "get_permissions_by_resource", lambda: {"tools": ["p1"]})
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_available_permissions(user={"email": "admin@example.com"})
+        await rbac_router.get_available_permissions(user={"email": "admin@example.com", "permissions": ["*"]})
     assert excinfo.value.status_code == 500
 
 
@@ -436,9 +440,13 @@ async def test_my_permissions_errors(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_my_roles(user={"email": "user@example.com"}, db=MagicMock())
+        await rbac_router.get_my_roles(
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}, db=MagicMock()
+        )
     assert excinfo.value.status_code == 500
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_my_permissions(team_id=None, user={"email": "user@example.com"}, db=MagicMock())
+        await rbac_router.get_my_permissions(
+            team_id=None, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}, db=MagicMock()
+        )
     assert excinfo.value.status_code == 500

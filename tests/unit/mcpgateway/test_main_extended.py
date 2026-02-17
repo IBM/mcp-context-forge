@@ -1026,7 +1026,13 @@ class TestServerEndpointCoverage:
         list_tools = AsyncMock(return_value=[tool])
         monkeypatch.setattr("mcpgateway.main.tool_service.list_server_tools", list_tools)
 
-        result = await server_get_tools(request, "server-1", include_metrics=True, db=MagicMock(), user={"email": "user@example.com"})
+        result = await server_get_tools(
+            request,
+            "server-1",
+            include_metrics=True,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result == [{"id": "tool-1"}]
         list_tools.assert_called_once()
 
@@ -1042,7 +1048,9 @@ class TestServerEndpointCoverage:
         list_resources = AsyncMock(return_value=[resource])
         monkeypatch.setattr("mcpgateway.main.resource_service.list_server_resources", list_resources)
 
-        result = await server_get_resources(request, "server-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await server_get_resources(
+            request, "server-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result == [{"id": "res-1"}]
         list_resources.assert_called_once()
 
@@ -1058,7 +1066,9 @@ class TestServerEndpointCoverage:
         list_prompts = AsyncMock(return_value=[prompt])
         monkeypatch.setattr("mcpgateway.main.prompt_service.list_server_prompts", list_prompts)
 
-        result = await server_get_prompts(request, "server-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await server_get_prompts(
+            request, "server-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result == [{"id": "prompt-1"}]
         list_prompts.assert_called_once()
 
@@ -1073,7 +1083,7 @@ class TestServerEndpointCoverage:
             request,
             team_id="team-2",
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -1095,7 +1105,7 @@ class TestServerEndpointCoverage:
             request,
             include_pagination=True,
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["resources"] == [{"id": "res-1"}]
         assert result["nextCursor"] == "next-cursor"
@@ -1116,7 +1126,7 @@ class TestServerEndpointCoverage:
             request,
             tags="a, b",
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["resources"] == []
 
@@ -1144,7 +1154,9 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", AsyncMock(return_value=tool))
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com")
-        result = await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await create_tool(
+            tool_input, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result is tool
 
     @pytest.mark.asyncio
@@ -1153,7 +1165,13 @@ class TestCrudEndpoints:
         request.state = SimpleNamespace(team_id="team-1")
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com")
-        response = await create_tool(tool_input, request, team_id="team-2", db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_tool(
+            tool_input,
+            request,
+            team_id="team-2",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
     @pytest.mark.asyncio
@@ -1175,13 +1193,17 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.update_tool", AsyncMock(return_value=tool))
 
         tool_update = ToolUpdate(name="tool-updated")
-        result = await update_tool("tool-1", tool_update, request, db=db, user={"email": "user@example.com"})
+        result = await update_tool(
+            "tool-1", tool_update, request, db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result is tool
 
     @pytest.mark.asyncio
     async def test_delete_tool_success(self, monkeypatch, allow_permission):
         monkeypatch.setattr("mcpgateway.main.tool_service.delete_tool", AsyncMock(return_value=None))
-        result = await delete_tool("tool-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await delete_tool(
+            "tool-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
@@ -1190,7 +1212,12 @@ class TestCrudEndpoints:
         tool.model_dump.return_value = {"id": "tool-1"}
         monkeypatch.setattr("mcpgateway.main.tool_service.set_tool_state", AsyncMock(return_value=tool))
 
-        result = await set_tool_state("tool-1", activate=True, db=MagicMock(), user={"email": "user@example.com"})
+        result = await set_tool_state(
+            "tool-1",
+            activate=True,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["tool"] == {"id": "tool-1"}
 
     @pytest.mark.asyncio
@@ -1213,7 +1240,12 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.resource_service.register_resource", AsyncMock(return_value=resource))
 
         resource_input = ResourceCreate(uri="res://1", name="Res", content="data")
-        result = await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await create_resource(
+            resource_input,
+            request,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result is resource
 
     @pytest.mark.asyncio
@@ -1232,13 +1264,21 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.invalidate_resource_cache", AsyncMock(return_value=None))
 
         resource_update = ResourceUpdate(name="Res Updated")
-        result = await update_resource("res-1", resource_update, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await update_resource(
+            "res-1",
+            resource_update,
+            request,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["id"] == "res-1"
 
     @pytest.mark.asyncio
     async def test_delete_resource_success(self, monkeypatch, allow_permission):
         monkeypatch.setattr("mcpgateway.main.resource_service.delete_resource", AsyncMock(return_value=None))
-        result = await delete_resource("res-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await delete_resource(
+            "res-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
@@ -1247,7 +1287,12 @@ class TestCrudEndpoints:
         resource.model_dump.return_value = {"id": "res-1"}
         monkeypatch.setattr("mcpgateway.main.resource_service.set_resource_state", AsyncMock(return_value=resource))
 
-        result = await set_resource_state("res-1", activate=False, db=MagicMock(), user={"email": "user@example.com"})
+        result = await set_resource_state(
+            "res-1",
+            activate=False,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["resource"] == {"id": "res-1"}
 
     @pytest.mark.asyncio
@@ -1270,7 +1315,9 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(return_value=prompt))
 
         prompt_input = PromptCreate(name="Prompt A", template="Hello")
-        result = await create_prompt(prompt_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await create_prompt(
+            prompt_input, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result is prompt
 
     @pytest.mark.asyncio
@@ -1288,13 +1335,21 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.prompt_service.update_prompt", AsyncMock(return_value={"id": "prompt-1"}))
 
         prompt_update = PromptUpdate(name="Prompt Updated")
-        result = await update_prompt("prompt-1", prompt_update, request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await update_prompt(
+            "prompt-1",
+            prompt_update,
+            request,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["id"] == "prompt-1"
 
     @pytest.mark.asyncio
     async def test_delete_prompt_success(self, monkeypatch, allow_permission):
         monkeypatch.setattr("mcpgateway.main.prompt_service.delete_prompt", AsyncMock(return_value=None))
-        result = await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com"})
+        result = await delete_prompt(
+            "prompt-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["status"] == "success"
 
     @pytest.mark.asyncio
@@ -1303,7 +1358,12 @@ class TestCrudEndpoints:
         prompt.model_dump.return_value = {"id": "prompt-1"}
         monkeypatch.setattr("mcpgateway.main.prompt_service.set_prompt_state", AsyncMock(return_value=prompt))
 
-        result = await set_prompt_state("prompt-1", activate=True, db=MagicMock(), user={"email": "user@example.com"})
+        result = await set_prompt_state(
+            "prompt-1",
+            activate=True,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["prompt"] == {"id": "prompt-1"}
 
     @pytest.mark.asyncio
@@ -1312,7 +1372,9 @@ class TestCrudEndpoints:
         request.state = SimpleNamespace(team_id=None, token_teams=[])
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com", visibility="team")
-        response = await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_tool(
+            tool_input, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert response.status_code == 403
 
     @pytest.mark.asyncio
@@ -1336,7 +1398,13 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", register_tool)
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com", visibility="public")
-        await create_tool(tool_input, request, team_id="team-1", db=MagicMock(), user={"email": "user@example.com"})
+        await create_tool(
+            tool_input,
+            request,
+            team_id="team-1",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert register_tool.await_args.kwargs["team_id"] is None
 
     @pytest.mark.asyncio
@@ -1362,7 +1430,12 @@ class TestCrudEndpoints:
 
         tool_input = ToolCreate(name="tool-a", url="http://example.com", visibility="public")
         with pytest.raises(HTTPException) as excinfo:
-            await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com"})
+            await create_tool(
+                tool_input,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
         assert "activating" in str(excinfo.value.detail).lower()
 
@@ -1388,12 +1461,22 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", AsyncMock(side_effect=ToolError("bad")))
         tool_input = ToolCreate(name="tool-a", url="http://example.com", visibility="public")
         with pytest.raises(HTTPException) as excinfo:
-            await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com"})
+            await create_tool(
+                tool_input,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr("mcpgateway.main.tool_service.register_tool", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await create_tool(tool_input, request, db=MagicMock(), user={"email": "user@example.com"})
+            await create_tool(
+                tool_input,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -1417,12 +1500,24 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.tool_service.update_tool", AsyncMock(side_effect=ToolError("bad")))
         tool_update = ToolUpdate(name="tool-updated")
         with pytest.raises(HTTPException) as excinfo:
-            await update_tool("tool-1", tool_update, request, db=db, user={"email": "user@example.com"})
+            await update_tool(
+                "tool-1",
+                tool_update,
+                request,
+                db=db,
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr("mcpgateway.main.tool_service.update_tool", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await update_tool("tool-1", tool_update, request, db=db, user={"email": "user@example.com"})
+            await update_tool(
+                "tool-1",
+                tool_update,
+                request,
+                db=db,
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -1431,12 +1526,22 @@ class TestCrudEndpoints:
 
         monkeypatch.setattr("mcpgateway.main.tool_service.set_tool_state", AsyncMock(side_effect=ToolLockConflictError("locked")))
         with pytest.raises(HTTPException) as excinfo:
-            await set_tool_state("tool-1", activate=True, db=MagicMock(), user={"email": "user@example.com"})
+            await set_tool_state(
+                "tool-1",
+                activate=True,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr("mcpgateway.main.tool_service.set_tool_state", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await set_tool_state("tool-1", activate=True, db=MagicMock(), user={"email": "user@example.com"})
+            await set_tool_state(
+                "tool-1",
+                activate=True,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -1445,7 +1550,13 @@ class TestCrudEndpoints:
         request.state = SimpleNamespace(team_id=None, token_teams=[])
 
         resource_input = ResourceCreate(uri="res://1", name="Res", content="data")
-        response = await create_resource(resource_input, request, visibility="team", db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_resource(
+            resource_input,
+            request,
+            visibility="team",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
     @pytest.mark.asyncio
@@ -1454,7 +1565,14 @@ class TestCrudEndpoints:
         request.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
 
         resource_input = ResourceCreate(uri="res://1", name="Res", content="data")
-        response = await create_resource(resource_input, request, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_resource(
+            resource_input,
+            request,
+            team_id="team-2",
+            visibility="public",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
     @pytest.mark.asyncio
@@ -1478,7 +1596,14 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.resource_service.register_resource", register_resource)
 
         resource_input = ResourceCreate(uri="res://1", name="Res", content="data")
-        await create_resource(resource_input, request, team_id="team-1", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+        await create_resource(
+            resource_input,
+            request,
+            team_id="team-1",
+            visibility="public",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert register_resource.await_args.kwargs["team_id"] is None
 
     @pytest.mark.asyncio
@@ -1514,7 +1639,12 @@ class TestCrudEndpoints:
 
         resource_input = ResourceCreate(uri="res://1", name="Res", content="data")
         with pytest.raises(HTTPException) as excinfo:
-            await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
+            await create_resource(
+                resource_input,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 422
 
         from sqlalchemy.exc import IntegrityError
@@ -1522,7 +1652,12 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.ErrorFormatter.format_database_error", lambda _e: "db-error")
         monkeypatch.setattr("mcpgateway.main.resource_service.register_resource", AsyncMock(side_effect=IntegrityError("stmt", "params", Exception("orig"))))
         with pytest.raises(HTTPException) as excinfo:
-            await create_resource(resource_input, request, db=MagicMock(), user={"email": "user@example.com"})
+            await create_resource(
+                resource_input,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
@@ -1541,7 +1676,13 @@ class TestCrudEndpoints:
 
         monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceURIConflictError("conflict")))
         with pytest.raises(HTTPException) as excinfo:
-            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+            await update_resource(
+                "res-1",
+                ResourceUpdate(name="Res Updated"),
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
@@ -1550,17 +1691,23 @@ class TestCrudEndpoints:
 
         monkeypatch.setattr("mcpgateway.main.resource_service.delete_resource", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await delete_resource("res-1", db=MagicMock(), user={"email": "user@example.com"})
+            await delete_resource(
+                "res-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 403
 
         monkeypatch.setattr("mcpgateway.main.resource_service.delete_resource", AsyncMock(side_effect=ResourceNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await delete_resource("res-1", db=MagicMock(), user={"email": "user@example.com"})
+            await delete_resource(
+                "res-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr("mcpgateway.main.resource_service.delete_resource", AsyncMock(side_effect=ResourceError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await delete_resource("res-1", db=MagicMock(), user={"email": "user@example.com"})
+            await delete_resource(
+                "res-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -1569,12 +1716,25 @@ class TestCrudEndpoints:
         request.state = SimpleNamespace(team_id="team-1", token_teams=[])
 
         prompt_input = PromptCreate(name="Prompt A", template="Hello")
-        response = await create_prompt(prompt_input, request, visibility="team", db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_prompt(
+            prompt_input,
+            request,
+            visibility="team",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
         request2 = _make_request("/prompts")
         request2.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
-        response = await create_prompt(prompt_input, request2, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+        response = await create_prompt(
+            prompt_input,
+            request2,
+            team_id="team-2",
+            visibility="public",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
         request3 = _make_request("/prompts")
@@ -1592,19 +1752,38 @@ class TestCrudEndpoints:
         )
         register_prompt = AsyncMock(return_value=MagicMock())
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", register_prompt)
-        await create_prompt(prompt_input, request3, team_id="team-1", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+        await create_prompt(
+            prompt_input,
+            request3,
+            team_id="team-1",
+            visibility="public",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert register_prompt.await_args.kwargs["team_id"] is None
 
         from mcpgateway.services.prompt_service import PromptError, PromptNameConflictError
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(side_effect=PromptNameConflictError("dup")))
         with pytest.raises(HTTPException) as excinfo:
-            await create_prompt(prompt_input, request3, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await create_prompt(
+                prompt_input,
+                request3,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(side_effect=PromptError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await create_prompt(prompt_input, request3, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await create_prompt(
+                prompt_input,
+                request3,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         from pydantic import BaseModel, ValidationError
@@ -1620,12 +1799,24 @@ class TestCrudEndpoints:
         monkeypatch.setattr("mcpgateway.main.ErrorFormatter.format_validation_error", lambda _e: "formatted")
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(side_effect=validation_err))
         with pytest.raises(HTTPException) as excinfo:
-            await create_prompt(prompt_input, request3, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await create_prompt(
+                prompt_input,
+                request3,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 422
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.register_prompt", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await create_prompt(prompt_input, request3, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await create_prompt(
+                prompt_input,
+                request3,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -1646,17 +1837,35 @@ class TestCrudEndpoints:
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.update_prompt", AsyncMock(side_effect=PromptNameConflictError("dup")))
         with pytest.raises(HTTPException) as excinfo:
-            await update_prompt("prompt-1", prompt_update, request, db=MagicMock(), user={"email": "user@example.com"})
+            await update_prompt(
+                "prompt-1",
+                prompt_update,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.update_prompt", AsyncMock(side_effect=PromptError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await update_prompt("prompt-1", prompt_update, request, db=MagicMock(), user={"email": "user@example.com"})
+            await update_prompt(
+                "prompt-1",
+                prompt_update,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.update_prompt", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await update_prompt("prompt-1", prompt_update, request, db=MagicMock(), user={"email": "user@example.com"})
+            await update_prompt(
+                "prompt-1",
+                prompt_update,
+                request,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
 
     @pytest.mark.asyncio
@@ -1665,17 +1874,23 @@ class TestCrudEndpoints:
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.delete_prompt", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com"})
+            await delete_prompt(
+                "prompt-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 403
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.delete_prompt", AsyncMock(side_effect=PromptError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com"})
+            await delete_prompt(
+                "prompt-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr("mcpgateway.main.prompt_service.delete_prompt", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await delete_prompt("prompt-1", db=MagicMock(), user={"email": "user@example.com"})
+            await delete_prompt(
+                "prompt-1", db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 500
 
 
@@ -1823,7 +2038,9 @@ class TestRootEndpointsCoverage:
 
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(side_effect=main_mod.RootServiceNotFoundError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_root(uri="root://missing", user={"email": "user@example.com"})
+            await main_mod.export_root(
+                uri="root://missing", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(side_effect=RuntimeError("boom")))
@@ -1837,16 +2054,25 @@ class TestRootEndpointsCoverage:
 
         root = SimpleNamespace(uri="root://example", name="Root Name")
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(return_value=root))
-        assert await main_mod.get_root_by_uri("root://example", user={"email": "user@example.com"}) == root
+        assert (
+            await main_mod.get_root_by_uri(
+                "root://example", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
+            == root
+        )
 
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(side_effect=main_mod.RootServiceNotFoundError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_root_by_uri("root://missing", user={"email": "user@example.com"})
+            await main_mod.get_root_by_uri(
+                "root://missing", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.root_service, "get_root_by_uri", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(RuntimeError):
-            await main_mod.get_root_by_uri("root://err", user={"email": "user@example.com"})
+            await main_mod.get_root_by_uri(
+                "root://err", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
 
     @pytest.mark.asyncio
     async def test_update_root_success_and_errors(self, monkeypatch):
@@ -1855,16 +2081,25 @@ class TestRootEndpointsCoverage:
         updated = SimpleNamespace(uri="root://example", name="Updated")
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(return_value=updated))
         root_payload = SimpleNamespace(name="Updated")
-        assert await main_mod.update_root("root://example", root_payload, user={"email": "user@example.com"}) == updated
+        assert (
+            await main_mod.update_root(
+                "root://example", root_payload, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
+            == updated
+        )
 
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(side_effect=main_mod.RootServiceNotFoundError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.update_root("root://missing", root_payload, user={"email": "user@example.com"})
+            await main_mod.update_root(
+                "root://missing", root_payload, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(RuntimeError):
-            await main_mod.update_root("root://err", root_payload, user={"email": "user@example.com"})
+            await main_mod.update_root(
+                "root://err", root_payload, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
 
 
 class TestToolListEndpointCoverage:
@@ -1896,7 +2131,7 @@ class TestToolListEndpointCoverage:
             gateway_id=None,
             db=db,
             apijsonpath=None,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["tools"][0]["id"] == "tool-1"
         assert result["nextCursor"] == "next"
@@ -1926,7 +2161,7 @@ class TestToolListEndpointCoverage:
             gateway_id=None,
             db=db,
             apijsonpath=None,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert list_tools_mock.await_args.kwargs["user_email"] is None
         assert list_tools_mock.await_args.kwargs["token_teams"] is None
@@ -1944,7 +2179,7 @@ class TestToolListEndpointCoverage:
             gateway_id=None,
             db=db,
             apijsonpath=None,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert list_tools_mock.await_args.kwargs["token_teams"] == []
 
@@ -1969,7 +2204,7 @@ class TestToolListEndpointCoverage:
             gateway_id=None,
             db=db,
             apijsonpath=None,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -2001,7 +2236,7 @@ class TestPromptListEndpointCoverage:
             team_id=None,
             visibility=None,
             db=db,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["prompts"][0]["id"] == "prompt-1"
         assert result["nextCursor"] == "next"
@@ -2026,7 +2261,7 @@ class TestPromptListEndpointCoverage:
             team_id="team-2",
             visibility=None,
             db=db,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -2052,7 +2287,12 @@ class TestReadResourceEndpointCoverage:
             uri: str
 
         monkeypatch.setattr(main_mod.resource_service, "read_resource", AsyncMock(return_value=TextWithUri(type="text", text="hello", uri="res://1")))
-        result = await main_mod.read_resource("res-1", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
+        result = await main_mod.read_resource(
+            "res-1",
+            request=request,
+            db=db,
+            user={"email": "user@example.com", "is_admin": False, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["text"] == "hello"
         assert result["uri"] == "res://1"
 
@@ -2067,7 +2307,12 @@ class TestReadResourceEndpointCoverage:
                 return self._uri
 
         monkeypatch.setattr(main_mod.resource_service, "read_resource", AsyncMock(return_value=BytesWithUri(b"abc", "res://2")))
-        result = await main_mod.read_resource("res-2", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
+        result = await main_mod.read_resource(
+            "res-2",
+            request=request,
+            db=db,
+            user={"email": "user@example.com", "is_admin": False, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["blob"] == "abc"
         assert result["uri"] == "res://2"
 
@@ -2082,7 +2327,12 @@ class TestReadResourceEndpointCoverage:
                 return self._uri
 
         monkeypatch.setattr(main_mod.resource_service, "read_resource", AsyncMock(return_value=StrWithUri("hi", "res://3")))
-        result = await main_mod.read_resource("res-3", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
+        result = await main_mod.read_resource(
+            "res-3",
+            request=request,
+            db=db,
+            user={"email": "user@example.com", "is_admin": False, "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["text"] == "hi"
         assert result["uri"] == "res://3"
 
@@ -2102,19 +2352,37 @@ class TestGetPromptEndpointCoverage:
         from mcpgateway.plugins.framework.errors import PluginViolationError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PluginViolationError("blocked", violation=SimpleNamespace(code="c"))))
-        response = await main_mod.get_prompt(request, "prompt-1", args={}, db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.get_prompt(
+            request,
+            "prompt-1",
+            args={},
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 422
 
         # ValueError -> 422 with message.
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=ValueError("bad args")))
-        response = await main_mod.get_prompt(request, "prompt-1", args={}, db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.get_prompt(
+            request,
+            "prompt-1",
+            args={},
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 422
 
         # PromptError -> 422 with message.
         from mcpgateway.services.prompt_service import PromptError
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PromptError("bad prompt")))
-        response = await main_mod.get_prompt(request, "prompt-1", args={}, db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.get_prompt(
+            request,
+            "prompt-1",
+            args={},
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 422
 
 
@@ -2131,19 +2399,25 @@ class TestGatewayEndpointsCoverage:
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+            await main_mod.delete_gateway(
+                "gw-1", db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 403
 
         from mcpgateway.services.gateway_service import GatewayNotFoundError, GatewayError
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+            await main_mod.delete_gateway(
+                "gw-1", db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+            await main_mod.delete_gateway(
+                "gw-1", db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -2160,7 +2434,9 @@ class TestGatewayEndpointsCoverage:
         invalidate = AsyncMock(return_value=None)
         monkeypatch.setattr(main_mod, "invalidate_resource_cache", invalidate)
 
-        result = await main_mod.delete_gateway("gw-1", db=db, user={"email": "user@example.com"})
+        result = await main_mod.delete_gateway(
+            "gw-1", db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["status"] == "success"
         invalidate.assert_awaited_once()
 
@@ -2185,7 +2461,7 @@ class TestGatewayEndpointsCoverage:
             request,
             include_resources=True,
             include_prompts=False,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
         )
         assert response.gateway_id == "gw-1"
         assert response.tools_added == 1
@@ -2197,7 +2473,7 @@ class TestGatewayEndpointsCoverage:
                 request,
                 include_resources=False,
                 include_prompts=False,
-                user={"email": "user@example.com"},
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
             )
         assert excinfo.value.status_code == 404
 
@@ -2208,7 +2484,7 @@ class TestGatewayEndpointsCoverage:
                 request,
                 include_resources=False,
                 include_prompts=False,
-                user={"email": "user@example.com"},
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
             )
         assert excinfo.value.status_code == 409
 
@@ -2747,7 +3023,7 @@ class TestUtilityFunctions:
         request.cookies = {"jwt_token": "cookie-token"}
         request.scope = {"root_path": ""}
 
-        user = {"email": "user@example.com", "is_admin": False}
+        user = {"email": "user@example.com", "is_admin": False, "permissions": ["*"], "db": MagicMock()}
 
         monkeypatch.setattr(main_mod, "update_url_protocol", lambda _req: "http://example.com")
         monkeypatch.setattr(main_mod, "_get_token_teams_from_request", lambda _req: [])
@@ -2887,7 +3163,7 @@ def test_client(app_with_temp_db):
 
     # Override get_current_user_with_permissions for RBAC system
     def mock_get_current_user_with_permissions(request=None, credentials=None, jwt_token=None):
-        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test"}
+        return {"email": "test_user@example.com", "full_name": "Test User", "is_admin": True, "ip_address": "127.0.0.1", "user_agent": "test", "permissions": ["*"], "db": MagicMock()}
 
     app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = mock_get_current_user_with_permissions
 
@@ -3039,7 +3315,14 @@ class TestA2ABranchCoverage:
         )
 
         agent = A2AAgentCreate(name="agent", endpoint_url="http://example.com/agent")
-        response = await main_mod.create_a2a_agent(agent, request, team_id=None, visibility="team", db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.create_a2a_agent(
+            agent,
+            request,
+            team_id=None,
+            visibility="team",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
     @pytest.mark.asyncio
@@ -3063,12 +3346,26 @@ class TestA2ABranchCoverage:
         )
 
         agent = A2AAgentCreate(name="agent", endpoint_url="http://example.com/agent")
-        response = await main_mod.create_a2a_agent(agent, request, team_id="team-2", visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.create_a2a_agent(
+            agent,
+            request,
+            team_id="team-2",
+            visibility="public",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert response.status_code == 403
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_a2a_agent(agent, request, team_id=None, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.create_a2a_agent(
+                agent,
+                request,
+                team_id=None,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 503
 
     @pytest.mark.asyncio
@@ -3109,12 +3406,26 @@ class TestA2ABranchCoverage:
         monkeypatch.setattr(main_mod, "a2a_service", svc)
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_a2a_agent(agent, request, team_id=None, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.create_a2a_agent(
+                agent,
+                request,
+                team_id=None,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 422
 
         svc.register_agent = AsyncMock(side_effect=IntegrityError("stmt", {}, Exception("orig")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_a2a_agent(agent, request, team_id=None, visibility="public", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.create_a2a_agent(
+                agent,
+                request,
+                team_id=None,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
@@ -3124,24 +3435,44 @@ class TestA2ABranchCoverage:
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent(
+                "agent-1",
+                purge_metrics=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 503
 
         svc = MagicMock()
         svc.delete_agent = AsyncMock(side_effect=PermissionError("nope"))
         monkeypatch.setattr(main_mod, "a2a_service", svc)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent(
+                "agent-1",
+                purge_metrics=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 403
 
         svc.delete_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent(
+                "agent-1",
+                purge_metrics=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 404
 
         svc.delete_agent = AsyncMock(side_effect=A2AAgentError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_a2a_agent("agent-1", purge_metrics=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.delete_a2a_agent(
+                "agent-1",
+                purge_metrics=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
     @pytest.mark.asyncio
@@ -3154,25 +3485,53 @@ class TestA2ABranchCoverage:
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.invoke_a2a_agent(
+                "agent",
+                request,
+                parameters={},
+                interaction_type="query",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 503
 
         svc = MagicMock()
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(main_mod, "a2a_service", svc)
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
-        result = await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
+        result = await main_mod.invoke_a2a_agent(
+            "agent",
+            request,
+            parameters={},
+            interaction_type="query",
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result["ok"] is True
         assert svc.invoke_agent.await_args.kwargs["token_teams"] == []
 
         svc.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.invoke_a2a_agent(
+                "agent",
+                request,
+                parameters={},
+                interaction_type="query",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 404
 
         svc.invoke_agent = AsyncMock(side_effect=A2AAgentError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.invoke_a2a_agent(
+                "agent",
+                request,
+                parameters={},
+                interaction_type="query",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         # Cover user_id=str(user) branch by bypassing RBAC wrapper.
@@ -3203,7 +3562,7 @@ class TestA2ABranchCoverage:
                 include_pagination=False,
                 limit=None,
                 db=db,
-                user={"email": "user@example.com"},
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
             )
         assert excinfo.value.status_code == 503
 
@@ -3225,13 +3584,15 @@ class TestA2ABranchCoverage:
             include_pagination=True,
             limit=None,
             db=db,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["agents"][0]["id"] == "agent-1"
         assert result["nextCursor"] == "next"
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.get_a2a_agent(
+                "agent-1", request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
 
@@ -3252,7 +3613,9 @@ class TestRpcHandling:
         request.body = AsyncMock(return_value=b"{bad")
         request.headers = {}
         request.query_params = {}
-        response = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        response = await handle_rpc(
+            request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert response.status_code == 400
 
     async def test_handle_rpc_tools_list_server(self):
@@ -3267,7 +3630,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["tools"][0]["id"] == "tool-1"
 
     async def test_handle_rpc_list_tools_with_cursor(self):
@@ -3282,7 +3647,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], "next-cursor"))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["nextCursor"] == "next-cursor"
 
     async def test_handle_rpc_list_gateways(self):
@@ -3294,7 +3661,9 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with patch("mcpgateway.main.gateway_service.list_gateways", new=AsyncMock(return_value=([gateway], None))):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["gateways"][0]["id"] == "gw-1"
 
     async def test_handle_rpc_resources_read_missing_uri(self):
@@ -3302,7 +3671,9 @@ class TestRpcHandling:
         request = self._make_request(payload)
 
         with patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert "error" in result
 
     async def test_handle_rpc_resources_list_with_cursor(self):
@@ -3317,7 +3688,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["resources"][0]["id"] == "res-1"
             assert result["result"]["nextCursor"] == "next-cursor"
 
@@ -3333,7 +3706,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["contents"][0]["uri"] == "resource://one"
 
         # Gateway forwarding is removed, so missing resource returns error
@@ -3341,7 +3716,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ValueError("no local"))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert "error" in result
             assert result["error"]["code"] == -32002
 
@@ -3371,7 +3748,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["prompts"][0]["name"] == "prompt-1"
 
         payload_get = {"jsonrpc": "2.0", "id": "7", "method": "prompts/get", "params": {"name": "prompt-1"}}
@@ -3384,13 +3763,17 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt_payload)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_get, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["name"] == "prompt-1"
 
     async def test_handle_rpc_ping_and_resource_templates(self):
         payload = {"jsonrpc": "2.0", "id": "8", "method": "ping", "params": {}}
         request = self._make_request(payload)
-        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["result"] == {}
 
         payload_templates = {"jsonrpc": "2.0", "id": "9", "method": "resources/templates/list", "params": {}}
@@ -3402,7 +3785,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_templates, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["resourceTemplates"][0]["uriTemplate"] == "resource://{id}"
 
     async def test_handle_rpc_tools_call(self, monkeypatch):
@@ -3419,7 +3804,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["ok"] is True
 
     async def test_handle_rpc_notifications_and_sampling(self):
@@ -3430,19 +3817,25 @@ class TestRpcHandling:
             patch("mcpgateway.main.cancellation_service.cancel_run", new=AsyncMock(return_value=None)),
             patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request_cancel, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_cancel, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"] == {}
 
         payload_msg = {"jsonrpc": "2.0", "id": "12", "method": "notifications/message", "params": {"data": "hello", "level": "info", "logger": "tests"}}
         request_msg = self._make_request(payload_msg)
         with patch("mcpgateway.main.logging_service.notify", new=AsyncMock(return_value=None)):
-            result = await handle_rpc(request_msg, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_msg, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"] == {}
 
         payload_sampling = {"jsonrpc": "2.0", "id": "13", "method": "sampling/createMessage", "params": {"messages": []}}
         request_sampling = self._make_request(payload_sampling)
         with patch("mcpgateway.main.sampling_handler.create_message", new=AsyncMock(return_value={"text": "ok"})):
-            result = await handle_rpc(request_sampling, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_sampling, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["text"] == "ok"
 
     async def test_handle_rpc_elicitation_completion_logging(self, monkeypatch):
@@ -3479,19 +3872,25 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["status"] == "ok"
 
         payload_completion = {"jsonrpc": "2.0", "id": "15", "method": "completion/complete", "params": {"prompt": "hi"}}
         request_completion = self._make_request(payload_completion)
         with patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"text": "done"})):
-            result = await handle_rpc(request_completion, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_completion, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["text"] == "done"
 
         payload_logging = {"jsonrpc": "2.0", "id": "16", "method": "logging/setLevel", "params": {"level": "info"}}
         request_logging = self._make_request(payload_logging)
         with patch("mcpgateway.main.logging_service.set_level", new=AsyncMock(return_value=None)):
-            result = await handle_rpc(request_logging, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_logging, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"] == {}
 
     async def test_handle_rpc_fallback_tool_error(self):
@@ -3502,12 +3901,16 @@ class TestRpcHandling:
         tool_result = MagicMock()
         tool_result.model_dump.return_value = {"ok": True}
         with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["ok"] is True
 
         # Gateway forwarding is removed, so missing tool returns error
         with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32000
 
     async def test_handle_rpc_user_object_and_auto_id(self):
@@ -3530,7 +3933,7 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([], None))) as list_tools,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            await handle_rpc(request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]})
             list_tools.assert_called_once()
 
         payload_legacy = {"jsonrpc": "2.0", "id": "19", "method": "list_tools", "params": {"server_id": "srv"}}
@@ -3542,7 +3945,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as list_server_tools,
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_legacy, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_legacy, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             list_server_tools.assert_called_once()
             assert result["result"]["tools"][0]["id"] == "tool-legacy"
 
@@ -3556,7 +3961,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], None))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_list, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["resources"][0]["id"] == "res-admin"
 
         payload_missing = {"jsonrpc": "2.0", "id": "21", "method": "resources/subscribe", "params": {}}
@@ -3579,7 +3986,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ValueError("no local"))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert "error" in result
             assert result["error"]["code"] == -32002
 
@@ -3593,13 +4002,17 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], None))),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_list, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["prompts"][0]["name"] == "prompt-admin"
 
         payload_missing = {"jsonrpc": "2.0", "id": "25", "method": "prompts/get", "params": {}}
         request_missing = self._make_request(payload_missing)
         request_missing.state = MagicMock()
-        result = await handle_rpc(request_missing, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request_missing, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["error"]["code"] == -32602
 
         payload_get = {"jsonrpc": "2.0", "id": "26", "method": "prompts/get", "params": {"name": "prompt-admin"}}
@@ -3612,14 +4025,18 @@ class TestRpcHandling:
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt_payload)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_get, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["name"] == "prompt-admin"
 
     async def test_handle_rpc_tools_call_missing_name_and_cancel(self, monkeypatch):
         payload_missing = {"jsonrpc": "2.0", "id": "27", "method": "tools/call", "params": {}}
         request_missing = self._make_request(payload_missing)
         request_missing.state = MagicMock()
-        result = await handle_rpc(request_missing, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request_missing, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["error"]["code"] == -32602
 
         payload = {"jsonrpc": "2.0", "id": "28", "method": "tools/call", "params": {"name": "tool-cancel", "arguments": {}}}
@@ -3635,7 +4052,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value={"ok": True})),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32800
 
     async def test_handle_rpc_tools_call_cancel_after_creation(self, monkeypatch):
@@ -3656,7 +4075,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=_slow_tool)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32800
 
     async def test_handle_rpc_resource_templates_admin_and_notifications_other(self):
@@ -3669,12 +4090,16 @@ class TestRpcHandling:
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_templates, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["resourceTemplates"][0]["uriTemplate"] == "resource://{id}"
 
         payload_other = {"jsonrpc": "2.0", "id": "31", "method": "notifications/other", "params": {}}
         request_other = self._make_request(payload_other)
-        result = await handle_rpc(request_other, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request_other, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["result"] == {}
 
     async def test_handle_rpc_elicitation_error_paths(self, monkeypatch):
@@ -3682,7 +4107,9 @@ class TestRpcHandling:
 
         payload_invalid = {"jsonrpc": "2.0", "id": "32", "method": "elicitation/create", "params": {}}
         request_invalid = self._make_request(payload_invalid)
-        result = await handle_rpc(request_invalid, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request_invalid, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["error"]["code"] == -32602
 
         payload_no_sessions = {
@@ -3693,7 +4120,11 @@ class TestRpcHandling:
         }
         request_no_sessions = self._make_request(payload_no_sessions)
         with patch("mcpgateway.main.session_registry.get_elicitation_capable_sessions", new=AsyncMock(return_value=[])):
-            result = await handle_rpc(request_no_sessions, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_no_sessions,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["error"]["code"] == -32000
 
         payload_not_capable = {
@@ -3704,7 +4135,11 @@ class TestRpcHandling:
         }
         request_not_capable = self._make_request(payload_not_capable)
         with patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=False)):
-            result = await handle_rpc(request_not_capable, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_not_capable,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["error"]["code"] == -32000
 
         class _EmptyService:
@@ -3726,7 +4161,11 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request_empty_pending, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_empty_pending,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["error"]["code"] == -32000
 
         class _TimeoutService:
@@ -3748,7 +4187,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request_timeout, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request_timeout, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32000
 
     async def test_handle_rpc_fallback_admin_bypass_and_plugin_error(self):
@@ -3762,7 +4203,9 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(return_value=tool_result)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, True)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["ok"] is True
 
         from mcpgateway.plugins.framework.models import PluginErrorModel
@@ -3775,7 +4218,9 @@ class TestRpcHandling:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             with pytest.raises(PluginError):
-                await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+                await handle_rpc(
+                    request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+                )
 
     async def test_handle_rpc_session_affinity_invalid_session_executes_locally(self, monkeypatch):
         """Cover session affinity branch when the MCP session id is invalid."""
@@ -3785,7 +4230,9 @@ class TestRpcHandling:
         request.headers = {"mcp-session-id": "not-valid"}
 
         with patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=False):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"] == {}
 
     async def test_handle_rpc_session_affinity_forwarded_response_success_and_error(self, monkeypatch):
@@ -3803,7 +4250,9 @@ class TestRpcHandling:
             patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
             patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["via"] == "other-worker"
 
         pool.forward_request_to_owner = AsyncMock(return_value={"error": {"code": -32001, "message": "nope"}})
@@ -3811,7 +4260,9 @@ class TestRpcHandling:
             patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
             patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32001
 
     async def test_handle_rpc_session_affinity_pool_not_initialized(self, monkeypatch):
@@ -3825,7 +4276,9 @@ class TestRpcHandling:
             patch("mcpgateway.services.mcp_session_pool.MCPSessionPool.is_valid_mcp_session_id", return_value=True),
             patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", side_effect=RuntimeError("no pool")),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"] == {}
 
     async def test_handle_rpc_session_affinity_internal_forwarded_executes_locally(self, monkeypatch):
@@ -3835,7 +4288,9 @@ class TestRpcHandling:
         request = self._make_request(payload)
         request.headers = {"mcp-session-id": "sess-123", "x-forwarded-internally": "true"}
 
-        result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["result"] == {}
 
     async def test_handle_rpc_initialize_registers_session_owner_success_and_failure(self, monkeypatch):
@@ -3853,13 +4308,17 @@ class TestRpcHandling:
         pool.register_pool_session_owner = AsyncMock(return_value=None)
 
         with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["capabilities"] == {}
             pool.register_pool_session_owner.assert_awaited_once()
 
         pool.register_pool_session_owner = AsyncMock(side_effect=Exception("boom"))
         with patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=pool):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["capabilities"] == {}
 
     async def test_handle_rpc_list_tools_legacy_token_teams_none_becomes_public_only(self):
@@ -3873,7 +4332,9 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["tools"][0]["id"] == "tool-1"
 
     async def test_handle_rpc_list_gateways_admin_bypass_and_next_cursor(self):
@@ -3887,14 +4348,18 @@ class TestRpcHandling:
         mock_db = MagicMock()
 
         with patch("mcpgateway.main.gateway_service.list_gateways", new=AsyncMock(return_value=([gateway], "next"))):
-            result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=mock_db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["gateways"][0]["id"] == "gw-1"
             assert result["result"]["nextCursor"] == "next"
 
         request2 = self._make_request(payload)
         request2.state.token_teams = None  # Explicitly None but no admin flag in token -> public-only
         with patch("mcpgateway.main.gateway_service.list_gateways", new=AsyncMock(return_value=([], None))) as list_gateways:
-            result = await handle_rpc(request2, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request2, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["result"]["gateways"] == []
             assert list_gateways.await_count == 1
 
@@ -3928,12 +4393,16 @@ class TestRpcHandling:
             patch("mcpgateway.main.session_registry.has_elicitation_capability", new=AsyncMock(return_value=True)),
             patch("mcpgateway.main.session_registry.broadcast", new=AsyncMock(return_value=None)),
         ):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32000
 
         payload_other = {"jsonrpc": "2.0", "id": "elic-2", "method": "elicitation/other", "params": {}}
         request_other = self._make_request(payload_other)
-        result = await handle_rpc(request_other, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request_other, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["result"] == {}
 
     async def test_handle_rpc_fallback_method_not_found_and_internal_error(self):
@@ -3944,12 +4413,16 @@ class TestRpcHandling:
 
         # Gateway forwarding is removed, so missing tool returns error
         with patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=ValueError("no tool"))):
-            result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await handle_rpc(
+                request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["error"]["code"] == -32000
 
         payload_missing_method = {"jsonrpc": "2.0", "id": "err-1", "params": {}}
         request_missing_method = self._make_request(payload_missing_method)
-        result = await handle_rpc(request_missing_method, db=MagicMock(), user={"email": "user@example.com"})
+        result = await handle_rpc(
+            request_missing_method, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["error"]["message"] == "Internal error"
 
     async def test_handle_rpc_tools_call_cancel_callback_cancels_task(self, monkeypatch):
@@ -3981,7 +4454,11 @@ class TestRpcHandling:
             patch("mcpgateway.main.tool_service.invoke_tool", new=AsyncMock(side_effect=_slow_invoke)),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            rpc_task = asyncio.create_task(handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"}))
+            rpc_task = asyncio.create_task(
+                handle_rpc(
+                    request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+                )
+            )
             await started.wait()
             await cancel_callback_holder["cb"](reason="test")  # type: ignore[misc]
             release.set()
@@ -4006,7 +4483,12 @@ class TestA2AListAndGet:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
             mock_service.list_agents = AsyncMock(return_value=([agent], "next-cursor"))
-            result = await list_a2a_agents(request, include_pagination=True, db=MagicMock(), user={"email": "user@example.com"})
+            result = await list_a2a_agents(
+                request,
+                include_pagination=True,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["agents"][0]["id"] == "agent-1"
             assert result["nextCursor"] == "next-cursor"
 
@@ -4020,7 +4502,12 @@ class TestA2AListAndGet:
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", ["team-a"], False)),
         ):
             mock_service.list_agents = AsyncMock(return_value=([], None))
-            response = await list_a2a_agents(request, team_id="team-b", db=MagicMock(), user={"email": "user@example.com"})
+            response = await list_a2a_agents(
+                request,
+                team_id="team-b",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert response.status_code == 403
 
     async def test_get_a2a_agent_success(self):
@@ -4031,7 +4518,9 @@ class TestA2AListAndGet:
             patch("mcpgateway.main.a2a_service.get_agent", new=AsyncMock(return_value={"id": "agent-1"})),
             patch("mcpgateway.main._get_rpc_filter_context", return_value=("user@example.com", None, False)),
         ):
-            result = await get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
+            result = await get_a2a_agent(
+                "agent-1", request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
             assert result["id"] == "agent-1"
 
 
@@ -4043,7 +4532,12 @@ class TestExportImportEndpoints:
         export_service.export_configuration = AsyncMock(return_value={"tools": []})
 
         with patch("mcpgateway.main.export_service", export_service):
-            result = await export_configuration(MagicMock(spec=Request), types="tools", db=MagicMock(), user={"email": "user@example.com"})
+            result = await export_configuration(
+                MagicMock(spec=Request),
+                types="tools",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["tools"] == []
 
     async def test_export_configuration_parsing_and_error_mappings(self, monkeypatch):
@@ -4088,7 +4582,12 @@ class TestExportImportEndpoints:
         export_service.export_selective = AsyncMock(return_value={"tools": ["tool-1"]})
 
         with patch("mcpgateway.main.export_service", export_service):
-            result = await export_selective_configuration({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            result = await export_selective_configuration(
+                {"tools": ["tool-1"]},
+                include_dependencies=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["tools"] == ["tool-1"]
 
     async def test_export_selective_configuration_error_mappings(self, monkeypatch):
@@ -4109,12 +4608,22 @@ class TestExportImportEndpoints:
 
         svc.export_selective = AsyncMock(side_effect=ExportError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_selective_configuration.__wrapped__({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.export_selective_configuration.__wrapped__(
+                {"tools": ["tool-1"]},
+                include_dependencies=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         svc.export_selective = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.export_selective_configuration.__wrapped__({"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.export_selective_configuration.__wrapped__(
+                {"tools": ["tool-1"]},
+                include_dependencies=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
 
     async def test_import_configuration_invalid_strategy(self):
@@ -4123,7 +4632,12 @@ class TestExportImportEndpoints:
         with pytest.raises(HTTPException) as excinfo:
             # NOTE: main.py raises HTTPException(400) for invalid strategies, but
             # immediately wraps it in the outer Exception handler (500).
-            await main_mod.import_configuration.__wrapped__(import_data={}, conflict_strategy="invalid", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data={},
+                conflict_strategy="invalid",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
         assert "Invalid conflict strategy" in str(excinfo.value.detail)
 
@@ -4134,7 +4648,12 @@ class TestExportImportEndpoints:
         import_service.import_configuration = AsyncMock(return_value=status)
 
         with patch("mcpgateway.main.import_service", import_service):
-            result = await import_configuration(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
+            result = await import_configuration(
+                import_data={"tools": []},
+                conflict_strategy="update",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
             assert result["status"] == "ok"
 
     async def test_import_configuration_error_mappings(self, monkeypatch):
@@ -4154,22 +4673,42 @@ class TestExportImportEndpoints:
 
         svc.import_configuration = AsyncMock(side_effect=ImportValidationError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data={"tools": []},
+                conflict_strategy="update",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 422
 
         svc.import_configuration = AsyncMock(side_effect=ImportConflictError("conflict"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data={"tools": []},
+                conflict_strategy="update",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 409
 
         svc.import_configuration = AsyncMock(side_effect=ImportServiceError("bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data={"tools": []},
+                conflict_strategy="update",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
         svc.import_configuration = AsyncMock(side_effect=RuntimeError("boom"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.import_configuration.__wrapped__(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.import_configuration.__wrapped__(
+                import_data={"tools": []},
+                conflict_strategy="update",
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 500
 
 
@@ -4179,9 +4718,7 @@ class TestMessageEndpointElicitation:
     async def test_message_endpoint_elicitation_response(self, monkeypatch):
         request = MagicMock(spec=Request)
         request.query_params = {"session_id": "session-1"}
-        request.body = AsyncMock(
-            return_value=json.dumps({"id": "req-1", "result": {"action": "accept", "content": {"foo": "bar"}}}).encode()
-        )
+        request.body = AsyncMock(return_value=json.dumps({"id": "req-1", "result": {"action": "accept", "content": {"foo": "bar"}}}).encode())
 
         # Allow permission checks to pass for direct invocation
         from mcpgateway.services.permission_service import PermissionService
@@ -4195,7 +4732,11 @@ class TestMessageEndpointElicitation:
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
 
-        response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        response = await message_endpoint(
+            request,
+            "server-1",
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
+        )
         assert response.status_code == 202
         broadcast.assert_not_called()
 
@@ -4204,7 +4745,15 @@ class TestMessageEndpointElicitation:
         request.query_params = {}
 
         with pytest.raises(HTTPException) as excinfo:
-            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+            await message_endpoint(
+                request,
+                "server-1",
+                user={
+                    "email": "user@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"],
+                    "db": MagicMock(),
+                },
+            )
         assert excinfo.value.status_code == 400
 
     async def test_message_endpoint_value_error_maps_to_400(self, monkeypatch):
@@ -4213,7 +4762,15 @@ class TestMessageEndpointElicitation:
 
         monkeypatch.setattr("mcpgateway.main._read_request_json", AsyncMock(side_effect=ValueError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+            await message_endpoint(
+                request,
+                "server-1",
+                user={
+                    "email": "user@example.com",
+                    "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"],
+                    "db": MagicMock(),
+                },
+            )
         assert excinfo.value.status_code == 400
 
     async def test_message_endpoint_elicitation_processing_error_falls_back_to_broadcast(self, monkeypatch):
@@ -4228,7 +4785,11 @@ class TestMessageEndpointElicitation:
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
 
-        response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        response = await message_endpoint(
+            request,
+            "server-1",
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
+        )
         assert response.status_code == 202
         broadcast.assert_awaited_once()
 
@@ -4244,7 +4805,11 @@ class TestMessageEndpointElicitation:
         broadcast = AsyncMock()
         monkeypatch.setattr("mcpgateway.main.session_registry.broadcast", broadcast)
 
-        response = await message_endpoint(request, "server-1", user={"email": "user@example.com"})
+        response = await message_endpoint(
+            request,
+            "server-1",
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"], "db": MagicMock()},
+        )
         assert response.status_code == 202
         broadcast.assert_awaited_once()
 
@@ -4432,7 +4997,7 @@ class TestRemainingCoverageGaps:
             team_id="team-2",
             visibility=None,
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -4453,7 +5018,7 @@ class TestRemainingCoverageGaps:
             team_id=None,
             visibility=None,
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["servers"] == [{"id": "srv-1"}]
         assert result["nextCursor"] == "next"
@@ -4474,7 +5039,7 @@ class TestRemainingCoverageGaps:
             team_id="team-2",
             visibility=None,
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -4494,7 +5059,7 @@ class TestRemainingCoverageGaps:
             team_id=None,
             visibility=None,
             db=db,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result["gateways"] == [{"id": "gw-1"}]
         assert result["nextCursor"] == "next"
@@ -4530,12 +5095,16 @@ class TestRemainingCoverageGaps:
         # 1) hasattr(content, "text") branch
         monkeypatch.setattr(builtins, "__import__", guarded_import)
         monkeypatch.setattr(main_mod.resource_service, "read_resource", AsyncMock(return_value=DummyContent("uri:1", text="hi")))
-        result = await main_mod.read_resource.__wrapped__("res-1", request, db=db, user={"email": "user@example.com"})
+        result = await main_mod.read_resource.__wrapped__(
+            "res-1", request, db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["text"] == "hi"
 
         # 2) final fallback branch
         monkeypatch.setattr(main_mod.resource_service, "read_resource", AsyncMock(return_value=DummyContent("uri:2")))
-        result = await main_mod.read_resource.__wrapped__("res-2", request, db=db, user={"email": "user@example.com"})
+        result = await main_mod.read_resource.__wrapped__(
+            "res-2", request, db=db, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["text"] == "dummy"
 
     async def test_get_resource_info_success_and_not_found(self, monkeypatch):
@@ -4544,12 +5113,22 @@ class TestRemainingCoverageGaps:
 
         ok = MagicMock()
         monkeypatch.setattr(main_mod.resource_service, "get_resource_by_id", AsyncMock(return_value=ok))
-        result = await main_mod.get_resource_info.__wrapped__("res-1", include_inactive=False, db=MagicMock(), user={"email": "user@example.com"})
+        result = await main_mod.get_resource_info.__wrapped__(
+            "res-1",
+            include_inactive=False,
+            db=MagicMock(),
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result is ok
 
         monkeypatch.setattr(main_mod.resource_service, "get_resource_by_id", AsyncMock(side_effect=ResourceNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_resource_info.__wrapped__("res-1", include_inactive=False, db=MagicMock(), user={"email": "user@example.com"})
+            await main_mod.get_resource_info.__wrapped__(
+                "res-1",
+                include_inactive=False,
+                db=MagicMock(),
+                user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 404
 
     async def test_get_import_status_found_and_not_found(self, monkeypatch):
@@ -4558,12 +5137,16 @@ class TestRemainingCoverageGaps:
         status_obj = MagicMock()
         status_obj.to_dict.return_value = {"status": "ok"}
         monkeypatch.setattr(main_mod.import_service, "get_import_status", MagicMock(return_value=status_obj))
-        result = await main_mod.get_import_status.__wrapped__("import-1", user={"email": "user@example.com"})
+        result = await main_mod.get_import_status.__wrapped__(
+            "import-1", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["status"] == "ok"
 
         monkeypatch.setattr(main_mod.import_service, "get_import_status", MagicMock(return_value=None))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_import_status.__wrapped__("import-2", user={"email": "user@example.com"})
+            await main_mod.get_import_status.__wrapped__(
+                "import-2", user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
     async def test_list_and_cleanup_import_statuses(self, monkeypatch):
@@ -4574,11 +5157,15 @@ class TestRemainingCoverageGaps:
         s2 = MagicMock()
         s2.to_dict.return_value = {"id": "2"}
         monkeypatch.setattr(main_mod.import_service, "list_import_statuses", MagicMock(return_value=[s1, s2]))
-        result = await main_mod.list_import_statuses.__wrapped__(user={"email": "user@example.com"})
+        result = await main_mod.list_import_statuses.__wrapped__(
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result == [{"id": "1"}, {"id": "2"}]
 
         monkeypatch.setattr(main_mod.import_service, "cleanup_completed_imports", MagicMock(return_value=2))
-        result = await main_mod.cleanup_import_statuses.__wrapped__(max_age_hours=1, user={"email": "user@example.com"})
+        result = await main_mod.cleanup_import_statuses.__wrapped__(
+            max_age_hours=1, user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["removed_count"] == 2
 
     async def test_create_server_public_only_restrictions_and_team_id(self, monkeypatch):
@@ -4594,7 +5181,7 @@ class TestRemainingCoverageGaps:
             team_id=None,
             visibility="team",
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -4605,7 +5192,7 @@ class TestRemainingCoverageGaps:
             team_id="team-2",
             visibility="team",
             db=MagicMock(),
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert response.status_code == 403
 
@@ -4631,7 +5218,7 @@ class TestRemainingCoverageGaps:
             team_id="team-1",
             visibility="public",
             db=db,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert register.call_args.kwargs["team_id"] is None
 
@@ -4642,12 +5229,16 @@ class TestRemainingCoverageGaps:
         request.state = SimpleNamespace(team_id="team-1", token_teams=[])
 
         gateway_obj = SimpleNamespace(team_id="team-1", visibility="team")
-        response = await main_mod.register_gateway.__wrapped__(gateway_obj, request, db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.register_gateway.__wrapped__(
+            gateway_obj, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert response.status_code == 403
 
         request.state = SimpleNamespace(team_id="team-1", token_teams=["team-1"])
         gateway_obj = SimpleNamespace(team_id="team-2", visibility="team")
-        response = await main_mod.register_gateway.__wrapped__(gateway_obj, request, db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.register_gateway.__wrapped__(
+            gateway_obj, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert response.status_code == 403
 
         request.state = SimpleNamespace(team_id="team-1", token_teams=[])
@@ -4659,7 +5250,9 @@ class TestRemainingCoverageGaps:
         )
         register = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(main_mod.gateway_service, "register_gateway", register)
-        _ = await main_mod.register_gateway.__wrapped__(gateway_obj, request, db=MagicMock(), user={"email": "user@example.com"})
+        _ = await main_mod.register_gateway.__wrapped__(
+            gateway_obj, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert register.call_args.kwargs["team_id"] is None
 
         class FakeValidationError(Exception):
@@ -4668,7 +5261,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "ValidationError", FakeValidationError)
         monkeypatch.setattr(main_mod.gateway_service, "register_gateway", AsyncMock(side_effect=FakeValidationError("bad")))
         monkeypatch.setattr(main_mod.ErrorFormatter, "format_validation_error", MagicMock(return_value={"detail": "bad"}))
-        response = await main_mod.register_gateway.__wrapped__(gateway_obj, request, db=MagicMock(), user={"email": "user@example.com"})
+        response = await main_mod.register_gateway.__wrapped__(
+            gateway_obj, request, db=MagicMock(), user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert response.status_code == 422
         assert json.loads(response.body.decode()) == {"detail": "bad"}
 
@@ -4681,42 +5276,58 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.server_service, "set_server_state", AsyncMock(side_effect=ServerLockConflictError("locked")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_server_state.__wrapped__("s1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_server_state.__wrapped__(
+                "s1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr(main_mod.server_service, "set_server_state", AsyncMock(side_effect=ServerError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_server_state.__wrapped__("s1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_server_state.__wrapped__(
+                "s1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr(main_mod.resource_service, "set_resource_state", AsyncMock(side_effect=ResourceLockConflictError("locked")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_resource_state.__wrapped__("r1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_resource_state.__wrapped__(
+                "r1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr(main_mod.resource_service, "set_resource_state", AsyncMock(side_effect=RuntimeError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_resource_state.__wrapped__("r1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_resource_state.__wrapped__(
+                "r1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr(main_mod.prompt_service, "set_prompt_state", AsyncMock(side_effect=PromptLockConflictError("locked")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_prompt_state.__wrapped__("p1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_prompt_state.__wrapped__(
+                "p1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 409
 
         monkeypatch.setattr(main_mod.prompt_service, "set_prompt_state", AsyncMock(side_effect=RuntimeError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_prompt_state.__wrapped__("p1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_prompt_state.__wrapped__(
+                "p1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
         monkeypatch.setattr(main_mod.gateway_service, "get_gateway", AsyncMock(side_effect=GatewayNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_gateway.__wrapped__("gw-1", db=MagicMock(), user={"email": "u"})
+            await main_mod.get_gateway.__wrapped__(
+                "gw-1", db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.gateway_service, "set_gateway_state", AsyncMock(side_effect=RuntimeError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_gateway_state.__wrapped__("gw-1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_gateway_state.__wrapped__(
+                "gw-1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
     async def test_delete_server_error_mappings(self, monkeypatch):
@@ -4726,12 +5337,16 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.server_service, "get_server", AsyncMock(return_value=None))
         monkeypatch.setattr(main_mod.server_service, "delete_server", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_server.__wrapped__("s1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
+            await main_mod.delete_server.__wrapped__(
+                "s1", purge_metrics=False, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 403
 
         monkeypatch.setattr(main_mod.server_service, "delete_server", AsyncMock(side_effect=ServerError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_server.__wrapped__("s1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
+            await main_mod.delete_server.__wrapped__(
+                "s1", purge_metrics=False, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
     async def test_message_endpoints_generic_exception_mapping(self, monkeypatch):
@@ -4744,7 +5359,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.session_registry, "broadcast", AsyncMock(side_effect=RuntimeError("boom")))
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.message_endpoint.__wrapped__(request, "server-1", user={"email": "u"})
+            await main_mod.message_endpoint.__wrapped__(
+                request, "server-1", user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 500
 
         request = MagicMock(spec=Request)
@@ -4752,7 +5369,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value={"hello": "world"}))
         monkeypatch.setattr(main_mod.session_registry, "broadcast", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.utility_message_endpoint.__wrapped__(request, user={"email": "u"})
+            await main_mod.utility_message_endpoint.__wrapped__(
+                request, user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 500
 
     async def test_list_tools_and_get_tool_jsonpath_modifier(self, monkeypatch):
@@ -4780,14 +5399,20 @@ class TestRemainingCoverageGaps:
             gateway_id=None,
             db=MagicMock(),
             apijsonpath=apijsonpath,
-            user={"email": "user@example.com"},
+            user={"email": "user@example.com", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert result == {"filtered": True}
 
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
-        result = await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
+        result = await main_mod.get_tool.__wrapped__(
+            "tool-1",
+            request=request,
+            db=MagicMock(),
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            apijsonpath=apijsonpath,
+        )
         assert result == {"filtered": True}
 
     async def test_deprecated_toggle_endpoints(self, monkeypatch):
@@ -4824,13 +5449,17 @@ class TestRemainingCoverageGaps:
         a2a.reset_metrics = AsyncMock()
         monkeypatch.setattr(main_mod, "a2a_service", a2a)
         monkeypatch.setattr(main_mod.settings, "mcpgateway_a2a_metrics_enabled", True)
-        result = await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
+        result = await main_mod.reset_metrics.__wrapped__(
+            entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert result["status"] == "success"
         a2a.reset_metrics.assert_awaited_once()
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.reset_metrics.__wrapped__(entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u"})
+            await main_mod.reset_metrics.__wrapped__(
+                entity="a2a_agent", entity_id=123, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_no_args_not_found_and_permission(self, monkeypatch):
@@ -4843,12 +5472,16 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PromptNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_prompt_no_args.__wrapped__(request, "p1", db=MagicMock(), user={"email": "u"})
+            await main_mod.get_prompt_no_args.__wrapped__(
+                request, "p1", db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=PermissionError("nope")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_prompt_no_args.__wrapped__(request, "p1", db=MagicMock(), user={"email": "u"})
+            await main_mod.get_prompt_no_args.__wrapped__(
+                request, "p1", db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 403
 
     async def test_list_resource_templates_token_teams_normalization(self, monkeypatch):
@@ -4860,11 +5493,25 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.resource_service, "list_resource_templates", AsyncMock(return_value=[]))
 
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, True))
-        result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags="a, b", visibility=None, user={"email": "u"})
+        result = await main_mod.list_resource_templates.__wrapped__(
+            request,
+            db=MagicMock(),
+            include_inactive=False,
+            tags="a, b",
+            visibility=None,
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result.resource_templates == []
 
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, False))
-        result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags=None, visibility=None, user={"email": "u"})
+        result = await main_mod.list_resource_templates.__wrapped__(
+            request,
+            db=MagicMock(),
+            include_inactive=False,
+            tags=None,
+            visibility=None,
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result.resource_templates == []
 
     async def test_list_prompts_token_teams_normalization(self, monkeypatch):
@@ -4887,7 +5534,7 @@ class TestRemainingCoverageGaps:
             team_id=None,
             visibility=None,
             db=MagicMock(),
-            user={"email": "u"},
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert list_prompts.call_args.kwargs["user_email"] is None
         assert list_prompts.call_args.kwargs["token_teams"] is None
@@ -4903,7 +5550,7 @@ class TestRemainingCoverageGaps:
             team_id=None,
             visibility=None,
             db=MagicMock(),
-            user={"email": "u"},
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert list_prompts.call_args.kwargs["token_teams"] == []
 
@@ -4922,10 +5569,22 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.prompt_service, "list_server_prompts", AsyncMock(return_value=[prompt]))
 
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, True))
-        result = await main_mod.server_get_resources.__wrapped__(request, "srv", include_inactive=False, db=MagicMock(), user={"email": "u"})
+        result = await main_mod.server_get_resources.__wrapped__(
+            request,
+            "srv",
+            include_inactive=False,
+            db=MagicMock(),
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result == [{"id": "r1"}]
 
-        result = await main_mod.server_get_prompts.__wrapped__(request, "srv", include_inactive=False, db=MagicMock(), user={"email": "u"})
+        result = await main_mod.server_get_prompts.__wrapped__(
+            request,
+            "srv",
+            include_inactive=False,
+            db=MagicMock(),
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result == [{"id": "p1"}]
 
     async def test_update_a2a_agent_service_unavailable_and_validation(self, monkeypatch):
@@ -4941,7 +5600,9 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
+            await main_mod.update_a2a_agent.__wrapped__(
+                "a1", MagicMock(), request, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 503
 
         validation = ValidationError.from_exception_data("A2AAgentUpdate", [{"type": "missing", "loc": ("name",), "msg": "Field required", "input": {}}])
@@ -4950,7 +5611,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "a2a_service", svc)
         monkeypatch.setattr(main_mod.ErrorFormatter, "format_validation_error", MagicMock(return_value="bad"))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.update_a2a_agent.__wrapped__("a1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
+            await main_mod.update_a2a_agent.__wrapped__(
+                "a1", MagicMock(), request, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 422
 
     async def test_module_level_router_registration_branches(self, monkeypatch):
@@ -5051,7 +5714,9 @@ class TestRemainingCoverageGaps:
         )
         monkeypatch.setattr(main_mod.server_service, "update_server", AsyncMock(side_effect=ServerNameConflictError("conflict")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.update_server.__wrapped__("s1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
+            await main_mod.update_server.__wrapped__(
+                "s1", MagicMock(), request, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 409
 
     async def test_server_get_tools_public_only_default(self, monkeypatch):
@@ -5066,17 +5731,31 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", None, False))
         monkeypatch.setattr(main_mod.tool_service, "list_server_tools", AsyncMock(return_value=[tool]))
 
-        result = await main_mod.server_get_tools.__wrapped__(request, "srv", include_inactive=False, include_metrics=False, db=MagicMock(), user={"email": "u"})
+        result = await main_mod.server_get_tools.__wrapped__(
+            request,
+            "srv",
+            include_inactive=False,
+            include_metrics=False,
+            db=MagicMock(),
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
         assert result == [{"id": "t1"}]
 
     async def test_tag_endpoints_parse_entity_types(self, monkeypatch):
         import mcpgateway.main as main_mod
 
         monkeypatch.setattr(main_mod.tag_service, "get_all_tags", AsyncMock(return_value=[]))
-        _ = await main_mod.list_tags.__wrapped__("Tools, Servers", include_entities=False, db=MagicMock(), user={"email": "u"})
+        _ = await main_mod.list_tags.__wrapped__(
+            "Tools, Servers",
+            include_entities=False,
+            db=MagicMock(),
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+        )
 
         monkeypatch.setattr(main_mod.tag_service, "get_entities_by_tag", AsyncMock(return_value=[]))
-        _ = await main_mod.get_entities_by_tag.__wrapped__("tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u"})
+        _ = await main_mod.get_entities_by_tag.__wrapped__(
+            "tag-1", entity_types="Tools", db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
 
     async def test_get_a2a_agent_service_unavailable(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -5085,7 +5764,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "a2a_service", None)
 
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.get_a2a_agent.__wrapped__("a1", request, db=MagicMock(), user={"email": "u"})
+            await main_mod.get_a2a_agent.__wrapped__(
+                "a1", request, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 503
 
     async def test_create_a2a_agent_public_only_sets_team_id_none(self, monkeypatch):
@@ -5116,7 +5797,7 @@ class TestRemainingCoverageGaps:
             team_id="team-1",
             visibility="public",
             db=MagicMock(),
-            user={"email": "u"},
+            user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
         )
         assert svc.register_agent.call_args.kwargs["team_id"] is None
 
@@ -5125,7 +5806,9 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod, "a2a_service", None)
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.set_a2a_agent_state.__wrapped__("a1", activate=True, db=MagicMock(), user={"email": "u"})
+            await main_mod.set_a2a_agent_state.__wrapped__(
+                "a1", activate=True, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 503
 
     async def test_delete_tool_not_found_maps_to_404(self, monkeypatch):
@@ -5134,7 +5817,9 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.tool_service, "delete_tool", AsyncMock(side_effect=ToolNotFoundError("missing")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.delete_tool.__wrapped__("t1", purge_metrics=False, db=MagicMock(), user={"email": "u"})
+            await main_mod.delete_tool.__wrapped__(
+                "t1", purge_metrics=False, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
         assert excinfo.value.status_code == 404
 
     async def test_create_resource_resource_error_maps_to_400(self, monkeypatch):
@@ -5158,7 +5843,14 @@ class TestRemainingCoverageGaps:
         )
         monkeypatch.setattr(main_mod.resource_service, "register_resource", AsyncMock(side_effect=ResourceError("bad")))
         with pytest.raises(HTTPException) as excinfo:
-            await main_mod.create_resource.__wrapped__(MagicMock(), request, team_id=None, visibility="public", db=MagicMock(), user={"email": "u"})
+            await main_mod.create_resource.__wrapped__(
+                MagicMock(),
+                request,
+                team_id=None,
+                visibility="public",
+                db=MagicMock(),
+                user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]},
+            )
         assert excinfo.value.status_code == 400
 
     async def test_get_prompt_reraises_unhandled_exception(self, monkeypatch):
@@ -5170,7 +5862,9 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.prompt_service, "get_prompt", AsyncMock(side_effect=RuntimeError("boom")))
         with pytest.raises(RuntimeError, match="boom"):
-            await main_mod.get_prompt.__wrapped__(request, "p1", args={}, db=MagicMock(), user={"email": "u"})
+            await main_mod.get_prompt.__wrapped__(
+                request, "p1", args={}, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+            )
 
     def test_log_security_recommendations_skip_ssl_verify_line(self, monkeypatch):
         import mcpgateway.main as main_mod
@@ -5206,7 +5900,9 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod.gateway_service, "update_gateway", AsyncMock(side_effect=FakeValidationError("bad")))
         monkeypatch.setattr(main_mod.ErrorFormatter, "format_validation_error", MagicMock(return_value={"detail": "bad"}))
 
-        response = await main_mod.update_gateway.__wrapped__("gw1", MagicMock(), request, db=MagicMock(), user={"email": "u"})
+        response = await main_mod.update_gateway.__wrapped__(
+            "gw1", MagicMock(), request, db=MagicMock(), user={"email": "u", "permissions": ["admin.*", "a2a.*", "tools.*", "servers.*", "resources.*", "prompts.*", "gateways.*", "teams.*"]}
+        )
         assert response.status_code == 422
         assert json.loads(response.body.decode()) == {"detail": "bad"}
 

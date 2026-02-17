@@ -971,6 +971,8 @@ class Permissions:
     ADMIN_EVENTS = "admin.events"
     ADMIN_GRPC = "admin.grpc"
     ADMIN_PLUGINS = "admin.plugins"
+    ADMIN_EXPORT = "admin.export"
+    ADMIN_IMPORT = "admin.import"
 
     # A2A Agent permissions
     A2A_CREATE = "a2a.create"
