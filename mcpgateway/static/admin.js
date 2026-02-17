@@ -22102,7 +22102,8 @@ async function showTeamEditModal(teamId) {
     }
 
     // Construct the full URL - ensure it starts with /
-    const url = (rootPath || "") + "/admin/teams/" + teamId + "/edit?_t=" + Date.now();
+    const url =
+        (rootPath || "") + "/admin/teams/" + teamId + "/edit?_t=" + Date.now();
 
     // Load the team edit form via HTMX
     fetch(url, {
