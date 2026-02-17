@@ -571,9 +571,7 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
                 env=subprocess_env,
             )
         except FileNotFoundError as exc:
-            raise RuntimeBackendError(
-                f"Command not found: {cmd[0]}. Ensure runtime backend dependencies are installed in the gateway container."
-            ) from exc
+            raise RuntimeBackendError(f"Command not found: {cmd[0]}. Ensure runtime backend dependencies are installed in the gateway container.") from exc
         except PermissionError as exc:
             raise RuntimeBackendError(f"Permission denied while executing: {' '.join(cmd)}") from exc
         except OSError as exc:
