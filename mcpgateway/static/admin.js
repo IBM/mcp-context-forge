@@ -8635,9 +8635,15 @@ async function runtimeLoadRuntimes() {
     query.set("limit", "200");
 
     const payload = await runtimeApiRequest(`?${query.toString()}`);
-    runtimeUiState.runtimes = Array.isArray(payload?.runtimes)
-        ? payload.runtimes
-        : [];
+    const runtimes = Array.isArray(payload?.runtimes) ? payload.runtimes : [];
+    runtimeUiState.runtimes = [...runtimes].sort((left, right) => {
+        const leftDeleted = String(left?.status || "") === "deleted";
+        const rightDeleted = String(right?.status || "") === "deleted";
+        if (leftDeleted === rightDeleted) {
+            return 0;
+        }
+        return leftDeleted ? 1 : -1;
+    });
     runtimeRenderRuntimes();
 }
 
@@ -8646,15 +8652,21 @@ async function runtimeLoadApprovals() {
         safeGetElement("runtime-approval-filter-status", true)?.value ||
         "pending";
     const query = new URLSearchParams();
-    if (statusFilter && statusFilter !== "all") {
+    if (statusFilter) {
         query.set("status_filter", statusFilter);
     }
     query.set("limit", "100");
 
     const payload = await runtimeApiRequest(`/approvals?${query.toString()}`);
-    runtimeUiState.approvals = Array.isArray(payload?.approvals)
-        ? payload.approvals
-        : [];
+    const approvals = Array.isArray(payload?.approvals) ? payload.approvals : [];
+    runtimeUiState.approvals = [...approvals].sort((left, right) => {
+        const leftPending = String(left?.status || "") === "pending";
+        const rightPending = String(right?.status || "") === "pending";
+        if (leftPending === rightPending) {
+            return 0;
+        }
+        return leftPending ? -1 : 1;
+    });
     runtimeRenderApprovals();
 }
 
