@@ -11,54 +11,6 @@ use std::{
 };
 use url::Url;
 
-/// Evaluates a URL against the URL reputation configuration.
-///
-/// This function:
-/// 1. Parses and normalizes the URL (trim + lowercase).
-/// 2. Extracts the domain.
-/// 4. Check if the domain is an ipv4 or ipv6
-/// 4. Applies reputation checks in the following order:
-///    - Whitelist domain
-///    - Blocked domains
-///    - Blocked URL patterns
-///    - heuristic check if not an ip address
-///         - Entropy-based heuristic on the domain
-///         - Valid TLD in IANNA list
-///         - Domain unicode security check
-///
-/// If any blocking rule matches, a `URLPluginResult` is returned with
-/// `continue_processing = false` and a populated `PluginViolation`.
-///
-/// If no rule matches, processing is allowed.
-///
-/// # Arguments
-/// * `url` - The URL to evaluate.
-/// * `config` - `URLReputationConfig`
-///                 whitelist_domains: set
-///                 blocked_domains: set
-///                 blocked_patterns: set
-///                 use_heuristic_check: bool
-///                 entropy_threshold: float
-///                 block_non_secure_http: bool
-///
-/// # Returns
-/// * `Ok(URLPluginResult)` indicating whether processing should continue
-///   and optional violation details.
-///
-/// # Notes
-///     - Whitelisted domains take precedence over all blocking rules.
-///     - The domain is normalized to lowercase before evaluation.
-///     - Emptty domains/url are considered invalid.
-
-// pub struct URLReputationConfig {
-//     pub whitelist_domains: HashSet<String>,
-//     pub allowed_patterns: Vec<String>,
-//     pub blocked_domains: HashSet<String>,
-//     pub blocked_patterns: HashSet<String>,
-//     pub use_heuristic_check: bool,
-//     pub entropy_threshold: f32,
-//     pub block_non_secure_http: bool,
-// }
 
 #[pyclass]
 pub struct URLReputationPlugin {
@@ -153,6 +105,18 @@ impl URLReputationPlugin {
                 }),
             });
         }
+        if self.config.blocked_domains.contains(domain)  {
+            return Ok(URLPluginResult {
+                continue_processing: false,
+                violation: Some(PluginViolation {
+                    reason: "Domain in blocked set".to_string(),
+                    description: format!("Domain '{}' in blocked set", domain),
+                    code: "URL_REPUTATION_BLOCK".to_string(),
+                    details: Some(HashMap::from([("domain".to_string(), url.to_string())])),
+                }),
+            });
+        }
+
         // check for patterns in the url
         if patterns::in_blocked_patterns_regex(url, &self.blocked_patterns) {
             return Ok(URLPluginResult {
@@ -234,6 +198,28 @@ mod tests {
     }
 
     #[test]
+    fn test_blocked_domain() {
+        let config = URLReputationConfig {
+            whitelist_domains: HashSet::new(),
+            allowed_patterns: Vec::new(),
+            blocked_domains: HashSet::from(["idontlikethisdomain.com".to_string()]),
+            blocked_patterns: Vec::new(),
+            use_heuristic_check: false,
+            entropy_threshold: 0.0,
+            block_non_secure_http: true,
+        };
+        let plugin = URLReputationPlugin::new(config);
+        let url = "https://idontlikethisdomain.com";
+
+        let result = plugin.validate_url(url).unwrap();
+        assert!(false == result.continue_processing);
+        assert_eq!(
+            result.violation.unwrap().reason,
+            "Domain in blocked set"
+        );
+    }
+
+    #[test]
     fn test_non_secure_http() {
         let config = URLReputationConfig {
             whitelist_domains: HashSet::new(),
@@ -248,7 +234,7 @@ mod tests {
         let url = "http://ibm.com";
 
         let result = plugin.validate_url(url).unwrap();
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
         assert_eq!(
             result.violation.unwrap().reason,
             "Blocked non secure http url"
@@ -288,7 +274,7 @@ mod tests {
         let url = "https://safe.com/crypto-invest";
 
         let result = plugin.validate_url(url).unwrap();
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
         assert_eq!(result.violation.unwrap().reason, "Blocked pattern");
     }
 
@@ -400,7 +386,7 @@ mod tests {
         let url = format!("https://{}.com", domain_label);
         let result = plugin.validate_url(&url).unwrap();
 
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -423,7 +409,7 @@ mod tests {
         let url = "https://pаypal.com/test"; // Cyrillic 'а'
         let result = plugin.validate_url(url).unwrap();
 
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -465,7 +451,7 @@ mod tests {
         let url = "https://my..com";
         let result = plugin.validate_url(url).unwrap();
 
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -488,7 +474,7 @@ mod tests {
         let url = "https://exa!mple.com";
         let result = plugin.validate_url(url).unwrap();
 
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
         assert_eq!(
             result.violation.unwrap().reason,
             "Domain unicode is not secure"
@@ -530,7 +516,7 @@ mod tests {
         let url = "https://332.168.0.1:442";
         let result = plugin.validate_url(url).unwrap();
 
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
     }
 
     #[test]
@@ -568,6 +554,6 @@ mod tests {
         let url = "https://[2001:db8::85a3::8a2e:370:7334 ]:442/";
         let result = plugin.validate_url(url).unwrap();
 
-        assert!(!result.continue_processing);
+        assert!(result.continue_processing == false);
     }
 }
