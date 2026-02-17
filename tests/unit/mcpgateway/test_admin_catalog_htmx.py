@@ -11,8 +11,8 @@ Uses TestClient with proper auth mocking via module-level fixture.
 # Standard
 import os
 
-# Set UI base path to /admin before importing mcpgateway modules
-os.environ["MCPGATEWAY_UI_BASE_PATH"] = "/admin"
+# Set UI base path to /ui before importing mcpgateway modules
+os.environ["MCPGATEWAY_UI_BASE_PATH"] = "/ui"
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
