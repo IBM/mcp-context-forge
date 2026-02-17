@@ -1,17 +1,17 @@
 # Core FastAPI and Web Framework
-fastapi>=0.104.0
 
 # HTTP Client
-httpx>=0.25.0
 
 # Langchain and AI (install these first)
-langchain>=0.1.0
-langchain-core>=0.1.0
-langchain-openai>=0.0.2
-openai>=1.0.0
-pydantic>=2.5.0
-python-dotenv>=1.0.0
 
 # Utilities
-python-multipart>=0.0.6
-uvicorn[standard]>=0.24.0
+fastapi>=0.129.0
+httpx>=0.28.1
+langchain>=1.2.10
+langchain-core>=1.2.13
+langchain-openai>=1.1.10
+openai>=2.21.0
+pydantic>=2.12.5
+python-dotenv>=1.2.1
+python-multipart>=0.0.22
+uvicorn[standard]>=0.41.0

@@ -31,11 +31,11 @@ dependencies = [
     "jinja2>=3.1.6",
     "mcp>=1.26.0",
     "numpy>=2.4.2",
-    "openai>=2.20.0",
+    "openai>=2.21.0",
     "orjson>=3.11.7",
     "psutil>=7.2.2",
     "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
+    "pydantic-settings>=2.13.0",
     "python-dotenv>=1.2.1",
     "PyYAML>=6.0.3",
     "scikit-learn>=1.8.0",
@@ -66,11 +66,11 @@ benchmark = [
     "memory-profiler>=0.61.0",
 ]
 anthropic = [
-    "anthropic>=0.79.0",
+    "anthropic>=0.80.0",
 ]
 aws = [
-    "boto3>=1.42.47",
-    "botocore>=1.42.47",
+    "boto3>=1.42.51",
+    "botocore>=1.42.51",
 ]
 ollama = []
 gemini = [
@@ -80,19 +80,19 @@ watsonx = [
     "ibm-watsonx-ai>=1.5.2",
 ]
 rest = [
-    "fastapi>=0.128.8",
+    "fastapi>=0.129.0",
     "python-multipart>=0.0.22",
-    "uvicorn[standard]>=0.40.0",
+    "uvicorn[standard]>=0.41.0",
 ]
 all = [
-    "anthropic>=0.79.0",
-    "boto3>=1.42.47",
-    "botocore>=1.42.47",
-    "fastapi>=0.128.8",
+    "anthropic>=0.80.0",
+    "boto3>=1.42.51",
+    "botocore>=1.42.51",
+    "fastapi>=0.129.0",
     "google-generativeai>=0.8.6",
     "ibm-watsonx-ai>=1.5.2",
     "python-multipart>=0.0.22",
-    "uvicorn[standard]>=0.40.0",
+    "uvicorn[standard]>=0.41.0",
 ]
 
 [project.urls]

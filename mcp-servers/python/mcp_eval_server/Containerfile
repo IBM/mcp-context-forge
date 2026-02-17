@@ -3,14 +3,14 @@
 ###############################################################################
 # MCP Evaluation Server - OCI-compliant container build
 #
-# This multi-stage Dockerfile produces an ultra-slim, scratch-based runtime
-# image that automatically tracks the latest Python 3.11.x patch release
-# from the RHEL 9 repositories and is fully patched on each rebuild.
+# This multi-stage Dockerfile produces a minimal UBI10-based runtime
+# image that automatically tracks the latest Python 3.12.x patch release
+# from the RHEL 10 repositories and is fully patched on each rebuild.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
-#   - Runtime stage is scratch: only the Python runtime and app
-#   - Both builder and runtime rootfs receive `dnf upgrade -y`
+#   - Runtime stage is ubi-minimal: only the Python runtime and app
+#   - Both builder and runtime receive full OS patches
 #   - Development headers are dropped from the final image
 #   - Hadolint DL3041 is suppressed to allow "latest patch" RPM usage
 #   - Includes ML/AI dependencies for sentence transformers and embeddings
@@ -19,19 +19,16 @@
 ###########################
 # Build-time arguments
 ###########################
-# Temporary dir for assembling the scratch rootfs
-ARG ROOTFS_PATH=/tmp/rootfs
 # Python major.minor series to track
-ARG PYTHON_VERSION=3.11
+ARG PYTHON_VERSION=3.12
 
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi9/ubi:9.6-1753978585 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1770180700 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
-ARG ROOTFS_PATH
 
 # ----------------------------------------------------------------------------
 # 1) Patch the OS
@@ -47,9 +44,9 @@ RUN set -euo pipefail \
     && dnf install -y \
          python${PYTHON_VERSION} \
          python${PYTHON_VERSION}-devel \
-         python${PYTHON_VERSION}-pip \
          gcc \
          binutils \
+         curl \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -116,124 +113,18 @@ EOF
 RUN chmod +x /app/run-server.sh
 
 # ----------------------------------------------------------------------------
-# Pre-compile Python bytecode with -OO optimization
-#  - Strips docstrings and assertions
-#  - Improves startup performance
-#  - Must be done before copying to rootfs
-#  - Remove __pycache__ directories after compilation
+# Create necessary directories for evaluation data and cache
 # ----------------------------------------------------------------------------
-RUN python3 -OO -m compileall -q /app/.venv /app/mcp_eval_server /app/config \
-    && find /app -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-
-# ----------------------------------------------------------------------------
-# Build a minimal, fully-patched rootfs containing only the runtime Python
-# Include ca-certificates for HTTPS connections to OpenAI/Azure APIs
-# ----------------------------------------------------------------------------
-# hadolint ignore=DL3041
-RUN set -euo pipefail \
-    && mkdir -p "${ROOTFS_PATH:?}" \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 upgrade -y \
-    && dnf --installroot="${ROOTFS_PATH:?}" --releasever=9 install -y \
-         --setopt=install_weak_deps=0 \
-         --setopt=tsflags=nodocs \
-         python${PYTHON_VERSION} \
-         ca-certificates \
-    && dnf clean all --installroot="${ROOTFS_PATH:?}"
-
-# ----------------------------------------------------------------------------
-# Create `python3` symlink in the rootfs for compatibility
-# ----------------------------------------------------------------------------
-RUN ln -s /usr/bin/python${PYTHON_VERSION} ${ROOTFS_PATH:?}/usr/bin/python3
-
-# ----------------------------------------------------------------------------
-# Clean up unnecessary files from rootfs (if they exist)
-#  - Remove development headers, documentation
-#  - Use ${var:?} to prevent accidental deletion of host directories
-# ----------------------------------------------------------------------------
-RUN set -euo pipefail \
-    && rm -rf ${ROOTFS_PATH:?}/usr/include/* \
-    ${ROOTFS_PATH:?}/usr/share/man/* \
-    ${ROOTFS_PATH:?}/usr/share/doc/* \
-    ${ROOTFS_PATH:?}/usr/share/info/* \
-    ${ROOTFS_PATH:?}/usr/share/locale/* \
-    ${ROOTFS_PATH:?}/var/log/* \
-    ${ROOTFS_PATH:?}/boot \
-    ${ROOTFS_PATH:?}/media \
-    ${ROOTFS_PATH:?}/srv \
-    ${ROOTFS_PATH:?}/usr/games \
-    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "test" -exec rm -rf {} + 2>/dev/null || true \
-    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true \
-    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -type d -name "idle_test" -exec rm -rf {} + 2>/dev/null || true \
-    && find ${ROOTFS_PATH:?}/usr/lib*/python*/ -name "*.mo" -delete 2>/dev/null || true \
-    && rm -rf ${ROOTFS_PATH:?}/usr/lib*/python*/ensurepip \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/idlelib \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/tkinter \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/turtle* \
-    ${ROOTFS_PATH:?}/usr/lib*/python*/distutils/command/*.exe
-
-# ----------------------------------------------------------------------------
-# Remove package managers and unnecessary system tools from rootfs
-# - Keep essential tools for MCP server functionality
-# - Remove security-sensitive tools to minimize attack surface
-# ----------------------------------------------------------------------------
-RUN rm -rf ${ROOTFS_PATH:?}/usr/bin/dnf* \
-    ${ROOTFS_PATH:?}/usr/bin/yum* \
-    ${ROOTFS_PATH:?}/usr/bin/rpm* \
-    ${ROOTFS_PATH:?}/usr/bin/microdnf \
-    ${ROOTFS_PATH:?}/usr/lib/rpm \
-    ${ROOTFS_PATH:?}/usr/lib/dnf \
-    ${ROOTFS_PATH:?}/usr/lib/yum* \
-    ${ROOTFS_PATH:?}/etc/dnf \
-    ${ROOTFS_PATH:?}/etc/yum*
-
-# ----------------------------------------------------------------------------
-# Strip unneeded symbols from shared libraries and remove build tools
-# - This reduces the final image size and removes build tools in one step
-# ----------------------------------------------------------------------------
-RUN find "${ROOTFS_PATH:?}/usr/lib64" -name '*.so*' -exec strip --strip-unneeded {} + 2>/dev/null || true \
-    && dnf remove -y gcc binutils \
-    && dnf clean all
-
-# ----------------------------------------------------------------------------
-# Remove setuid/setgid binaries for security
-# ----------------------------------------------------------------------------
-RUN find ${ROOTFS_PATH:?} -perm /4000 -o -perm /2000 -type f -delete 2>/dev/null || true
-
-# ----------------------------------------------------------------------------
-# Create minimal passwd/group files for user 1001
-# - Using GID 1001 to match UID for consistency
-# - OpenShift compatible (accepts any UID in group 1001)
-# ----------------------------------------------------------------------------
-RUN printf 'mcp-eval:x:1001:1001:mcp-eval:/app:/sbin/nologin\n' > "${ROOTFS_PATH:?}/etc/passwd" && \
-    printf 'mcp-eval:x:1001:\n' > "${ROOTFS_PATH:?}/etc/group"
-
-# ----------------------------------------------------------------------------
-# Create necessary directories in the rootfs
-#  - /tmp and /var/tmp with sticky bit for security
-#  - Create directories for evaluation data and cache
-# ----------------------------------------------------------------------------
-RUN chmod 1777 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp 2>/dev/null || true \
-    && chown 1001:1001 ${ROOTFS_PATH:?}/tmp ${ROOTFS_PATH:?}/var/tmp \
-    && mkdir -p ${ROOTFS_PATH:?}/app/data/cache \
-    && mkdir -p ${ROOTFS_PATH:?}/app/data/results \
-    && chown -R 1001:1001 ${ROOTFS_PATH:?}/app/data
-
-# ----------------------------------------------------------------------------
-# Copy application directory into the rootfs and fix permissions for non-root
-# - Set ownership to 1001:1001 (matching passwd/group)
-# - Allow group write permissions for OpenShift compatibility
-# ----------------------------------------------------------------------------
-RUN cp -r /app ${ROOTFS_PATH:?}/app \
-    && chown -R 1001:1001 ${ROOTFS_PATH:?}/app \
-    && chmod -R g=u ${ROOTFS_PATH:?}/app
+RUN mkdir -p /app/data/cache /app/data/results \
+    && chown -R 1001:0 /app \
+    && chmod -R g=u /app
 
 ###########################
-# Final runtime (squashed)
+# Runtime stage
 ###########################
-FROM scratch AS runtime
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557 AS runtime
 
-ARG PYTHON_VERSION
-ARG ROOTFS_PATH
+ARG PYTHON_VERSION=3.12
 
 # ----------------------------------------------------------------------------
 # OCI image metadata
@@ -247,14 +138,26 @@ LABEL maintainer="Mihai Criveti" \
       org.opencontainers.image.documentation="https://github.com/contextforge/mcp-context-forge/mcp-servers/python/mcp-eval-server" \
       org.opencontainers.image.vendor="MCP Context Forge"
 
+# hadolint ignore=DL3041
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
+    python${PYTHON_VERSION} \
+    ca-certificates \
+    shadow-utils \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum
+
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
+
+RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+
 # ----------------------------------------------------------------------------
-# Copy the entire prepared root filesystem from the builder stage
+# Copy the application from the builder stage
 # ----------------------------------------------------------------------------
-COPY --from=builder ${ROOTFS_PATH}/ /
+COPY --from=builder --chown=1001:0 /app /app
 
 # ----------------------------------------------------------------------------
 # Ensure our virtual environment binaries have priority in PATH
-# - Don't write bytecode files (we pre-compiled with -OO)
+# - Don't write bytecode files
 # - Unbuffered output for better logging
 # - Random hash seed for security
 # - Disable pip cache to save space
