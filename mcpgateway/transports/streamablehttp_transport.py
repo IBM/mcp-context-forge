@@ -1030,6 +1030,12 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     handlers expect.  This mirrors the normalization performed by
     ``streamable_http_auth`` so that the stateful-session fallback path in
     ``_get_request_context_or_default`` returns an identical shape.
+
+    Args:
+        payload: Raw JWT payload dict from ``require_auth_override``.
+
+    Returns:
+        Canonical user context dict with keys email, teams, is_admin, is_authenticated.
     """
     email = payload.get("sub") or payload.get("email")
     is_admin = payload.get("is_admin", False)
