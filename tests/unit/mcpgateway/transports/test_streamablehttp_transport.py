@@ -8064,6 +8064,70 @@ def test_normalize_jwt_payload_session_no_email():
 
 
 # ---------------------------------------------------------------------------
+# call_tool: recovered context propagation regression test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_call_tool_uses_recovered_email_not_stale_contextvar(monkeypatch):
+    """call_tool passes app_user_email from recovered fallback context, not stale ContextVar.
+
+    Regression test: previously call_tool used get_user_email_from_context()
+    which reads from user_context_var (stale in stateful sessions). Now it
+    extracts email from the already-recovered user_context dict.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, server_id_var, tool_service, types, user_context_var
+
+    # Set ContextVar to a STALE email that should NOT be used
+    stale_ctx = {"email": "stale-user@old.com", "teams": [], "is_admin": False, "is_authenticated": True}
+    u_tok = user_context_var.set(stale_ctx)
+
+    # The recovered context should provide a DIFFERENT email
+    recovered_ctx = {"email": "recovered-user@new.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True}
+
+    # Mock _get_request_context_or_default to return the recovered context
+    async def fake_get_context():
+        return "test-server-id", {"authorization": "Bearer token"}, recovered_ctx
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default", fake_get_context)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: None)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", False)
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "ok"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    invoke_mock = AsyncMock(return_value=mock_result)
+    monkeypatch.setattr(tool_service, "invoke_tool", invoke_mock)
+
+    try:
+        await call_tool("test-tool", {"arg": "val"})
+
+        # Assert invoke_tool was called with the RECOVERED email, not the stale one
+        invoke_mock.assert_awaited_once()
+        call_kwargs = invoke_mock.call_args.kwargs
+        assert call_kwargs["app_user_email"] == "recovered-user@new.com", f"Expected recovered email but got: {call_kwargs['app_user_email']}"
+        assert call_kwargs["user_email"] == "recovered-user@new.com"
+        assert call_kwargs["token_teams"] == ["team-1"]
+    finally:
+        user_context_var.reset(u_tok)
+
+
+# ---------------------------------------------------------------------------
 # handle_streamable_http injection: additional coverage
 # ---------------------------------------------------------------------------
 
