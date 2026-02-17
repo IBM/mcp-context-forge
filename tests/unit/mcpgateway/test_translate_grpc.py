@@ -10,7 +10,6 @@ Tests for gRPC to MCP translation module.
 # Standard
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
 
 # Third-Party
 import pytest
@@ -1022,3 +1021,48 @@ def test_import_fallback_sets_grpc_unavailable(monkeypatch):
     ns = runpy.run_path(tg.__file__, run_name="__translate_grpc_import_fallback_test__")
     assert ns["GRPC_AVAILABLE"] is False
     assert ns["grpc"] is None
+
+
+@pytest.mark.skipif(not GRPC_AVAILABLE, reason="gRPC packages not installed")
+class TestGrpcEndpointLoadFileDescriptors:
+    """Tests for GrpcEndpoint.load_file_descriptors()."""
+
+    def test_load_file_descriptors_populates_pool(self):
+        """Test that valid FileDescriptorProto bytes are loaded into the pool."""
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+
+        # Create a minimal valid FileDescriptorProto
+        fd = FileDescriptorProto()
+        fd.name = "test_load_fd.proto"
+        fd.package = "test_load_fd"
+        fd.syntax = "proto3"
+        proto_bytes = fd.SerializeToString()
+
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        endpoint.load_file_descriptors([proto_bytes])
+
+        # The descriptor should now be findable in the pool
+        found = endpoint._pool.FindFileByName("test_load_fd.proto")
+        assert found is not None
+        assert found.package == "test_load_fd"
+
+    def test_load_file_descriptors_skips_duplicates(self):
+        """Test that loading the same descriptor twice doesn't raise."""
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+
+        fd = FileDescriptorProto()
+        fd.name = "test_dup_fd.proto"
+        fd.package = "test_dup_fd"
+        fd.syntax = "proto3"
+        proto_bytes = fd.SerializeToString()
+
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        # Load twice — should not raise
+        endpoint.load_file_descriptors([proto_bytes])
+        endpoint.load_file_descriptors([proto_bytes])
+
+    def test_load_file_descriptors_skips_corrupt_bytes(self):
+        """Test that corrupt/invalid bytes are silently skipped."""
+        endpoint = GrpcEndpoint(target="localhost:50051", reflection_enabled=False)
+        # Should not raise
+        endpoint.load_file_descriptors([b"not-valid-protobuf-data"])
