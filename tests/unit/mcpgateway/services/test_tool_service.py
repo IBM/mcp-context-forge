@@ -6216,3 +6216,87 @@ class TestInvokeToolDirectProxyViaHeader:
                     {},
                     request_headers=request_headers,
                 )
+
+
+class TestGrpcToolInvocation:
+    """Tests for gRPC tool invocation via invoke_tool."""
+
+    @pytest.fixture
+    def tool_service(self):
+        return ToolService()
+
+    @pytest.fixture
+    def test_db(self):
+        db = MagicMock()
+        db.close = MagicMock()
+        db.commit = MagicMock()
+        return db
+
+    @pytest.fixture
+    def mock_grpc_tool(self):
+        """Create a mock gRPC tool."""
+        tool = MagicMock(spec=DbTool)
+        tool.id = "grpc-tool-1"
+        tool.original_name = "test.Svc.DoStuff"
+        tool.url = "localhost:8989"
+        tool.description = "gRPC method test.Svc.DoStuff"
+        tool.original_description = "gRPC method test.Svc.DoStuff"
+        tool.integration_type = "gRPC"
+        tool.request_type = "SSE"
+        tool.headers = {}
+        tool.input_schema = {"type": "object", "properties": {}}
+        tool.output_schema = None
+        tool.jsonpath_filter = ""
+        tool.auth_type = None
+        tool.auth_value = None
+        tool.gateway_id = None
+        tool.gateway = None
+        tool.grpc_service_id = "grpc-svc-1"
+        tool.annotations = {}
+        tool.name = "test-svc-dostuff"
+        tool.custom_name = "test.Svc.DoStuff"
+        tool.custom_name_slug = "test-svc-dostuff"
+        tool.display_name = "Test Svc Dostuff"
+        tool.enabled = True
+        tool.reachable = True
+        tool.tags = []
+        tool.team_id = None
+        tool.owner_email = "admin@example.com"
+        tool.visibility = "public"
+        tool.team = None
+        return tool
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_success(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """Test successful gRPC tool invocation."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"status": "ok", "value": 42})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {"key": "val"}, request_headers=None)
+
+        assert response.is_error is not True
+        assert "ok" in response.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """Test gRPC tool invocation that raises an error."""
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(side_effect=Exception("Connection refused"))
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is True
+        assert "gRPC invocation error" in response.content[0].text
+        assert "Connection refused" in response.content[0].text

@@ -855,3 +855,220 @@ class TestGrpcService:
         assert mock_db.add.call_count == 3
         tool_names = {call[0][0].original_name for call in mock_db.add.call_args_list}
         assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1", "pkg.ServiceB.MethodB2"}
+
+    def test_sync_tools_skips_underscore_keys(self, service, mock_db, sample_db_service):
+        """Test that _sync_tools_from_reflection skips _-prefixed keys like _file_descriptors."""
+        sample_db_service.discovered_services = {
+            "_file_descriptors": ["base64data"],
+            "test.Svc": {
+                "name": "test.Svc",
+                "methods": [
+                    {"name": "Do", "input_type": ".test.Req", "output_type": ".test.Resp", "client_streaming": False, "server_streaming": False},
+                ],
+            },
+        }
+        sample_db_service.team_id = None
+        sample_db_service.owner_email = None
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = []
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Should only create 1 tool, not try to process _file_descriptors
+        assert mock_db.add.call_count == 1
+        tool = mock_db.add.call_args[0][0]
+        assert tool.original_name == "test.Svc.Do"
+
+    def test_sync_tools_updates_matching_description(self, service, mock_db, sample_db_service):
+        """Test that when description == original_description, both get updated."""
+        sample_db_service.discovered_services = {
+            "test.Svc": {
+                "name": "test.Svc",
+                "methods": [
+                    {"name": "Do", "input_type": ".test.Req", "output_type": ".test.Resp", "client_streaming": False, "server_streaming": False},
+                ],
+            },
+        }
+
+        from mcpgateway.db import Tool as DbTool
+
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.id = "tool-id"
+        existing_tool.original_name = "test.Svc.Do"
+        existing_tool.original_description = "old desc"
+        existing_tool.description = "old desc"  # Matches original, so should be updated
+        existing_tool.url = sample_db_service.target
+        existing_tool.input_schema = {
+            "type": "object",
+            "properties": {},
+            "x-grpc-input-type": ".test.Req",
+            "x-grpc-output-type": ".test.Resp",
+            "x-grpc-client-streaming": False,
+            "x-grpc-server-streaming": False,
+        }
+
+        mock_scalars = MagicMock()
+        mock_scalars.all.return_value = [existing_tool]
+        mock_result = MagicMock()
+        mock_result.scalars.return_value = mock_scalars
+        mock_db.execute.return_value = mock_result
+
+        service._sync_tools_from_reflection(mock_db, sample_db_service)
+
+        # Both description and original_description should be updated
+        assert existing_tool.description == "gRPC method test.Svc.Do"
+        assert existing_tool.original_description == "gRPC method test.Svc.Do"
+
+    async def test_get_service_methods_skips_underscore_keys(self, service, mock_db, sample_db_service):
+        """Test that get_service_methods skips _-prefixed keys like _file_descriptors."""
+        sample_db_service.discovered_services = {
+            "_file_descriptors": ["base64data"],
+            "test.TestService": {
+                "name": "test.TestService",
+                "methods": [
+                    {"name": "Hello", "input_type": "test.Req", "output_type": "test.Resp", "client_streaming": False, "server_streaming": False},
+                ],
+            },
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
+
+        result = await service.get_service_methods(mock_db, sample_db_service.id)
+
+        assert len(result) == 1
+        assert result[0]["method"] == "Hello"
+
+    @patch("mcpgateway.translate_grpc.GrpcEndpoint")
+    async def test_invoke_method_with_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
+        """Test invoke_method uses stored descriptors instead of reflection."""
+        import base64
+
+        fake_descriptor_bytes = b"\x0a\x05hello"
+        sample_db_service.enabled = True
+        sample_db_service.discovered_services = {
+            "_file_descriptors": [base64.b64encode(fake_descriptor_bytes).decode("ascii")],
+            "test.Svc": {
+                "name": "test.Svc",
+                "methods": [
+                    {"name": "Do", "input_type": ".test.Req", "output_type": ".test.Resp", "client_streaming": False, "server_streaming": False},
+                ],
+            },
+        }
+        sample_db_service.tls_enabled = False
+        sample_db_service.tls_cert_path = None
+        sample_db_service.tls_key_path = None
+        sample_db_service.grpc_metadata = {}
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
+
+        mock_ep_instance = AsyncMock()
+        mock_ep_instance.invoke = AsyncMock(return_value={"result": "ok"})
+        mock_ep_instance.close = AsyncMock()
+        mock_ep_instance.load_file_descriptors = MagicMock()
+        mock_ep_instance._services = {}
+        mock_endpoint_cls.return_value = mock_ep_instance
+
+        result = await service.invoke_method(mock_db, sample_db_service.id, "test.Svc.Do", {"key": "value"})
+
+        assert result == {"result": "ok"}
+        # Should have been created with reflection_enabled=False
+        mock_endpoint_cls.assert_called_once()
+        call_kwargs = mock_endpoint_cls.call_args[1]
+        assert call_kwargs["reflection_enabled"] is False
+        # Should have called load_file_descriptors
+        mock_ep_instance.load_file_descriptors.assert_called_once()
+        # Should have set _services (excluding _file_descriptors)
+        assert "_file_descriptors" not in mock_ep_instance._services
+        mock_ep_instance.close.assert_called_once()
+
+    @patch("mcpgateway.translate_grpc.GrpcEndpoint")
+    async def test_invoke_method_without_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
+        """Test invoke_method falls back to reflection when no stored descriptors."""
+        sample_db_service.enabled = True
+        sample_db_service.discovered_services = {
+            "test.Svc": {
+                "name": "test.Svc",
+                "methods": [
+                    {"name": "Do", "input_type": ".test.Req", "output_type": ".test.Resp", "client_streaming": False, "server_streaming": False},
+                ],
+            },
+        }
+        sample_db_service.tls_enabled = False
+        sample_db_service.tls_cert_path = None
+        sample_db_service.tls_key_path = None
+        sample_db_service.grpc_metadata = {}
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
+
+        mock_ep_instance = AsyncMock()
+        mock_ep_instance.invoke = AsyncMock(return_value={"result": "ok"})
+        mock_ep_instance.close = AsyncMock()
+        mock_endpoint_cls.return_value = mock_ep_instance
+
+        result = await service.invoke_method(mock_db, sample_db_service.id, "test.Svc.Do", {})
+
+        assert result == {"result": "ok"}
+        # Should have been created with reflection_enabled=True
+        call_kwargs = mock_endpoint_cls.call_args[1]
+        assert call_kwargs["reflection_enabled"] is True
+        mock_ep_instance.close.assert_called_once()
+
+    @patch("mcpgateway.services.grpc_service.grpc")
+    @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
+    @patch("mcpgateway.services.grpc_service.reflection_pb2")
+    async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_reflection_pb2_grpc, mock_grpc, service, mock_db, sample_db_service):
+        """Test that _perform_reflection collects file descriptor bytes into _file_descriptors."""
+        import base64
+
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
+
+        # Build a real serialized FileDescriptorProto
+        fd_proto = FileDescriptorProto()
+        fd_proto.name = "test.proto"
+        fd_proto.package = "testpkg"
+        svc_desc = fd_proto.service.add()
+        svc_desc.name = "TestService"
+        m = svc_desc.method.add()
+        m.name = "DoStuff"
+        m.input_type = ".testpkg.Req"
+        m.output_type = ".testpkg.Resp"
+        proto_bytes = fd_proto.SerializeToString()
+
+        sample_db_service.tls_enabled = False
+
+        # Mock list_services response
+        list_resp = MagicMock()
+        list_resp.HasField = lambda f: f == "list_services_response"
+        svc_info = MagicMock()
+        svc_info.name = "testpkg.TestService"
+        list_resp.list_services_response.service = [svc_info]
+
+        # Mock file_descriptor response
+        fd_resp = MagicMock()
+        fd_resp.HasField = lambda f: f == "file_descriptor_response"
+        fd_resp.file_descriptor_response.file_descriptor_proto = [proto_bytes]
+
+        mock_stub = MagicMock()
+        # First call: list services, second call: file descriptor
+        mock_stub.ServerReflectionInfo = MagicMock(side_effect=[iter([list_resp]), iter([fd_resp])])
+        mock_reflection_pb2_grpc.ServerReflectionStub.return_value = mock_stub
+
+        mock_grpc.insecure_channel.return_value = MagicMock()
+
+        # Patch _sync_tools_from_reflection to avoid DB operations
+        with patch.object(service, "_sync_tools_from_reflection"):
+            await service._perform_reflection(mock_db, sample_db_service)
+
+        # Verify _file_descriptors was populated
+        discovered = sample_db_service.discovered_services
+        assert "_file_descriptors" in discovered
+        assert len(discovered["_file_descriptors"]) == 1
+        # Verify it's valid base64-encoded proto bytes
+        decoded = base64.b64decode(discovered["_file_descriptors"][0])
+        assert decoded == proto_bytes
+        # Verify service was discovered
+        assert "testpkg.TestService" in discovered
+        assert discovered["testpkg.TestService"]["methods"][0]["name"] == "DoStuff"
