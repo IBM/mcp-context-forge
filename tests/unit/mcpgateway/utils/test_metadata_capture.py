@@ -44,7 +44,7 @@ class TestMetadataCapture:
         request.client.host = "10.0.0.1"
         request.headers = {"user-agent": "Chrome/90.0"}
         request.url = SimpleNamespace()
-        request.url.path = "/admin/tools"
+        request.url.path = "/ui/tools"  # Use /ui path (default UI base path)
 
         context = MetadataCapture.extract_request_context(request)
 
@@ -87,7 +87,7 @@ class TestMetadataCapture:
         request.client.host = "172.16.0.5"
         request.headers = {"user-agent": "HTTPie/2.4.0"}
         request.url = SimpleNamespace()
-        request.url.path = "/admin/servers"
+        request.url.path = "/ui/servers"  # Use /ui path (default UI base path)
 
         metadata = MetadataCapture.extract_creation_metadata(request, "admin", import_batch_id="batch-123", federation_source="gateway-prod")
 
