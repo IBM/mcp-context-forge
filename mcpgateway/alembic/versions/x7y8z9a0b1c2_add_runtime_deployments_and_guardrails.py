@@ -34,7 +34,7 @@ def upgrade() -> None:
             sa.Column("description", sa.Text(), nullable=False, server_default=""),
             sa.Column("recommended_backends", sa.JSON(), nullable=False),
             sa.Column("config", sa.JSON(), nullable=False),
-            sa.Column("built_in", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+            sa.Column("built_in", sa.Boolean(), nullable=False, server_default=sa.false()),
             sa.Column("created_by", sa.String(length=255), nullable=True),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),

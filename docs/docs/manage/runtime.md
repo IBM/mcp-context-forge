@@ -136,4 +136,3 @@ When triggered:
 - Runtime status reflects backend state (`pending`, `deploying`, `running`, `connected`, `stopped`, `error`, `deleted`).
 - Successful deployments can auto-register a gateway entry.
 - Runtime logs are available through backend-native retrieval (`docker logs` or `ibmcloud ce application logs`).
-

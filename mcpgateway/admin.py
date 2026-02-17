@@ -1187,6 +1187,37 @@ def _normalize_int_query(value: Any, fallback: int) -> int:
         return fallback
 
 
+def _normalize_list_query(value: Any) -> List[str]:
+    """Normalize list-like query values, including FastAPI Query defaults.
+
+    Args:
+        value: Raw query value or FastAPI ``Query`` wrapper.
+
+    Returns:
+        List[str]: Cleaned list of non-empty string values.
+    """
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+
+    default_value = getattr(value, "default", None)
+    if default_value is None:
+        return []
+
+    if isinstance(default_value, list):
+        return [str(item).strip() for item in default_value if str(item).strip()]
+
+    if isinstance(default_value, str):
+        return [item.strip() for item in default_value.split(",") if item.strip()]
+
+    return []
+
+
 _TAG_MAX_GROUPS = 20
 _TAG_MAX_TERMS_PER_GROUP = 10
 
@@ -15407,8 +15438,8 @@ async def list_catalog_servers(
         auth_type=auth_type,
         provider=provider,
         search=search,
-        tags=tags or [],
-        supported_backends=supported_backends or [],
+        tags=_normalize_list_query(tags),
+        supported_backends=_normalize_list_query(supported_backends),
         source_type=source_type,
         show_registered_only=show_registered_only,
         show_available_only=show_available_only,
