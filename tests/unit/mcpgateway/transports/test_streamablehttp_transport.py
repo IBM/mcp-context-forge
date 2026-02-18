@@ -3954,6 +3954,95 @@ async def test_complete_exception(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# complete direct_proxy tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_delegates_to_helper(monkeypatch):
+    """complete() delegates to _proxy_complete_to_gateway in direct_proxy mode."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-dp"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_completion = types.Completion(values=["python"], total=1, hasMore=False)
+    mock_proxy_result = types.CompleteResult(completion=mock_completion)
+
+    proxy_mock = AsyncMock(return_value=mock_proxy_result)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_complete_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False})))
+
+    mock_meta = MagicMock()
+    mock_meta.model_dump.return_value = {"progressToken": "tok-1"}
+    mock_ctx = MagicMock()
+    mock_ctx.meta = mock_meta
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="my-prompt")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="language", value="py")))
+
+    result = await complete(ref, argument, context=None)
+
+    assert result is not None
+    proxy_mock.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_complete_direct_proxy_access_denied(monkeypatch):
+    """complete() returns empty Completion when direct_proxy RBAC check fails."""
+    from mcpgateway.transports.streamablehttp_transport import complete, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-deny"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    ref = types.PromptReference(type="ref/prompt", name="p")
+    argument = types.CompleteRequest(params=types.CompleteRequestParams(ref=ref, argument=types.CompletionArgument(name="a", value="v")))
+
+    result = await complete(ref, argument, context=None)
+    assert result.values == []
+
+
+# ---------------------------------------------------------------------------
 # _proxy_complete_to_gateway tests
 # ---------------------------------------------------------------------------
 

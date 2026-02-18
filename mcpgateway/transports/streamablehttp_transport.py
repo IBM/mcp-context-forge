@@ -1839,12 +1839,59 @@ async def complete(
         Exception: If completion handling fails internally. The method
             logs the exception and returns an empty completion structure.
     """
+    meta_data = None
+    try:
+        ctx = mcp_app.request_context
+        if ctx and ctx.meta is not None:
+            meta_data = ctx.meta.model_dump()
+    except LookupError:
+        logger.debug("No active request context found for _meta extraction in completion/complete")
+
+    server_id, request_headers, user_context = await _get_request_context_or_default()
+
     try:
         async with get_db() as db:
+            # Check for direct_proxy mode (uses the same DB session as cache path)
+            if server_id:
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                if gateway_id:
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        user_email = user_context.get("email") if user_context else None
+                        token_teams = user_context.get("teams") if user_context else None
+
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return types.Completion(values=[], total=0, hasMore=False)
+
+                        logger.info(f"[COMPLETE] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
+                        result = await _proxy_complete_to_gateway(
+                            gateway, request_headers, user_context,
+                            ref=ref, argument=argument, context=context, meta=meta_data,
+                        )
+                        if result is None:
+                            return types.Completion(values=[], total=0, hasMore=False)
+                        if isinstance(result, dict):
+                            return types.Completion(**result.get("completion", result))
+                        if hasattr(result, "completion"):
+                            comp = result.completion
+                            return comp if isinstance(comp, types.Completion) else types.Completion(**comp.model_dump())
+                        return result
+
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} not in direct_proxy mode, using cache")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} not found")
+
             params = {
                 "ref": ref.model_dump() if hasattr(ref, "model_dump") else ref,
                 "argument": argument.model_dump() if hasattr(argument, "model_dump") else argument,
                 "context": context.model_dump() if hasattr(context, "model_dump") else context,
+                "_meta": meta_data,
             }
 
             result = await completion_service.handle_completion(db, params)
