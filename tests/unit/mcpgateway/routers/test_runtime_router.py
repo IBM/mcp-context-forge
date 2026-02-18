@@ -439,6 +439,19 @@ async def test_approval_actions_success_and_error(mock_db, mock_user):
 
 
 @pytest.mark.asyncio
+async def test_approve_runtime_request_expired_commits_status_state(mock_db, mock_user):
+    payload = RuntimeApprovalDecisionRequest(reason="late")
+    with patch(
+        "mcpgateway.routers.runtime_router.runtime_service.approve",
+        AsyncMock(side_effect=RuntimeBackendError("Approval request expired")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await approve_runtime_request(approval_id="approval-expired", payload=payload, db=mock_db, user=mock_user)
+    assert exc_info.value.status_code == 400
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_get_runtime_approval_error_path(mock_db, mock_user):
     with patch("mcpgateway.routers.runtime_router.runtime_service.get_approval", AsyncMock(side_effect=RuntimeBackendError("approval not found"))):
         with pytest.raises(HTTPException) as exc_info:

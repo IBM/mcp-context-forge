@@ -3,6 +3,7 @@
 
 # Standard
 from datetime import timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
@@ -949,6 +950,56 @@ async def test_docker_backend_logs_uses_combined_output(monkeypatch):
 
     lines = await backend.logs("container-abc", tail=5)
     assert lines == ["startup line", "request line"]
+
+
+@pytest.mark.asyncio
+async def test_docker_backend_builds_github_using_clone_relative_dockerfile_path(monkeypatch, tmp_path):
+    backend = DockerRuntimeBackend(docker_binary="docker")
+
+    temp_root = tmp_path / "runtime-workdir"
+    clone_dir = temp_root / "src"
+    calls: list[list[str]] = []
+
+    class _TempDir:
+        def __enter__(self):
+            temp_root.mkdir(parents=True, exist_ok=True)
+            return str(temp_root)
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        calls.append(cmd)
+        if cmd[:2] == ["git", "clone"]:
+            clone_dir.mkdir(parents=True, exist_ok=True)
+            (clone_dir / "Dockerfile").write_text("FROM scratch\\n", encoding="utf-8")
+        return "ok"
+
+    monkeypatch.setattr("mcpgateway.runtimes.docker_backend.tempfile.TemporaryDirectory", lambda prefix: _TempDir())
+    monkeypatch.setattr(backend, "_run", _fake_run)
+
+    image, logs = await backend._build_image_from_github(
+        RuntimeBackendDeployRequest(
+            runtime_id="12345678-1234-1234-1234-123456789abc",
+            name="github-runtime",
+            source_type="github",
+            source={
+                "type": "github",
+                "repo": "acme/runtime",
+                "branch": "main",
+                "dockerfile": "Dockerfile",
+            },
+        )
+    )
+
+    assert image.startswith("mcpgateway-runtime/github-runtime:")
+    assert any("Cloned repository" in line for line in logs)
+    assert any("Built image" in line for line in logs)
+
+    build_cmd = next(cmd for cmd in calls if len(cmd) > 1 and cmd[1] == "build")
+    dockerfile_arg = build_cmd[build_cmd.index("-f") + 1]
+    assert Path(dockerfile_arg) == (clone_dir / "Dockerfile").resolve()
+    assert Path(build_cmd[-1]) == clone_dir.resolve()
 
 
 @pytest.mark.asyncio
