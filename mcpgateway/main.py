@@ -4127,7 +4127,6 @@ async def get_tool(
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
         # Allow apijsonpath as a direct model (internal/tests) or as JSON string via query
         parsed_apijsonpath: Optional[JsonPathModifier] = None
-        logger.info(f"Received request for tool {tool_id} with apijsonpath: {apijsonpath}")
         if apijsonpath is None:
             return data
 
@@ -4138,7 +4137,6 @@ async def get_tool(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
         elif isinstance(apijsonpath, JsonPathModifier):
             parsed_apijsonpath = apijsonpath
-        logger.info(f"Parsed JSONPath modifier for tool {tool_id}: {parsed_apijsonpath}")
         if parsed_apijsonpath is None:
             return data
 
