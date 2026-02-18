@@ -52,7 +52,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
         Args:
             app: ASGI application
             enabled: Whether observability is enabled (defaults to settings)
-            service: Optional ObseObservabilityService instance
+            service: Optional ObservabilityService instance
         """
         super().__init__(app)
         self.enabled = enabled if enabled is not None else getattr(settings, "observability_enabled", False)
