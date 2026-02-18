@@ -91,7 +91,7 @@ class URLReputationPlugin(Plugin):
         if _RUST_AVAILABLE:
             self.rust_plugin = plugin_rust(self._cfg)
 
-    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload, context: PluginContext) -> ResourcePreFetchResult:
+    async def resource_pre_fetch(self, payload: ResourcePreFetchPayload) -> ResourcePreFetchResult:
         """Check URL against blocked domains and patterns before fetch.
 
         Args:
