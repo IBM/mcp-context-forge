@@ -481,4 +481,4 @@ The test fixtures use `pytest` finalizers that run even on test failure, ensurin
 - [Microsoft Graph API - Users](https://learn.microsoft.com/en-us/graph/api/resources/user)
 - [Microsoft Graph API - Groups](https://learn.microsoft.com/en-us/graph/api/resources/group)
 - [Azure AD App Registration](https://learn.microsoft.com/en-us/azure/active-directory/develop/quickstart-register-app)
-- [ContextForge SSO Configuration](../configuration/sso.md)
+- [ContextForge SSO Configuration](../manage/sso.md)
