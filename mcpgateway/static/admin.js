@@ -1006,7 +1006,7 @@ function showErrorMessage(message, elementId = null) {
 // HTML error response and surfaces it via the toast notification system.
 function handleDeleteUserError(event) {
     if (!event.detail.successful) {
-        var d = document.createElement("div");
+        const d = document.createElement("div");
         d.innerHTML = event.detail.xhr.responseText;
         showErrorMessage(d.textContent.trim() || "Error deleting user");
     }
