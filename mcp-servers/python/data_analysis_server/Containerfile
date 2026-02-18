@@ -87,37 +87,32 @@ RUN set -euo pipefail \
 COPY src/ /app/src/
 COPY sample_data/ /app/sample_data/
 COPY config.yaml /app/
-COPY __init__.py /app/ 2>/dev/null || true
 
 # ----------------------------------------------------------------------------
 # Create runtime script for MCP server
 # ----------------------------------------------------------------------------
-RUN cat > /app/run-server.sh << 'EOF'
-#!/bin/bash
-set -euo pipefail
-
-# Set default values for data analysis server
-export PYTHONPATH="/app/src:${PYTHONPATH:-}"
-export DATA_ANALYSIS_CACHE_DIR="${DATA_ANALYSIS_CACHE_DIR:-/app/data/cache}"
-export DATA_ANALYSIS_RESULTS_DIR="${DATA_ANALYSIS_RESULTS_DIR:-/app/data/results}"
-
-# Create directories if they don't exist
-mkdir -p "$DATA_ANALYSIS_CACHE_DIR" "$DATA_ANALYSIS_RESULTS_DIR"
-
-# Log startup information
-echo "Starting MCP Data Analysis Server..."
-echo "Available tools: load_data, analyze_data, transform_data, query_data, visualize_data, statistical_test, time_series_analysis"
-echo "Cache directory: $DATA_ANALYSIS_CACHE_DIR"
-echo "Results directory: $DATA_ANALYSIS_RESULTS_DIR"
-
-# Run the MCP server
-exec python3 -m data_analysis_server.server
-EOF
-
-# ----------------------------------------------------------------------------
-# Ensure executable permissions for scripts
-# ----------------------------------------------------------------------------
-RUN chmod +x /app/run-server.sh
+RUN printf '%s\n' \
+    '#!/bin/bash' \
+    'set -euo pipefail' \
+    '' \
+    '# Set default values for data analysis server' \
+    'export PYTHONPATH="/app/src:${PYTHONPATH:-}"' \
+    'export DATA_ANALYSIS_CACHE_DIR="${DATA_ANALYSIS_CACHE_DIR:-/app/data/cache}"' \
+    'export DATA_ANALYSIS_RESULTS_DIR="${DATA_ANALYSIS_RESULTS_DIR:-/app/data/results}"' \
+    '' \
+    '# Create directories if they don'\''t exist' \
+    'mkdir -p "$DATA_ANALYSIS_CACHE_DIR" "$DATA_ANALYSIS_RESULTS_DIR"' \
+    '' \
+    '# Log startup information' \
+    'echo "Starting MCP Data Analysis Server..."' \
+    'echo "Available tools: load_data, analyze_data, transform_data, query_data, visualize_data, statistical_test, time_series_analysis"' \
+    'echo "Cache directory: $DATA_ANALYSIS_CACHE_DIR"' \
+    'echo "Results directory: $DATA_ANALYSIS_RESULTS_DIR"' \
+    '' \
+    '# Run the MCP server' \
+    'exec python3 -m data_analysis_server.server' \
+    > /app/run-server.sh \
+    && chmod +x /app/run-server.sh
 
 # ----------------------------------------------------------------------------
 # Create necessary directories for data analysis cache and results

@@ -31,7 +31,6 @@ RUN set -euo pipefail \
     && rm -rf /root/.cache
 
 COPY src/ ./src/
-COPY templates/ ./templates/
 
 RUN chown -R 1001:0 /app \
     && chmod -R g=u /app

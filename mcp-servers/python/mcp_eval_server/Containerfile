@@ -84,33 +84,26 @@ RUN set -euo pipefail \
 # This ensures code changes don't invalidate the dependency layer
 # ----------------------------------------------------------------------------
 COPY mcp_eval_server/ /app/mcp_eval_server/
-COPY config/ /app/config/
-COPY __init__.py /app/
 
 # ----------------------------------------------------------------------------
 # Create runtime script for MCP server
 # ----------------------------------------------------------------------------
-RUN cat > /app/run-server.sh << 'EOF'
-#!/bin/bash
-set -euo pipefail
-
-# Set default values
-export OPENAI_API_KEY="${OPENAI_API_KEY:-}"
-export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-}"
-export AZURE_OPENAI_KEY="${AZURE_OPENAI_KEY:-}"
-
-# Log startup information
-echo "Starting MCP Evaluation Server..."
-echo "Available judges: $(python3 -c 'from mcp_eval_server.tools.judge_tools import JudgeTools; jt=JudgeTools(); print(jt.get_available_judges())')"
-
-# Run the MCP server
-exec python3 -m mcp_eval_server.server
-EOF
-
-# ----------------------------------------------------------------------------
-# Ensure executable permissions for scripts
-# ----------------------------------------------------------------------------
-RUN chmod +x /app/run-server.sh
+RUN printf '%s\n' \
+    '#!/bin/bash' \
+    'set -euo pipefail' \
+    '' \
+    '# Set default values' \
+    'export OPENAI_API_KEY="${OPENAI_API_KEY:-}"' \
+    'export AZURE_OPENAI_ENDPOINT="${AZURE_OPENAI_ENDPOINT:-}"' \
+    'export AZURE_OPENAI_KEY="${AZURE_OPENAI_KEY:-}"' \
+    '' \
+    '# Log startup information' \
+    'echo "Starting MCP Evaluation Server..."' \
+    '' \
+    '# Run the MCP server' \
+    'exec python3 -m mcp_eval_server.server' \
+    > /app/run-server.sh \
+    && chmod +x /app/run-server.sh
 
 # ----------------------------------------------------------------------------
 # Create necessary directories for evaluation data and cache
