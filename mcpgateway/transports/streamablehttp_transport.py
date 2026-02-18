@@ -1232,7 +1232,7 @@ async def list_prompts() -> List[types.Prompt]:
         >>> sig.return_annotation
         typing.List[mcp.types.Prompt]
     """
-    server_id, _, user_context = await _get_request_context_or_default()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1251,6 +1251,33 @@ async def list_prompts() -> List[types.Prompt]:
     if server_id:
         try:
             async with get_db() as db:
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                if gateway_id:
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []
+
+                        meta = None
+                        try:
+                            request_ctx = mcp_app.request_context
+                            meta = request_ctx.meta
+                            logger.info(f"[LIST PROMPTS] Using direct_proxy mode for server {server_id}, gateway {gateway.id}. Meta Attached: {meta is not None}")
+                        except (LookupError, AttributeError) as e:
+                            logger.debug(f"No request context available for _meta extraction: {e}")
+
+                        return await _proxy_list_prompts_to_gateway(gateway, request_headers, user_context, meta)
+
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
                 prompts = await prompt_service.list_server_prompts(db, server_id, user_email=user_email, token_teams=token_teams)
                 return [types.Prompt(name=prompt.name, description=prompt.description, arguments=prompt.arguments) for prompt in prompts]
         except Exception as e:
