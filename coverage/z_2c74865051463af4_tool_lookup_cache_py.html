@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/cache/tool_lookup_cache.py: 96%</title>
+    <title>Coverage for mcpgateway/cache/tool_lookup_cache.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;cache&#8201;/&#8201;tool_lookup_cache.py</b>:
-            <span class="pc_cov">96%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -56,10 +55,9 @@
         </aside>
         <h2>
             <span class="text">168 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">164<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">4<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">168<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">5<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_2c74865051463af4_session_registry_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -235,12 +233,12 @@
     <p class="run"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">            <span class="key">from</span> <span class="nam">mcpgateway</span><span class="op">.</span><span class="nam">utils</span><span class="op">.</span><span class="nam">redis_client</span> <span class="key">import</span> <span class="nam">get_redis_client</span>  <span class="com"># pylint: disable=import-outside-toplevel</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t153" href="#t153">153</a></span><span class="t">            <span class="nam">client</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">get_redis_client</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">            <span class="key">if</span> <span class="nam">client</span> <span class="key">and</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_checked</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">154&#x202F;&#x219B;&#x202F;157</span><span class="annotate long">line 154 didn't jump to line 157 because the condition on line 154 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t154" href="#t154">154</a></span><span class="t">            <span class="key">if</span> <span class="nam">client</span> <span class="key">and</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_checked</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t155" href="#t155">155</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_checked</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t156" href="#t156">156</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_available</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">            <span class="key">return</span> <span class="nam">client</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_checked</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">159&#x202F;&#x219B;&#x202F;162</span><span class="annotate long">line 159 didn't jump to line 162 because the condition on line 159 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">            <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_checked</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_checked</span> <span class="op">=</span> <span class="key">True</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">                <span class="nam">self</span><span class="op">.</span><span class="nam">_redis_available</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">            <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
@@ -356,12 +354,12 @@
     <p class="pln"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">            <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">setex</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_redis_key</span><span class="op">(</span><span class="nam">name</span><span class="op">)</span><span class="op">,</span> <span class="nam">effective_ttl</span><span class="op">,</span> <span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">payload</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">            <span class="key">if</span> <span class="nam">gateway_id</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">275&#x202F;&#x219B;&#x202F;exit</span><span class="annotate long">line 275 didn't return from function 'set' because the condition on line 275 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">            <span class="key">if</span> <span class="nam">gateway_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">                <span class="nam">set_key</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_gateway_set_key</span><span class="op">(</span><span class="nam">gateway_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">                <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">sadd</span><span class="op">(</span><span class="nam">set_key</span><span class="op">,</span> <span class="nam">name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">                <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">expire</span><span class="op">(</span><span class="nam">set_key</span><span class="op">,</span> <span class="nam">max</span><span class="op">(</span><span class="nam">effective_ttl</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_ttl_seconds</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"ToolLookupCache Redis set failed: %s"</span><span class="op">,</span> <span class="nam">exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"ToolLookupCache Redis set failed: %s"</span><span class="op">,</span> <span class="nam">exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">set_negative</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">name</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">status</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t283" href="#t283">283</a></span><span class="t">        <span class="str">"""Store a negative cache entry for a tool name.</span>&nbsp;</span><span class="r"></span></p>
@@ -413,11 +411,11 @@
     <p class="pln"><span class="n"><a id="t329" href="#t329">329</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t330" href="#t330">330</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t331" href="#t331">331</a></span><span class="t">            <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">delete</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_redis_key</span><span class="op">(</span><span class="nam">name</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t332" href="#t332">332</a></span><span class="t">            <span class="key">if</span> <span class="nam">gateway_id</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">332&#x202F;&#x219B;&#x202F;334</span><span class="annotate long">line 332 didn't jump to line 334 because the condition on line 332 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t332" href="#t332">332</a></span><span class="t">            <span class="key">if</span> <span class="nam">gateway_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t333" href="#t333">333</a></span><span class="t">                <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">srem</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_gateway_set_key</span><span class="op">(</span><span class="nam">gateway_id</span><span class="op">)</span><span class="op">,</span> <span class="nam">name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t334" href="#t334">334</a></span><span class="t">            <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">publish</span><span class="op">(</span><span class="str">"mcpgw:cache:invalidate"</span><span class="op">,</span> <span class="fst">f"</span><span class="fst">tool_lookup:</span><span class="op">{</span><span class="nam">name</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t335" href="#t335">335</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="mis show_mis"><span class="n"><a id="t336" href="#t336">336</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"ToolLookupCache Redis invalidate failed: %s"</span><span class="op">,</span> <span class="nam">exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t335" href="#t335">335</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t336" href="#t336">336</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"ToolLookupCache Redis invalidate failed: %s"</span><span class="op">,</span> <span class="nam">exc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t337" href="#t337">337</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t338" href="#t338">338</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">invalidate_gateway</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">gateway_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t339" href="#t339">339</a></span><span class="t">        <span class="str">"""Invalidate all cached tools for a gateway.</span>&nbsp;</span><span class="r"></span></p>
@@ -453,7 +451,7 @@
     <p class="run"><span class="n"><a id="t369" href="#t369">369</a></span><span class="t">        <span class="nam">set_key</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_gateway_set_key</span><span class="op">(</span><span class="nam">gateway_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t370" href="#t370">370</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t371" href="#t371">371</a></span><span class="t">            <span class="nam">tool_names</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">smembers</span><span class="op">(</span><span class="nam">set_key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">            <span class="key">if</span> <span class="nam">tool_names</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">372&#x202F;&#x219B;&#x202F;375</span><span class="annotate long">line 372 didn't jump to line 375 because the condition on line 372 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t372" href="#t372">372</a></span><span class="t">            <span class="key">if</span> <span class="nam">tool_names</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t373" href="#t373">373</a></span><span class="t">                <span class="nam">keys</span> <span class="op">=</span> <span class="op">[</span><span class="nam">self</span><span class="op">.</span><span class="nam">_redis_key</span><span class="op">(</span><span class="nam">name</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">name</span><span class="op">,</span> <span class="nam">bytes</span><span class="op">)</span> <span class="key">else</span> <span class="nam">name</span><span class="op">)</span> <span class="key">for</span> <span class="nam">name</span> <span class="key">in</span> <span class="nam">tool_names</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t374" href="#t374">374</a></span><span class="t">                <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">delete</span><span class="op">(</span><span class="op">*</span><span class="nam">keys</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t375" href="#t375">375</a></span><span class="t">            <span class="key">await</span> <span class="nam">redis</span><span class="op">.</span><span class="nam">delete</span><span class="op">(</span><span class="nam">set_key</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -534,7 +532,7 @@
             <a class="nav" href="z_580dae60cda9039c_cli_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
     </div>
 </footer>

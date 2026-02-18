@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/plugins/framework/hooks/agents.py: 97%</title>
+    <title>Coverage for mcpgateway/plugins/framework/hooks/agents.py: 100%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;plugins&#8201;/&#8201;framework&#8201;/&#8201;hooks&#8201;/&#8201;agents.py</b>:
-            <span class="pc_cov">97%</span>
+            <span class="pc_cov">100%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,15 +58,14 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">30<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">1<span class="text"> partial</span></button>
         </h2>
         <p class="text">
-            <a id="prevFileLink" class="nav" href="z_5034b1a4dfe2a731_server_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a id="prevFileLink" class="nav" href="z_3749c6a41567077d___init___py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a id="nextFileLink" class="nav" href="z_3749c6a41567077d_http_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -219,7 +217,7 @@
     <p class="run"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">    <span class="nam">registry</span> <span class="op">=</span> <span class="nam">get_hook_registry</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">    <span class="com"># Only register if not already registered (idempotent)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">registry</span><span class="op">.</span><span class="nam">is_registered</span><span class="op">(</span><span class="nam">AgentHookType</span><span class="op">.</span><span class="nam">AGENT_PRE_INVOKE</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">138&#x202F;&#x219B;&#x202F;exit</span><span class="annotate long">line 138 didn't return from function '_register_agent_hooks' because the condition on line 138 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t138" href="#t138">138</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">registry</span><span class="op">.</span><span class="nam">is_registered</span><span class="op">(</span><span class="nam">AgentHookType</span><span class="op">.</span><span class="nam">AGENT_PRE_INVOKE</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t139" href="#t139">139</a></span><span class="t">        <span class="nam">registry</span><span class="op">.</span><span class="nam">register_hook</span><span class="op">(</span><span class="nam">AgentHookType</span><span class="op">.</span><span class="nam">AGENT_PRE_INVOKE</span><span class="op">,</span> <span class="nam">AgentPreInvokePayload</span><span class="op">,</span> <span class="nam">AgentPreInvokeResult</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t140" href="#t140">140</a></span><span class="t">        <span class="nam">registry</span><span class="op">.</span><span class="nam">register_hook</span><span class="op">(</span><span class="nam">AgentHookType</span><span class="op">.</span><span class="nam">AGENT_POST_INVOKE</span><span class="op">,</span> <span class="nam">AgentPostInvokePayload</span><span class="op">,</span> <span class="nam">AgentPostInvokeResult</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t141" href="#t141">141</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -229,12 +227,12 @@
 <footer>
     <div class="content">
         <p>
-            <a class="nav" href="z_5034b1a4dfe2a731_server_py.html">&#xab; prev</a> &nbsp; &nbsp;
+            <a class="nav" href="z_3749c6a41567077d___init___py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
             <a class="nav" href="z_3749c6a41567077d_http_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
     </div>
 </footer>

@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,7 +58,6 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">203<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_rbac_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_server_well_known_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -572,28 +570,31 @@
     <p class="pln"><span class="n"><a id="t488" href="#t488">488</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t489" href="#t489">489</a></span><span class="t"><span class="str">        Yields:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t490" href="#t490">490</a></span><span class="t"><span class="str">            dict: SSE event data.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t491" href="#t491">491</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t492" href="#t492">492</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t493" href="#t493">493</a></span><span class="t">            <span class="com"># Send initial connection event</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t494" href="#t494">494</a></span><span class="t">            <span class="key">yield</span> <span class="op">{</span><span class="str">"event"</span><span class="op">:</span> <span class="str">"connected"</span><span class="op">,</span> <span class="str">"data"</span><span class="op">:</span> <span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="op">{</span><span class="str">"sessionId"</span><span class="op">:</span> <span class="nam">session_id</span><span class="op">,</span> <span class="str">"serverInfo"</span><span class="op">:</span> <span class="nam">session</span><span class="op">.</span><span class="nam">server_info</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t495" href="#t495">495</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t496" href="#t496">496</a></span><span class="t">            <span class="com"># TODO: Implement message queue for SSE delivery</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t497" href="#t497">497</a></span><span class="t">            <span class="key">while</span> <span class="key">not</span> <span class="key">await</span> <span class="nam">request</span><span class="op">.</span><span class="nam">is_disconnected</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t498" href="#t498">498</a></span><span class="t">                <span class="key">await</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">sleep</span><span class="op">(</span><span class="num">30</span><span class="op">)</span>  <span class="com"># Keepalive</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t499" href="#t499">499</a></span><span class="t">                <span class="key">yield</span> <span class="op">{</span><span class="str">"event"</span><span class="op">:</span> <span class="str">"keepalive"</span><span class="op">,</span> <span class="str">"data"</span><span class="op">:</span> <span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="op">{</span><span class="str">"timestamp"</span><span class="op">:</span> <span class="nam">datetime</span><span class="op">.</span><span class="nam">now</span><span class="op">(</span><span class="nam">tz</span><span class="op">=</span><span class="nam">timezone</span><span class="op">.</span><span class="nam">utc</span><span class="op">)</span><span class="op">.</span><span class="nam">isoformat</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
-    <p class="pln"><span class="n"><a id="t500" href="#t500">500</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t501" href="#t501">501</a></span><span class="t">        <span class="key">except</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">CancelledError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t502" href="#t502">502</a></span><span class="t">            <span class="key">pass</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t491" href="#t491">491</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t492" href="#t492">492</a></span><span class="t"><span class="str">        Raises:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t493" href="#t493">493</a></span><span class="t"><span class="str">            asyncio.CancelledError: If the generator is cancelled.</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t494" href="#t494">494</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t495" href="#t495">495</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t496" href="#t496">496</a></span><span class="t">            <span class="com"># Send initial connection event</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t497" href="#t497">497</a></span><span class="t">            <span class="key">yield</span> <span class="op">{</span><span class="str">"event"</span><span class="op">:</span> <span class="str">"connected"</span><span class="op">,</span> <span class="str">"data"</span><span class="op">:</span> <span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="op">{</span><span class="str">"sessionId"</span><span class="op">:</span> <span class="nam">session_id</span><span class="op">,</span> <span class="str">"serverInfo"</span><span class="op">:</span> <span class="nam">session</span><span class="op">.</span><span class="nam">server_info</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t498" href="#t498">498</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t499" href="#t499">499</a></span><span class="t">            <span class="com"># TODO: Implement message queue for SSE delivery</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t500" href="#t500">500</a></span><span class="t">            <span class="key">while</span> <span class="key">not</span> <span class="key">await</span> <span class="nam">request</span><span class="op">.</span><span class="nam">is_disconnected</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t501" href="#t501">501</a></span><span class="t">                <span class="key">await</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">sleep</span><span class="op">(</span><span class="num">30</span><span class="op">)</span>  <span class="com"># Keepalive</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t502" href="#t502">502</a></span><span class="t">                <span class="key">yield</span> <span class="op">{</span><span class="str">"event"</span><span class="op">:</span> <span class="str">"keepalive"</span><span class="op">,</span> <span class="str">"data"</span><span class="op">:</span> <span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="op">{</span><span class="str">"timestamp"</span><span class="op">:</span> <span class="nam">datetime</span><span class="op">.</span><span class="nam">now</span><span class="op">(</span><span class="nam">tz</span><span class="op">=</span><span class="nam">timezone</span><span class="op">.</span><span class="nam">utc</span><span class="op">)</span><span class="op">.</span><span class="nam">isoformat</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t503" href="#t503">503</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t504" href="#t504">504</a></span><span class="t">    <span class="key">return</span> <span class="nam">StreamingResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t505" href="#t505">505</a></span><span class="t">        <span class="nam">event_generator</span><span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t506" href="#t506">506</a></span><span class="t">        <span class="nam">media_type</span><span class="op">=</span><span class="str">"text/event-stream"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t507" href="#t507">507</a></span><span class="t">        <span class="nam">headers</span><span class="op">=</span><span class="op">{</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t508" href="#t508">508</a></span><span class="t">            <span class="str">"Cache-Control"</span><span class="op">:</span> <span class="str">"no-cache"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t509" href="#t509">509</a></span><span class="t">            <span class="str">"Connection"</span><span class="op">:</span> <span class="str">"keep-alive"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t510" href="#t510">510</a></span><span class="t">            <span class="str">"X-Accel-Buffering"</span><span class="op">:</span> <span class="str">"no"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t511" href="#t511">511</a></span><span class="t">        <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t512" href="#t512">512</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t504" href="#t504">504</a></span><span class="t">        <span class="key">except</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">CancelledError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t505" href="#t505">505</a></span><span class="t">            <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
+    <p class="pln"><span class="n"><a id="t506" href="#t506">506</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t507" href="#t507">507</a></span><span class="t">    <span class="key">return</span> <span class="nam">StreamingResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t508" href="#t508">508</a></span><span class="t">        <span class="nam">event_generator</span><span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t509" href="#t509">509</a></span><span class="t">        <span class="nam">media_type</span><span class="op">=</span><span class="str">"text/event-stream"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t510" href="#t510">510</a></span><span class="t">        <span class="nam">headers</span><span class="op">=</span><span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t511" href="#t511">511</a></span><span class="t">            <span class="str">"Cache-Control"</span><span class="op">:</span> <span class="str">"no-cache"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t512" href="#t512">512</a></span><span class="t">            <span class="str">"Connection"</span><span class="op">:</span> <span class="str">"keep-alive"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t513" href="#t513">513</a></span><span class="t">            <span class="str">"X-Accel-Buffering"</span><span class="op">:</span> <span class="str">"no"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t514" href="#t514">514</a></span><span class="t">        <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t515" href="#t515">515</a></span><span class="t">    <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -603,7 +604,7 @@
             <a class="nav" href="z_66e097f12625e52f_server_well_known_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
     </div>
 </footer>

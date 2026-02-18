@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,7 +58,6 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">93<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">46<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">0<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_095c6c0b4411cdd5_create_slug_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_display_name_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -419,7 +417,7 @@
     <p class="pln"><span class="n"><a id="t335" href="#t335">335</a></span><span class="t">                    <span class="com"># Exponential backoff: interval * 2^(attempt-1), capped at max_backoff</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t336" href="#t336">336</a></span><span class="t">                    <span class="nam">backoff</span> <span class="op">=</span> <span class="nam">min</span><span class="op">(</span><span class="nam">interval</span> <span class="op">*</span> <span class="op">(</span><span class="num">2</span> <span class="op">**</span> <span class="op">(</span><span class="nam">attempt</span> <span class="op">-</span> <span class="num">1</span><span class="op">)</span><span class="op">)</span><span class="op">,</span> <span class="nam">max_backoff</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t337" href="#t337">337</a></span><span class="t">                    <span class="com"># Add jitter (&#177;25%) to prevent thundering herd</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t338" href="#t338">338</a></span><span class="t">                    <span class="nam">jitter</span> <span class="op">=</span> <span class="nam">backoff</span> <span class="op">*</span> <span class="nam">random</span><span class="op">.</span><span class="nam">uniform</span><span class="op">(</span><span class="op">-</span><span class="num">0.25</span><span class="op">,</span> <span class="num">0.25</span><span class="op">)</span>  <span class="com"># noqa: DUO102  # nosec B311 - timing jitter, not security</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t338" href="#t338">338</a></span><span class="t">                    <span class="nam">jitter</span> <span class="op">=</span> <span class="nam">backoff</span> <span class="op">*</span> <span class="nam">random</span><span class="op">.</span><span class="nam">uniform</span><span class="op">(</span><span class="op">-</span><span class="num">0.25</span><span class="op">,</span> <span class="num">0.25</span><span class="op">)</span>  <span class="com"># nosec B311  # noqa: DUO102 - timing jitter, not security</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t339" href="#t339">339</a></span><span class="t">                    <span class="nam">sleep_time</span> <span class="op">=</span> <span class="nam">max</span><span class="op">(</span><span class="num">0.1</span><span class="op">,</span> <span class="nam">backoff</span> <span class="op">+</span> <span class="nam">jitter</span><span class="op">)</span>  <span class="com"># Ensure minimum 0.1s</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">                    <span class="nam">log</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Attempt </span><span class="op">{</span><span class="nam">attempt</span><span class="op">}</span><span class="fst">/</span><span class="op">{</span><span class="nam">max_tries</span><span class="op">}</span><span class="fst"> failed (</span><span class="op">{</span><span class="nam">_sanitize</span><span class="op">(</span><span class="nam">str</span><span class="op">(</span><span class="nam">exc</span><span class="op">)</span><span class="op">)</span><span class="op">}</span><span class="fst">) - retrying in </span><span class="op">{</span><span class="nam">sleep_time</span><span class="op">:</span><span class="fst">.1f</span><span class="op">}</span><span class="fst">s</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t341" href="#t341">341</a></span><span class="t">                    <span class="nam">time</span><span class="op">.</span><span class="nam">sleep</span><span class="op">(</span><span class="nam">sleep_time</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -558,7 +556,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_display_name_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
     </div>
 </footer>
