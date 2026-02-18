@@ -6,7 +6,7 @@ import logging
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -57,7 +57,7 @@ async def require_runtime_access(user=Depends(get_current_user_with_permissions)
         return
 
     raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
+        status_code=http_status.HTTP_403_FORBIDDEN,
         detail="Runtime API is restricted to platform administrators",
     )
 
@@ -76,10 +76,10 @@ def _raise_runtime_http_error(exc: RuntimeBackendError) -> None:
     """
     message = str(exc)
     if "not found" in message.lower():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=message)
+        raise HTTPException(status_code=http_status.HTTP_404_NOT_FOUND, detail=message)
     if "disabled" in message.lower():
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=message)
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message)
+        raise HTTPException(status_code=http_status.HTTP_403_FORBIDDEN, detail=message)
+    raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail=message)
 
 
 @runtime_router.get("/backends", response_model=RuntimeBackendListResponse)
@@ -164,7 +164,7 @@ async def get_guardrail_profile_compatibility(
         raise  # pragma: no cover
 
 
-@runtime_router.post("/guardrails", response_model=RuntimeGuardrailProfileRead, status_code=status.HTTP_201_CREATED)
+@runtime_router.post("/guardrails", response_model=RuntimeGuardrailProfileRead, status_code=http_status.HTTP_201_CREATED)
 @require_permission("admin.system_config")
 async def create_guardrail_profile(
     payload: RuntimeGuardrailProfileCreate,
@@ -219,7 +219,7 @@ async def update_guardrail_profile(
         raise  # pragma: no cover
 
 
-@runtime_router.delete("/guardrails/{name}", status_code=status.HTTP_204_NO_CONTENT)
+@runtime_router.delete("/guardrails/{name}", status_code=http_status.HTTP_204_NO_CONTENT)
 @require_permission("admin.system_config")
 async def delete_guardrail_profile(
     name: str,
@@ -242,7 +242,7 @@ async def delete_guardrail_profile(
         raise  # pragma: no cover
 
 
-@runtime_router.post("/deploy", response_model=RuntimeDeployResponse, status_code=status.HTTP_201_CREATED)
+@runtime_router.post("/deploy", response_model=RuntimeDeployResponse, status_code=http_status.HTTP_201_CREATED)
 @require_permission("servers.create")
 async def deploy_runtime(
     payload: RuntimeDeployRequest,
