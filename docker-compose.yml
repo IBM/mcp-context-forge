@@ -115,6 +115,11 @@ services:
     build:
       context: .
       dockerfile: Containerfile.lite     # Same one the Makefile builds
+      args:
+        # Optional CLI tooling for runtime backends inside gateway container.
+        # Set to false to produce a slimmer image when a backend is not used.
+        ENABLE_DOCKER_CLI: ${GATEWAY_ENABLE_DOCKER_CLI:-true}
+        ENABLE_IBMCLOUD_CLI: ${GATEWAY_ENABLE_IBMCLOUD_CLI:-true}
     restart: unless-stopped
     # NOTE: When using replicas > 1, access via nginx:8080 instead of direct port 4444
     # ports:

@@ -611,11 +611,7 @@ class RuntimeService:
         Raises:
             RuntimeBackendError: If approval is invalid or expired.
         """
-        approval = db.execute(
-            select(RuntimeDeploymentApproval)
-            .where(RuntimeDeploymentApproval.id == approval_id)
-            .with_for_update()
-        ).scalar_one_or_none()
+        approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id).with_for_update()).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
         if approval.status != "pending":
@@ -665,11 +661,7 @@ class RuntimeService:
         Raises:
             RuntimeBackendError: If approval is invalid.
         """
-        approval = db.execute(
-            select(RuntimeDeploymentApproval)
-            .where(RuntimeDeploymentApproval.id == approval_id)
-            .with_for_update()
-        ).scalar_one_or_none()
+        approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id).with_for_update()).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
         if approval.status != "pending":
@@ -1116,14 +1108,10 @@ class RuntimeService:
             catalog_runtime = {}
 
         endpoint_port = (
-            self._normalize_endpoint_port(request.endpoint_port)
-            or self._normalize_endpoint_port(metadata.get("endpoint_port"))
-            or self._normalize_endpoint_port(catalog_runtime.get("endpoint_port"))
+            self._normalize_endpoint_port(request.endpoint_port) or self._normalize_endpoint_port(metadata.get("endpoint_port")) or self._normalize_endpoint_port(catalog_runtime.get("endpoint_port"))
         )
         endpoint_path = (
-            self._normalize_endpoint_path(request.endpoint_path)
-            or self._normalize_endpoint_path(metadata.get("endpoint_path"))
-            or self._normalize_endpoint_path(catalog_runtime.get("endpoint_path"))
+            self._normalize_endpoint_path(request.endpoint_path) or self._normalize_endpoint_path(metadata.get("endpoint_path")) or self._normalize_endpoint_path(catalog_runtime.get("endpoint_path"))
         )
         return endpoint_port, endpoint_path
 
