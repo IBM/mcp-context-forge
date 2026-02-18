@@ -6354,8 +6354,7 @@ def _render_user_card_html(user_obj, current_user_email: str, admin_count: int, 
             f'focus:ring-red-500" hx-delete="{root_path}/admin/users/{encoded_email}" '
             f'hx-confirm="Are you sure you want to delete this user? This action cannot be undone." '
             f'hx-target="closest .user-card" hx-swap="outerHTML" '
-            f"hx-on::after-request=\"if(!event.detail.successful){{var d=document.createElement('div');d.innerHTML=event.detail.xhr.responseText;showErrorMessage(d.textContent.trim()||'Error deleting user');}}\""
-            f">Delete</button>"
+            f'hx-on::after-request="handleDeleteUserError(event)">Delete</button>'
         )
 
     return f"""
