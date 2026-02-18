@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/routers/llmchat_router.py: 97%</title>
+    <title>Coverage for mcpgateway/routers/llmchat_router.py: 99%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_9ff733b0.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway&#8201;/&#8201;routers&#8201;/&#8201;llmchat_router.py</b>:
-            <span class="pc_cov">97%</span>
+            <span class="pc_cov">99%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -26,7 +26,6 @@
                         <kbd>r</kbd>
                         <kbd>m</kbd>
                         <kbd>x</kbd>
-                        <kbd>p</kbd>
                         &nbsp; toggle line displays
                     </p>
                     <p>
@@ -59,7 +58,6 @@
             <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">332<span class="text"> run</span></button>
             <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">5<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
-            <button type="button" class="par run show_par button_toggle_par" value="par" data-shortcut="p" title="Toggle lines partially run">7<span class="text"> partial</span></button>
         </h2>
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_llm_proxy_router_py.html">&#xab; prev</a> &nbsp; &nbsp;
@@ -67,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_log_search_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -651,7 +649,7 @@
     <p class="pln"><span class="n"><a id="t567" href="#t567">567</a></span><span class="t">            <span class="com"># someone else is (re)creating; wait a bit for them to finish</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t568" href="#t568">568</a></span><span class="t">            <span class="key">for</span> <span class="nam">_</span> <span class="key">in</span> <span class="nam">range</span><span class="op">(</span><span class="nam">LOCK_RETRIES</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t569" href="#t569">569</a></span><span class="t">                <span class="key">await</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">sleep</span><span class="op">(</span><span class="nam">LOCK_WAIT</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t570" href="#t570">570</a></span><span class="t">                <span class="key">if</span> <span class="nam">active_sessions</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">user_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">570&#x202F;&#x219B;&#x202F;571</span><span class="annotate long">line 570 didn't jump to line 571 because the condition on line 570 was never true</span></span></p>
+    <p class="run"><span class="n"><a id="t570" href="#t570">570</a></span><span class="t">                <span class="key">if</span> <span class="nam">active_sessions</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">user_id</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t571" href="#t571">571</a></span><span class="t">                    <span class="key">return</span> <span class="nam">active_sessions</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="nam">user_id</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t572" href="#t572">572</a></span><span class="t">            <span class="key">return</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t573" href="#t573">573</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -818,10 +816,10 @@
     <p class="pln"><span class="n"><a id="t734" href="#t734">734</a></span><span class="t">        <span class="com"># Extract tool names</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t735" href="#t735">735</a></span><span class="t">        <span class="nam">tool_names</span> <span class="op">=</span> <span class="op">[</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t736" href="#t736">736</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t737" href="#t737">737</a></span><span class="t">            <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">chat_service</span><span class="op">,</span> <span class="str">"_tools"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">chat_service</span><span class="op">.</span><span class="nam">_tools</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">737&#x202F;&#x219B;&#x202F;746</span><span class="annotate long">line 737 didn't jump to line 746 because the condition on line 737 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t737" href="#t737">737</a></span><span class="t">            <span class="key">if</span> <span class="nam">hasattr</span><span class="op">(</span><span class="nam">chat_service</span><span class="op">,</span> <span class="str">"_tools"</span><span class="op">)</span> <span class="key">and</span> <span class="nam">chat_service</span><span class="op">.</span><span class="nam">_tools</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t738" href="#t738">738</a></span><span class="t">                <span class="key">for</span> <span class="nam">tool</span> <span class="key">in</span> <span class="nam">chat_service</span><span class="op">.</span><span class="nam">_tools</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t739" href="#t739">739</a></span><span class="t">                    <span class="nam">tool_name</span> <span class="op">=</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">tool</span><span class="op">,</span> <span class="str">"name"</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t740" href="#t740">740</a></span><span class="t">                    <span class="key">if</span> <span class="nam">tool_name</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">740&#x202F;&#x219B;&#x202F;738</span><span class="annotate long">line 740 didn't jump to line 738 because the condition on line 740 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t740" href="#t740">740</a></span><span class="t">                    <span class="key">if</span> <span class="nam">tool_name</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t741" href="#t741">741</a></span><span class="t">                        <span class="nam">tool_names</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="nam">tool_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t742" href="#t742">742</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">tool_error</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t743" href="#t743">743</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to extract tool names: </span><span class="op">{</span><span class="nam">tool_error</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -909,7 +907,7 @@
     <p class="run"><span class="n"><a id="t825" href="#t825">825</a></span><span class="t">            <span class="key">elif</span> <span class="nam">et</span> <span class="key">in</span> <span class="op">(</span><span class="str">"tool_start"</span><span class="op">,</span> <span class="str">"tool_end"</span><span class="op">,</span> <span class="str">"tool_error"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t826" href="#t826">826</a></span><span class="t">                <span class="key">async</span> <span class="key">for</span> <span class="nam">part</span> <span class="key">in</span> <span class="nam">sse</span><span class="op">(</span><span class="nam">et</span><span class="op">,</span> <span class="nam">ev</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t827" href="#t827">827</a></span><span class="t">                    <span class="key">yield</span> <span class="nam">part</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t828" href="#t828">828</a></span><span class="t">            <span class="key">elif</span> <span class="nam">et</span> <span class="op">==</span> <span class="str">"final"</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">828&#x202F;&#x219B;&#x202F;819</span><span class="annotate long">line 828 didn't jump to line 819 because the condition on line 828 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t828" href="#t828">828</a></span><span class="t">            <span class="key">elif</span> <span class="nam">et</span> <span class="op">==</span> <span class="str">"final"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t829" href="#t829">829</a></span><span class="t">                <span class="key">async</span> <span class="key">for</span> <span class="nam">part</span> <span class="key">in</span> <span class="nam">sse</span><span class="op">(</span><span class="str">"final"</span><span class="op">,</span> <span class="nam">ev</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t830" href="#t830">830</a></span><span class="t">                    <span class="key">yield</span> <span class="nam">part</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t831" href="#t831">831</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1000,7 +998,7 @@
     <p class="run"><span class="n"><a id="t916" href="#t916">916</a></span><span class="t">    <span class="nam">user_id</span> <span class="op">=</span> <span class="nam">_resolve_user_id</span><span class="op">(</span><span class="nam">input_data</span><span class="op">.</span><span class="nam">user_id</span><span class="op">,</span> <span class="nam">user</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t917" href="#t917">917</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t918" href="#t918">918</a></span><span class="t">    <span class="com"># Validate input</span>&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t919" href="#t919">919</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">user_id</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">919&#x202F;&#x219B;&#x202F;920</span><span class="annotate long">line 919 didn't jump to line 920 because the condition on line 919 was never true</span></span></p>
+    <p class="run"><span class="n"><a id="t919" href="#t919">919</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">user_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t920" href="#t920">920</a></span><span class="t">        <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="num">400</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="str">"User ID is required"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t921" href="#t921">921</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t922" href="#t922">922</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">input_data</span><span class="op">.</span><span class="nam">message</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">input_data</span><span class="op">.</span><span class="nam">message</span><span class="op">.</span><span class="nam">strip</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -1102,7 +1100,7 @@
     <p class="pln"><span class="n"><a id="t1018" href="#t1018">1018</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1019" href="#t1019">1019</a></span><span class="t">    <span class="nam">user_id</span> <span class="op">=</span> <span class="nam">_resolve_user_id</span><span class="op">(</span><span class="nam">input_data</span><span class="op">.</span><span class="nam">user_id</span><span class="op">,</span> <span class="nam">user</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1020" href="#t1020">1020</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t1021" href="#t1021">1021</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">user_id</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">1021&#x202F;&#x219B;&#x202F;1022</span><span class="annotate long">line 1021 didn't jump to line 1022 because the condition on line 1021 was never true</span></span></p>
+    <p class="run"><span class="n"><a id="t1021" href="#t1021">1021</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">user_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t1022" href="#t1022">1022</a></span><span class="t">        <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="num">400</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="str">"User ID is required"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1023" href="#t1023">1023</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1024" href="#t1024">1024</a></span><span class="t">    <span class="com"># Remove and shut down chat service</span>&nbsp;</span><span class="r"></span></p>
@@ -1232,7 +1230,7 @@
     <p class="pln"><span class="n"><a id="t1148" href="#t1148">1148</a></span><span class="t">    <span class="com"># Sanitize and return config (remove secrets)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1149" href="#t1149">1149</a></span><span class="t">    <span class="nam">config_dict</span> <span class="op">=</span> <span class="nam">config</span><span class="op">.</span><span class="nam">model_dump</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1150" href="#t1150">1150</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="par run show_par"><span class="n"><a id="t1151" href="#t1151">1151</a></span><span class="t">    <span class="key">if</span> <span class="str">"config"</span> <span class="key">in</span> <span class="nam">config_dict</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"llm"</span><span class="op">,</span> <span class="op">{</span><span class="op">}</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"><span class="annotate short">1151&#x202F;&#x219B;&#x202F;1155</span><span class="annotate long">line 1151 didn't jump to line 1155 because the condition on line 1151 was always true</span></span></p>
+    <p class="run"><span class="n"><a id="t1151" href="#t1151">1151</a></span><span class="t">    <span class="key">if</span> <span class="str">"config"</span> <span class="key">in</span> <span class="nam">config_dict</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"llm"</span><span class="op">,</span> <span class="op">{</span><span class="op">}</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1152" href="#t1152">1152</a></span><span class="t">        <span class="nam">config_dict</span><span class="op">[</span><span class="str">"llm"</span><span class="op">]</span><span class="op">[</span><span class="str">"config"</span><span class="op">]</span><span class="op">.</span><span class="nam">pop</span><span class="op">(</span><span class="str">"api_key"</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t1153" href="#t1153">1153</a></span><span class="t">        <span class="nam">config_dict</span><span class="op">[</span><span class="str">"llm"</span><span class="op">]</span><span class="op">[</span><span class="str">"config"</span><span class="op">]</span><span class="op">.</span><span class="nam">pop</span><span class="op">(</span><span class="str">"auth_token"</span><span class="op">,</span> <span class="key">None</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t1154" href="#t1154">1154</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -1305,7 +1303,7 @@
             <a class="nav" href="z_66e097f12625e52f_log_search_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.13.1">coverage.py v7.13.1</a>,
-            created at 2026-02-11 07:10 +0000
+            created at 2026-02-18 12:49 +0000
         </p>
     </div>
 </footer>
