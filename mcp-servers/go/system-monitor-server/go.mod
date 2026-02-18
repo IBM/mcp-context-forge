@@ -6,7 +6,7 @@ toolchain go1.24.7
 
 require (
     github.com/hpcloud/tail v1.0.0
-    github.com/mark3labs/mcp-go v0.43.2
+    github.com/mark3labs/mcp-go v0.44.0
     github.com/shirou/gopsutil/v3 v3.24.5
 )
 
@@ -17,7 +17,7 @@ require (
     github.com/go-ole/go-ole v1.3.0 // indirect
     github.com/google/uuid v1.6.0 // indirect
     github.com/invopop/jsonschema v0.13.0 // indirect
-    github.com/lufia/plan9stats v0.0.0-20251013123823-9fd1530e3ec3 // indirect
+    github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88 // indirect
     github.com/mailru/easyjson v0.9.1 // indirect
     github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
     github.com/shoenig/go-m1cpu v0.1.7 // indirect
