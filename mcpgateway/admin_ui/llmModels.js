@@ -1166,34 +1166,6 @@ export const llmApiInfoApp = function () {
   };
 };
 
-export const overviewDashboard = function () {
-  return {
-    init() {
-      this.updateSvgColors();
-      const observer = new MutationObserver(() => this.updateSvgColors());
-      observer.observe(document.documentElement, {
-        attributes: true,
-        attributeFilter: ["class"],
-      });
-    },
-    updateSvgColors() {
-      const isDark = document.documentElement.classList.contains("dark");
-      const svg = safeGetElement("overview-architecture");
-      if (!svg) {
-        return;
-      }
-
-      const marker = svg.querySelector("#arrowhead polygon");
-      if (marker) {
-        marker.setAttribute(
-          "class",
-          isDark ? "fill-gray-500" : "fill-gray-400",
-        );
-      }
-    },
-  };
-};
-
 export const llmComboboxSetExpanded = function (expanded) {
   const input = document.getElementById("llm-model-model-id");
   if (input) input.setAttribute("aria-expanded", String(expanded));

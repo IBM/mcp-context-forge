@@ -308,3 +308,12 @@ export const TABLE_TO_ENTITY_TYPE = {
  * e.g. the "servers" toggle navigates to the #catalog tab.
  */
 export const TOGGLE_FRAGMENT_MAP = { servers: "catalog" };
+
+// Dashboard query keys
+export const OVERVIEW_DRILLDOWN_QUERY_KEYS = [
+  "overview_time_range",
+  "overview_entity",
+  "overview_status",
+  "overview_tool_name",
+  "overview_view_mode",
+];

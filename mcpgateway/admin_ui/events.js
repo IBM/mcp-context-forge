@@ -2,6 +2,7 @@ import { AppState } from "./appState.js";
 import { initializeCACertUpload } from "./caCertificate.js";
 import { overflowMenu } from "./components/overflow-menu.js";
 import { TABLE_TO_ENTITY_TYPE } from "./constants.js";
+import { applyOverviewDrilldownToObservability } from "./dashboard.js";
 import { toggleViewPublic, updateFilterStatus } from "./filters.js";
 import { selectTeamFromSelector } from "./formFieldHandlers.js";
 import { setupFormValidation } from "./formValidation.js";
@@ -129,6 +130,17 @@ import {
       );
     }
   });
+
+  // Initialise the home dashboard
+  if (!window.__overviewObservabilityHookAttached) {
+    window.__overviewObservabilityHookAttached = true;
+    document.addEventListener("htmx:afterSettle", (event) => {
+      const eventTarget = event?.detail?.target || event?.target;
+      if (eventTarget && eventTarget.id === "observability-panel") {
+        applyOverviewDrilldownToObservability();
+      }
+    });
+  }
 
   // Executes MCP tools via SSE streaming. Streams results to UI textarea.
   document.addEventListener("DOMContentLoaded", () => {

@@ -106,6 +106,11 @@ Admin.copyConfigToClipboard = copyConfigToClipboard;
 Admin.downloadConfig = downloadConfig;
 Admin.goBackToSelection = goBackToSelection;
 
+// Dashboard
+import { navigateOverviewDrilldown, applyOverviewDrilldownToObservability } from "./dashboard.js"
+Admin.navigateOverviewDrilldown = navigateOverviewDrilldown;
+Admin.applyOverviewDrilldownToObservability = applyOverviewDrilldownToObservability;
+
 // File Transfer
 import {
   previewImport,
@@ -195,7 +200,6 @@ import {
   llmModelComboboxSelect,
   onLLMProviderTypeChange,
   onModelProviderChange,
-  overviewDashboard,
   saveLLMModel,
   saveLLMProvider,
   showAddModelModal,
@@ -224,7 +228,6 @@ Admin.llmModelComboboxOpen = llmModelComboboxOpen;
 Admin.llmModelComboboxSelect = llmModelComboboxSelect;
 Admin.onLLMProviderTypeChange = onLLMProviderTypeChange;
 Admin.onModelProviderChange = onModelProviderChange;
-Admin.overviewDashboard = overviewDashboard;
 Admin.saveLLMModel = saveLLMModel;
 Admin.saveLLMProvider = saveLLMProvider;
 Admin.showAddModelModal = showAddModelModal;
