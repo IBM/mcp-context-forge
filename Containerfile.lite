@@ -28,6 +28,11 @@ ARG ENABLE_RUST=false
 # Note: Container must have SYS_PTRACE capability for attaching to processes
 # See docs/docs/development/profiling.md for detailed usage
 ARG ENABLE_PROFILING=false
+# Optional runtime CLIs used by secure runtime backends.
+# ENABLE_DOCKER_CLI controls Docker backend support inside the gateway container.
+# ENABLE_IBMCLOUD_CLI controls IBM Code Engine backend support inside the gateway container.
+ARG ENABLE_DOCKER_CLI=true
+ARG ENABLE_IBMCLOUD_CLI=true
 
 ###############################################################################
 # Docker CLI stage (for runtime Docker backend operations inside gateway)
@@ -222,6 +227,8 @@ FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557 AS runtime
 
 ARG PYTHON_VERSION=3.12
 ARG ENABLE_PROFILING=false
+ARG ENABLE_DOCKER_CLI=true
+ARG ENABLE_IBMCLOUD_CLI=true
 
 # ----------------------------------------------------------------------------
 # OCI image metadata
@@ -277,8 +284,34 @@ RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create
 # Copy the application from the builder stage
 # ----------------------------------------------------------------------------
 COPY --from=builder --chown=1001:0 /app /app
-COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
-COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+
+# ----------------------------------------------------------------------------
+# Install optional runtime CLIs for runtime backends
+# ----------------------------------------------------------------------------
+RUN --mount=from=docker-cli,src=/usr/local,target=/tmp/docker-local,ro \
+    if [ "$ENABLE_DOCKER_CLI" = "true" ]; then \
+        echo "🐳 Installing Docker CLI support into runtime image"; \
+        install -D /tmp/docker-local/bin/docker /usr/local/bin/docker; \
+        mkdir -p /usr/local/libexec/docker; \
+        cp -a /tmp/docker-local/libexec/docker/cli-plugins /usr/local/libexec/docker/; \
+    else \
+        echo "⏭️  Docker CLI support disabled (ENABLE_DOCKER_CLI=false)"; \
+    fi \
+    && if [ "$ENABLE_IBMCLOUD_CLI" = "true" ]; then \
+        echo "☁️ Installing IBM Cloud CLI + Code Engine plugin into runtime image"; \
+        export HOME=/app; \
+        mkdir -p /app/.bluemix; \
+        microdnf install -y --nodocs --setopt=install_weak_deps=0 curl tar gzip \
+        && microdnf clean all \
+        && rm -rf /var/cache/yum \
+        && curl -fsSL https://clis.cloud.ibm.com/install/linux | sh \
+        && (ibmcloud plugin install code-engine -f || ibmcloud plugin update code-engine -f) \
+        && (ibmcloud plugin install container-registry -f || ibmcloud plugin update container-registry -f) \
+        && chown -R 1001:0 /app/.bluemix \
+        && chmod -R g=u /app/.bluemix; \
+    else \
+        echo "⏭️  IBM Cloud CLI support disabled (ENABLE_IBMCLOUD_CLI=false)"; \
+    fi
 
 # ----------------------------------------------------------------------------
 # Ensure our virtual environment binaries have priority in PATH

@@ -23,6 +23,15 @@ RUNTIME_DOCKER_ENABLED=true
 RUNTIME_IBM_CODE_ENGINE_ENABLED=false
 ```
 
+If you build the gateway container via Docker Compose, you can control backend CLI tooling in the image build:
+
+```bash
+GATEWAY_ENABLE_DOCKER_CLI=true
+GATEWAY_ENABLE_IBMCLOUD_CLI=true
+```
+
+Set either value to `false` to omit that CLI from the image.
+
 When disabled, runtime endpoints are not exposed.
 By default, runtime endpoints are platform-admin-only. Set `RUNTIME_PLATFORM_ADMIN_ONLY=false` to use route-level RBAC checks instead.
 
