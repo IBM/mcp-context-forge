@@ -7002,7 +7002,7 @@ async def admin_get_user_edit(
                 {"" if is_editing_self else f'''<div>
                     <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
                         <input type="checkbox" name="is_admin" id="admin-field" {"checked" if user_obj.is_admin else ""}
-                               class="mr-2" onchange="disableAdminProtection();> Administrator
+                               class="mr-2" onchange="disableAdminProtection();"> Administrator
                     </label>
                     <input type="hidden" name="disable_admin_protection" :value="!is_admin" id="disable-admin-protection-field">
                 </div>'''}
