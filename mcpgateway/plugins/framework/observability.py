@@ -7,15 +7,16 @@ Authors: Fred Araujo
 Observability abstractions for the plugin framework.
 
 Provides a protocol-based interface for observability so that host
-applications can inject their own tracing implementation. Includes
-a NullObservability no-op default for standalone operation.
+applications can inject their own tracing implementation.
 """
 
 # Standard
 from contextvars import ContextVar
 from typing import Any, Dict, Optional, Protocol
 
-# Context variable for tracking the current trace_id across async calls
+# Context variable for tracking the current trace_id across async calls.
+# NOTE: This is bridged from mcpgateway.services.observability_service.current_trace_id
+# by ObservabilityMiddleware. Both must be set together; see the middleware for details.
 current_trace_id: ContextVar[Optional[str]] = ContextVar("current_trace_id", default=None)
 
 

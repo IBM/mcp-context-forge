@@ -40,7 +40,7 @@ from mcpgateway.plugins.framework.loader.config import ConfigLoader
 from mcpgateway.plugins.framework.loader.plugin import PluginLoader
 from mcpgateway.plugins.framework.memory import copyonwrite
 from mcpgateway.plugins.framework.models import Config, GlobalContext, PluginContext, PluginContextTable, PluginErrorModel, PluginMode, PluginPayload, PluginResult
-from mcpgateway.plugins.framework.observability import ObservabilityProvider
+from mcpgateway.plugins.framework.observability import current_trace_id, ObservabilityProvider
 from mcpgateway.plugins.framework.registry import PluginInstanceRegistry
 from mcpgateway.plugins.framework.utils import payload_matches
 
@@ -308,14 +308,14 @@ class PluginExecutor:
 
         Raises:
             asyncio.TimeoutError: If plugin exceeds timeout.
+            Exception: Re-raised from plugin hook execution failures.
         """
-        # Add observability tracing for plugin execution
-        try:
-            # First-Party
-            from mcpgateway.plugins.framework.observability import current_trace_id  # pylint: disable=import-outside-toplevel
+        # Start observability span if tracing is active
+        trace_id = current_trace_id.get()
+        span_id = None
 
-            trace_id = current_trace_id.get()
-            if trace_id and self.observability:
+        if trace_id and self.observability:
+            try:
                 span_id = self.observability.start_span(
                     trace_id=trace_id,
                     name=f"plugin.execute.{hook_ref.plugin_ref.name}",
@@ -330,11 +330,23 @@ class PluginExecutor:
                         "plugin.timeout": self.timeout,
                     },
                 )
+            except Exception as e:
+                logger.debug("Plugin observability start_span failed: %s", e)
 
-                # Execute plugin
-                result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        # Execute plugin
+        try:
+            result = await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        except Exception:
+            if span_id is not None:
+                try:
+                    self.observability.end_span(span_id=span_id, status="error")
+                except Exception:  # nosec B110
+                    pass
+            raise
 
-                # End span with success
+        # End span with success
+        if span_id is not None:
+            try:
                 self.observability.end_span(
                     span_id=span_id,
                     status="ok",
@@ -343,15 +355,10 @@ class PluginExecutor:
                         "plugin.modified_payload": result.modified_payload is not None,
                     },
                 )
-                return result
+            except Exception as e:
+                logger.debug("Plugin observability end_span failed: %s", e)
 
-            # No active trace or no observability provider, execute without instrumentation
-            return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
-
-        except Exception as e:
-            # If observability setup fails, continue without instrumentation
-            logger.debug("Plugin observability setup failed: %s", e)
-            return await asyncio.wait_for(hook_ref.hook(payload, context), timeout=self.timeout)
+        return result
 
     def _validate_payload_size(self, payload: Any) -> None:
         """Validate that payload doesn't exceed size limits.

@@ -86,7 +86,6 @@ from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import init_telemetry
 from mcpgateway.plugins.framework import PluginError, PluginManager, PluginViolationError
-from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -1900,6 +1899,7 @@ else:
 if settings.observability_enabled:
     # First-Party
     from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
+    from mcpgateway.plugins.observability_adapter import ObservabilityServiceAdapter
     from mcpgateway.services.observability_service import ObservabilityService
 
     _service = ObservabilityService()
