@@ -938,6 +938,87 @@ async def test_get_prompt_outer_exception(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# get_prompt direct_proxy tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_direct_proxy_delegates_to_helper(monkeypatch):
+    """get_prompt calls _proxy_get_prompt_to_gateway in direct_proxy mode."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-dp"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="hi"))
+    mock_proxy_result = types.GetPromptResult(description="d", messages=[mock_message])
+
+    proxy_mock = AsyncMock(return_value=mock_proxy_result)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._proxy_get_prompt_to_gateway", proxy_mock)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-dp")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": ["t1"], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("my-prompt", {"lang": "en"})
+
+    assert result is not None
+    assert len(result.messages) == 1
+    proxy_mock.assert_called_once()
+    call_kwargs = proxy_mock.call_args[1]
+    assert call_kwargs["name"] == "my-prompt"
+    assert call_kwargs["arguments"] == {"lang": "en"}
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_direct_proxy_access_denied(monkeypatch):
+    """get_prompt returns [] when direct_proxy RBAC check fails."""
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app
+    from contextlib import asynccontextmanager
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-deny"
+    mock_gateway.gateway_mode = "direct_proxy"
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.check_gateway_access", AsyncMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_enabled=True))
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.extract_gateway_id_from_headers", lambda h: "gw-deny")
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+                        AsyncMock(return_value=("srv-1", {}, {"email": "u@x.com", "teams": [], "is_admin": False})))
+    type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    mock_db_result = MagicMock()
+    mock_db_result.scalar_one_or_none.return_value = mock_gateway
+    mock_db = MagicMock()
+    mock_db.execute = MagicMock(return_value=mock_db_result)
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    result = await get_prompt("denied-prompt", None)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
 # list_resources tests
 # ---------------------------------------------------------------------------
 
