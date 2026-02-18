@@ -775,7 +775,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     return await update_user_delegate(user_email, user_request, current_user_ctx, db)
 
 
-# ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as dirrected in the docstring of update_user_delegate
+# ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as directed in the docstring of update_user_delegate
 @email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse, deprecated=True)
 @require_permission("admin.user_management")
 async def update_user_deprecated(
