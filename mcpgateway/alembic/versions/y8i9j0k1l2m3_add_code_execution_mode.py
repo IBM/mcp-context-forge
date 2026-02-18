@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """Add code_execution virtual server mode (servers columns + skills/runs tables)
 
-Revision ID: x7h8i9j0k1l2
+Revision ID: y8i9j0k1l2m3
 Revises: w6g7h8i9j0k1
 Create Date: 2026-02-16 01:20:00.000000
 """
@@ -14,8 +14,8 @@ from alembic import op
 import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
-revision: str = "x7h8i9j0k1l2"
-down_revision: Union[str, Sequence[str], None] = "w6g7h8i9j0k1"
+revision: str = "y8i9j0k1l2m3"
+down_revision: Union[str, Sequence[str], None] = "x7h8i9j0k1l2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

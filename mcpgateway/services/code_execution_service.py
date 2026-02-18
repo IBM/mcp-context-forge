@@ -92,6 +92,19 @@ _PYTHON_DANGEROUS_PATTERNS = (
     r"(?i)\bos\.system\s*\(",
     r"(?i)\bsubprocess\.",
     r"(?i)\bopen\s*\(\s*['\"]/(etc|proc|sys)",
+    r"__subclasses__",
+    r"__bases__",
+    r"__mro__",
+    r"__class__\s*\.",
+    r"\bbreakpoint\s*\(",
+    r"\bcompile\s*\(",
+    r"\bglobals\s*\(",
+    r"\bgetattr\s*\(",
+    r"\bsetattr\s*\(",
+    r"\bdelattr\s*\(",
+    r"\bvars\s*\(",
+    r"\bdir\s*\(",
+    r"\b__builtins__",
 )
 _TS_DANGEROUS_PATTERNS = (
     r"(?i)\beval\s*\(",
@@ -108,6 +121,7 @@ _DEFAULT_FS_DENY = ("/etc/**", "/proc/**", "/sys/**")
 _DEFAULT_TOKENIZATION_TYPES = ("email", "phone", "ssn", "credit_card", "name")
 _DEFAULT_CODE_EXECUTION_BASE_DIR = str(Path(tempfile.gettempdir()) / "mcpgateway_code_execution")
 _PIPE_SEPARATOR = "|"
+_MAX_SHELL_OUTPUT_BYTES = 10 * 1024 * 1024  # 10 MiB cap on shell pipeline intermediate/final output
 
 
 def _coerce_string_list(value: Any, fallback: Sequence[str]) -> List[str]:
@@ -116,6 +130,19 @@ def _coerce_string_list(value: Any, fallback: Sequence[str]) -> List[str]:
         return list(fallback)
     cleaned = [str(item).strip() for item in value if str(item).strip()]
     return cleaned
+
+
+def _is_path_within(child: Path, parent: Path) -> bool:
+    """Return True if *child* is equal to or inside *parent* (symlink-safe)."""
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+# Maximum allowed length for user-supplied regex patterns in grep/rg.
+_MAX_REGEX_LENGTH = 512
 
 
 # Safe subset only. No eval/exec/open/import.
@@ -478,6 +505,7 @@ class DenoRuntime(SandboxRuntime):
             f"--allow-write={allow_write}",
         ]
         if bool(policy.get("allow_raw_http", False)):
+            logger.warning("Deno sandbox launched with unrestricted --allow-net for server=%s user=%s", session.server_id, session.user_email)
             cmd.append("--allow-net")
 
         max_memory_mb = int(policy.get("max_memory_mb", 256))
@@ -621,7 +649,6 @@ class PythonSandboxRuntime(SandboxRuntime):
             "import contextlib\n"
             "import io\n"
             "import json\n"
-            "import os\n"
             "from pathlib import Path\n"
             "import re\n"
             "import sys\n"
@@ -672,8 +699,11 @@ class PythonSandboxRuntime(SandboxRuntime):
             "        if normalized == root or normalized.startswith(root + '/'):\n"
             "            suffix = normalized[len(root):].lstrip('/')\n"
             "            resolved = (real_root / suffix).resolve()\n"
-            "            if str(resolved).startswith(str(real_root.resolve())):\n"
-            "                return resolved\n"
+            "            try:\n"
+            "                resolved.relative_to(real_root.resolve())\n"
+            "            except ValueError:\n"
+            "                raise PermissionError(f'EACCES: path traversal denied: {normalized}')\n"
+            "            return resolved\n"
             "    raise PermissionError(f'EACCES: path denied: {normalized}')\n"
             "\n"
             "def read_file(path: str) -> str:\n"
@@ -684,8 +714,16 @@ class PythonSandboxRuntime(SandboxRuntime):
             "\n"
             "def write_file(path: str, content: str) -> None:\n"
             "    p = __virtual_to_real(path)\n"
-            "    if not (str(p).startswith(str(Path(__SCRATCH_ROOT).resolve())) or str(p).startswith(str(Path(__RESULTS_ROOT).resolve()))):\n"
-            "        raise PermissionError(f'EACCES: write denied for path: {path}')\n"
+            "    _scratch = Path(__SCRATCH_ROOT).resolve()\n"
+            "    _results = Path(__RESULTS_ROOT).resolve()\n"
+            "    try:\n"
+            "        p.relative_to(_scratch)\n"
+            "    except ValueError:\n"
+            "        try:\n"
+            "            p.relative_to(_results)\n"
+            "        except ValueError:\n"
+            "            raise PermissionError(f'EACCES: write denied for path: {path}')\n"
+            "    del _scratch, _results  # cleanup namespace\n"
             "    p.parent.mkdir(parents=True, exist_ok=True)\n"
             "    p.write_text(content, encoding='utf-8')\n"
             "\n"
@@ -756,32 +794,6 @@ class PythonSandboxRuntime(SandboxRuntime):
             "    sys.__stdout__.flush()\n"
             "    return await fut\n"
             "\n" + "\n".join(user_lines) + "\n\n"
-            "async def __main() -> int:\n"
-            "    stdout_capture = io.StringIO()\n"
-            "    stderr_capture = io.StringIO()\n"
-            "    orig_stdout, orig_stderr = sys.stdout, sys.stderr\n"
-            "    sys.stdout, sys.stderr = stdout_capture, stderr_capture\n"
-            "    exit_code = 0\n"
-            "    result_value = None\n"
-            "    try:\n"
-            "        globals_dict = {\n"
-            "            '__builtins__': _SAFE_BUILTINS,\n"
-            "            '__toolcall__': __toolcall__,\n"
-            "            'tools': tools,\n"
-            "            'json': json,\n"
-            "            'read_file': read_file,\n"
-            "            'write_file': write_file,\n"
-            "            'list_dir': list_dir,\n"
-            "        }\n"
-            "        exec('\\n'.join(__CODE__.splitlines()), globals_dict)\n"
-            "    except Exception:\n"
-            "        pass\n"
-            "    finally:\n"
-            "        pass\n"
-            "\n"
-            "    sys.stdout, sys.stderr = orig_stdout, orig_stderr\n"
-            "    return exit_code\n"
-            "\n"
             "# Execute user code in a restricted globals dict\n"
             "__CODE__ = " + json.dumps("\n".join(user_lines)) + "\n"
             "\n"
@@ -1206,6 +1218,7 @@ class CodeExecutionService:
     ) -> Dict[str, Any]:
         """Execute sandboxed code for code_execution virtual servers."""
         del stream
+        logger.info("shell_exec invoked for server=%s user=%s language=%s", server.id, user_email, language)
         if not self._shell_exec_enabled:
             raise CodeExecutionError("shell_exec meta-tool is disabled by configuration")
         if not code or not code.strip():
@@ -1466,6 +1479,18 @@ class CodeExecutionService:
         created_by: Optional[str],
     ) -> CodeExecutionSkill:
         """Create a persisted skill and optionally queue approval."""
+        if language not in {"python", "typescript"}:
+            raise CodeExecutionError(f"Unsupported skill language: {language}")
+        # Validate skill source against dangerous patterns regardless of approval policy.
+        # Imported skills execute with full runtime privileges, so static safety
+        # checks must be applied at creation time.
+        self._validate_code_safety(
+            code=source_code,
+            language=language,
+            allow_raw_http=bool(self._server_sandbox_policy(server).get("allow_raw_http", False)),
+            user_email=owner_email,
+            request_headers=None,
+        )
         current_version = (
             db.execute(select(CodeExecutionSkill.version).where(CodeExecutionSkill.server_id == server.id, CodeExecutionSkill.name == name).order_by(CodeExecutionSkill.version.desc()))
             .scalars()
@@ -1574,7 +1599,8 @@ class CodeExecutionService:
 
             if session is None:
                 session_id = uuid.uuid4().hex
-                root = self._base_dir / server.id / user_email.replace("@", "_") / session_id
+                logger.info("Creating code execution session %s for user=%s server=%s lang=%s", session_id, user_email, server.id, language)
+                root = self._base_dir / server.id / slugify(user_email) / session_id
                 tools_dir = root / "tools"
                 scratch_dir = root / "scratch"
                 skills_dir = root / "skills"
@@ -1846,18 +1872,13 @@ class CodeExecutionService:
         # Admin bypass: token_teams is None (normalize_token_teams contract).
         if token_teams is None:
             return True
-        if token_teams is not None:
-            if len(token_teams) == 0:
-                return tool.visibility == "public"
-            if tool.visibility == "public":
-                return True
-            if user_email and tool.owner_email == user_email:
-                return True
-            return tool.team_id in token_teams and tool.visibility in {"team", "public"}
-        # Conservative fallback: public + owner only.
+        if len(token_teams) == 0:
+            return tool.visibility == "public"
         if tool.visibility == "public":
             return True
-        return bool(user_email and tool.owner_email == user_email)
+        if user_email and tool.owner_email == user_email:
+            return True
+        return tool.team_id in token_teams and tool.visibility in {"team", "public"}
 
     def _tool_matches_mount_rules(self, tool: DbTool, mount_rules: Dict[str, Any]) -> bool:
         """Evaluate include/exclude mount rules against a candidate tool."""
@@ -2261,6 +2282,9 @@ class CodeExecutionService:
                 # Stop pipeline on error (predictable behavior for agents).
                 break
 
+            if len(stdin.encode("utf-8", errors="replace")) > _MAX_SHELL_OUTPUT_BYTES:
+                return (stdin[:_MAX_SHELL_OUTPUT_BYTES], "shell: output truncated (exceeds 10 MiB limit)", 0)
+
         return (stdin, stderr, exit_code)
 
     def _shell_ls(self, session: CodeExecutionSession, args: List[str], policy: Dict[str, Any]) -> Tuple[str, str, int]:
@@ -2347,6 +2371,8 @@ class CodeExecutionService:
         pattern = positionals[0]
         search_paths = positionals[1:]
 
+        if len(pattern) > _MAX_REGEX_LENGTH:
+            raise CodeExecutionError(f"{cmd}: pattern too long (max {_MAX_REGEX_LENGTH} chars)")
         try:
             rx = re.compile(pattern)
         except re.error as exc:
@@ -2421,11 +2447,15 @@ class CodeExecutionService:
 
         return ("\n".join(matches) + ("\n" if matches else ""), "", 0 if matches else 1)
 
+    _MAX_JQ_FILTER_LENGTH = 1024
+
     def _shell_jq(self, session: CodeExecutionSession, args: List[str], stdin: str, policy: Dict[str, Any]) -> Tuple[str, str, int]:
         """Implement a restricted `jq` transform for JSON content."""
         if not args:
             raise CodeExecutionError("jq: missing filter")
         jq_filter = args[0]
+        if len(jq_filter) > self._MAX_JQ_FILTER_LENGTH:
+            raise CodeExecutionError(f"jq: filter too long (max {self._MAX_JQ_FILTER_LENGTH} chars)")
         file_arg = args[1] if len(args) > 1 else None
 
         raw_input = stdin
@@ -2445,9 +2475,12 @@ class CodeExecutionService:
         except json.JSONDecodeError as exc:
             raise CodeExecutionError(f"jq: invalid JSON input: {exc}") from exc
 
-        # pylint: disable=c-extension-no-member
-        program = jq.compile(jq_filter)
-        results = program.input(parsed).all()
+        try:
+            # pylint: disable=c-extension-no-member
+            program = jq.compile(jq_filter)
+            results = program.input(parsed).all()
+        except ValueError as exc:
+            raise CodeExecutionError(f"jq: invalid filter: {exc}") from exc
         out_lines: List[str] = []
         for item in results:
             if isinstance(item, (dict, list)):
@@ -2744,17 +2777,15 @@ class CodeExecutionService:
             index_lines.append(f"{rel}:{content.replace(os.linesep, ' ')}")
         (tools_dir / ".search_index").write_text("\n".join(index_lines), encoding="utf-8")
 
+    _KNOWN_SHELL_COMMANDS = frozenset({"ls", "cat", "grep", "rg", "jq"})
+
     def _looks_like_shell_command(self, code: str) -> bool:
-        """Heuristically detect one-line shell-style commands."""
+        """Detect one-line commands that start with a known internal shell command."""
         stripped = code.strip()
         if "\n" in stripped:
             return False
-        python_markers = ("def ", "class ", "import ", "from ", "await ", "return ", "for ", "while ", "if ")
-        ts_markers = ("const ", "let ", "function ", "=>", "import ", "export ", "await ")
-        if stripped.startswith(python_markers) or stripped.startswith(ts_markers):
-            return False
-        # Single-line command-like input.
-        return bool(re.match(r"^[A-Za-z0-9_./-]+\s?.*$", stripped))
+        first_token = stripped.split(None, 1)[0] if stripped else ""
+        return first_token in self._KNOWN_SHELL_COMMANDS
 
     def _enforce_disk_limits(self, session: CodeExecutionSession, policy: Dict[str, Any]) -> None:
         """Enforce per-file and aggregate disk quotas in writable roots."""
@@ -2783,7 +2814,7 @@ class CodeExecutionService:
         client_ip = "unknown"
         if request_headers:
             client_ip = request_headers.get("x-forwarded-for") or request_headers.get("x-real-ip") or "unknown"
-        with contextlib.suppress(Exception):
+        try:
             security_logger.log_suspicious_activity(
                 activity_type="code_execution_policy_violation",
                 description=description,
@@ -2796,6 +2827,8 @@ class CodeExecutionService:
                 threat_indicators=threat_indicators,
                 action_taken="blocked",
             )
+        except Exception:
+            logger.warning("Failed to emit security event: %s", description, exc_info=True)
 
     def _virtual_to_real_path(self, session: CodeExecutionSession, virtual_path: str) -> Optional[Path]:
         """Resolve a virtual path into a session-scoped real filesystem path."""
@@ -2812,9 +2845,12 @@ class CodeExecutionService:
             if normalized.startswith(root + "/"):
                 suffix = normalized[len(root) + 1 :]
                 resolved = (real_root / suffix).resolve()
-                if str(resolved).startswith(str(real_root.resolve())):
-                    return resolved
-                return None
+                real_root_resolved = real_root.resolve()
+                try:
+                    resolved.relative_to(real_root_resolved)
+                except ValueError:
+                    return None
+                return resolved
         return None
 
     def _real_to_virtual_path(self, session: CodeExecutionSession, real_path: Path) -> str:
@@ -2846,7 +2882,7 @@ class CodeExecutionService:
             raise CodeExecutionSecurityError(f"EACCES: write denied for path: {virtual_path}")
         allowed_roots = (session.scratch_dir.resolve(), session.results_dir.resolve())
         resolved = real_path.resolve()
-        if not any(str(resolved).startswith(str(root)) for root in allowed_roots):
+        if not any(_is_path_within(resolved, root) for root in allowed_roots):
             raise CodeExecutionSecurityError(f"EACCES: write denied for path: {virtual_path}")
         real_path.parent.mkdir(parents=True, exist_ok=True)
         real_path.write_text(content, encoding="utf-8")
@@ -2860,6 +2896,7 @@ class CodeExecutionService:
 
     async def _destroy_session(self, session: CodeExecutionSession) -> None:
         """Destroy runtime artifacts and remove the session workspace."""
+        logger.info("Destroying code execution session %s for user=%s server=%s", session.session_id, session.user_email, session.server_id)
         with contextlib.suppress(Exception):
             await self._deno_runtime.destroy_session(session)
         with contextlib.suppress(Exception):

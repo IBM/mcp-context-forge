@@ -2,18 +2,30 @@
 """Unit tests for code execution service."""
 
 # Standard
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 # Third-Party
 import orjson
 import pytest
 
 # First-Party
-from mcpgateway.services.code_execution_service import CodeExecutionError, CodeExecutionSecurityError, CodeExecutionService, CodeExecutionSession
+from mcpgateway.services.code_execution_service import (
+    CodeExecutionError,
+    CodeExecutionRateLimitError,
+    CodeExecutionSecurityError,
+    CodeExecutionService,
+    CodeExecutionSession,
+    TokenizationContext,
+    ToolCallRecord,
+    _coerce_string_list,
+    _is_path_within,
+    _MAX_REGEX_LENGTH,
+)
 
 
 def _make_session(tmp_path: Path, language: str = "python") -> CodeExecutionSession:
