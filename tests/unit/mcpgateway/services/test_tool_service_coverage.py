@@ -8,6 +8,7 @@ branch coverage beyond the current 63%.
 # Standard
 import asyncio
 import base64
+import json
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import time
@@ -2548,7 +2549,6 @@ class TestInvokeA2AToolCoverage:
         assert result.is_error is False
         text = result.content[0].text
         # Must be valid JSON, not Python repr
-        import json
         parsed = json.loads(text)
         assert parsed["has_chart"] is False
         assert "False" not in text  # Python repr would have capital False
@@ -2573,7 +2573,6 @@ class TestInvokeA2AToolCoverage:
         result = await tool_service._invoke_a2a_tool(db, tool, {})
         assert result.is_error is False
         text = result.content[0].text
-        import json
         parsed = json.loads(text)
         assert parsed["result"]["has_chart"] is False
         assert "False" not in text
@@ -4756,16 +4755,15 @@ class TestInvokeToolRestSuccess:
 
 
 class TestInvokeToolRestErrorResponse:
-    @pytest.mark.asyncio
-    async def test_rest_error_dict_serialized_as_json(self, tool_service):
-        """When REST error field is a dict, it should be serialized as valid JSON, not Python repr."""
+    async def _invoke_with_error_response(self, tool_service, status_code, json_return, text_body):
+        """Helper to invoke a REST GET tool with a mocked error response."""
         tp = _make_tool_payload(integration_type="REST", request_type="GET")
         db = MagicMock()
 
         mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.json = MagicMock(return_value={"error": {"code": "INVALID", "details": {"field": "name", "required": True}}})
-        mock_response.text = "Bad Request"
+        mock_response.status_code = status_code
+        mock_response.json = MagicMock(return_value=json_return)
+        mock_response.text = text_body
         mock_response.raise_for_status = MagicMock()
 
         async def fake_get(*a, **kw):
@@ -4789,11 +4787,20 @@ class TestInvokeToolRestErrorResponse:
             tool_service._http_client = AsyncMock()
             tool_service._http_client.get = fake_get
 
-            result = await tool_service.invoke_tool(db, "test_tool", {})
+            return await tool_service.invoke_tool(db, "test_tool", {})
+
+    @pytest.mark.asyncio
+    async def test_rest_error_dict_serialized_as_json(self, tool_service):
+        """When REST error field is a dict, it should be serialized as valid JSON, not Python repr."""
+        result = await self._invoke_with_error_response(
+            tool_service,
+            status_code=400,
+            json_return={"error": {"code": "INVALID", "details": {"field": "name", "required": True}}},
+            text_body="Bad Request",
+        )
         assert result.is_error is True
         text = result.content[0].text
         # Must be valid JSON, not Python repr
-        import json
         parsed = json.loads(text)
         assert parsed["code"] == "INVALID"
         assert parsed["details"]["required"] is True
@@ -4802,37 +4809,12 @@ class TestInvokeToolRestErrorResponse:
     @pytest.mark.asyncio
     async def test_rest_error_string_passed_through(self, tool_service):
         """When REST error field is a string, it should be passed through as-is."""
-        tp = _make_tool_payload(integration_type="REST", request_type="GET")
-        db = MagicMock()
-
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.json = MagicMock(return_value={"error": "Internal server error"})
-        mock_response.text = "Internal Server Error"
-        mock_response.raise_for_status = MagicMock()
-
-        async def fake_get(*a, **kw):
-            return mock_response
-
-        with (
-            _setup_cache_for_invoke(tp),
-            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
-            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
-            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
-            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
-            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-        ):
-            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
-            mock_trace.get = MagicMock(return_value=None)
-            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
-            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
-            mock_mbuf.return_value = MagicMock()
-
-            tool_service._http_client = AsyncMock()
-            tool_service._http_client.get = fake_get
-
-            result = await tool_service.invoke_tool(db, "test_tool", {})
+        result = await self._invoke_with_error_response(
+            tool_service,
+            status_code=500,
+            json_return={"error": "Internal server error"},
+            text_body="Internal Server Error",
+        )
         assert result.is_error is True
         assert result.content[0].text == "Internal server error"
 
@@ -5293,7 +5275,6 @@ class TestInvokeToolPluginPostInvokeSerialization:
         assert result.is_error is False
         text = result.content[0].text
         # Must be valid JSON, not Python repr
-        import json
         parsed = json.loads(text)
         assert parsed["status"] == "transformed"
         assert parsed["valid"] is False
