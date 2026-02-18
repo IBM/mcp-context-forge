@@ -3807,9 +3807,10 @@ class ToolService:
                     if http_response.status_code == 200:
                         response_data = http_response.json()
                         if isinstance(response_data, dict) and "response" in response_data:
-                            content = [TextContent(type="text", text=str(response_data["response"]))]
+                            val = response_data["response"]
+                            content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
                         else:
-                            content = [TextContent(type="text", text=str(response_data))]
+                            content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
                         tool_result = ToolResult(content=content, is_error=False)
                         success = True
                     else:
@@ -4762,9 +4763,10 @@ class ToolService:
 
             # Convert A2A response to MCP ToolResult format
             if isinstance(response_data, dict) and "response" in response_data:
-                content = [TextContent(type="text", text=str(response_data["response"]))]
+                val = response_data["response"]
+                content = [TextContent(type="text", text=val if isinstance(val, str) else orjson.dumps(val).decode())]
             else:
-                content = [TextContent(type="text", text=str(response_data))]
+                content = [TextContent(type="text", text=response_data if isinstance(response_data, str) else orjson.dumps(response_data).decode())]
 
             result = ToolResult(content=content, is_error=False)
 
