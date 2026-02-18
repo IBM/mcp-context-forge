@@ -7174,6 +7174,19 @@ if getattr(settings, "structured_logging_enabled", True):
 else:
     logger.info("Log search router not included - structured logging disabled")
 
+# Include compliance router if enabled
+if settings.mcpgateway_compliance_enabled:
+    try:
+        # First-Party
+        from mcpgateway.routers.compliance import router as compliance_router
+
+        app.include_router(compliance_router)
+        logger.info("Compliance router included - compliance feature enabled")
+    except ImportError as e:
+        logger.warning(f"Failed to import compliance router: {e}")
+else:
+    logger.info("Compliance router not included - compliance feature disabled")
+
 # Conditionally include observability router if enabled
 if settings.observability_enabled:
     # First-Party

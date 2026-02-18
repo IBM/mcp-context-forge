@@ -199,6 +199,7 @@ UI_SECTION_TO_TABS: Dict[str, tuple[str, ...]] = {
     "plugins": ("plugins",),
     "export-import": ("export-import",),
     "logs": ("logs",),
+    "compliance": ("compliance",),
     "version-info": ("version-info",),
     "maintenance": ("maintenance",),
     "teams": ("teams",),
@@ -3301,6 +3302,10 @@ async def admin_ui(
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),
             "performance_enabled": getattr(settings, "mcpgateway_performance_tracking", False),
+            "compliance_enabled": getattr(settings, "mcpgateway_compliance_enabled", False),
+            "audit_trail_enabled": getattr(settings, "audit_trail_enabled", False),
+            "permission_audit_enabled": getattr(settings, "permission_audit_enabled", False),
+            "security_logging_enabled": getattr(settings, "security_logging_enabled", False),
             "current_user": get_user_email(user),
             "email_auth_enabled": getattr(settings, "email_auth_enabled", False),
             "is_admin": bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False)),
@@ -10127,6 +10132,7 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+        """Execute an entity search and downgrade auth failures to empty results."""
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:

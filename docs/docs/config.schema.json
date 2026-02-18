@@ -63,7 +63,7 @@
       "type": "string"
     },
     "protocol_version": {
-      "default": "2025-06-18",
+      "default": "2025-11-25",
       "title": "Protocol Version",
       "type": "string"
     },
@@ -1304,6 +1304,40 @@
       "title": "Mcpgateway Admin Api Enabled",
       "type": "boolean"
     },
+    "mcpgateway_compliance_enabled": {
+      "default": false,
+      "description": "Enable /api/compliance endpoints and Admin UI Compliance section",
+      "title": "Mcpgateway Compliance Enabled",
+      "type": "boolean"
+    },
+    "mcpgateway_compliance_frameworks": {
+      "description": "Compliance frameworks used in scoring/export summaries (CSV/JSON): soc2, gdpr, hipaa, iso27001",
+      "items": {
+        "type": "string"
+      },
+      "title": "Mcpgateway Compliance Frameworks",
+      "type": "array"
+    },
+    "mcpgateway_compliance_report_schedule": {
+      "default": "disabled",
+      "description": "Schedule hint for external compliance report generation automation (not a built-in scheduler)",
+      "enum": [
+        "disabled",
+        "daily",
+        "weekly",
+        "monthly"
+      ],
+      "title": "Mcpgateway Compliance Report Schedule",
+      "type": "string"
+    },
+    "mcpgateway_compliance_max_export_rows": {
+      "default": 5000,
+      "description": "Hard cap (100-50000) for compliance evidence export rows per request",
+      "maximum": 50000,
+      "minimum": 100,
+      "title": "Mcpgateway Compliance Max Export Rows",
+      "type": "integer"
+    },
     "mcpgateway_ui_airgapped": {
       "default": false,
       "description": "Use local CDN assets instead of external CDNs for airgapped deployments",
@@ -1317,7 +1351,7 @@
       "type": "boolean"
     },
     "mcpgateway_ui_hide_sections": {
-      "description": "CSV/JSON list of UI sections to hide. Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings",
+      "description": "CSV/JSON list of UI sections to hide. Valid values: overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, compliance, teams, users, agents, tokens, settings",
       "items": {
         "type": "string"
       },
@@ -2232,6 +2266,20 @@
       "title": "Security Rate Limit Window Minutes",
       "type": "integer"
     },
+    "token_usage_logging_enabled": {
+      "default": true,
+      "description": "Enable API token usage logging middleware",
+      "title": "Token Usage Logging Enabled",
+      "type": "boolean"
+    },
+    "token_last_used_update_interval_minutes": {
+      "default": 5,
+      "description": "Minimum minutes between last_used timestamp updates (rate-limits DB writes)",
+      "maximum": 1440,
+      "minimum": 1,
+      "title": "Token Last Used Update Interval Minutes",
+      "type": "integer"
+    },
     "metrics_aggregation_enabled": {
       "default": true,
       "description": "Enable automatic log aggregation into performance metrics",
@@ -2755,13 +2803,13 @@
     "allowed_mime_types": {
       "default": [
         "image/gif",
-        "text/plain",
-        "image/jpeg",
-        "image/png",
         "text/markdown",
+        "image/jpeg",
         "text/html",
+        "text/plain",
+        "application/xml",
         "application/json",
-        "application/xml"
+        "image/png"
       ],
       "items": {
         "type": "string"

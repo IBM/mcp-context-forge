@@ -9,6 +9,7 @@ Test cases for admin UI.
 
 # Standard
 import re
+import uuid
 
 # Third-Party
 from playwright.sync_api import expect
@@ -99,3 +100,29 @@ class TestAdminUI:
         admin_page.page.set_viewport_size({"width": 1920, "height": 1080})
         admin_page.navigate()
         expect(admin_page.servers_tab).to_be_visible()
+
+    def test_compliance_empty_export_shows_actionable_guidance(self, admin_page: AdminPage):
+        """Compliance export should explain empty datasets instead of downloading empty payloads."""
+        admin_page.navigate()
+
+        compliance_tab = admin_page.page.locator("#tab-compliance")
+        if compliance_tab.count() == 0:
+            pytest.skip("Compliance feature flag is disabled for this environment.")
+
+        compliance_tab.click()
+        admin_page.page.wait_for_selector("#compliance-panel:not(.hidden)")
+
+        # Ensure controls are visible and dashboard metadata is loaded first.
+        admin_page.page.locator('button[onclick="showComplianceDashboard()"]').click()
+        admin_page.page.wait_for_selector("#compliance-controls:not(.hidden)")
+
+        # Use a unique identifier so user_activity preview is expected to be empty.
+        missing_user = f"missing-{uuid.uuid4().hex}@example.invalid"
+        admin_page.page.locator("#compliance-export-dataset").select_option("user_activity")
+        admin_page.page.locator("#compliance-user-filter").fill(missing_user)
+
+        admin_page.page.locator('button[onclick="exportComplianceEvidence()"]').click()
+
+        compliance_stats = admin_page.page.locator("#compliance-stats")
+        expect(compliance_stats).to_contain_text('No rows matched export dataset "user_activity".')
+        expect(compliance_stats).to_contain_text("Widen the Start/End date range")

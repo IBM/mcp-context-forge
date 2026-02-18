@@ -7520,6 +7520,7 @@ const ADMIN_ONLY_TABS = new Set([
     "observability",
     "plugins",
     "logs",
+    "compliance",
     "export-import",
     "version-info",
     "maintenance",
@@ -7884,6 +7885,14 @@ function showTab(tabName) {
                     const logsTbody = safeGetElement("logs-tbody");
                     if (logsTbody && logsTbody.children.length === 0) {
                         searchStructuredLogs();
+                    }
+                }
+
+                if (tabName === "compliance") {
+                    // Load compliance dashboard when tab is first opened
+                    const complianceTbody = safeGetElement("compliance-tbody");
+                    if (complianceTbody && complianceTbody.children.length === 0) {
+                        showComplianceDashboard();
                     }
                 }
 
@@ -29503,6 +29512,38 @@ function setLogFiltersVisibility(shouldShow) {
     }
 }
 
+function setComplianceControlsVisibility(shouldShow) {
+    const controls = document.getElementById("compliance-controls");
+    if (!controls) {
+        return;
+    }
+    if (shouldShow) {
+        controls.classList.remove("hidden");
+    } else {
+        controls.classList.add("hidden");
+    }
+}
+
+function appendComplianceRange(params) {
+    const startInput = document.getElementById("compliance-start-date")?.value;
+    const endInput = document.getElementById("compliance-end-date")?.value;
+    if (startInput) {
+        params.set("start_time", new Date(startInput).toISOString());
+    }
+    if (endInput) {
+        params.set("end_time", new Date(endInput).toISOString());
+    }
+}
+
+function getComplianceFramework() {
+    return document.getElementById("compliance-framework-select")?.value || "";
+}
+
+function getComplianceUserIdentifier() {
+    const value = document.getElementById("compliance-user-filter")?.value || "";
+    return value.trim();
+}
+
 function handlePerformanceAggregationChange(event) {
     const selectedKey = event?.target?.value;
     if (selectedKey && PERFORMANCE_AGGREGATION_OPTIONS[selectedKey]) {
@@ -29516,6 +29557,7 @@ function handlePerformanceAggregationChange(event) {
 async function searchStructuredLogs() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(true);
+    setComplianceControlsVisibility(false);
     const levelFilter = document.getElementById("log-level-filter")?.value;
     const componentFilter = document.getElementById(
         "log-component-filter",
@@ -29772,6 +29814,7 @@ function restoreLogTableHeaders() {
 async function showCorrelationTrace(correlationId) {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(true);
+    setComplianceControlsVisibility(false);
     if (!correlationId) {
         const searchInput = document.getElementById("log-search");
         correlationId = prompt(
@@ -30194,6 +30237,7 @@ function displayCorrelationTrace(trace) {
 async function showSecurityEvents() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(false);
+    setComplianceControlsVisibility(false);
     try {
         const response = await fetchWithAuth(
             `${getRootPath()}/api/logs/security-events?limit=50&resolved=false`,
@@ -30339,6 +30383,7 @@ function getSeverityClass(severity) {
 async function showAuditTrail() {
     setPerformanceAggregationVisibility(false);
     setLogFiltersVisibility(false);
+    setComplianceControlsVisibility(false);
     try {
         const response = await fetchWithAuth(
             `${getRootPath()}/api/logs/audit-trails?limit=50&requires_review=true`,
@@ -30504,6 +30549,7 @@ async function showPerformanceMetrics(rangeKey) {
     syncPerformanceAggregationSelect();
     setPerformanceAggregationVisibility(true);
     setLogFiltersVisibility(false);
+    setComplianceControlsVisibility(false);
     const hoursParam = encodeURIComponent(PERFORMANCE_HISTORY_HOURS.toString());
     const aggregationParam = encodeURIComponent(
         getPerformanceAggregationQuery(),
@@ -30630,6 +30676,760 @@ function displayPerformanceMetrics(metrics) {
         .join("");
 }
 
+function getComplianceStatusClass(status) {
+    const classes = {
+        compliant:
+            "bg-green-200 text-green-800 dark:bg-green-800 dark:text-green-200",
+        needs_attention:
+            "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+        at_risk: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+    };
+    return classes[status] || classes.needs_attention;
+}
+
+function getComplianceConfidenceClass(confidence) {
+    const classes = {
+        high: "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200",
+        medium:
+            "bg-yellow-100 text-yellow-700 dark:bg-yellow-900 dark:text-yellow-200",
+        low: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200",
+    };
+    return classes[confidence] || classes.medium;
+}
+
+function formatControlName(name) {
+    return String(name || "")
+        .replaceAll("_", " ")
+        .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function formatComplianceDate(value) {
+    if (!value) {
+        return "-";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+        return "-";
+    }
+    return date.toLocaleString();
+}
+
+function getComplianceSignalFlags() {
+    const flags = window.COMPLIANCE_SIGNAL_FLAGS || {};
+    return {
+        auditTrailEnabled: Boolean(flags.auditTrailEnabled),
+        permissionAuditEnabled: Boolean(flags.permissionAuditEnabled),
+        securityLoggingEnabled: Boolean(flags.securityLoggingEnabled),
+    };
+}
+
+function setComplianceInsights(content) {
+    const insights = document.getElementById("compliance-insights");
+    if (!insights) {
+        return;
+    }
+    if (!content) {
+        insights.classList.add("hidden");
+        insights.innerHTML = "";
+        return;
+    }
+    insights.classList.remove("hidden");
+    insights.innerHTML = content;
+}
+
+function updateComplianceScoreLegend(payload) {
+    const modelContainer = document.getElementById("compliance-score-model");
+    if (!modelContainer) {
+        return;
+    }
+    const scoreModel = payload?.score_model || {};
+    const thresholds = scoreModel.status_thresholds || {};
+    const method =
+        scoreModel.method ||
+        "Each framework score is an arithmetic mean of control scores.";
+    modelContainer.innerHTML = `
+        <div>${escapeHtml(method)}</div>
+        <div class="mt-1 text-xs">
+            Compliant ${escapeHtml(thresholds.compliant || ">= 85")} •
+            Needs Attention ${escapeHtml(thresholds.needs_attention || ">= 70 and < 85")} •
+            At Risk ${escapeHtml(thresholds.at_risk || "< 70")}
+        </div>
+    `;
+}
+
+function renderComplianceDashboardInsights(payload) {
+    const dataSources = Array.isArray(payload?.data_sources)
+        ? payload.data_sources
+        : [];
+    const violations = Array.isArray(payload?.policy_violations)
+        ? payload.policy_violations
+        : [];
+    const limitations = Array.isArray(payload?.limitations)
+        ? payload.limitations
+        : [];
+
+    const sourceHtml = dataSources
+        .map((source) => {
+            const enabled = Boolean(source.enabled);
+            const statusClass = enabled
+                ? "text-green-700 dark:text-green-300"
+                : "text-red-700 dark:text-red-300";
+            const statusText = enabled ? "Enabled" : "Disabled";
+            return `<li class="text-xs">
+                <span class="font-semibold">${escapeHtml(source.display_name || source.source || "Telemetry Source")}:</span>
+                <span class="${statusClass}">${statusText}</span>
+                <span class="text-gray-600 dark:text-gray-400">(${Number(source.event_count || 0).toLocaleString()} events)</span>
+            </li>`;
+        })
+        .join("");
+
+    const violationsHtml = violations
+        .map(
+            (item) =>
+                `<li class="text-xs text-red-700 dark:text-red-300">${escapeHtml(item.message || item.policy_id || "Policy issue")}</li>`,
+        )
+        .join("");
+
+    const limitationsHtml = limitations
+        .map(
+            (item) =>
+                `<li class="text-xs text-amber-700 dark:text-amber-300">${escapeHtml(item)}</li>`,
+        )
+        .join("");
+
+    if (!sourceHtml && !violationsHtml && !limitationsHtml) {
+        setComplianceInsights("");
+        return;
+    }
+
+    setComplianceInsights(`
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
+            <div>
+                <div class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Telemetry Coverage</div>
+                <ul class="space-y-1">${sourceHtml || '<li class="text-xs text-gray-500">No source data.</li>'}</ul>
+            </div>
+            <div>
+                <div class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Policy Violations</div>
+                <ul class="space-y-1">${violationsHtml || '<li class="text-xs text-gray-500">No policy violations detected.</li>'}</ul>
+            </div>
+            <div>
+                <div class="text-xs font-semibold text-gray-700 dark:text-gray-200 mb-1">Current Limitations</div>
+                <ul class="space-y-1">${limitationsHtml || '<li class="text-xs text-gray-500">No limitations detected for this period.</li>'}</ul>
+            </div>
+        </div>
+    `);
+}
+
+function getComplianceDatasetMetadata(dataset) {
+    const fromDashboard = Array.isArray(window.__complianceDatasetStatus)
+        ? window.__complianceDatasetStatus.find((item) => item.dataset === dataset)
+        : null;
+    if (fromDashboard) {
+        return fromDashboard;
+    }
+
+    const fallback = {
+        audit_logs: {
+            display_name: "Audit Logs",
+            description: "Detailed CRUD/admin trails from audit logs.",
+            required_signals: ["audit_trail"],
+        },
+        access_control: {
+            display_name: "Access Control",
+            description: "Permission check outcomes from RBAC audits.",
+            required_signals: ["permission_audit"],
+        },
+        security_events: {
+            display_name: "Security Events",
+            description: "Security detections and resolution status.",
+            required_signals: ["security_events"],
+        },
+        compliance_summary: {
+            display_name: "Compliance Summary",
+            description: "Per-framework scoring summary for the selected period.",
+            required_signals: [],
+        },
+        encryption_status: {
+            display_name: "Encryption Status",
+            description: "Current encryption and TLS posture snapshot.",
+            required_signals: [],
+        },
+        user_activity: {
+            display_name: "User Activity",
+            description: "Merged timeline for a specific user identifier.",
+            required_signals: [
+                "audit_trail",
+                "permission_audit",
+                "security_events",
+            ],
+        },
+    };
+    return fallback[dataset] || null;
+}
+
+function updateComplianceExportHelp() {
+    const helper = document.getElementById("compliance-export-help");
+    if (!helper) {
+        return;
+    }
+
+    const dataset =
+        document.getElementById("compliance-export-dataset")?.value ||
+        "compliance_summary";
+    const metadata = getComplianceDatasetMetadata(dataset);
+    const flags = getComplianceSignalFlags();
+    const signalLabels = {
+        audit_trail: "AUDIT_TRAIL_ENABLED",
+        permission_audit: "PERMISSION_AUDIT_ENABLED",
+        security_events: "SECURITY_LOGGING_ENABLED",
+    };
+    const signalEnabled = {
+        audit_trail: flags.auditTrailEnabled,
+        permission_audit: flags.permissionAuditEnabled,
+        security_events: flags.securityLoggingEnabled,
+    };
+
+    const missingSignals = (metadata?.required_signals || []).filter(
+        (signal) => !signalEnabled[signal],
+    );
+    const missingHint =
+        missingSignals.length > 0
+            ? ` Missing prerequisites: ${missingSignals.map((signal) => signalLabels[signal] || signal).join(", ")}.`
+            : "";
+
+    helper.textContent = `${metadata?.description || "Choose a dataset to export evidence."}${missingHint}`;
+}
+
+async function showComplianceDashboard() {
+    setComplianceControlsVisibility(true);
+    updateComplianceExportHelp();
+
+    const params = new URLSearchParams();
+    const framework = getComplianceFramework();
+    if (framework) {
+        params.append("framework", framework);
+    }
+    appendComplianceRange(params);
+
+    try {
+        const query = params.toString();
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/compliance/dashboard${query ? `?${query}` : ""}`,
+            { method: "GET" },
+        );
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch compliance dashboard: ${response.statusText}`,
+            );
+        }
+        const payload = await response.json();
+        displayComplianceDashboard(payload);
+    } catch (error) {
+        console.error("Error fetching compliance dashboard:", error);
+        showToast(
+            "Failed to fetch compliance dashboard: " + error.message,
+            "error",
+        );
+    }
+}
+
+function displayComplianceDashboard(payload) {
+    const tbody = document.getElementById("compliance-tbody");
+    const thead = document.getElementById("compliance-thead");
+    const complianceCount = document.getElementById("compliance-count");
+    const complianceStats = document.getElementById("compliance-stats");
+    if (!tbody || !thead || !complianceCount || !complianceStats) {
+        return;
+    }
+    const frameworks = payload.frameworks || [];
+    const overview = payload.overview || {};
+    const violations = payload.policy_violations || [];
+    window.__complianceDatasetStatus = Array.isArray(payload.export_datasets)
+        ? payload.export_datasets
+        : [];
+    updateComplianceScoreLegend(payload);
+    updateComplianceExportHelp();
+    renderComplianceDashboardInsights(payload);
+
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Framework
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Score
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Status
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Control Scores & Evidence
+                </th>
+            </tr>
+        `;
+    }
+
+    const overallStatus = (payload.overall_status || "unknown")
+        .replaceAll("_", " ")
+        .toUpperCase();
+    const period = payload.period || {};
+    complianceCount.textContent = `${frameworks.length} frameworks`;
+    complianceStats.innerHTML = `
+        <div class="text-sm">
+            <span class="font-semibold">Overall Score:</span>
+            ${Number(payload.overall_score || 0).toFixed(2)}
+            <span class="ml-2 px-2 py-0.5 rounded ${getComplianceStatusClass(payload.overall_status)}">${escapeHtml(overallStatus)}</span>
+            <span class="ml-3">Audit: ${(overview.audit_events || 0).toLocaleString()}</span>
+            <span class="ml-3">Denied Permissions: ${(overview.permission_denied || 0).toLocaleString()}</span>
+            <span class="ml-3">Unresolved Security: ${(overview.security_unresolved || 0).toLocaleString()}</span>
+            <span class="ml-3">Policy Violations: ${violations.length.toLocaleString()}</span>
+            <div class="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                Period: ${escapeHtml(formatComplianceDate(period.start_time))} to ${escapeHtml(formatComplianceDate(period.end_time))}
+            </div>
+        </div>
+    `;
+
+    if (frameworks.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="4" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                No framework summaries are available for this period.
+            </td></tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = frameworks
+        .map((card) => {
+            const controlDetails = Array.isArray(card.control_details)
+                ? card.control_details
+                : [];
+            const controlsFallback = Object.entries(card.controls || {}).map(
+                ([name, value]) => ({
+                    display_name: formatControlName(name),
+                    score: Number(value || 0),
+                    evidence: "",
+                    gap: "",
+                }),
+            );
+            const effectiveControls =
+                controlDetails.length > 0 ? controlDetails : controlsFallback;
+            const controls = effectiveControls
+                .map((item) => {
+                    const detailEvidence = item.evidence
+                        ? `<div class="text-gray-500 dark:text-gray-400">Evidence: ${escapeHtml(item.evidence)}</div>`
+                        : "";
+                    const detailGap = item.gap
+                        ? `<div class="text-red-600 dark:text-red-400">Gap: ${escapeHtml(item.gap)}</div>`
+                        : "";
+                    return `<div class="mb-2">
+                        <div><span class="font-semibold">${escapeHtml(item.display_name || "-")}</span>: <strong>${Number(item.score || 0).toFixed(2)}</strong></div>
+                        ${detailEvidence}
+                        ${detailGap}
+                    </div>`;
+                })
+                .join("");
+            const missingEvidence = Array.isArray(card.missing_evidence)
+                ? card.missing_evidence
+                : [];
+            const missingEvidenceHtml =
+                missingEvidence.length > 0
+                    ? `<div class="mt-2 text-xs text-red-700 dark:text-red-300">
+                        <div class="font-semibold">Missing Evidence</div>
+                        ${missingEvidence.map((item) => `<div>• ${escapeHtml(item)}</div>`).join("")}
+                    </div>`
+                    : '<div class="mt-2 text-xs text-green-700 dark:text-green-300">No missing-evidence signals detected for this framework.</div>';
+            const confidence = String(card.confidence || "medium").toLowerCase();
+            const lowControls = Array.isArray(card.low_scoring_controls)
+                ? card.low_scoring_controls
+                : [];
+            const lowControlsHtml =
+                lowControls.length > 0
+                    ? `<div class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                        Low controls: ${lowControls
+                            .map(
+                                (item) =>
+                                    `${escapeHtml(item.display_name || item.control || "-")} (${Number(item.score || 0).toFixed(2)})`,
+                            )
+                            .join(", ")}
+                    </div>`
+                    : "";
+            const nextSteps = Array.isArray(card.recommended_next_steps)
+                ? card.recommended_next_steps
+                : [];
+            const nextStepsHtml =
+                nextSteps.length > 0
+                    ? `<div class="mt-2 text-xs text-indigo-700 dark:text-indigo-300">
+                        <div class="font-semibold">Recommended Next Steps</div>
+                        ${nextSteps.map((item) => `<div>• ${escapeHtml(item)}</div>`).join("")}
+                    </div>`
+                    : "";
+
+            return `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                    <td class="px-4 py-3 text-sm font-semibold text-gray-900 dark:text-gray-300">
+                        ${escapeHtml(card.framework_display_name || card.framework || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${Number(card.score || 0).toFixed(2)}
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded ${getComplianceStatusClass(card.status)}">
+                            ${escapeHtml((card.status || "unknown").replaceAll("_", " "))}
+                        </span>
+                        <div class="mt-1">
+                            <span class="px-2 py-0.5 text-xs rounded ${getComplianceConfidenceClass(confidence)}">
+                                ${escapeHtml(confidence)} confidence
+                            </span>
+                        </div>
+                    </td>
+                    <td class="px-4 py-3 text-xs text-gray-700 dark:text-gray-300">
+                        <div class="mb-2 text-gray-600 dark:text-gray-400">${escapeHtml(card.score_explanation || "")}</div>
+                        ${controls || "-"}
+                        ${lowControlsHtml}
+                        ${missingEvidenceHtml}
+                        ${nextStepsHtml}
+                    </td>
+                </tr>
+            `;
+        })
+        .join("");
+}
+
+function getComplianceSourceClass(source) {
+    const classes = {
+        audit: "bg-blue-200 text-blue-800 dark:bg-blue-800 dark:text-blue-200",
+        security: "bg-red-200 text-red-800 dark:bg-red-800 dark:text-red-200",
+        permission:
+            "bg-yellow-200 text-yellow-800 dark:bg-yellow-800 dark:text-yellow-200",
+    };
+    return classes[source] || classes.audit;
+}
+
+async function showComplianceUserTimeline(userIdentifier) {
+    setComplianceControlsVisibility(true);
+    updateComplianceExportHelp();
+
+    const resolvedUser = (userIdentifier || getComplianceUserIdentifier()).trim();
+    if (!resolvedUser) {
+        const prompted = prompt(
+            "Enter user email or ID for timeline:",
+            getComplianceUserIdentifier(),
+        );
+        if (!prompted || !prompted.trim()) {
+            return;
+        }
+        userIdentifier = prompted.trim();
+    } else {
+        userIdentifier = resolvedUser;
+    }
+
+    const params = new URLSearchParams();
+    params.set("limit", "500");
+    appendComplianceRange(params);
+
+    try {
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/compliance/user-activity/${encodeURIComponent(userIdentifier)}?${params.toString()}`,
+            { method: "GET" },
+        );
+        if (!response.ok) {
+            throw new Error(
+                `Failed to fetch user timeline: ${response.statusText}`,
+            );
+        }
+        const payload = await response.json();
+        displayComplianceTimeline(payload);
+    } catch (error) {
+        console.error("Error fetching user timeline:", error);
+        showToast("Failed to fetch user timeline: " + error.message, "error");
+    }
+}
+
+function displayComplianceTimeline(payload) {
+    const tbody = document.getElementById("compliance-tbody");
+    const thead = document.getElementById("compliance-thead");
+    const complianceCount = document.getElementById("compliance-count");
+    const complianceStats = document.getElementById("compliance-stats");
+    if (!tbody || !thead || !complianceCount || !complianceStats) {
+        return;
+    }
+    const events = payload.events || [];
+    const sessions = payload.sessions || [];
+    updateComplianceScoreLegend(null);
+    setComplianceInsights("");
+
+    if (thead) {
+        thead.innerHTML = `
+            <tr>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Time
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Source
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Action
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Resource
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Status
+                </th>
+                <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Session
+                </th>
+            </tr>
+        `;
+    }
+
+    complianceCount.textContent = `${events.length} events`;
+    complianceStats.innerHTML = `
+        <div class="text-sm">
+            <span class="text-indigo-600 dark:text-indigo-400">
+                User timeline: ${escapeHtml(payload.user_identifier || "-")} (${sessions.length} sessions)
+            </span>
+            <div class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                Period: ${escapeHtml(formatComplianceDate(payload?.period?.start_time))} to ${escapeHtml(formatComplianceDate(payload?.period?.end_time))}
+            </div>
+        </div>
+    `;
+
+    if (events.length === 0) {
+        tbody.innerHTML = `
+            <tr><td colspan="6" class="px-4 py-8 text-center text-gray-500 dark:text-gray-400">
+                No timeline events found for this user and date range.
+            </td></tr>
+        `;
+        return;
+    }
+
+    tbody.innerHTML = events
+        .map((event) => {
+            const resourceName =
+                event.resource_name || event.resource_id || "-";
+            const statusText = event.success ? "Success" : "Attention";
+            const statusClass = event.success
+                ? "text-green-600"
+                : "text-red-600";
+            return `
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${formatTimestamp(event.timestamp)}
+                    </td>
+                    <td class="px-4 py-3">
+                        <span class="px-2 py-1 text-xs font-semibold rounded ${getComplianceSourceClass(event.source)}">
+                            ${escapeHtml(event.source || "-")}
+                        </span>
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-900 dark:text-gray-300">
+                        ${escapeHtml(event.action || "-")}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        <div>${escapeHtml(event.resource_type || "-")}</div>
+                        <div class="text-xs text-gray-500 dark:text-gray-400">${escapeHtml(resourceName)}</div>
+                    </td>
+                    <td class="px-4 py-3 text-sm ${statusClass}">
+                        ${statusText}
+                    </td>
+                    <td class="px-4 py-3 text-sm text-gray-700 dark:text-gray-300">
+                        ${escapeHtml(truncateText(event.session_id || "-", 28))}
+                    </td>
+                </tr>
+            `;
+        })
+        .join("");
+}
+
+function downloadEvidenceBlob(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+}
+
+function buildComplianceExportParams(
+    dataset,
+    format,
+    limit,
+    framework,
+    userIdentifier,
+) {
+    const params = new URLSearchParams();
+    params.set("dataset", dataset);
+    params.set("format", format);
+    params.set("limit", String(limit));
+    if (framework) {
+        params.append("framework", framework);
+    }
+    if (userIdentifier) {
+        params.set("user_identifier", userIdentifier);
+    }
+    appendComplianceRange(params);
+    return params;
+}
+
+function getComplianceExportSuggestions(dataset, userIdentifier) {
+    const flags = getComplianceSignalFlags();
+    const suggestions = [
+        "Widen the Start/End date range to include periods with activity.",
+    ];
+    if (dataset === "audit_logs" && !flags.auditTrailEnabled) {
+        suggestions.push(
+            "Enable AUDIT_TRAIL_ENABLED=true to capture audit logs for this dataset.",
+        );
+    }
+    if (dataset === "access_control" && !flags.permissionAuditEnabled) {
+        suggestions.push(
+            "Enable PERMISSION_AUDIT_ENABLED=true to capture permission evidence.",
+        );
+    }
+    if (dataset === "security_events" && !flags.securityLoggingEnabled) {
+        suggestions.push(
+            "Enable SECURITY_LOGGING_ENABLED=true to populate security event exports.",
+        );
+    }
+    if (dataset === "user_activity" && !userIdentifier) {
+        suggestions.push(
+            "Set a user email or ID in 'User (email or id)' before exporting User Activity.",
+        );
+    }
+    if (dataset === "compliance_summary") {
+        suggestions.push(
+            "If this is empty, verify MCPGATEWAY_COMPLIANCE_FRAMEWORKS is not blank/invalid.",
+        );
+    }
+    return suggestions;
+}
+
+function renderComplianceEmptyExportState(dataset, suggestions) {
+    const complianceStats = document.getElementById("compliance-stats");
+    if (!complianceStats) {
+        return;
+    }
+    complianceStats.innerHTML = `
+        <div class="text-sm text-amber-700 dark:text-amber-300">
+            <div class="font-semibold">No rows matched export dataset "${escapeHtml(dataset)}".</div>
+            <div class="mt-1">Try the following:</div>
+            <ul class="mt-1 list-disc list-inside">
+                ${suggestions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}
+            </ul>
+        </div>
+    `;
+}
+
+async function exportComplianceEvidence() {
+    setComplianceControlsVisibility(true);
+    updateComplianceExportHelp();
+
+    const dataset =
+        document.getElementById("compliance-export-dataset")?.value ||
+        "compliance_summary";
+    const format =
+        document.getElementById("compliance-export-format")?.value || "json";
+    const framework = getComplianceFramework();
+    const userIdentifier = getComplianceUserIdentifier();
+
+    if (dataset === "user_activity" && !userIdentifier) {
+        showToast(
+            "User Activity export requires a user email or id in compliance controls.",
+            "error",
+        );
+        return;
+    }
+
+    try {
+        const previewParams = buildComplianceExportParams(
+            dataset,
+            "json",
+            1,
+            framework,
+            userIdentifier,
+        );
+        const previewResponse = await fetchWithAuth(
+            `${getRootPath()}/api/compliance/evidence/export?${previewParams.toString()}`,
+            { method: "GET" },
+        );
+        if (!previewResponse.ok) {
+            throw new Error(
+                `Failed to preview evidence: ${previewResponse.statusText}`,
+            );
+        }
+        const previewRows = await previewResponse.json();
+        if (!Array.isArray(previewRows) || previewRows.length === 0) {
+            const suggestions = getComplianceExportSuggestions(
+                dataset,
+                userIdentifier,
+            );
+            renderComplianceEmptyExportState(dataset, suggestions);
+            showToast(
+                "No evidence rows found for the selected dataset and filters.",
+                "info",
+            );
+            return;
+        }
+
+        const exportParams = buildComplianceExportParams(
+            dataset,
+            format,
+            5000,
+            framework,
+            userIdentifier,
+        );
+        const response = await fetchWithAuth(
+            `${getRootPath()}/api/compliance/evidence/export?${exportParams.toString()}`,
+            { method: "GET" },
+        );
+        if (!response.ok) {
+            throw new Error(
+                `Failed to export evidence: ${response.statusText}`,
+            );
+        }
+
+        const timestamp = new Date()
+            .toISOString()
+            .replace(/[-:]/g, "")
+            .replace(/\.\d+Z$/, "Z");
+        const filename = `${dataset}_${timestamp}.${format}`;
+
+        if (format === "csv") {
+            const blob = await response.blob();
+            downloadEvidenceBlob(blob, filename);
+        } else {
+            const payload = await response.json();
+            if (!Array.isArray(payload) || payload.length === 0) {
+                const suggestions = getComplianceExportSuggestions(
+                    dataset,
+                    userIdentifier,
+                );
+                renderComplianceEmptyExportState(dataset, suggestions);
+                showToast(
+                    "No evidence rows found for the selected dataset and filters.",
+                    "info",
+                );
+                return;
+            }
+            const blob = new Blob([JSON.stringify(payload, null, 2)], {
+                type: "application/json",
+            });
+            downloadEvidenceBlob(blob, filename);
+        }
+
+        showToast("Compliance evidence export completed.", "success");
+    } catch (error) {
+        console.error("Error exporting compliance evidence:", error);
+        showToast(
+            "Failed to export compliance evidence: " + error.message,
+            "error",
+        );
+    }
+}
+
 /**
  * Navigate to previous log page
  */
@@ -30674,6 +31474,10 @@ window.showCorrelationTrace = showCorrelationTrace;
 window.showSecurityEvents = showSecurityEvents;
 window.showAuditTrail = showAuditTrail;
 window.showPerformanceMetrics = showPerformanceMetrics;
+window.showComplianceDashboard = showComplianceDashboard;
+window.showComplianceUserTimeline = showComplianceUserTimeline;
+window.exportComplianceEvidence = exportComplianceEvidence;
+window.updateComplianceExportHelp = updateComplianceExportHelp;
 window.handlePerformanceAggregationChange = handlePerformanceAggregationChange;
 window.previousLogPage = previousLogPage;
 window.nextLogPage = nextLogPage;
