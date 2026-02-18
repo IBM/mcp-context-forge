@@ -5410,6 +5410,220 @@ async def test_forwarded_post_exception_falls_through(monkeypatch):
     assert sdk_called
 
 
+@pytest.mark.asyncio
+async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
+    """Test internally-forwarded POST injects server_id from URL path into JSON-RPC params.
+    
+    This verifies the bug fix at lines 1861-1868 where server_id extraction from
+    /servers/{server_id}/mcp URL pattern is injected into params before forwarding to /rpc.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-123-def-456"  # Valid hex format matching regex pattern
+    send, messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}'
+    scope = _make_scope(
+        f"/servers/{server_id}/mcp",
+        method="POST",
+        headers=[(b"x-forwarded-internally", b"true")],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
+
+    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+        # Verify the POST to /rpc includes server_id in params
+        mock_client.post.assert_called_once()
+        posted_content = mock_client.post.call_args.kwargs["content"]
+        posted_json = orjson.loads(posted_content)
+        
+        assert "params" in posted_json
+        assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
+    """Test internally-forwarded POST without server_id pattern in URL does not inject server_id.
+    
+    Verifies that requests to paths like /mcp (without /servers/{id}/) don't get
+    server_id injection, ensuring the fix only applies to the correct URL pattern.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    send, messages = _make_send_collector()
+    original_body = b'{"jsonrpc":"2.0","method":"tools/list","params":{"other":"value"},"id":1}'
+    scope = _make_scope(
+        "/mcp",  # No /servers/{id}/ pattern
+        method="POST",
+        headers=[(b"x-forwarded-internally", b"true")],
+    )
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{"tools":[]},"id":1}'
+
+    with patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, _make_receive(original_body), send)
+
+        # Verify the POST to /rpc does NOT include server_id
+        mock_client.post.assert_called_once()
+        posted_content = mock_client.post.call_args.kwargs["content"]
+        posted_json = orjson.loads(posted_content)
+        
+        # Body should be unchanged - no server_id injection
+        assert posted_json["params"] == {"other": "value"}
+        assert "server_id" not in posted_json["params"]
+
+    await wrapper.shutdown()
+    assert messages[0]["status"] == 200
+
+
+@pytest.mark.asyncio
+async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
+    """Test internally-forwarded notification does not inject server_id.
+    
+    Notifications return 202 early and should not go through server_id injection
+    or routing to /rpc, even if the URL contains /servers/{id}/.
+    """
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            raise AssertionError("Should not reach SDK")
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "test-server-456"
+    send, messages = _make_send_collector()
+    body = b'{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    scope = _make_scope(
+        f"/servers/{server_id}/mcp",
+        method="POST",
+        headers=[(b"x-forwarded-internally", b"true")],
+    )
+
+    # No httpx mock needed - should return 202 before any HTTP call
+    await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+    
+    await wrapper.shutdown()
+    # Should return 202 Accepted for notification, not route to /rpc
+    assert messages[0]["status"] == 202
+
+
+@pytest.mark.asyncio
+async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
+    """Test local-owner affinity POST still injects server_id (regression test).
+    
+    Verifies that the existing server_id injection for local-owner requests
+    (lines 1565-1572) continues to work after the internally-forwarded fix.
+    """
+    # Third-Party
+    import orjson
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+
+    server_id = "abc-def-123-456"  # Valid hex format
+    original_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
+    scope = _make_scope(f"/servers/{server_id}/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-1")])
+    receive = _make_receive(original_body)
+    send, messages = _make_send_collector()
+
+    mock_pool = MagicMock()
+    mock_pool.get_streamable_http_session_owner = AsyncMock(return_value="worker-1")
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b'{"jsonrpc":"2.0","result":{},"id":1}'
+
+    with (
+        patch("mcpgateway.services.mcp_session_pool.get_mcp_session_pool", return_value=mock_pool),
+        patch("mcpgateway.services.mcp_session_pool.WORKER_ID", "worker-1"),
+        patch("mcpgateway.services.mcp_session_pool.MCPSessionPool", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        await wrapper.handle_streamable_http(scope, receive, send)
+
+        # Verify server_id was injected in local-owner branch
+        mock_client.post.assert_called_once()
+        posted_content = mock_client.post.call_args.kwargs["content"]
+        posted_json = orjson.loads(posted_content)
+
+        assert "params" in posted_json
+        assert posted_json["params"]["server_id"] == server_id
+
+    await wrapper.shutdown()
+
+
 # ---------------------------------------------------------------------------
 # Group 6: Session affinity owner forward (lines 1468-1523)
 # ---------------------------------------------------------------------------
