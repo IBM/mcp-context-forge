@@ -278,6 +278,10 @@ mcpContextForge:
     MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
     MCPGATEWAY_UI_AIRGAPPED: "false"  # serve vendored CSS/JS files locally (air-gapped mode)
     MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
+    MCPGATEWAY_COMPLIANCE_ENABLED: "false" # enable /api/compliance endpoints and Admin -> Compliance section
+    MCPGATEWAY_COMPLIANCE_FRAMEWORKS: "soc2,gdpr,hipaa,iso27001" # frameworks used in scoring (csv/json: soc2|gdpr|hipaa|iso27001)
+    MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE: "disabled" # schedule hint only (disabled|daily|weekly|monthly); external scheduler required
+    MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS: "5000" # hard cap (100-50000) for evidence export rows per request
     MCPGATEWAY_BULK_IMPORT_ENABLED: "true" # toggle bulk import endpoint
     MCPGATEWAY_BULK_IMPORT_MAX_TOOLS: "200" # maximum tools per bulk import
     MCPGATEWAY_BULK_IMPORT_RATE_LIMIT: "10" # requests per minute for bulk import
@@ -303,7 +307,7 @@ mcpContextForge:
     # ─ UI Configuration ─
     MCPGATEWAY_UI_TOOL_TEST_TIMEOUT: "60000" # tool test timeout in milliseconds for the admin UI
     MCPGATEWAY_UI_EMBEDDED: "false"          # embedded UI mode (hides logout + team selector by default)
-    MCPGATEWAY_UI_HIDE_SECTIONS: ""          # CSV/JSON list of UI sections to hide (e.g. prompts,resources,teams)
+    MCPGATEWAY_UI_HIDE_SECTIONS: ""          # CSV/JSON list of UI sections to hide (e.g. prompts,resources,teams,compliance)
     MCPGATEWAY_UI_HIDE_HEADER_ITEMS: ""      # CSV/JSON list of header items to hide (e.g. logout,team_selector)
 
     # ─ ToolOps Feature ─

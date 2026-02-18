@@ -814,7 +814,7 @@ def test_ui_hide_sections_empty_tokens_stripped():
 def test_ui_hide_sections_accepts_extended_sections():
     """Extended admin tabs should be accepted as valid hideable sections."""
     s = Settings(
-        mcpgateway_ui_hide_sections="overview,roots,mcp-registry,metrics,plugins,export-import,logs,version-info,maintenance",
+        mcpgateway_ui_hide_sections="overview,roots,mcp-registry,metrics,plugins,export-import,logs,version-info,maintenance,compliance",
         _env_file=None,
     )
     assert s.mcpgateway_ui_hide_sections == [
@@ -827,6 +827,7 @@ def test_ui_hide_sections_accepts_extended_sections():
         "logs",
         "version-info",
         "maintenance",
+        "compliance",
     ]
 
 

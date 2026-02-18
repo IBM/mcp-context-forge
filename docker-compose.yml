@@ -276,6 +276,13 @@ services:
       - REQUIRE_USER_IN_DB=${REQUIRE_USER_IN_DB:-false}
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
+      # Compliance reporting/dashboard feature flag and settings
+      # Raw dataset exports depend on telemetry capture:
+      # AUDIT_TRAIL_ENABLED (audit_logs), PERMISSION_AUDIT_ENABLED (access_control), SECURITY_LOGGING_ENABLED (security_events)
+      - MCPGATEWAY_COMPLIANCE_ENABLED=${MCPGATEWAY_COMPLIANCE_ENABLED:-false}
+      - MCPGATEWAY_COMPLIANCE_FRAMEWORKS=${MCPGATEWAY_COMPLIANCE_FRAMEWORKS:-soc2,gdpr,hipaa,iso27001}
+      - MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE=${MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE:-disabled}
+      - MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS=${MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS:-5000}
       # Embedded UI mode (hides logout + team selector by default)
       - MCPGATEWAY_UI_EMBEDDED=false
       # CSV list (or JSON array) of UI sections/header items to hide for embedded contexts

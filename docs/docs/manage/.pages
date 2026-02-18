@@ -15,6 +15,7 @@ nav:
   - export-import-tutorial.md
   - export-import-reference.md
   - logging.md
+  - compliance-reporting.md
   - logging-examples.md
   - observability.md
   - observability

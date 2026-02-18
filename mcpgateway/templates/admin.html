@@ -578,7 +578,7 @@
           </div>
           {% endif %}
 
-          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
+          {% if is_admin and ('export-import' not in hidden_sections or 'logs' not in hidden_sections or (compliance_enabled and 'compliance' not in hidden_sections) or 'version-info' not in hidden_sections or 'maintenance' not in hidden_sections) %}
           <!-- Admin Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
             <span class="px-3 text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wider">Admin</span>
@@ -600,6 +600,15 @@
                onclick="showTab('logs')">
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📋</span>
               <span x-show="!sidebarCollapsed">System Logs</span>
+            </a>
+            {% endif %}
+            {% if compliance_enabled and 'compliance' not in hidden_sections %}
+            <a href="#compliance" id="tab-compliance"
+               class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
+               :class="{ 'justify-center': sidebarCollapsed }"
+               onclick="showTab('compliance')">
+              <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">🧾</span>
+              <span x-show="!sidebarCollapsed">Compliance</span>
             </a>
             {% endif %}
             {% if 'version-info' not in hidden_sections %}
@@ -1062,6 +1071,211 @@
                     Next
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+      </div>
+      {% endif %}
+
+      {% if is_admin and compliance_enabled and 'compliance' not in hidden_sections %}
+      <!-- Compliance Panel -->
+      <div id="compliance-panel" class="tab-panel hidden">
+          <div class="bg-white dark:bg-gray-800 shadow rounded-lg">
+            <div class="px-4 py-5 sm:p-6">
+              <h2
+                class="text-lg font-medium text-gray-900 dark:text-white mb-4"
+              >
+                🧾 Compliance Dashboard
+              </h2>
+              <p class="text-sm text-gray-600 dark:text-gray-300 mb-4">
+                Scores are heuristic control signals (0-100) derived from audit, permission, and security telemetry.
+                Use this view to spot evidence gaps and prioritize remediation work, not as a legal attestation by itself.
+              </p>
+
+              <div
+                id="compliance-score-legend"
+                class="mb-4 p-3 rounded border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/40 text-sm text-indigo-900 dark:text-indigo-200"
+              >
+                <div class="font-semibold mb-1">How Scores Work</div>
+                <div id="compliance-score-model">
+                  Framework score = average of control scores. Status thresholds: Compliant ≥ 85, Needs Attention 70-84, At Risk &lt; 70.
+                </div>
+              </div>
+
+              <!-- Compliance Actions -->
+              <div class="mb-4 flex gap-2 flex-wrap">
+                <button
+                  onclick="showComplianceDashboard()"
+                  class="px-3 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+                >
+                  📊 Dashboard
+                </button>
+                <button
+                  onclick="showComplianceUserTimeline()"
+                  class="px-3 py-2 bg-slate-600 text-white rounded hover:bg-slate-700"
+                >
+                  👤 User Timeline
+                </button>
+                <button
+                  onclick="exportComplianceEvidence()"
+                  class="px-3 py-2 bg-gray-700 text-white rounded hover:bg-gray-800"
+                >
+                  📥 Export Evidence
+                </button>
+              </div>
+
+              <!-- Compliance Controls -->
+              <div id="compliance-controls" class="mb-4 hidden">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <div>
+                    <label
+                      for="compliance-start-date"
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Start
+                    </label>
+                    <input
+                      id="compliance-start-date"
+                      type="datetime-local"
+                      class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      for="compliance-end-date"
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      End
+                    </label>
+                    <input
+                      id="compliance-end-date"
+                      type="datetime-local"
+                      class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      for="compliance-framework-select"
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Framework
+                    </label>
+                    <select
+                      id="compliance-framework-select"
+                      class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    >
+                      <option value="">All Frameworks</option>
+                      <option value="soc2">SOC 2</option>
+                      <option value="gdpr">GDPR</option>
+                      <option value="hipaa">HIPAA</option>
+                      <option value="iso27001">ISO 27001</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label
+                      for="compliance-user-filter"
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      User (email or id)
+                    </label>
+                    <input
+                      id="compliance-user-filter"
+                      type="text"
+                      placeholder="admin@example.com"
+                      class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      for="compliance-export-dataset"
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Export Dataset
+                    </label>
+                    <select
+                      id="compliance-export-dataset"
+                      class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                      onchange="updateComplianceExportHelp()"
+                    >
+                      <option value="compliance_summary">Compliance Summary</option>
+                      <option value="audit_logs">Audit Logs</option>
+                      <option value="access_control">Access Control</option>
+                      <option value="security_events">Security Events</option>
+                      <option value="encryption_status">Encryption Status</option>
+                      <option value="user_activity">User Activity</option>
+                    </select>
+                    <p
+                      id="compliance-export-help"
+                      class="mt-1 text-xs text-gray-500 dark:text-gray-400"
+                    >
+                      Compliance Summary is the most reliable default export when raw telemetry datasets are sparse.
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      for="compliance-export-format"
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Export Format
+                    </label>
+                    <select
+                      id="compliance-export-format"
+                      class="mt-1 px-1.5 block w-full border-gray-300 rounded-md shadow-sm dark:bg-gray-700 dark:border-gray-600 text-gray-700 dark:text-gray-300"
+                    >
+                      <option value="json">JSON</option>
+                      <option value="csv">CSV</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                id="compliance-stats"
+                class="mb-4 p-3 bg-gray-100 dark:bg-gray-700 rounded text-gray-700 dark:text-gray-300"
+              >
+                <span class="text-sm">Load a compliance view to begin.</span>
+              </div>
+
+              <div
+                id="compliance-insights"
+                class="mb-4 p-3 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-800 hidden"
+              ></div>
+
+              <div class="overflow-x-auto">
+                <table
+                  class="min-w-full divide-y divide-gray-200 dark:divide-gray-700"
+                >
+                  <thead id="compliance-thead" class="bg-gray-50 dark:bg-gray-700">
+                    <tr>
+                      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Framework
+                      </th>
+                      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Score
+                      </th>
+                      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Status
+                      </th>
+                      <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                        Control Scores &amp; Evidence
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody
+                    id="compliance-tbody"
+                    class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
+                  >
+                    <!-- Compliance rows inserted by JS -->
+                  </tbody>
+                </table>
+              </div>
+
+              <div class="mt-4">
+                <span
+                  id="compliance-count"
+                  class="text-sm text-gray-600 dark:text-gray-300"
+                  >0 entries</span
+                >
               </div>
             </div>
           </div>
@@ -11820,6 +12034,11 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       window.UI_HIDDEN_SECTIONS = {{ ui_hidden_sections | default([]) | tojson }};
       window.UI_HIDDEN_HEADER_ITEMS = {{ ui_hidden_header_items | default([]) | tojson }};
       window.UI_HIDDEN_TABS = {{ ui_hidden_tabs | default([]) | tojson }};
+      window.COMPLIANCE_SIGNAL_FLAGS = {
+        auditTrailEnabled: {{ audit_trail_enabled | tojson }},
+        permissionAuditEnabled: {{ permission_audit_enabled | tojson }},
+        securityLoggingEnabled: {{ security_logging_enabled | tojson }},
+      };
 
       // Display flash messages from URL parameters
       (function() {

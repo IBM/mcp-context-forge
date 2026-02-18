@@ -43,6 +43,7 @@ These values in `.env.example` differ from code defaults to provide a working lo
 | `HOST` | Bind address | `0.0.0.0` |
 | `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `true` |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `true` |
+| `MCPGATEWAY_COMPLIANCE_ENABLED` | Enable compliance dashboard/reporting APIs and UI controls | `false` |
 | `DATABASE_URL` | SQLAlchemy connection URL | `sqlite:///./mcp.db` |
 
 ---
@@ -253,9 +254,13 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 | ------------------------------ | -------------------------------------- | ------- | ------- |
 | `MCPGATEWAY_UI_ENABLED`        | Enable the interactive Admin dashboard | `false` | bool    |
 | `MCPGATEWAY_ADMIN_API_ENABLED` | Enable API endpoints for admin ops     | `false` | bool    |
+| `MCPGATEWAY_COMPLIANCE_ENABLED` | Enable compliance dashboard/reporting APIs and UI controls | `false` | bool |
+| `MCPGATEWAY_COMPLIANCE_FRAMEWORKS` | Enabled frameworks for compliance scoring/reporting (CSV/JSON list: `soc2`, `gdpr`, `hipaa`, `iso27001`) | `soc2,gdpr,hipaa,iso27001` | CSV/JSON list |
+| `MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE` | Schedule hint for recurring compliance reports | `disabled` | `disabled`, `daily`, `weekly`, `monthly` |
+| `MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS` | Max rows allowed in compliance evidence exports | `5000` | int (100-50000) |
 | `MCPGATEWAY_UI_AIRGAPPED`      | Use local CDN assets for airgapped deployments | `false` | bool |
 | `MCPGATEWAY_UI_EMBEDDED`       | Embedded UI mode (hides logout + team selector by default) | `false` | bool |
-| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, teams, users, agents, tokens, settings) | `[]` | CSV/JSON list |
+| `MCPGATEWAY_UI_HIDE_SECTIONS`  | CSV/JSON list of UI sections to hide (overview, servers, gateways, tools, prompts, resources, roots, mcp-registry, metrics, plugins, export-import, logs, version-info, maintenance, compliance, teams, users, agents, tokens, settings) | `[]` | CSV/JSON list |
 | `MCPGATEWAY_UI_HIDE_HEADER_ITEMS` | CSV/JSON list of header items to hide (logout, team_selector, user_identity, theme_toggle) | `[]` | CSV/JSON list |
 | `MCPGATEWAY_BULK_IMPORT_ENABLED` | Enable bulk import endpoint for tools | `true`  | bool    |
 | `MCPGATEWAY_BULK_IMPORT_MAX_TOOLS` | Maximum number of tools per bulk import request | `200` | int |
@@ -277,6 +282,28 @@ For detailed guidance on embedding and section customization, see [Admin UI Cust
 
 !!! tip "Production Settings"
     Set both UI and Admin API to `false` to disable management UI and APIs in production.
+
+### Compliance Reporting
+
+Compliance reporting capabilities (dashboard, framework reports, user activity timelines, and evidence exports) are guarded behind a feature flag.
+
+| Setting | Description | Default | Options |
+|---------|-------------|---------|---------|
+| `MCPGATEWAY_COMPLIANCE_ENABLED` | Enable compliance API endpoints and the dedicated Admin UI Compliance section | `false` | bool |
+| `MCPGATEWAY_COMPLIANCE_FRAMEWORKS` | Frameworks used in compliance scoring and summaries | `soc2,gdpr,hipaa,iso27001` | CSV/JSON list |
+| `MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE` | Schedule hint for recurring report generation jobs | `disabled` | `disabled`, `daily`, `weekly`, `monthly` |
+| `MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS` | Server-side cap for compliance evidence exports | `5000` | int (100-50000) |
+
+When disabled (`MCPGATEWAY_COMPLIANCE_ENABLED=false`), compliance routes under `/api/compliance/*` are not registered and compliance UI controls are hidden from the Admin dashboard.
+
+Raw evidence dataset coverage depends on telemetry settings:
+
+- `AUDIT_TRAIL_ENABLED=true` for `audit_logs`
+- `PERMISSION_AUDIT_ENABLED=true` for `access_control`
+- `SECURITY_LOGGING_ENABLED=true` for `security_events`
+
+If these are disabled (or no events fall in the selected date range), exports may be empty while `compliance_summary` still returns computed framework scores.
+See [Compliance Reporting](compliance-reporting.md) for score model details and troubleshooting.
 
 ### A2A (Agent-to-Agent) Features
 
@@ -1076,6 +1103,14 @@ BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_COMPLIANCE_ENABLED=false
+MCPGATEWAY_COMPLIANCE_FRAMEWORKS=soc2,gdpr,hipaa,iso27001
+MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE=disabled
+MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS=5000
+# Telemetry prerequisites for raw compliance exports
+AUDIT_TRAIL_ENABLED=true
+PERMISSION_AUDIT_ENABLED=true
+SECURITY_LOGGING_ENABLED=true
 # Embedded UI mode (hides logout + team selector by default)
 MCPGATEWAY_UI_EMBEDDED=false
 # CSV/JSON list of UI sections/header items to hide (optional)
@@ -1147,6 +1182,10 @@ data:
   BASIC_AUTH_PASSWORD: "changeme"
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
+  MCPGATEWAY_COMPLIANCE_ENABLED: "false"
+  MCPGATEWAY_COMPLIANCE_FRAMEWORKS: "soc2,gdpr,hipaa,iso27001"
+  MCPGATEWAY_COMPLIANCE_REPORT_SCHEDULE: "disabled"
+  MCPGATEWAY_COMPLIANCE_MAX_EXPORT_ROWS: "5000"
   LOG_LEVEL: "INFO"
 ```
 
