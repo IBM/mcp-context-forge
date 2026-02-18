@@ -392,10 +392,21 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
             await self._run(["git", "clone", "--depth", "1", "--branch", str(branch), repo_url, str(clone_dir)], timeout=600)
             logs.append(f"Cloned repository {repo} ({branch})")
 
-            cmd = [self.docker_binary, "build", "-t", local_tag, "-f", dockerfile]
+            dockerfile_path = Path(str(dockerfile).strip() or "Dockerfile")
+            if dockerfile_path.is_absolute():
+                raise RuntimeBackendError("GitHub source dockerfile path must be relative to repository root")
+
+            clone_root = clone_dir.resolve()
+            resolved_dockerfile = (clone_root / dockerfile_path).resolve()
+            if clone_root not in resolved_dockerfile.parents and resolved_dockerfile != clone_root:
+                raise RuntimeBackendError("GitHub source dockerfile path must remain within repository root")
+            if not resolved_dockerfile.exists():
+                raise RuntimeBackendError(f"Dockerfile not found in repository: {dockerfile_path}")
+
+            cmd = [self.docker_binary, "build", "-t", local_tag, "-f", str(resolved_dockerfile)]
             for key, value in build_args.items():
                 cmd.extend(["--build-arg", f"{key}={value}"])
-            cmd.append(str(clone_dir))
+            cmd.append(str(clone_root))
             await self._run(cmd, timeout=1800)
             logs.append(f"Built image {local_tag}")
 

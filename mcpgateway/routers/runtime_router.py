@@ -385,6 +385,8 @@ async def approve_runtime_request(
         runtime = await runtime_service.approve(approval_id, db, reviewer=user.get("email"), reason=payload.reason)
         return RuntimeDeployResponse(runtime=runtime, message=f"Approved deployment {runtime.id}")
     except RuntimeBackendError as exc:
+        if "expired" in str(exc).lower():
+            db.commit()
         _raise_runtime_http_error(exc)
         raise  # pragma: no cover
 
