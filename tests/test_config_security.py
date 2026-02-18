@@ -11,9 +11,10 @@ unconfigured or weak in production environments.
 
 # Standard
 import pytest
+import logging
 
 # First-Party
-from mcpgateway.config import get_settings
+from mcpgateway.config import get_settings, SecurityConfigurationError
 
 
 @pytest.fixture(autouse=True)
@@ -28,49 +29,47 @@ def clear_settings_cache():
 
 def test_fail_closed_production_missing_jwt_secret():
     """Verify that production startup fails if JWT_SECRET_KEY is empty."""
-    with pytest.raises(SystemExit) as cm:
+    with pytest.raises(SecurityConfigurationError):
         get_settings(environment="production", jwt_secret_key="", auth_encryption_secret="secure-test-secret-32-characters-min")
-    # Ensure application exits with code 1
-    assert cm.value.code == 1
 
 
 def test_fail_closed_production_missing_auth_secret():
     """Verify that production startup fails if AUTH_ENCRYPTION_SECRET is unconfigured."""
-    with pytest.raises(SystemExit) as cm:
+    with pytest.raises(SecurityConfigurationError):
         get_settings(environment="production", jwt_secret_key="secure-test-secret-32-characters-min", auth_encryption_secret="UNCONFIGURED")
-    assert cm.value.code == 1
 
 
 def test_fail_closed_production_weak_secret():
     """Verify that production startup fails if weak secrets are detected."""
-    with pytest.raises(SystemExit) as cm:
+    with pytest.raises(SecurityConfigurationError):
         get_settings(environment="production", jwt_secret_key="my-test-key", require_strong_secrets=True)
-    assert cm.value.code == 1
 
 
-def test_proceed_development_mode():
+def test_proceed_development_mode(caplog):
     """Ensure development environment allows startup with warnings for local testing."""
-    # Development mode should return settings object instead of exiting
-    cfg = get_settings(environment="development", jwt_secret_key="my-test-key", auth_encryption_secret="UNCONFIGURED")
+    with caplog.at_level(logging.WARNING):
+        # Development mode should return settings object instead of exiting
+        cfg = get_settings(environment="development", jwt_secret_key="my-test-key", auth_encryption_secret="UNCONFIGURED")
 
-    # Validation status should be SUCCESS to allow development flow
-    status = cfg.get_security_status()
-    assert status["status"] == "SUCCESS"
+        # Validation status should be SUCCESS to allow development flow
+        status = cfg.get_security_status()
+        assert status["status"] == "SUCCESS"
+        assert "DEV WARNING" in caplog.text
+        assert "AUTH_ENCRYPTION_SECRET" in caplog.text or "UNCONFIGURED" in caplog.text
 
 
 def test_environment_aware_default_production(monkeypatch):
-    """US-1: Verify that REQUIRE_STRONG_SECRETS defaults to True in production."""
+    """Verify that REQUIRE_STRONG_SECRETS defaults to True in production."""
     # Simulate production environment via env var
     monkeypatch.setenv("ENVIRONMENT", "production")
 
     # In production, even without passing require_strong_secrets, it should be True
-    with pytest.raises(SystemExit) as cm:
+    with pytest.raises(SecurityConfigurationError):
         get_settings(jwt_secret_key="weak-key")
-    assert cm.value.code == 1
 
 
 def test_environment_aware_default_development(monkeypatch):
-    """US-1: Verify that REQUIRE_STRONG_SECRETS defaults to False in development."""
+    """Verify that REQUIRE_STRONG_SECRETS defaults to False in development."""
     # Simulate development environment
     monkeypatch.setenv("ENVIRONMENT", "development")
 
