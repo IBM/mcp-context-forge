@@ -5414,8 +5414,9 @@ async def test_forwarded_post_exception_falls_through(monkeypatch):
 async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
     """Test internally-forwarded POST injects server_id from URL path into JSON-RPC params.
 
-    This verifies the bug fix at lines 1861-1868 where server_id extraction from
+    This verifies the bug fix at lines 1862-1870 where server_id extraction from
     /servers/{server_id}/mcp URL pattern is injected into params before forwarding to /rpc.
+    Tests both cases: when params exists and when it needs to be created (line 1865).
     """
     # Third-Party
     import orjson
@@ -5434,7 +5435,8 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
 
     server_id = "abc-123-def-456"  # Valid hex format matching regex pattern
     send, messages = _make_send_collector()
-    body = b'{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}'
+    # Body WITHOUT params field - this triggers line 1865 (params dict creation)
+    body = b'{"jsonrpc":"2.0","method":"tools/list","id":1}'
     scope = _make_scope(
         f"/servers/{server_id}/mcp",
         method="POST",
@@ -5454,16 +5456,17 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
 
         await wrapper.handle_streamable_http(scope, _make_receive(body), send)
 
-        # Verify the POST to /rpc includes server_id in params
+        # Verify the POST to /rpc includes server_id in params (created if missing)
         mock_client.post.assert_called_once()
         posted_content = mock_client.post.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
 
-        assert "params" in posted_json
+        assert "params" in posted_json, "params dict should be created when missing"
         assert posted_json["params"]["server_id"] == server_id
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
+
 
 
 @pytest.mark.asyncio
