@@ -2870,6 +2870,12 @@ class Tool(Base):
     plugin_chain_pre: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
     plugin_chain_post: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
 
+    # GraphQL-specific fields
+    graphql_operation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    graphql_variables_mapping: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True)
+    graphql_field_selection: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    graphql_operation_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
     # Federation relationship with a local gateway
     gateway_id: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.id", ondelete="CASCADE"))
     # gateway_slug: Mapped[Optional[str]] = mapped_column(ForeignKey("gateways.slug"))

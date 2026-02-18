@@ -1149,6 +1149,11 @@ class ToolService:
                 allowlist=tool.allowlist if tool.integration_type == "REST" else None,
                 plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
                 plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
+                # GraphQL-specific fields
+                graphql_operation=tool.graphql_operation if tool.integration_type == "GRAPHQL" else None,
+                graphql_variables_mapping=tool.graphql_variables_mapping if tool.integration_type == "GRAPHQL" else None,
+                graphql_field_selection=tool.graphql_field_selection if tool.integration_type == "GRAPHQL" else None,
+                graphql_operation_type=tool.graphql_operation_type if tool.integration_type == "GRAPHQL" else None,
             )
             db.add(db_tool)
             db.commit()
@@ -1585,6 +1590,13 @@ class ToolService:
                         existing_tool.plugin_chain_pre = tool.plugin_chain_pre
                         existing_tool.plugin_chain_post = tool.plugin_chain_post
 
+                    # Update GraphQL-specific fields if applicable
+                    if tool.integration_type == "GRAPHQL":
+                        existing_tool.graphql_operation = tool.graphql_operation
+                        existing_tool.graphql_variables_mapping = tool.graphql_variables_mapping
+                        existing_tool.graphql_field_selection = tool.graphql_field_selection
+                        existing_tool.graphql_operation_type = tool.graphql_operation_type
+
                     return {"status": "update", "tool": existing_tool}
 
                 if conflict_strategy == "rename":
@@ -1706,6 +1718,10 @@ class ToolService:
             allowlist=tool.allowlist if tool.integration_type == "REST" else None,
             plugin_chain_pre=tool.plugin_chain_pre if tool.integration_type == "REST" else None,
             plugin_chain_post=tool.plugin_chain_post if tool.integration_type == "REST" else None,
+            graphql_operation=tool.graphql_operation if tool.integration_type == "GRAPHQL" else None,
+            graphql_variables_mapping=tool.graphql_variables_mapping if tool.integration_type == "GRAPHQL" else None,
+            graphql_field_selection=tool.graphql_field_selection if tool.integration_type == "GRAPHQL" else None,
+            graphql_operation_type=tool.graphql_operation_type if tool.integration_type == "GRAPHQL" else None,
         )
 
     async def list_tools(
@@ -2980,6 +2996,19 @@ class ToolService:
         # ═══════════════════════════════════════════════════════════════════════════
         # CRITICAL: Release DB connection back to pool BEFORE making HTTP calls
         # This prevents connection pool exhaustion during slow upstream requests.
+        # ═══════════════════════════════════════════════════════════════════════════
+        # GraphQL Data Extraction (must happen before db.close())
+        # ═══════════════════════════════════════════════════════════════════════════
+        graphql_operation: Optional[str] = None
+        graphql_variables_mapping: Optional[Dict[str, str]] = None
+        graphql_field_selection: Optional[str] = None
+        graphql_operation_type_field: Optional[str] = None
+        if tool_integration_type == "GRAPHQL" and tool is not None:
+            graphql_operation = getattr(tool, "graphql_operation", None)
+            graphql_variables_mapping = getattr(tool, "graphql_variables_mapping", None)
+            getattr(tool, "graphql_field_selection", None)
+            getattr(tool, "graphql_operation_type", None)
+
         # All needed data has been extracted to local variables above.
         # The session will be closed again by FastAPI's get_db() finally block (safe no-op).
         # ═══════════════════════════════════════════════════════════════════════════
@@ -3816,6 +3845,77 @@ class ToolService:
                         error_message = f"HTTP {http_response.status_code}: {http_response.text}"
                         content = [TextContent(type="text", text=f"A2A agent error: {error_message}")]
                         tool_result = ToolResult(content=content, is_error=True)
+                elif tool_integration_type == "GRAPHQL":
+                    # GraphQL tool invocation
+                    headers = tool_headers.copy()
+                    # Handle authentication
+                    if tool_auth_type and tool_auth_value:
+                        credentials = decode_auth(tool_auth_value)
+                        filtered_credentials = {k: v for k, v in credentials.items() if k and v}
+                        headers.update(filtered_credentials)
+                    headers["Content-Type"] = "application/json"
+
+                    # Plugin hook: tool pre-invoke for GraphQL
+                    if self._plugin_manager and self._plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+                        if tool_metadata:
+                            global_context.metadata[TOOL_METADATA] = tool_metadata
+                        pre_result, context_table = await self._plugin_manager.invoke_hook(
+                            ToolHookType.TOOL_PRE_INVOKE,
+                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=headers)),
+                            global_context=global_context,
+                            local_contexts=context_table,
+                            violations_as_exceptions=True,
+                        )
+                        if pre_result.modified_payload:
+                            payload = pre_result.modified_payload
+                            name = payload.name
+                            arguments = payload.args
+                            if payload.headers is not None:
+                                headers = payload.headers.model_dump()
+
+                    # Build GraphQL request using pre-extracted local variables
+                    if graphql_operation:
+                        # Direct tool registration mode: use stored operation and variables mapping
+                        variables = {}
+                        if graphql_variables_mapping and arguments:
+                            for mcp_arg, gql_var in graphql_variables_mapping.items():
+                                if mcp_arg in arguments:
+                                    variables[gql_var] = arguments[mcp_arg]
+                        elif arguments:
+                            variables = arguments.copy()
+                        graphql_payload = {"query": graphql_operation, "variables": variables}
+                    else:
+                        # Auto-discovered tool: build query from arguments
+                        graphql_payload = {"query": f"query {{ {name}  }}", "variables": arguments or {}}
+
+                    time.time()
+                    try:
+                        response = await asyncio.wait_for(self._http_client.post(tool_url, json=graphql_payload, headers=headers), timeout=effective_timeout)
+                    except (asyncio.TimeoutError, httpx.TimeoutException):
+                        raise ToolTimeoutError(f"GraphQL tool invocation timed out after {effective_timeout}s")
+
+                    response.raise_for_status()
+
+                    try:
+                        result = response.json()
+                    except Exception:
+                        result = {"response_text": response.text} if response.text else {}
+
+                    # Handle GraphQL errors
+                    if "errors" in result and result["errors"]:
+                        error_msgs = "; ".join(e.get("message", str(e)) for e in result["errors"])
+                        tool_result = ToolResult(content=[TextContent(type="text", text=f"GraphQL error: {error_msgs}")], is_error=True)
+                    else:
+                        data = result.get("data", result)
+                        filtered_response = extract_using_jq(data, tool_jsonpath_filter)
+                        if isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent):
+                            tool_result = ToolResult(content=filtered_response, is_error=True)
+                            success = False
+                        else:
+                            serialized = orjson.dumps(filtered_response, option=orjson.OPT_INDENT_2)
+                            tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
+                            success = True
+
                 else:
                     tool_result = ToolResult(content=[TextContent(type="text", text="Invalid tool type")], is_error=True)
 

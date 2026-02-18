@@ -737,6 +737,13 @@ mcpContextForge:
     MCPGATEWAY_GRPC_REFLECTION_ENABLED: "true" # enable gRPC reflection
     MCPGATEWAY_GRPC_TLS_ENABLED: "false" # enable gRPC TLS
 
+    # GraphQL support (experimental)
+    MCPGATEWAY_GRAPHQL_ENABLED: "false" # enable GraphQL
+    MCPGATEWAY_GRAPHQL_TIMEOUT: "30" # GraphQL timeout (seconds)
+    MCPGATEWAY_GRAPHQL_MAX_DEPTH: "3" # max field selection depth
+    MCPGATEWAY_GRAPHQL_INTROSPECTION_ENABLED: "true" # enable GraphQL introspection
+    MCPGATEWAY_GRAPHQL_INCLUDE_MUTATIONS: "true" # include mutations
+
     # Performance tracking (internal)
     PERFORMANCE_TRACKING_ENABLED: "true" # enable performance tracking
     PERFORMANCE_THRESHOLD_DATABASE_QUERY_MS: "100.0" # DB query threshold (ms)
