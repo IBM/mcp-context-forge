@@ -723,23 +723,23 @@ class ToolCreate(BaseModel):
 
         # Step 1: Extract base_url and path_template from url if provided
         url = values.get("url")
-        logger.info(f"extract_base_url_and_populate_schemas: url={url}, integration_type={integration_type}")
+        logger.debug(f"extract_base_url_and_populate_schemas: url={url}, integration_type={integration_type}")
         if url:
             parsed = urlparse(str(url))
             base_url = f"{parsed.scheme}://{parsed.netloc}"
             path_template = parsed.path
-            logger.info(f"Extracted base_url={base_url}, path_template={path_template}")
+            logger.debug(f"Extracted base_url={base_url}, path_template={path_template}")
             # Ensure path_template starts with a single '/'
             if path_template:
                 path_template = "/" + path_template.lstrip("/")
             if not values.get("base_url"):
                 values["base_url"] = base_url
-                logger.info(f"Set base_url to {base_url}")
+                logger.debug(f"Set base_url to {base_url}")
             if not values.get("path_template"):
                 values["path_template"] = path_template
-                logger.info(f"Set path_template to {path_template}")
+                logger.debug(f"Set path_template to {path_template}")
         else:
-            logger.info("No url field provided, cannot extract base_url and path_template")
+            logger.debug("No url field provided, cannot extract base_url and path_template")
 
         # Step 2: Populate schemas from OpenAPI spec
 
@@ -1250,6 +1250,216 @@ class ToolUpdate(BaseModelWithConfigDict):
                 else:
                     # Don't encode empty headers - leave auth empty
                     values["auth"] = {"auth_type": "authheaders", "auth_value": None}
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def extract_base_url_and_populate_schemas(cls, values: dict) -> dict:
+        """
+        For integration_type 'REST':
+        1. Extract 'base_url' and 'path_template' from 'url' if provided
+        2. Fetch OpenAPI spec from base_url and populate input_schema and output_schema
+
+        Args:
+            values (dict): The input values to process.
+
+        Returns:
+            dict: The updated values with base_url, path_template, and populated schemas.
+        """
+        integration_type = values.get("integration_type")
+        if integration_type != "REST":
+            return values
+
+        # Step 1: Extract base_url and path_template from url if provided
+        url = values.get("url")
+        logger.debug(f"ToolUpdate.extract_base_url_and_populate_schemas: url={url}, integration_type={integration_type}")
+        if url:
+            parsed = urlparse(str(url))
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            path_template = parsed.path
+            logger.debug(f"Extracted base_url={base_url}, path_template={path_template}")
+            # Ensure path_template starts with a single '/'
+            if path_template:
+                path_template = "/" + path_template.lstrip("/")
+            if not values.get("base_url"):
+                values["base_url"] = base_url
+                logger.debug(f"Set base_url to {base_url}")
+            if not values.get("path_template"):
+                values["path_template"] = path_template
+                logger.debug(f"Set path_template to {path_template}")
+        else:
+            logger.debug("No url field provided, cannot extract base_url and path_template")
+
+        # Step 2: Populate schemas from OpenAPI spec
+        # For ToolUpdate: If URL is being changed, force re-population of schemas
+        # even if they already exist
+        url_changed = url is not None  # If url field is provided in update, it means it's being changed
+        
+        # Check if schemas need to be populated
+        input_schema = values.get("input_schema")
+        output_schema = values.get("output_schema")
+
+        # Log what we received for debugging
+        logger.debug(f"Received input_schema: {input_schema}, output_schema: {output_schema}, url_changed: {url_changed}")
+
+        # Determine if schemas need population
+        def is_empty_schema(schema):
+            if not schema or schema == {}:
+                return True
+            if isinstance(schema, dict):
+                if schema.get("type") == "object":
+                    props = schema.get("properties")
+                    if props is None or props == {} or props == dict():
+                        return True
+                if "properties" in schema and not schema.get("properties"):
+                    return True
+            return False
+
+        # For ToolUpdate: Force re-population if URL changed
+        if url_changed:
+            logger.info("URL changed in ToolUpdate, forcing schema re-population from OpenAPI spec")
+            input_needs_population = True
+            output_needs_population = True
+        else:
+            input_needs_population = is_empty_schema(input_schema)
+            output_needs_population = is_empty_schema(output_schema)
+
+        logger.debug(f"input_needs_population: {input_needs_population}, output_needs_population: {output_needs_population}")
+
+        if not input_needs_population and not output_needs_population:
+            logger.debug("Both schemas already populated and URL not changed, skipping OpenAPI fetch")
+            return values
+
+        # Get base_url and path_template
+        base_url = values.get("base_url")
+        path_template = values.get("path_template")
+        request_type = values.get("request_type", "POST").upper()
+
+        # If base_url is not provided, skip auto-population
+        if not base_url:
+            logger.info("base_url not provided for REST tool update, skipping OpenAPI schema auto-population")
+            if not values.get("input_schema"):
+                values["input_schema"] = {"type": "object", "properties": {}}
+            return values
+
+        try:
+            # Third-Party
+            import requests  # pylint: disable=import-outside-toplevel
+
+            # Fetch OpenAPI spec
+            openapi_url = f"{base_url.rstrip('/')}/openapi.json"
+            logger.info(f"Fetching OpenAPI spec from {openapi_url}")
+
+            response = requests.get(openapi_url, timeout=10)
+            response.raise_for_status()
+            spec = response.json()
+
+            if not spec or "paths" not in spec:
+                raise ValueError(f"Invalid OpenAPI spec from {openapi_url}: missing 'paths'")
+
+            # Find the matching path in OpenAPI spec
+            if not path_template:
+                raise ValueError("path_template is required to extract schemas from OpenAPI spec")
+
+            # Normalize path_template for matching
+            normalized_path = path_template.lstrip("/")
+            matching_path = None
+
+            # Try exact match first
+            for path_key in spec["paths"]:
+                if path_key.lstrip("/") == normalized_path:
+                    matching_path = path_key
+                    break
+
+            if not matching_path:
+                raise ValueError(f"Path '{path_template}' not found in OpenAPI spec at {openapi_url}")
+
+            # Get the operation (GET, POST, etc.)
+            path_item = spec["paths"][matching_path]
+            operation_key = request_type.lower()
+
+            if operation_key not in path_item:
+                raise ValueError(f"Method '{request_type}' not found for path '{matching_path}' in OpenAPI spec")
+
+            operation = path_item[operation_key]
+
+            # Extract input_schema from requestBody if needed
+            if input_needs_population:
+                if "requestBody" in operation:
+                    request_body = operation["requestBody"]
+                    if "content" in request_body and "application/json" in request_body["content"]:
+                        schema_def = request_body["content"]["application/json"].get("schema", {})
+
+                        # Handle $ref
+                        if "$ref" in schema_def:
+                            schema_ref = schema_def["$ref"]
+                            schema_name = schema_ref.split("/")[-1]
+
+                            if "components" in spec and "schemas" in spec["components"] and schema_name in spec["components"]["schemas"]:
+                                input_schema = spec["components"]["schemas"][schema_name]
+                                values["input_schema"] = input_schema
+                                logger.info(f"Populated input_schema from OpenAPI spec for path '{path_template}'")
+                            else:
+                                raise ValueError(f"Schema reference '{schema_name}' not found in OpenAPI spec components")
+                        else:
+                            # Direct schema definition
+                            values["input_schema"] = schema_def
+                            logger.info(f"Populated input_schema from OpenAPI spec for path '{path_template}'")
+                else:
+                    # No requestBody means no input parameters
+                    logger.warning(f"No requestBody found for path '{path_template}', using empty input_schema")
+                    values["input_schema"] = {"type": "object", "properties": {}}
+
+            # Extract output_schema from responses if needed
+            if output_needs_population:
+                if "responses" in operation:
+                    response_schema = None
+                    for status_code in ["200", "201", "default"]:
+                        if status_code in operation["responses"]:
+                            response_def = operation["responses"][status_code]
+                            if "content" in response_def and "application/json" in response_def["content"]:
+                                schema_def = response_def["content"]["application/json"].get("schema", {})
+
+                                # Handle $ref
+                                if "$ref" in schema_def:
+                                    schema_ref = schema_def["$ref"]
+                                    schema_name = schema_ref.split("/")[-1]
+
+                                    if "components" in spec and "schemas" in spec["components"] and schema_name in spec["components"]["schemas"]:
+                                        response_schema = spec["components"]["schemas"][schema_name]
+                                        break
+                                    else:
+                                        logger.warning(f"Schema reference '{schema_name}' not found in OpenAPI spec components")
+                                else:
+                                    # Direct schema definition
+                                    response_schema = schema_def
+                                    break
+
+                    if response_schema:
+                        values["output_schema"] = response_schema
+                        logger.info(f"Populated output_schema from OpenAPI spec for path '{path_template}'")
+                    else:
+                        logger.warning(f"No valid response schema found for path '{path_template}'")
+
+            # Final validation: ensure input_schema is not empty
+            final_input_schema = values.get("input_schema")
+            if not final_input_schema or final_input_schema == {}:
+                logger.warning("input_schema is empty after OpenAPI population attempt. Setting minimal default schema.")
+                values["input_schema"] = {"type": "object", "properties": {}}
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Failed to fetch OpenAPI spec from {openapi_url}: {e}. Using default schema.")
+            if not values.get("input_schema"):
+                values["input_schema"] = {"type": "object", "properties": {}}
+        except KeyError as e:
+            logger.warning(f"Invalid OpenAPI spec structure: {e}. Using default schema.")
+            if not values.get("input_schema"):
+                values["input_schema"] = {"type": "object", "properties": {}}
+        except Exception as e:
+            logger.warning(f"Error populating schemas from OpenAPI spec: {str(e)}. Using default schema.")
+            if not values.get("input_schema"):
+                values["input_schema"] = {"type": "object", "properties": {}}
+
         return values
 
     @field_validator("displayName")
