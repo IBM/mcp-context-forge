@@ -4794,6 +4794,249 @@ class TestRemainingCoverageGaps:
         result = await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
         assert isinstance(result, ORJSONResponse)
         assert orjson.loads(result.body) == {"filtered": True}
+    async def test_list_tools_apijsonpath_string_parsing_error(self, monkeypatch):
+        """Test list_tools with invalid apijsonpath string (lines 3668-3671)."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.to_dict.return_value = {"id": "t1"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+
+        # Invalid JSON string for apijsonpath
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.list_tools.__wrapped__(
+                request,
+                cursor=None,
+                include_pagination=False,
+                limit=None,
+                include_inactive=False,
+                tags=None,
+                team_id=None,
+                visibility=None,
+                gateway_id=None,
+                db=MagicMock(),
+                apijsonpath="{invalid json",
+                user={"email": "user@example.com"},
+            )
+        assert excinfo.value.status_code == 400
+        assert "Invalid apijsonpath JSON" in str(excinfo.value.detail)
+
+    async def test_list_tools_apijsonpath_none_with_pagination(self, monkeypatch):
+        """Test list_tools with parsed_apijsonpath=None and include_pagination=True (lines 3674-3681)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "t1", "name": "test"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], "next_cursor_123")))
+
+        # Pass JsonPathModifier instance but with None jsonpath to trigger parsed_apijsonpath=None path
+        result = await main_mod.list_tools.__wrapped__(
+            request,
+            cursor=None,
+            include_pagination=True,
+            limit=None,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id=None,
+            db=MagicMock(),
+            apijsonpath=None,  # This will trigger the None path
+            user={"email": "user@example.com"},
+        )
+        assert "tools" in result
+        assert "nextCursor" in result
+        assert result["nextCursor"] == "next_cursor_123"
+
+    async def test_list_tools_apijsonpath_exception_handling(self, monkeypatch):
+        """Test list_tools jsonpath_modifier exception (lines 3684-3685, 3690-3692)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.to_dict.return_value = {"id": "t1"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
+
+        # Make jsonpath_modifier raise an exception
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(side_effect=RuntimeError("jsonpath error")))
+
+        apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.list_tools.__wrapped__(
+                request,
+                cursor=None,
+                include_pagination=False,
+                limit=None,
+                include_inactive=False,
+                tags=None,
+                team_id=None,
+                visibility=None,
+                gateway_id=None,
+                db=MagicMock(),
+                apijsonpath=apijsonpath,
+                user={"email": "user@example.com"},
+            )
+        assert excinfo.value.status_code == 500
+        assert "JSONPath modifier error" in str(excinfo.value.detail)
+
+    async def test_list_tools_apijsonpath_with_empty_tools_list(self, monkeypatch):
+        """Test list_tools with empty tools list and jsonpath (line 3684-3685 branch)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+        from mcpgateway.utils.orjson_response import ORJSONResponse
+        import orjson
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        # Empty tools list
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([], None)))
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(return_value={"filtered": []}))
+
+        apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
+        result = await main_mod.list_tools.__wrapped__(
+            request,
+            cursor=None,
+            include_pagination=False,
+            limit=None,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id=None,
+            db=MagicMock(),
+            apijsonpath=apijsonpath,
+            user={"email": "user@example.com"},
+        )
+        assert isinstance(result, ORJSONResponse)
+        assert orjson.loads(result.body) == {"filtered": []}
+
+    async def test_get_tool_apijsonpath_none(self, monkeypatch):
+        """Test get_tool with parsed_apijsonpath=None (lines 3833-3834)."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        data = MagicMock()
+        data.to_dict.return_value = {"id": "t1", "name": "test"}
+
+        async def mock_get_tool(*args, **kwargs):
+            return data
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", mock_get_tool)
+
+        result = await main_mod.get_tool.__wrapped__(
+            "tool-1",
+            request=request,
+            db=MagicMock(),
+            user={"email": "u"},
+            apijsonpath=None
+        )
+        assert result == data
+
+    async def test_create_tool_endpoint_coverage(self, monkeypatch):
+        """Test create_tool endpoint (lines 3695-3698)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import ToolCreate
+        from mcpgateway.utils.metadata_capture import MetadataCapture
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None, token_teams=None)
+
+        tool_data = ToolCreate(
+            name="test_tool",
+            url="http://example.com",
+            description="Test",
+            integration_type="REST",
+            request_type="GET"
+        )
+
+        created_tool = MagicMock()
+        created_tool.id = "tool-123"
+
+        # Mock all the dependencies
+        monkeypatch.setattr(MetadataCapture, "extract_creation_metadata", lambda *args: {
+            "created_by": "user@example.com",
+            "created_from_ip": "127.0.0.1",
+            "created_via": "api",
+            "created_user_agent": "test",
+            "import_batch_id": None,
+            "federation_source": None
+        })
+        monkeypatch.setattr(main_mod, "get_user_email", lambda user: "user@example.com")
+        monkeypatch.setattr(main_mod.tool_service, "register_tool", AsyncMock(return_value=created_tool))
+
+        mock_db = MagicMock()
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        result = await main_mod.create_tool.__wrapped__(
+            tool=tool_data,
+            request=request,
+            team_id=None,
+            db=mock_db,
+            user={"email": "user@example.com"}
+        )
+        assert result == created_tool
+
+    async def test_update_tool_endpoint_coverage(self, monkeypatch):
+        """Test update_tool endpoint (lines 3848-3851)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import ToolUpdate
+        from mcpgateway.utils.metadata_capture import MetadataCapture
+        from mcpgateway.db import Tool as DbTool
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool_update = ToolUpdate(description="Updated description")
+
+        updated_tool = MagicMock()
+        updated_tool.id = "tool-123"
+
+        current_tool = MagicMock()
+        current_tool.version = 1
+
+        mock_db = MagicMock()
+        mock_db.get = MagicMock(return_value=current_tool)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        # Mock dependencies
+        monkeypatch.setattr(MetadataCapture, "extract_modification_metadata", lambda *args: {
+            "modified_by": "user@example.com",
+            "modified_from_ip": "127.0.0.1",
+            "modified_via": "api",
+            "modified_user_agent": "test"
+        })
+        monkeypatch.setattr(main_mod.tool_service, "update_tool", AsyncMock(return_value=updated_tool))
+
+        result = await main_mod.update_tool.__wrapped__(
+            tool_id="tool-123",
+            tool=tool_update,
+            request=request,
+            db=mock_db,
+            user={"email": "user@example.com"}
+        )
+        assert result == updated_tool
+
 
     async def test_deprecated_toggle_endpoints(self, monkeypatch):
         import mcpgateway.main as main_mod

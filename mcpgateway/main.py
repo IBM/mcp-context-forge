@@ -3820,7 +3820,6 @@ async def get_tool(
         data = await tool_service.get_tool(db, tool_id, requesting_user_email=_req_email, requesting_user_is_admin=_req_is_admin, requesting_user_team_roles=_req_team_roles)
         # Allow apijsonpath as a direct model (internal/tests) or as JSON string via query
         parsed_apijsonpath: Optional[JsonPathModifier] = None
-        logger.info(f"Received request for tool {tool_id} with apijsonpath: {apijsonpath}")
         if apijsonpath is None:
             return data
 
@@ -3831,7 +3830,6 @@ async def get_tool(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
         elif isinstance(apijsonpath, JsonPathModifier):
             parsed_apijsonpath = apijsonpath
-        logger.info(f"Parsed JSONPath modifier for tool {tool_id}: {parsed_apijsonpath}")
         if parsed_apijsonpath is None:
             return data
 
