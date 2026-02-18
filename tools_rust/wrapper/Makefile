@@ -92,7 +92,7 @@ coverage cov cv:
 	@rustup component add llvm-tools-preview
 	@cargo llvm-cov --html --ignore-filename-regex "src/bin/.*"
 	@echo "Coverage report generated at target/llvm-cov/html/index.html"
-	@xdg-open target/llvm-cov/html/index.html
+	@xdg-open target/llvm-cov/html/index.html 2>/dev/null || true
 
 # help: licenses		- Check licenses
 licenses license lic l:

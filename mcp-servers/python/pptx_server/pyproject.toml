@@ -10,18 +10,18 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "aiofiles>=25.1.0",
-    "fastapi>=0.128.8",
+    "fastapi>=0.129.0",
     "fastmcp>=2.14.5",
     "orjson>=3.11.7",
     "pathvalidate>=3.3.1",
     "Pillow>=12.1.1",
     "pydantic>=2.12.5",
-    "pydantic-settings>=2.12.0",
+    "pydantic-settings>=2.13.0",
     "python-dotenv>=1.2.1",
     "python-pptx-fix>=0.6.21.2",
     "typing-extensions>=4.15.0",
     "uuid>=1.30",
-    "uvicorn>=0.40.0",
+    "uvicorn>=0.41.0",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +31,7 @@ dev = [
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
-    "ruff>=0.15.0",
+    "ruff>=0.15.1",
 ]
 
 [build-system]
