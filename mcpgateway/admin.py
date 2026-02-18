@@ -10248,6 +10248,7 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+        """Execute a search callable, returning an empty result on HTTP error."""  # noqa: DAR101,DAR201,DAR401
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:

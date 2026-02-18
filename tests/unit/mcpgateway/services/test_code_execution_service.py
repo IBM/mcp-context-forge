@@ -167,6 +167,7 @@ async def test_replay_disabled_by_feature_flag(monkeypatch: pytest.MonkeyPatch) 
     with pytest.raises(CodeExecutionError, match="Replay is disabled"):
         await svc.replay_run(
             db=SimpleNamespace(),
+            server_id="server-1",
             run_id="run-1",
             user_email="user@example.com",
             token_teams=None,
@@ -508,6 +509,7 @@ async def test_skill_create_and_approval_lifecycle() -> None:
 
     approved = await svc.approve_skill(  # type: ignore[arg-type]
         db=db,
+        server_id="server-1",
         approval_id=approval.id,
         reviewer_email="admin@example.com",
         approve=True,
@@ -519,6 +521,7 @@ async def test_skill_create_and_approval_lifecycle() -> None:
 
     revoked = await svc.revoke_skill(  # type: ignore[arg-type]
         db=db,
+        server_id="server-1",
         skill_id=skill.id,
         reviewer_email="admin@example.com",
         reason="retired",

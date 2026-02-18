@@ -55,7 +55,7 @@ except ImportError:
     _RUST_CODE_EXEC_AVAILABLE = False
 
 # First-Party
-from mcpgateway.config import settings
+from mcpgateway.config import PYTHON_DANGEROUS_PATTERNS, settings
 from mcpgateway.db import CodeExecutionRun, CodeExecutionSkill
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SkillApproval
@@ -85,27 +85,7 @@ _PHONE_RE = re.compile(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?){2}\d{4}\b")
 _SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
 _CC_RE = re.compile(r"\b(?:\d[ -]*?){13,16}\b")  # noqa: DUO138 - bounded token pattern (13-16 chars) for lightweight masking
 
-_PYTHON_DANGEROUS_PATTERNS = (
-    r"(?i)\beval\s*\(",
-    r"(?i)\bexec\s*\(",
-    r"(?i)__import__\s*\(",
-    r"(?i)\bos\.system\s*\(",
-    r"(?i)\bsubprocess\.",
-    r"(?i)\bopen\s*\(\s*['\"]/(etc|proc|sys)",
-    r"__subclasses__",
-    r"__bases__",
-    r"__mro__",
-    r"__class__\s*\.",
-    r"\bbreakpoint\s*\(",
-    r"\bcompile\s*\(",
-    r"\bglobals\s*\(",
-    r"\bgetattr\s*\(",
-    r"\bsetattr\s*\(",
-    r"\bdelattr\s*\(",
-    r"\bvars\s*\(",
-    r"\bdir\s*\(",
-    r"\b__builtins__",
-)
+_PYTHON_DANGEROUS_PATTERNS = PYTHON_DANGEROUS_PATTERNS
 _TS_DANGEROUS_PATTERNS = (
     r"(?i)\beval\s*\(",
     r"(?i)\bDeno\.run\b",
@@ -493,8 +473,36 @@ class DenoRuntime(SandboxRuntime):
         }
         import_map_path.write_text(json.dumps({"imports": imports}, indent=2), encoding="utf-8")
 
-        allow_read = ",".join(str(p) for p in session.all_dirs)
-        allow_write = ",".join(str(p) for p in (session.scratch_dir, session.results_dir))
+        # Filter Deno FS permissions against the configurable policy.
+        perms_deno = (policy.get("permissions") or {}).get("filesystem") or {}
+        deny_deno = perms_deno.get("deny") or list(_DEFAULT_FS_DENY)
+        read_allow_deno = perms_deno.get("read") or list(_DEFAULT_FS_READ)
+        write_allow_deno = perms_deno.get("write") or list(_DEFAULT_FS_WRITE)
+
+        _vroot_map = [
+            ("/tools", session.tools_dir),
+            ("/skills", session.skills_dir),
+            ("/scratch", session.scratch_dir),
+            ("/results", session.results_dir),
+        ]
+
+        def _vroot_allowed(vroot: str, allow_patterns: Sequence[str]) -> bool:
+            """Return True if the virtual root is permitted by the FS policy."""
+            probe = f"{vroot}/x"
+            if any(fnmatch.fnmatch(probe, p) for p in deny_deno):
+                return False
+            return any(fnmatch.fnmatch(probe, p) for p in allow_patterns)
+
+        allowed_read_dirs = [d for v, d in _vroot_map if _vroot_allowed(v, read_allow_deno)]
+        allowed_write_dirs = [d for v, d in _vroot_map if _vroot_allowed(v, write_allow_deno)]
+        # Scratch dir must always be readable/writable for runtime artifacts.
+        if session.scratch_dir not in allowed_read_dirs:
+            allowed_read_dirs.append(session.scratch_dir)
+        if session.scratch_dir not in allowed_write_dirs:
+            allowed_write_dirs.append(session.scratch_dir)
+
+        allow_read = ",".join(str(p) for p in allowed_read_dirs)
+        allow_write = ",".join(str(p) for p in allowed_write_dirs)
         cmd = [
             self._deno_path,
             "run",
@@ -637,6 +645,12 @@ class PythonSandboxRuntime(SandboxRuntime):
         scratch_root = str(session.scratch_dir.resolve())
         results_root = str(session.results_dir.resolve())
 
+        # Extract resolved FS policy patterns for injection into the subprocess wrapper.
+        perms = (policy.get("permissions") or {}).get("filesystem") or {}
+        fs_deny = perms.get("deny") or list(_DEFAULT_FS_DENY)
+        fs_read = perms.get("read") or list(_DEFAULT_FS_READ)
+        fs_write = perms.get("write") or list(_DEFAULT_FS_WRITE)
+
         user_lines = ["async def __user_main__():", "    # User code"]
         for line in code.splitlines() or [""]:
             user_lines.append(f"    {line}")
@@ -647,6 +661,7 @@ class PythonSandboxRuntime(SandboxRuntime):
             "import asyncio\n"
             "import builtins\n"
             "import contextlib\n"
+            "import fnmatch\n"
             "import io\n"
             "import json\n"
             "from pathlib import Path\n"
@@ -660,6 +675,27 @@ class PythonSandboxRuntime(SandboxRuntime):
             f"__SKILLS_ROOT = {json.dumps(skills_root)}\n"
             f"__SCRATCH_ROOT = {json.dumps(scratch_root)}\n"
             f"__RESULTS_ROOT = {json.dumps(results_root)}\n"
+            f"__FS_DENY = {json.dumps(fs_deny)}\n"
+            f"__FS_READ = {json.dumps(fs_read)}\n"
+            f"__FS_WRITE = {json.dumps(fs_write)}\n"
+            "\n"
+            "def __enforce_fs_permission(op: str, path: str) -> None:\n"
+            "    raw = path.strip()\n"
+            "    if not raw.startswith('/'):\n"
+            "        raw = '/scratch/' + raw\n"
+            "    normalized = '/' + raw.lstrip('/')\n"
+            "    def _matches(val, patterns):\n"
+            "        for p in patterns:\n"
+            "            if fnmatch.fnmatch(val, p):\n"
+            "                return True\n"
+            "            if p.endswith('/**') and val == p[:-3]:\n"
+            "                return True\n"
+            "        return False\n"
+            "    if _matches(normalized, __FS_DENY):\n"
+            "        raise PermissionError(f'EACCES: {op} denied for path: {normalized}')\n"
+            "    allowed = __FS_READ if op == 'read' else __FS_WRITE\n"
+            "    if not _matches(normalized, allowed):\n"
+            "        raise PermissionError(f'EACCES: {op} denied for path: {normalized}')\n"
             "\n"
             "sys.path.insert(0, str(Path(__TOOLS_ROOT).parent))\n"
             "\n"
@@ -707,12 +743,14 @@ class PythonSandboxRuntime(SandboxRuntime):
             "    raise PermissionError(f'EACCES: path denied: {normalized}')\n"
             "\n"
             "def read_file(path: str) -> str:\n"
+            "    __enforce_fs_permission('read', path)\n"
             "    p = __virtual_to_real(path)\n"
             "    if not p.exists() or not p.is_file():\n"
             "        raise PermissionError(f'EACCES: read denied for path: {path}')\n"
             "    return p.read_text(encoding='utf-8')\n"
             "\n"
             "def write_file(path: str, content: str) -> None:\n"
+            "    __enforce_fs_permission('write', path)\n"
             "    p = __virtual_to_real(path)\n"
             "    _scratch = Path(__SCRATCH_ROOT).resolve()\n"
             "    _results = Path(__RESULTS_ROOT).resolve()\n"
@@ -728,6 +766,7 @@ class PythonSandboxRuntime(SandboxRuntime):
             "    p.write_text(content, encoding='utf-8')\n"
             "\n"
             "def list_dir(path: str = '/scratch') -> list[str]:\n"
+            "    __enforce_fs_permission('read', path)\n"
             "    p = __virtual_to_real(path)\n"
             "    if not p.exists() or not p.is_dir():\n"
             "        raise PermissionError(f'EACCES: read denied for path: {path}')\n"
@@ -827,7 +866,7 @@ class PythonSandboxRuntime(SandboxRuntime):
             "    finally:\n"
             "        sys.stdout, sys.stderr = orig_stdout, orig_stderr\n"
             "        pump_task.cancel()\n"
-            "        with contextlib.suppress(Exception):\n"
+            "        with contextlib.suppress(BaseException):\n"
             "            await pump_task\n"
             "    return stdout_capture.getvalue(), stderr_capture.getvalue(), exit_code\n"
             "\n"
@@ -1164,6 +1203,10 @@ class CodeExecutionService:
         real_path = self._virtual_to_real_path(session, virtual_path)
         if real_path is None:
             raise CodeExecutionSecurityError(f"Path '{virtual_path}' is outside the virtual filesystem")
+
+        policy = self._server_sandbox_policy(server)
+        self._enforce_fs_permission(policy, "read", virtual_path)
+
         if not real_path.exists():
             raise CodeExecutionError(f"Path not found: {virtual_path}")
 
@@ -1433,6 +1476,7 @@ class CodeExecutionService:
     async def replay_run(
         self,
         db: Session,
+        server_id: str,
         run_id: str,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
@@ -1445,6 +1489,8 @@ class CodeExecutionService:
 
         run = db.get(CodeExecutionRun, run_id)
         if not run:
+            raise CodeExecutionError(f"Run not found: {run_id}")
+        if run.server_id != server_id:
             raise CodeExecutionError(f"Run not found: {run_id}")
         if not run.code_body:
             raise CodeExecutionError("Replay unavailable: code body was not persisted")
@@ -1538,7 +1584,7 @@ class CodeExecutionService:
             query = query.where(CodeExecutionSkill.is_active.is_(True))
         return db.execute(query).scalars().all()
 
-    async def approve_skill(self, db: Session, approval_id: str, reviewer_email: str, approve: bool, reason: Optional[str] = None) -> SkillApproval:
+    async def approve_skill(self, db: Session, server_id: str, approval_id: str, reviewer_email: str, approve: bool, reason: Optional[str] = None) -> SkillApproval:
         """Approve or reject a pending skill request."""
         approval = db.get(SkillApproval, approval_id)
         if not approval:
@@ -1546,8 +1592,12 @@ class CodeExecutionService:
         skill = db.get(CodeExecutionSkill, approval.skill_id)
         if not skill:
             raise CodeExecutionError(f"Skill not found: {approval.skill_id}")
+        if skill.server_id != server_id:
+            raise CodeExecutionError(f"Skill approval not found: {approval_id}")
         if approval.status != "pending":
             raise CodeExecutionError(f"Approval is already in terminal state: {approval.status}")
+        if approval.is_expired():
+            raise CodeExecutionError("Approval request has expired")
         approval.reviewed_by = reviewer_email
         approval.reviewed_at = utc_now()
         if approve:
@@ -1564,10 +1614,12 @@ class CodeExecutionService:
             skill.is_active = False
         return approval
 
-    async def revoke_skill(self, db: Session, skill_id: str, reviewer_email: str, reason: Optional[str] = None) -> CodeExecutionSkill:
+    async def revoke_skill(self, db: Session, server_id: str, skill_id: str, reviewer_email: str, reason: Optional[str] = None) -> CodeExecutionSkill:
         """Revoke an active skill."""
         skill = db.get(CodeExecutionSkill, skill_id)
         if not skill:
+            raise CodeExecutionError(f"Skill not found: {skill_id}")
+        if skill.server_id != server_id:
             raise CodeExecutionError(f"Skill not found: {skill_id}")
         skill.status = "revoked"
         skill.is_active = False
@@ -2092,9 +2144,9 @@ class CodeExecutionService:
             "__toolcall__": _bridge,
             "tools": tools_namespace,
             "json": json,
-            "read_file": lambda p: self._read_virtual_text_file(session, p),
-            "write_file": lambda p, c: self._write_virtual_text_file(session, p, c),
-            "list_dir": lambda p="/tools": self._list_virtual_dir(session, p),
+            "read_file": lambda p: (self._enforce_fs_permission(policy, "read", p), self._read_virtual_text_file(session, p))[1],
+            "write_file": lambda p, c: (self._enforce_fs_permission(policy, "write", p), self._write_virtual_text_file(session, p, c))[1],
+            "list_dir": lambda p="/tools": (self._enforce_fs_permission(policy, "read", p), self._list_virtual_dir(session, p))[1],
         }
 
         wrapped_body = "\n".join(f"    {line}" for line in code.splitlines())

@@ -56,7 +56,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
-from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, TypedDict
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, NotRequired, Optional, Self, Set, Tuple, TypedDict
 from urllib.parse import urlparse
 
 # Third-Party
@@ -152,6 +152,30 @@ UI_HIDE_SECTION_ALIASES = {
     "api_tokens": "tokens",
     "llm-settings": "settings",
 }
+
+# Canonical list of dangerous Python patterns for code execution sandboxing.
+# Referenced by both the Settings default and code_execution_service module.
+PYTHON_DANGEROUS_PATTERNS: Tuple[str, ...] = (
+    r"(?i)\beval\s*\(",
+    r"(?i)\bexec\s*\(",
+    r"(?i)__import__\s*\(",
+    r"(?i)\bos\.system\s*\(",
+    r"(?i)\bsubprocess\.",
+    r"(?i)\bopen\s*\(\s*['\"]/(etc|proc|sys)",
+    r"__subclasses__",
+    r"__bases__",
+    r"__mro__",
+    r"__class__\s*\.",
+    r"\bbreakpoint\s*\(",
+    r"\bcompile\s*\(",
+    r"\bglobals\s*\(",
+    r"\bgetattr\s*\(",
+    r"\bsetattr\s*\(",
+    r"\bdelattr\s*\(",
+    r"\bvars\s*\(",
+    r"\bdir\s*\(",
+    r"\b__builtins__",
+)
 
 
 class Settings(BaseSettings):
@@ -649,27 +673,7 @@ class Settings(BaseSettings):
         description="Maximum number of characters persisted for output/error in CodeExecutionRun records",
     )
     code_execution_python_dangerous_patterns: List[str] = Field(
-        default_factory=lambda: [
-            r"(?i)\beval\s*\(",
-            r"(?i)\bexec\s*\(",
-            r"(?i)__import__\s*\(",
-            r"(?i)\bos\.system\s*\(",
-            r"(?i)\bsubprocess\.",
-            r"(?i)\bopen\s*\(\s*['\"]/(etc|proc|sys)",
-            r"__subclasses__",
-            r"__bases__",
-            r"__mro__",
-            r"__class__\s*\.",
-            r"\bbreakpoint\s*\(",
-            r"\bcompile\s*\(",
-            r"\bglobals\s*\(",
-            r"\bgetattr\s*\(",
-            r"\bsetattr\s*\(",
-            r"\bdelattr\s*\(",
-            r"\bvars\s*\(",
-            r"\bdir\s*\(",
-            r"\b__builtins__",
-        ],
+        default_factory=lambda: list(PYTHON_DANGEROUS_PATTERNS),
         description="Regex patterns blocked for python code in code execution mode",
     )
     code_execution_typescript_dangerous_patterns: List[str] = Field(

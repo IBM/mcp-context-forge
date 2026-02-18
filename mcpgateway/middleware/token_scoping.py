@@ -80,6 +80,16 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/prompts/[^/]+$"), Permissions.PROMPTS_READ),  # MCP spec prompt retrieval (POST /prompts/{id})
     ("PUT", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_UPDATE),
     ("DELETE", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_DELETE),
+    # Code execution (code mode) endpoints — must precede generic /servers catch-all
+    ("GET", re.compile(r"^/servers/[^/]+/code/runs(?:$|/)"), Permissions.SERVERS_READ),
+    ("GET", re.compile(r"^/servers/[^/]+/code/sessions(?:$|/)"), Permissions.SERVERS_READ),
+    ("GET", re.compile(r"^/servers/[^/]+/code/security-events(?:$|/)"), Permissions.SERVERS_READ),
+    ("POST", re.compile(r"^/servers/[^/]+/code/runs/[^/]+/replay(?:$|/)"), Permissions.SERVERS_USE),
+    ("GET", re.compile(r"^/servers/[^/]+/skills/approvals(?:$|/)"), Permissions.SKILLS_APPROVE),
+    ("GET", re.compile(r"^/servers/[^/]+/skills(?:$|/)"), Permissions.SKILLS_READ),
+    ("POST", re.compile(r"^/servers/[^/]+/skills/?$"), Permissions.SKILLS_CREATE),
+    ("POST", re.compile(r"^/servers/[^/]+/skills/approvals/[^/]+/(?:approve|reject)(?:$|/)"), Permissions.SKILLS_APPROVE),
+    ("POST", re.compile(r"^/servers/[^/]+/skills/[^/]+/revoke(?:$|/)"), Permissions.SKILLS_REVOKE),
     # Server management permissions
     ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
@@ -89,16 +99,6 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
-    # Code execution (code mode) endpoints
-    ("GET", re.compile(r"^/servers/[^/]+/code/runs(?:$|/)"), Permissions.SERVERS_READ),
-    ("GET", re.compile(r"^/servers/[^/]+/code/sessions(?:$|/)"), Permissions.SERVERS_READ),
-    ("GET", re.compile(r"^/servers/[^/]+/code/security-events(?:$|/)"), Permissions.SERVERS_READ),
-    ("POST", re.compile(r"^/servers/[^/]+/code/runs/[^/]+/replay(?:$|/)"), Permissions.SERVERS_USE),
-    ("GET", re.compile(r"^/servers/[^/]+/skills(?:$|/)"), Permissions.SKILLS_READ),
-    ("POST", re.compile(r"^/servers/[^/]+/skills/?$"), Permissions.SKILLS_CREATE),
-    ("GET", re.compile(r"^/servers/[^/]+/skills/approvals(?:$|/)"), Permissions.SKILLS_APPROVE),
-    ("POST", re.compile(r"^/servers/[^/]+/skills/approvals/[^/]+/(?:approve|reject)(?:$|/)"), Permissions.SKILLS_APPROVE),
-    ("POST", re.compile(r"^/servers/[^/]+/skills/[^/]+/revoke(?:$|/)"), Permissions.SKILLS_REVOKE),
     # Gateway permissions
     ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
