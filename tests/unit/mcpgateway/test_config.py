@@ -343,6 +343,23 @@ def test_x_frame_options_normal_value():
     assert s.x_frame_options == "DENY"
 
 
+def test_x_frame_options_empty_string_returns_none():
+    """Empty-string x_frame_options should be normalized to None (allow embedding)."""
+    s = Settings(x_frame_options="", _env_file=None)
+    assert s.x_frame_options is None
+
+
+def test_x_frame_options_whitespace_only_returns_none():
+    """Whitespace-only x_frame_options should be normalized to None (allow embedding)."""
+    s = Settings(x_frame_options="   ", _env_file=None)
+    assert s.x_frame_options is None
+
+
+def test_x_frame_options_none_value_returns_none():
+    """x_frame_options set to None should return None."""
+    s = Settings(x_frame_options=None, _env_file=None)
+    assert s.x_frame_options is None
+
 # --------------------------------------------------------------------------- #
 #                      parse_allowed_roots                                     #
 # --------------------------------------------------------------------------- #
