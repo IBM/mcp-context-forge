@@ -74,6 +74,7 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_generic_token_url="https://auth.example.com/token",
         sso_generic_userinfo_url="https://auth.example.com/userinfo",
         sso_generic_issuer="https://auth.example.com",
+        sso_generic_jwks_uri=None,
         sso_generic_scope="openid profile email",
         sso_trusted_domains=["example.com"],
         sso_auto_create_users=True,
@@ -98,7 +99,7 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
 
     keycloak_provider = next(provider for provider in providers if provider["id"] == "keycloak")
     metadata = keycloak_provider["provider_metadata"]
-    assert "jwks_uri" not in keycloak_provider
+    assert keycloak_provider["jwks_uri"] == "https://keycloak.example.com/jwks"
     assert metadata["jwks_uri"] == "https://keycloak.example.com/jwks"
     assert metadata["public_base_url"] == "https://login.example.com"
     assert metadata["role_mappings"] == {"gateway-admin": "platform_admin"}
@@ -275,6 +276,7 @@ def test_get_predefined_sso_providers_skips_keycloak_when_disabled(monkeypatch):
         sso_generic_token_url="https://auth.example.com/token",
         sso_generic_userinfo_url="https://auth.example.com/userinfo",
         sso_generic_issuer="https://auth.example.com",
+        sso_generic_jwks_uri=None,
         sso_generic_scope="openid profile email",
         sso_trusted_domains=[],
         sso_auto_create_users=True,
@@ -499,6 +501,217 @@ class TestSSOBootstrapAsync:
 
                     # Should not try to get a DB session when no providers
                     mock_get_db.assert_not_called()
+
+
+def test_generic_oidc_includes_jwks_uri_when_configured(monkeypatch):
+    """Generic OIDC provider should include jwks_uri when configured."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="keycloak",
+        sso_generic_display_name="Keycloak",
+        sso_generic_client_id="kc-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://keycloak.example.com/auth",
+        sso_generic_token_url="https://keycloak.example.com/token",
+        sso_generic_userinfo_url="https://keycloak.example.com/userinfo",
+        sso_generic_issuer="https://keycloak.example.com",
+        sso_generic_jwks_uri="https://keycloak.example.com/certs",
+        sso_generic_scope="openid profile email",
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["id"] == "keycloak"
+    assert providers[0]["jwks_uri"] == "https://keycloak.example.com/certs"
+
+
+def test_generic_oidc_omits_jwks_uri_when_not_configured(monkeypatch):
+    """Generic OIDC provider should not include jwks_uri when not configured."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="auth0",
+        sso_generic_display_name="Auth0",
+        sso_generic_client_id="a0-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://auth0.example.com/authorize",
+        sso_generic_token_url="https://auth0.example.com/token",
+        sso_generic_userinfo_url="https://auth0.example.com/userinfo",
+        sso_generic_issuer="https://auth0.example.com",
+        sso_generic_jwks_uri=None,
+        sso_generic_scope="openid profile email",
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["id"] == "auth0"
+    assert "jwks_uri" not in providers[0]
+
+
+class TestSSOProviderModel:
+    """Tests for SSOProvider model accepting jwks_uri."""
+
+    def test_sso_provider_accepts_jwks_uri(self):
+        """SSOProvider constructor should accept jwks_uri as a valid column."""
+        # First-Party
+        from mcpgateway.db import SSOProvider
+
+        provider = SSOProvider(
+            id="test",
+            name="test",
+            display_name="Test",
+            provider_type="oidc",
+            client_id="cid",
+            client_secret_encrypted="encrypted",
+            authorization_url="https://example.com/auth",
+            token_url="https://example.com/token",
+            userinfo_url="https://example.com/userinfo",
+            scope="openid",
+            jwks_uri="https://example.com/certs",
+        )
+        assert provider.jwks_uri == "https://example.com/certs"
+
+    def test_sso_provider_jwks_uri_defaults_to_none(self):
+        """SSOProvider should have jwks_uri=None by default."""
+        # First-Party
+        from mcpgateway.db import SSOProvider
+
+        provider = SSOProvider(
+            id="test",
+            name="test",
+            display_name="Test",
+            provider_type="oidc",
+            client_id="cid",
+            client_secret_encrypted="encrypted",
+            authorization_url="https://example.com/auth",
+            token_url="https://example.com/token",
+            userinfo_url="https://example.com/userinfo",
+            scope="openid",
+        )
+        assert provider.jwks_uri is None
+
+
+class TestCreateProviderDefensive:
+    """Tests for create_provider filtering unknown keys."""
+
+    @pytest.mark.asyncio
+    async def test_create_provider_ignores_unknown_keys(self):
+        """create_provider should ignore unknown keys instead of raising TypeError."""
+        # First-Party
+        from mcpgateway.services.sso_service import SSOService
+
+        mock_db = MagicMock()
+        service = SSOService(mock_db)
+        service._encrypt_secret = AsyncMock(side_effect=lambda s: "ENC(" + s + ")")
+
+        data = {
+            "id": "test",
+            "name": "test",
+            "display_name": "Test Provider",
+            "provider_type": "oidc",
+            "client_id": "cid",
+            "client_secret": "secret",
+            "authorization_url": "https://example.com/auth",
+            "token_url": "https://example.com/token",
+            "userinfo_url": "https://example.com/userinfo",
+            "scope": "openid",
+            "completely_unknown_field": "should_be_ignored",
+        }
+
+        # Should NOT raise TypeError
+        provider = await service.create_provider(data)
+        assert provider.id == "test"
+        assert not hasattr(provider, "completely_unknown_field") or provider.completely_unknown_field is None
+
+    @pytest.mark.asyncio
+    async def test_create_provider_accepts_jwks_uri(self):
+        """create_provider should accept jwks_uri as a valid field."""
+        # First-Party
+        from mcpgateway.services.sso_service import SSOService
+
+        mock_db = MagicMock()
+        service = SSOService(mock_db)
+        service._encrypt_secret = AsyncMock(side_effect=lambda s: "ENC(" + s + ")")
+
+        data = {
+            "id": "keycloak",
+            "name": "keycloak",
+            "display_name": "Keycloak",
+            "provider_type": "oidc",
+            "client_id": "cid",
+            "client_secret": "secret",
+            "authorization_url": "https://keycloak.example.com/auth",
+            "token_url": "https://keycloak.example.com/token",
+            "userinfo_url": "https://keycloak.example.com/userinfo",
+            "issuer": "https://keycloak.example.com",
+            "jwks_uri": "https://keycloak.example.com/certs",
+            "scope": "openid profile email",
+        }
+
+        provider = await service.create_provider(data)
+        assert provider.id == "keycloak"
+        assert provider.jwks_uri == "https://keycloak.example.com/certs"
 
 
 class TestAttemptToBootstrapSSOProviders:

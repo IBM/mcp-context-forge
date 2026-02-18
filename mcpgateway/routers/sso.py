@@ -42,6 +42,7 @@ class SSOProviderCreateRequest(BaseModel):
     token_url: str
     userinfo_url: str
     issuer: Optional[str] = None
+    jwks_uri: Optional[str] = None
     scope: str = "openid profile email"
     trusted_domains: List[str] = []
     auto_create_users: bool = True
@@ -61,6 +62,7 @@ class SSOProviderUpdateRequest(BaseModel):
     token_url: Optional[str] = None
     userinfo_url: Optional[str] = None
     issuer: Optional[str] = None
+    jwks_uri: Optional[str] = None
     scope: Optional[str] = None
     trusted_domains: Optional[List[str]] = None
     auto_create_users: Optional[bool] = None
@@ -496,6 +498,7 @@ async def get_sso_provider(
         "token_url": provider.token_url,
         "userinfo_url": provider.userinfo_url,
         "issuer": provider.issuer,
+        "jwks_uri": provider.jwks_uri,
         "scope": provider.scope,
         "trusted_domains": provider.trusted_domains,
         "auto_create_users": provider.auto_create_users,
