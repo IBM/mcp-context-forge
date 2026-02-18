@@ -22847,7 +22847,7 @@ function registerAdminActionListeners() {
     document.body.addEventListener("htmx:afterSwap", function (event) {
         initializeAddMembersForms(event.target);
         initializePasswordValidation(event.target);
-        initializeDisableAdminProtection(event.target)
+        initializeDisableAdminProtection(event.target);
         const target = event.target;
         if (
             target &&
@@ -23410,15 +23410,17 @@ function initializeDisableAdminProtection(root = document) {
     }
 }
 
-function disableAdminProtection(){
+function disableAdminProtection() {
     const admin = document.getElementById("admin-field");
-    const hiddenDisableAdminOverride = document.getElementById("disable-admin-protection-field");
+    const hiddenDisableAdminOverride = document.getElementById(
+        "disable-admin-protection-field",
+    );
 
-    if(!admin || !hiddenDisableAdminOverride){
+    if (!admin || !hiddenDisableAdminOverride) {
         return;
     }
 
-    hiddenDisableAdminOverride.value = !admin.checked? "on": "";
+    hiddenDisableAdminOverride.value = !admin.checked ? "on" : "";
 }
 
 // Expose password validation function to global scope
