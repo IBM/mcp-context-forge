@@ -655,17 +655,21 @@ class Settings(BaseSettings):
     @field_validator("x_frame_options")
     @classmethod
     def normalize_x_frame_options(cls, v: Optional[str]) -> Optional[str]:
-        """Convert string 'null' or 'none' to Python None to disable iframe restrictions.
+        """Convert string 'null', 'none', or empty/whitespace-only string to Python None to disable iframe restrictions.
 
         Args:
-            v: The x_frame_options value from environment/config
+            v: The X-Frame-Options value to normalize.
 
         Returns:
-            None if v is "null" or "none" (case-insensitive), otherwise returns v unchanged
+            None if v is None, an empty/whitespace-only string, or case-insensitive 'null'/'none';
+            otherwise returns the stripped string value.
         """
-        if isinstance(v, str) and v.lower() in ("null", "none"):
+        if v is None:
             return None
-        return v
+        val = v.strip()
+        if val == "" or val.lower() in ("null", "none"):
+            return None
+        return val
 
     x_content_type_options_enabled: bool = Field(default=True)
     x_xss_protection_enabled: bool = Field(default=True)
