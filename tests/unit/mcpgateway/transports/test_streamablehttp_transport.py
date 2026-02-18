@@ -401,6 +401,116 @@ async def test_list_tools_exception_with_server_id(monkeypatch, caplog):
 
 
 # ---------------------------------------------------------------------------
+# _proxy_list_prompts_to_gateway tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_proxy_list_prompts_forwards_meta(monkeypatch):
+    """_proxy_list_prompts_to_gateway passes _meta via PaginatedRequestParams."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_list_prompts_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_prompt = types.Prompt(name="p1", description="desc", arguments=[])
+    mock_result = MagicMock()
+    mock_result.prompts = [mock_prompt]
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_prompts = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-1"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self): return mock_session
+        async def __aexit__(self, *a): pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    from mcp.types import RequestParams
+    meta = RequestParams.Meta(progressToken="tok-1")
+    result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {}, meta=meta)
+
+    assert len(result) == 1
+    assert result[0].name == "p1"
+    call_kwargs = mock_session.list_prompts.call_args[1]
+    assert call_kwargs["params"] is not None
+
+
+@pytest.mark.asyncio
+async def test_proxy_list_prompts_no_meta(monkeypatch):
+    """_proxy_list_prompts_to_gateway passes params=None when no meta."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_list_prompts_to_gateway
+    from contextlib import asynccontextmanager
+
+    mock_result = MagicMock()
+    mock_result.prompts = []
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.list_prompts = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-2"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self): return mock_session
+        async def __aexit__(self, *a): pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {}, meta=None)
+    assert result == []
+    mock_session.list_prompts.assert_called_once_with(params=None)
+
+
+@pytest.mark.asyncio
+async def test_proxy_list_prompts_exception_returns_empty(monkeypatch):
+    """_proxy_list_prompts_to_gateway returns [] on exception."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_list_prompts_to_gateway
+    from contextlib import asynccontextmanager
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-err"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        raise RuntimeError("upstream down")
+        yield
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+
+    result = await _proxy_list_prompts_to_gateway(mock_gateway, {}, {})
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
 # list_prompts tests
 # ---------------------------------------------------------------------------
 

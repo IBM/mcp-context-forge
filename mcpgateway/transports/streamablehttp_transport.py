@@ -552,6 +552,48 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
         return []
 
 
+async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Prompt]:  # pylint: disable=unused-argument
+    """Proxy prompts/list request directly to remote MCP gateway using MCP SDK.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - _meta comes from MCP SDK)
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        List of Prompt objects from remote server
+    """
+    try:
+        headers = build_gateway_auth_headers(gateway)
+
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying prompts/list to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                params = None
+                if meta:
+                    params = PaginatedRequestParams(_meta=meta)
+
+                result = await session.list_prompts(params=params)
+                logger.info(f"Received {len(result.prompts)} prompts from gateway {gateway.id}")
+                return result.prompts
+
+    except Exception as e:
+        logger.exception(f"Error proxying prompts/list to gateway {gateway.id}: {e}")
+        return []
+
+
 async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
     """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
 
