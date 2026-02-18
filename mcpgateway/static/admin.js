@@ -1004,13 +1004,14 @@ function showErrorMessage(message, elementId = null) {
 
 // Handle HTMX after-request for user delete — extracts plain text from the
 // HTML error response and surfaces it via the toast notification system.
-function handleDeleteUserError(event) {
+// Exposed on window so inline hx-on::after-request handlers can call it.
+window.handleDeleteUserError = function (event) {
     if (!event.detail.successful) {
         const d = document.createElement("div");
         d.innerHTML = event.detail.xhr.responseText;
         showErrorMessage(d.textContent.trim() || "Error deleting user");
     }
-}
+};
 
 // Show success messages
 function showSuccessMessage(message) {
