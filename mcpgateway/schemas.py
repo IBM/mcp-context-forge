@@ -6805,6 +6805,7 @@ class SSOProviderResponse(BaseModelWithConfigDict):
     provider_type: Optional[str] = Field(None, description="Provider type (oauth2, oidc)")
     is_enabled: Optional[bool] = Field(None, description="Whether provider is enabled")
     authorization_url: Optional[str] = Field(None, description="OAuth authorization URL")
+    jwks_uri: Optional[str] = Field(None, description="OIDC JWKS endpoint for token signature verification")
 
 
 class SSOLoginResponse(BaseModelWithConfigDict):

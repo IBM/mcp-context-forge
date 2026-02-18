@@ -1385,7 +1385,7 @@ class TestMain:
         mock_conn = Mock()
         mock_conn.commit = Mock()
         mock_inspector = Mock()
-        mock_inspector.get_table_names.return_value = ["gateways", "tools", "prompts", "alembic_version"]
+        mock_inspector.get_table_names.return_value = ["gateways", "tools", "prompts", "sso_providers", "alembic_version"]
 
         mock_execute = Mock()
         mock_execute.fetchall.return_value = []
@@ -1398,6 +1398,8 @@ class TestMain:
                 return [{"name": "oauth_config"}]
             if table_name == "prompts":
                 return [{"name": "custom_name"}]
+            if table_name == "sso_providers":
+                return [{"name": "jwks_uri"}]
             return []
 
         mock_inspector.get_columns.side_effect = _get_columns
