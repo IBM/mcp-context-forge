@@ -3653,7 +3653,6 @@ async def list_tools(
     # Allow apijsonpath to be supplied either as a model (direct call/tests) or
     # as a JSON-encoded string via query (HTTP GET). Body() is not allowed on GET.
     parsed_apijsonpath: Optional[JsonPathModifier] = None
-    logger.info(f"Received request for tools list with apijsonpath: {apijsonpath}")
     if apijsonpath is None:
         logger.info("No apijsonpath provided; returning unmodified data")
         if include_pagination:
@@ -3668,14 +3667,11 @@ async def list_tools(
         try:
             parsed_apijsonpath = JsonPathModifier.model_validate(__import__("json").loads(apijsonpath))
         except Exception as ex:
-            logger.info(f"Failed to parse apijsonpath string: {apijsonpath} with error: {ex}")
+            logger.error(f"Failed to parse apijsonpath string: {apijsonpath} with error: {ex}")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid apijsonpath JSON: {ex}")
     elif isinstance(apijsonpath, JsonPathModifier):
-        logger.info("apijsonpath provided as model instance")
         parsed_apijsonpath = apijsonpath
-    logger.info(f"Received request for tools list with parsed_apijsonpath: {parsed_apijsonpath}")
     if parsed_apijsonpath is None:
-        logger.info("No valid apijsonpath provided; returning unmodified data")
         # Nothing to modify
         if include_pagination:
             payload = {"tools": [tool.model_dump(by_alias=True) for tool in data]}
@@ -3685,12 +3681,10 @@ async def list_tools(
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
-    logger.info(f"Converting {len(tools_dict_list)} tools to dict for JSONPath processing")
     if tools_dict_list:
         logger.info(f"Sample tool dict keys: {list(tools_dict_list[0].keys())[:10]}")
     try:
         result = jsonpath_modifier(tools_dict_list, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
-        logger.info(f"JSONPath modifier returned {len(result) if isinstance(result, list) else 1} results")
         # Return ORJSONResponse to bypass FastAPI's response_model validation
         return ORJSONResponse(content=result)
     except Exception:
