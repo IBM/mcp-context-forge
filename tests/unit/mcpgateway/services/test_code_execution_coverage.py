@@ -287,16 +287,18 @@ class TestCodeExecutionSession:
 
 
 class TestDenoRuntime:
-    def test_create_session_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_session_noop(self) -> None:
         runtime = DenoRuntime()
         session = MagicMock()
-        result = asyncio.get_event_loop().run_until_complete(runtime.create_session(session, {}))
+        result = await runtime.create_session(session, {})
         assert result is None
 
-    def test_destroy_session_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_destroy_session_noop(self) -> None:
         runtime = DenoRuntime()
         session = MagicMock()
-        result = asyncio.get_event_loop().run_until_complete(runtime.destroy_session(session))
+        result = await runtime.destroy_session(session)
         assert result is None
 
     @pytest.mark.asyncio
@@ -326,16 +328,18 @@ class TestDenoRuntime:
 
 
 class TestPythonSandboxRuntime:
-    def test_create_session_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_create_session_noop(self) -> None:
         runtime = PythonSandboxRuntime()
         session = MagicMock()
-        result = asyncio.get_event_loop().run_until_complete(runtime.create_session(session, {}))
+        result = await runtime.create_session(session, {})
         assert result is None
 
-    def test_destroy_session_noop(self) -> None:
+    @pytest.mark.asyncio
+    async def test_destroy_session_noop(self) -> None:
         runtime = PythonSandboxRuntime()
         session = MagicMock()
-        result = asyncio.get_event_loop().run_until_complete(runtime.destroy_session(session))
+        result = await runtime.destroy_session(session)
         assert result is None
 
     @pytest.mark.asyncio
@@ -1913,3 +1917,137 @@ class TestResolveRuntimeToolName:
         session = _make_session(tmp_path)
         with pytest.raises(CodeExecutionSecurityError, match="not mounted"):
             svc._resolve_runtime_tool_name(session, "", "missing_tool")
+
+
+# ===================================================================
+# Finding 1: Cross-server replay IDOR
+# ===================================================================
+
+
+class TestReplayRunServerOwnership:
+    """Validate replay_run enforces server_id ownership on the run."""
+
+    @pytest.mark.asyncio
+    async def test_replay_run_rejects_wrong_server_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_replay_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        run = SimpleNamespace(id="run-1", server_id="server-A", code_body="print(1)")
+        db = MagicMock()
+        db.get.return_value = run
+
+        with pytest.raises(CodeExecutionError, match="Run not found"):
+            await svc.replay_run(
+                db=db,
+                server_id="server-B",
+                run_id="run-1",
+                user_email="user@test.com",
+                token_teams=None,
+                request_headers=None,
+                invoke_tool=AsyncMock(),
+            )
+
+
+# ===================================================================
+# Finding 2: Cross-server skill approve/revoke IDOR
+# ===================================================================
+
+
+class TestSkillOwnershipChecks:
+    """Validate approve_skill and revoke_skill enforce server_id ownership."""
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_rejects_wrong_server_id(self) -> None:
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(id="skill-1", server_id="server-A")
+        approval = SimpleNamespace(id="appr-1", skill_id="skill-1", status="pending", is_expired=lambda: False)
+        db = MagicMock()
+        db.get.side_effect = lambda model, key: {"appr-1": approval, "skill-1": skill}.get(key)
+
+        with pytest.raises(CodeExecutionError, match="Skill approval not found"):
+            await svc.approve_skill(db=db, server_id="server-B", approval_id="appr-1", reviewer_email="admin@test.com", approve=True)
+
+    @pytest.mark.asyncio
+    async def test_revoke_skill_rejects_wrong_server_id(self) -> None:
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(id="skill-1", server_id="server-A")
+        db = MagicMock()
+        db.get.return_value = skill
+
+        with pytest.raises(CodeExecutionError, match="Skill not found"):
+            await svc.revoke_skill(db=db, server_id="server-B", skill_id="skill-1", reviewer_email="admin@test.com")
+
+
+# ===================================================================
+# Finding 6: Expired approvals can still be approved
+# ===================================================================
+
+
+class TestExpiredApprovalCheck:
+    """Validate approve_skill rejects expired approvals."""
+
+    @pytest.mark.asyncio
+    async def test_approve_skill_rejects_expired(self) -> None:
+        svc = CodeExecutionService()
+        skill = SimpleNamespace(id="skill-1", server_id="server-1")
+        approval = SimpleNamespace(id="appr-1", skill_id="skill-1", status="pending", is_expired=lambda: True)
+        db = MagicMock()
+        db.get.side_effect = lambda model, key: {"appr-1": approval, "skill-1": skill}.get(key)
+
+        with pytest.raises(CodeExecutionError, match="expired"):
+            await svc.approve_skill(db=db, server_id="server-1", approval_id="appr-1", reviewer_email="admin@test.com", approve=True)
+
+
+# ===================================================================
+# Finding 3: Filesystem policy enforcement
+# ===================================================================
+
+
+class TestFsBrowsePolicyEnforcement:
+    """Validate fs_browse enforces filesystem policy."""
+
+    def test_enforce_fs_permission_denies_restricted_path(self) -> None:
+        svc = CodeExecutionService()
+        policy = {
+            "permissions": {
+                "filesystem": {
+                    "deny": ["/secrets/**"],
+                    "read": ["/tools/**"],
+                    "write": ["/scratch/**"],
+                },
+            },
+        }
+        with pytest.raises(CodeExecutionSecurityError, match="EACCES"):
+            svc._enforce_fs_permission(policy, "read", "/secrets/keys.json")
+
+    def test_enforce_fs_permission_denies_unallowed_read(self) -> None:
+        svc = CodeExecutionService()
+        policy = {
+            "permissions": {
+                "filesystem": {
+                    "deny": [],
+                    "read": ["/tools/**"],
+                    "write": ["/scratch/**"],
+                },
+            },
+        }
+        with pytest.raises(CodeExecutionSecurityError, match="EACCES"):
+            svc._enforce_fs_permission(policy, "read", "/private/data.txt")
+
+    def test_inprocess_read_file_enforces_policy(self, tmp_path: Path) -> None:
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        policy = {
+            "permissions": {
+                "filesystem": {
+                    "deny": ["/tools/**"],
+                    "read": ["/scratch/**"],
+                    "write": ["/scratch/**"],
+                },
+            },
+        }
+        # Write a file to tools
+        (session.tools_dir / "test.txt").write_text("data", encoding="utf-8")
+        # read_file lambda should enforce policy and deny /tools read
+        read_fn = lambda p: (svc._enforce_fs_permission(policy, "read", p), svc._read_virtual_text_file(session, p))[1]
+        with pytest.raises(CodeExecutionSecurityError, match="EACCES"):
+            read_fn("/tools/test.txt")

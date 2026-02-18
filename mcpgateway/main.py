@@ -3212,6 +3212,7 @@ async def replay_code_execution_run(
     try:
         return await code_execution_service.replay_run(
             db=db,
+            server_id=server_id,
             run_id=run_id,
             user_email=user_email,
             token_teams=token_teams,
@@ -3356,7 +3357,10 @@ async def approve_skill_request(
         raise HTTPException(status_code=404, detail="code_execution server not found")
     reviewer_email = get_user_email(user)
     notes = payload.get("notes")
-    approval = await code_execution_service.approve_skill(db=db, approval_id=approval_id, reviewer_email=reviewer_email, approve=True, reason=notes)
+    try:
+        approval = await code_execution_service.approve_skill(db=db, server_id=server_id, approval_id=approval_id, reviewer_email=reviewer_email, approve=True, reason=notes)
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"id": approval.id, "status": approval.status, "skill_id": approval.skill_id}
 
 
@@ -3375,7 +3379,10 @@ async def reject_skill_request(
         raise HTTPException(status_code=404, detail="code_execution server not found")
     reviewer_email = get_user_email(user)
     reason = str(payload.get("reason") or "Rejected")
-    approval = await code_execution_service.approve_skill(db=db, approval_id=approval_id, reviewer_email=reviewer_email, approve=False, reason=reason)
+    try:
+        approval = await code_execution_service.approve_skill(db=db, server_id=server_id, approval_id=approval_id, reviewer_email=reviewer_email, approve=False, reason=reason)
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"id": approval.id, "status": approval.status, "skill_id": approval.skill_id}
 
 
@@ -3394,7 +3401,10 @@ async def revoke_skill(
         raise HTTPException(status_code=404, detail="code_execution server not found")
     reviewer_email = get_user_email(user)
     reason = payload.get("reason")
-    skill = await code_execution_service.revoke_skill(db=db, skill_id=skill_id, reviewer_email=reviewer_email, reason=reason)
+    try:
+        skill = await code_execution_service.revoke_skill(db=db, server_id=server_id, skill_id=skill_id, reviewer_email=reviewer_email, reason=reason)
+    except CodeExecutionError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     return {"id": skill.id, "status": skill.status}
 
 

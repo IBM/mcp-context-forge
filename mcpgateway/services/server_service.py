@@ -1378,33 +1378,35 @@ class ServerService:
                     server.skills_scope = None
                     server.skills_require_approval = False
 
-            if server_update.stub_language is not None:
-                server.stub_language = server_update.stub_language
+            # Only apply code-execution fields when the effective type is code_execution
+            if requested_server_type == "code_execution":
+                if server_update.stub_language is not None:
+                    server.stub_language = server_update.stub_language
 
-            if hasattr(server_update, "model_fields_set") and "mount_rules" in server_update.model_fields_set:
-                server.mount_rules = server_update.mount_rules.model_dump() if hasattr(server_update.mount_rules, "model_dump") else server_update.mount_rules
-            elif server_update.mount_rules is not None:
-                server.mount_rules = server_update.mount_rules.model_dump() if hasattr(server_update.mount_rules, "model_dump") else server_update.mount_rules
+                if hasattr(server_update, "model_fields_set") and "mount_rules" in server_update.model_fields_set:
+                    server.mount_rules = server_update.mount_rules.model_dump() if hasattr(server_update.mount_rules, "model_dump") else server_update.mount_rules
+                elif server_update.mount_rules is not None:
+                    server.mount_rules = server_update.mount_rules.model_dump() if hasattr(server_update.mount_rules, "model_dump") else server_update.mount_rules
 
-            if hasattr(server_update, "model_fields_set") and "sandbox_policy" in server_update.model_fields_set:
-                server.sandbox_policy = server_update.sandbox_policy.model_dump() if hasattr(server_update.sandbox_policy, "model_dump") else server_update.sandbox_policy
-            elif server_update.sandbox_policy is not None:
-                server.sandbox_policy = server_update.sandbox_policy.model_dump() if hasattr(server_update.sandbox_policy, "model_dump") else server_update.sandbox_policy
+                if hasattr(server_update, "model_fields_set") and "sandbox_policy" in server_update.model_fields_set:
+                    server.sandbox_policy = server_update.sandbox_policy.model_dump() if hasattr(server_update.sandbox_policy, "model_dump") else server_update.sandbox_policy
+                elif server_update.sandbox_policy is not None:
+                    server.sandbox_policy = server_update.sandbox_policy.model_dump() if hasattr(server_update.sandbox_policy, "model_dump") else server_update.sandbox_policy
 
-            if hasattr(server_update, "model_fields_set") and "tokenization" in server_update.model_fields_set:
-                server.tokenization = server_update.tokenization.model_dump() if hasattr(server_update.tokenization, "model_dump") else server_update.tokenization
-            elif server_update.tokenization is not None:
-                server.tokenization = server_update.tokenization.model_dump() if hasattr(server_update.tokenization, "model_dump") else server_update.tokenization
+                if hasattr(server_update, "model_fields_set") and "tokenization" in server_update.model_fields_set:
+                    server.tokenization = server_update.tokenization.model_dump() if hasattr(server_update.tokenization, "model_dump") else server_update.tokenization
+                elif server_update.tokenization is not None:
+                    server.tokenization = server_update.tokenization.model_dump() if hasattr(server_update.tokenization, "model_dump") else server_update.tokenization
 
-            if hasattr(server_update, "model_fields_set") and "skills_scope" in server_update.model_fields_set:
-                server.skills_scope = server_update.skills_scope
-            elif server_update.skills_scope is not None:
-                server.skills_scope = server_update.skills_scope
+                if hasattr(server_update, "model_fields_set") and "skills_scope" in server_update.model_fields_set:
+                    server.skills_scope = server_update.skills_scope
+                elif server_update.skills_scope is not None:
+                    server.skills_scope = server_update.skills_scope
 
-            if hasattr(server_update, "model_fields_set") and "skills_require_approval" in server_update.model_fields_set:
-                server.skills_require_approval = bool(server_update.skills_require_approval)
-            elif server_update.skills_require_approval is not None:
-                server.skills_require_approval = bool(server_update.skills_require_approval)
+                if hasattr(server_update, "model_fields_set") and "skills_require_approval" in server_update.model_fields_set:
+                    server.skills_require_approval = bool(server_update.skills_require_approval)
+                elif server_update.skills_require_approval is not None:
+                    server.skills_require_approval = bool(server_update.skills_require_approval)
 
             # Update metadata fields
             server.updated_at = datetime.now(timezone.utc)
