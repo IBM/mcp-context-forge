@@ -2098,13 +2098,7 @@ async def _run_multi_protocol_server(  # pylint: disable=too-many-positional-arg
                 receive (Receive): An awaitable that yields incoming ASGI events.
                 send (Send): An awaitable used to send ASGI events.
             """
-            if scope.get("type") == "http" and scope.get("path") == "/mcp" and streamable_manager:
-                # Let StreamableHTTPSessionManager handle session-oriented streaming
-                # await streamable_manager.handle_request(scope, receive, send)
-                await original_app(scope, receive, send)
-            else:
-                # Delegate everything else to the original FastAPI app
-                await original_app(scope, receive, send)
+            await original_app(scope, receive, send)
 
         # Replace the app used by uvicorn with the ASGI wrapper
         app = mcp_asgi_wrapper  # type: ignore[assignment]

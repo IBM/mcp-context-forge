@@ -472,15 +472,13 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
+    If the flush fails, the exception is propagated so the commit also fails
+    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    try:
-        session.flush()
-    except Exception:  # nosec B110
-        # If flush fails, the commit will also fail and trigger rollback
-        pass
+    session.flush()
 
 
 # ---------------------------------------------------------------------------

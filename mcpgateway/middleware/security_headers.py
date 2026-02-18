@@ -255,12 +255,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if settings.x_content_type_options_enabled:
             response.headers["X-Content-Type-Options"] = "nosniff"
 
-        # Handle X-Frame-Options: None = don't set header, empty string = allow all, other values = set header
-        if settings.x_frame_options is not None:
-            if settings.x_frame_options:  # Non-empty string
-                response.headers["X-Frame-Options"] = settings.x_frame_options
-            # Empty string means user wants to disable the header (allow all frames)
-            # Don't set the header in this case
+        # Handle X-Frame-Options: None/empty = don't set header (allow embedding), other values = set header
+        # Note: config validator normalizes ""/"null"/"none" to None, but we guard here too for safety
+        x_frame = settings.x_frame_options
+        if isinstance(x_frame, str) and not x_frame.strip():
+            x_frame = None
+        if x_frame is not None:
+            response.headers["X-Frame-Options"] = x_frame
 
         if settings.x_xss_protection_enabled:
             response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
@@ -282,10 +283,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "connect-src 'self' ws: wss: https:",
         ]
 
-        # Only add frame-ancestors if x_frame_options is not None
-        # When None (or "null"/"none" string), completely disable iframe restrictions
-        if settings.x_frame_options is not None:
-            x_frame = str(settings.x_frame_options)
+        # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
+        if x_frame is not None:
             x_frame_upper = x_frame.upper()
 
             if x_frame_upper == "DENY":

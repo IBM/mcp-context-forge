@@ -281,14 +281,9 @@ class DecisionCache:
         keys_to_delete = []
 
         for key in list(self._store.keys()):
-            # Simple strategy: if no filter args, flush everything
-            if subject is None and action is None and resource is None:
-                keys_to_delete.append(key)
-            # If we had the original request stored we could filter precisely;
-            # for now a targeted invalidation flushes the whole cache.
-            # Future: store the original request tuple alongside the entry.
-            else:
-                keys_to_delete.append(key)
+            # Flush all entries — targeted invalidation requires storing
+            # the original request tuple alongside entries (future improvement).
+            keys_to_delete.append(key)
 
         for key in keys_to_delete:
             del self._store[key]

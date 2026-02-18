@@ -68,7 +68,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import verify_credentials
+from mcpgateway.utils.verify_credentials import require_auth_override, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -659,9 +659,7 @@ async def call_tool(name: str, arguments: dict) -> Union[
         >>> sig.parameters['arguments'].annotation
         <class 'dict'>
     """
-    request_headers = request_headers_var.get()
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
     # Extract _meta from request context if available
@@ -724,7 +722,8 @@ async def call_tool(name: str, arguments: dict) -> Union[
             return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
 
     # Normal mode: use standard tool invocation with normalization
-    app_user_email = get_user_email_from_context()  # Keep for OAuth token selection
+    # Use the already-recovered user_context (works for both ContextVar and stateful session paths)
+    app_user_email = (user_context.get("email") or user_context.get("sub") or "unknown") if user_context else "unknown"
 
     # Multi-worker session affinity: check if we should forward to another worker
     # Check both x-mcp-session-id (internal/forwarded) and mcp-session-id (client protocol header)
@@ -946,6 +945,131 @@ async def call_tool(name: str, arguments: dict) -> Union[
         raise
 
 
+async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[str, Any]]:
+    """Retrieve request context information for the current execution.
+
+    This function attempts to obtain the `server_id`, request headers, and
+    user context from ContextVars (fast path). If the ContextVars contain
+    default values—indicating a stateful session where context propagation
+    may not have occurred—it falls back to extracting the information from
+    `mcp_app.request_context`.
+
+    The fallback logic:
+    - Extracts `server_id` from the request URL path.
+    - Copies request headers from the underlying request object.
+    - Attempts to recover user context using the authorization header or
+      JWT token stored in cookies.
+
+    If recovery fails at any point, default ContextVar values are returned.
+
+    Returns:
+        Tuple[str, dict[str, Any], dict[str, Any]]: A tuple containing:
+            - server_id: The resolved server identifier.
+            - request_headers: A dictionary of request headers.
+            - user_context: A dictionary representing the authenticated user
+              context (empty if anonymous or recovery fails).
+    """
+    # 1. Try context vars first (fast path)
+    s_id = server_id_var.get()
+
+    # Check if context vars are populated with real data (not defaults)
+    if s_id != "default_server_id":
+        return s_id, request_headers_var.get(), user_context_var.get()
+
+    # 2. Fallback to mcp_app.request_context (stateful session path)
+    try:
+        ctx = mcp_app.request_context
+        request = ctx.request
+        if not request:
+            logger.warning("No request object found in MCP context")
+            return s_id, request_headers_var.get(), user_context_var.get()
+
+        # Extract server_id from URL
+        path = request.url.path
+        match = _SERVER_ID_RE.search(path)
+        if match:
+            s_id = match.group("server_id")
+
+        # Extract headers
+        req_headers = dict(request.headers)
+
+        # Extract and verify user context
+        auth_header = req_headers.get("authorization")
+        # In stateful session, cookie might be more reliable
+        cookie_token = request.cookies.get("jwt_token")
+
+        try:
+            raw_payload = await require_auth_override(auth_header=auth_header, jwt_token=cookie_token, request=request)
+            if isinstance(raw_payload, str):  # "anonymous"
+                user_ctx = {}
+            elif isinstance(raw_payload, dict):
+                # Normalize raw JWT payload to canonical user context shape
+                # (matches streamable_http_auth normalization at lines 2155-2259)
+                user_ctx = _normalize_jwt_payload(raw_payload)
+            else:
+                user_ctx = {}
+        except Exception as e:
+            logger.warning(f"Failed to recover user context in stateful session: {e}")
+            user_ctx = {}
+
+        return s_id, req_headers, user_ctx
+
+    except LookupError:
+        # Not in a request context
+        return s_id, request_headers_var.get(), user_context_var.get()
+    except Exception as e:
+        logger.error(f"Error recovering context in stateful session: {e}", exc_info=True)
+        return s_id, request_headers_var.get(), user_context_var.get()
+
+
+def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a raw JWT payload to the canonical user context shape.
+
+    Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
+    canonical ``{email, teams, is_admin, is_authenticated}`` dict that MCP
+    handlers expect.  This mirrors the normalization performed by
+    ``streamable_http_auth`` so that the stateful-session fallback path in
+    ``_get_request_context_or_default`` returns an identical shape.
+
+    Args:
+        payload: Raw JWT payload dict from ``require_auth_override``.
+
+    Returns:
+        Canonical user context dict with keys email, teams, is_admin, is_authenticated.
+    """
+    email = payload.get("sub") or payload.get("email")
+    is_admin = payload.get("is_admin", False)
+    if not is_admin:
+        user_info = payload.get("user", {})
+        is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+
+    token_use = payload.get("token_use")
+    if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        # Session token: resolve teams from DB/cache
+        if is_admin:
+            final_teams = None  # Admin bypass
+        elif email:
+            # First-Party
+            from mcpgateway.auth import _resolve_teams_from_db_sync  # pylint: disable=import-outside-toplevel
+
+            final_teams = _resolve_teams_from_db_sync(email, is_admin=False)
+        else:
+            final_teams = []  # No email — public-only
+    else:
+        # API token or legacy: use embedded teams from JWT
+        # First-Party
+        from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+        final_teams = normalize_token_teams(payload)
+
+    return {
+        "email": email,
+        "teams": final_teams,
+        "is_admin": is_admin,
+        "is_authenticated": True,
+    }
+
+
 @mcp_app.list_tools()
 async def list_tools() -> List[types.Tool]:
     """
@@ -968,9 +1092,7 @@ async def list_tools() -> List[types.Tool]:
         >>> sig.return_annotation
         typing.List[mcp.types.Tool]
     """
-    server_id = server_id_var.get()
-    request_headers = request_headers_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1068,8 +1190,7 @@ async def list_prompts() -> List[types.Prompt]:
         >>> sig.return_annotation
         typing.List[mcp.types.Prompt]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, _, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1126,8 +1247,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         >>> sig.return_annotation.__name__
         'GetPromptResult'
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, _, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1193,8 +1313,7 @@ async def list_resources() -> List[types.Resource]:
         >>> sig.return_annotation
         typing.List[mcp.types.Resource]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract filtering parameters from user context
     user_email = user_context.get("email") if user_context else None
@@ -1214,8 +1333,6 @@ async def list_resources() -> List[types.Resource]:
         try:
             async with get_db() as db:
                 # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
-                request_headers = request_headers_var.get()
-
                 gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
@@ -1287,8 +1404,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
         >>> sig.return_annotation
         typing.Union[str, bytes]
     """
-    server_id = server_id_var.get()
-    user_context = user_context_var.get()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_resources)
     user_email = user_context.get("email") if user_context else None
@@ -1315,8 +1431,6 @@ async def read_resource(resource_uri: str) -> Union[str, bytes]:
     try:
         async with get_db() as db:
             # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
-            request_headers = request_headers_var.get()
-
             gateway_id = extract_gateway_id_from_headers(request_headers)
 
             # If X-Context-Forge-Gateway-Id is provided, check if that gateway is in direct_proxy mode
@@ -1405,7 +1519,7 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         'list'
     """
     # Extract filtering parameters from user context (same pattern as list_resources)
-    user_context = user_context_var.get()
+    _, _, user_context = await _get_request_context_or_default()
     user_email = user_context.get("email") if user_context else None
     token_teams = user_context.get("teams") if user_context else None
     is_admin = user_context.get("is_admin", False) if user_context else False
@@ -1885,6 +1999,16 @@ class SessionManagerWrapper:
                             await send({"type": "http.response.start", "status": 202, "headers": []})
                             await send({"type": "http.response.body", "body": b""})
                             return
+
+                        # Inject server_id from URL path into params for /rpc routing
+                        if match:
+                            server_id = match.group("server_id")
+                            if "params" not in json_body:
+                                json_body["params"] = {}
+                            json_body["params"]["server_id"] = server_id
+                            # Re-serialize body with injected server_id
+                            body = orjson.dumps(json_body)
+                            logger.debug(f"[HTTP_AFFINITY_LOCAL] Injected server_id {server_id} into /rpc params")
 
                         async with httpx.AsyncClient() as client:
                             rpc_headers = {

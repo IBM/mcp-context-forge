@@ -276,6 +276,11 @@ services:
       - REQUIRE_USER_IN_DB=${REQUIRE_USER_IN_DB:-false}
       - MCPGATEWAY_UI_ENABLED=true
       - MCPGATEWAY_ADMIN_API_ENABLED=true
+      # Embedded UI mode (hides logout + team selector by default)
+      - MCPGATEWAY_UI_EMBEDDED=false
+      # CSV list (or JSON array) of UI sections/header items to hide for embedded contexts
+      - MCPGATEWAY_UI_HIDE_SECTIONS=
+      - MCPGATEWAY_UI_HIDE_HEADER_ITEMS=
       # Security configuration (using defaults)
       - ENVIRONMENT=development
       - SECURITY_HEADERS_ENABLED=true

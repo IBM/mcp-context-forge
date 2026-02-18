@@ -1,30 +1,68 @@
-# syntax=docker/dockerfile:1
-FROM python:3.11-slim AS base
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PATH="/app/.venv/bin:$PATH"
+# syntax=docker/dockerfile:1.7
+ARG PYTHON_VERSION=3.12
+
+###########################
+# Builder stage
+###########################
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1770180700 AS builder
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+ARG PYTHON_VERSION
+
+# hadolint ignore=DL3041
+RUN set -euo pipefail \
+    && dnf upgrade -y \
+    && dnf install -y \
+        python${PYTHON_VERSION} \
+        python${PYTHON_VERSION}-devel \
+        binutils gcc gcc-c++ curl \
+    && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
+    && dnf clean all
 
 WORKDIR /app
 
-# System deps
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && \
-    rm -rf /var/lib/apt/lists/*
-
-# Copy metadata early for layer caching
 COPY pyproject.toml README.md ./
 
-# Create venv and install
-RUN python -m venv /app/.venv && \
-    /app/.venv/bin/pip install --upgrade pip setuptools wheel && \
-    /app/.venv/bin/pip install -e .
+RUN set -euo pipefail \
+    && python3 -m venv /app/.venv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /app/.venv/bin/pip install --no-cache-dir . \
+    && /app/.venv/bin/pip uninstall --yes pip setuptools wheel \
+    && rm -rf /root/.cache
 
-# Copy source
 COPY src/ ./src/
 
-# Non-root user
-RUN useradd -u 1001 -m appuser && chown -R 1001:1001 /app
+RUN chown -R 1001:0 /app \
+    && chmod -R g=u /app
+
+###########################
+# Runtime stage
+###########################
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.1-1770180557 AS runtime
+
+ARG PYTHON_VERSION=3.12
+
+# hadolint ignore=DL3041
+RUN microdnf install -y --nodocs --setopt=install_weak_deps=0 \
+    python${PYTHON_VERSION} \
+    ca-certificates \
+    shadow-utils \
+    && microdnf clean all \
+    && rm -rf /var/cache/yum
+
+RUN ln -sf /usr/bin/python${PYTHON_VERSION} /usr/bin/python3
+
+RUN useradd --uid 1001 --gid 0 --home-dir /app --shell /sbin/nologin --no-create-home --comment app app
+
+COPY --from=builder --chown=1001:0 /app /app
+
+ENV PATH="/app/.venv/bin:${PATH}" \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+EXPOSE 8000
 USER 1001
 
-CMD ["python", "-m", "docx_server.server"]
+CMD ["python3", "-m", "docx_server.server"]

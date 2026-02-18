@@ -674,6 +674,774 @@ class TestAuthHooksOptimization:
                         assert user.email == mock_user.email
 
 
+class TestGetSyncRedisClient:
+    """Test cases for _get_sync_redis_client helper function."""
+
+    def test_get_sync_redis_client_returns_cached_client(self):
+        """Test that _get_sync_redis_client returns cached client if already initialized."""
+        # First-Party
+        from mcpgateway import auth
+
+        # Set up a mock cached client
+        mock_redis = MagicMock()
+        auth._SYNC_REDIS_CLIENT = mock_redis
+
+        try:
+            result = auth._get_sync_redis_client()
+            assert result is mock_redis
+        finally:
+            # Clean up
+            auth._SYNC_REDIS_CLIENT = None
+
+    def test_get_sync_redis_client_returns_none_when_redis_not_configured(self):
+        """Test that _get_sync_redis_client returns None when Redis is not configured."""
+        # First-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        auth._SYNC_REDIS_CLIENT = None
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.redis_url = ""
+            mock_settings.cache_type = "redis"
+
+            result = auth._get_sync_redis_client()
+            assert result is None
+
+    def test_get_sync_redis_client_returns_none_when_cache_type_not_redis(self):
+        """Test that _get_sync_redis_client returns None when cache_type is not redis."""
+        # First-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        auth._SYNC_REDIS_CLIENT = None
+
+        with patch("mcpgateway.config.settings") as mock_settings:
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.cache_type = "memory"
+
+            result = auth._get_sync_redis_client()
+            assert result is None
+
+    def test_get_sync_redis_client_initializes_on_first_call(self):
+        """Test that _get_sync_redis_client initializes Redis client on first call."""
+        # Standard
+        import sys
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.return_value = True
+
+            # Mock the redis module
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.return_value = mock_redis_client
+
+            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                result = auth._get_sync_redis_client()
+
+                mock_redis_module.from_url.assert_called_once()
+                mock_redis_client.ping.assert_called_once()
+                assert result is mock_redis_client
+                # Verify it's cached
+                assert auth._SYNC_REDIS_CLIENT is mock_redis_client
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_handles_redis_connection_failure(self):
+        """Test that _get_sync_redis_client handles Redis connection failure gracefully."""
+        # Standard
+        import sys
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            # Mock the redis module to raise an exception
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.side_effect = Exception("Connection failed")
+
+            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                result = auth._get_sync_redis_client()
+
+                assert result is None
+                # Verify None is cached
+                assert auth._SYNC_REDIS_CLIENT is None
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_handles_redis_ping_failure(self):
+        """Test that _get_sync_redis_client handles Redis ping failure gracefully."""
+        # Standard
+        import sys
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.side_effect = Exception("Ping failed")
+
+            # Mock the redis module
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.return_value = mock_redis_client
+
+            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                result = auth._get_sync_redis_client()
+
+                assert result is None
+                # Verify None is cached
+                assert auth._SYNC_REDIS_CLIENT is None
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_double_check_locking(self):
+        """Test that _get_sync_redis_client properly handles double-check locking."""
+        # Standard
+        import sys
+        import threading
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Reset cached client
+        original_client = auth._SYNC_REDIS_CLIENT
+        auth._SYNC_REDIS_CLIENT = None
+
+        try:
+            mock_redis_client = MagicMock()
+            mock_redis_client.ping.return_value = True
+
+            call_count = 0
+
+            def mock_from_url_with_delay(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                # Simulate initialization delay
+                # Standard
+                import time
+
+                time.sleep(0.01)
+                return mock_redis_client
+
+            # Mock the redis module
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.side_effect = mock_from_url_with_delay
+
+            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                # Call from multiple threads simultaneously
+                results = []
+
+                def call_get_sync():
+                    results.append(auth._get_sync_redis_client())
+
+                threads = [threading.Thread(target=call_get_sync) for _ in range(5)]
+                for t in threads:
+                    t.start()
+                for t in threads:
+                    t.join()
+
+                # Should only initialize once despite multiple concurrent calls
+                assert call_count <= 1  # May be 0 if already cached or 1 if initialized
+                # All threads should get the same instance (or None if uninitialized)
+                assert all(r == results[0] for r in results)
+        finally:
+            # Restore original state
+            auth._SYNC_REDIS_CLIENT = original_client
+
+    def test_get_sync_redis_client_backoff_after_failure(self):
+        """Test that _get_sync_redis_client backs off for 30s after a failure."""
+        # Standard
+        import sys
+        import time as time_module
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Save and reset state
+        original_client = auth._SYNC_REDIS_CLIENT
+        original_failure_time = auth._SYNC_REDIS_FAILURE_TIME
+        auth._SYNC_REDIS_CLIENT = None
+        auth._SYNC_REDIS_FAILURE_TIME = None
+
+        try:
+            mock_redis_module = MagicMock()
+            mock_redis_module.from_url.side_effect = Exception("Connection refused")
+
+            with patch("mcpgateway.config.settings") as mock_settings, patch.dict(sys.modules, {"redis": mock_redis_module}):
+                mock_settings.redis_url = "redis://localhost:6379/0"
+                mock_settings.cache_type = "redis"
+
+                # First call: should attempt connection and fail
+                result1 = auth._get_sync_redis_client()
+                assert result1 is None
+                assert auth._SYNC_REDIS_FAILURE_TIME is not None
+                mock_redis_module.from_url.assert_called_once()
+
+                # Second call within 30s: should skip retry due to backoff
+                mock_redis_module.from_url.reset_mock()
+                result2 = auth._get_sync_redis_client()
+                assert result2 is None
+                mock_redis_module.from_url.assert_not_called()
+
+                # Simulate 31 seconds passing
+                auth._SYNC_REDIS_FAILURE_TIME = time_module.time() - 31
+
+                # Third call after backoff: should retry
+                mock_redis_module.from_url.reset_mock()
+                mock_redis_module.from_url.side_effect = Exception("Still down")
+                result3 = auth._get_sync_redis_client()
+                assert result3 is None
+                mock_redis_module.from_url.assert_called_once()
+        finally:
+            auth._SYNC_REDIS_CLIENT = original_client
+            auth._SYNC_REDIS_FAILURE_TIME = original_failure_time
+
+
+class TestUpdateApiTokenLastUsed:
+    """Test cases for _update_api_token_last_used_sync helper function."""
+
+    def test_update_api_token_last_used_sync_updates_timestamp(self):
+        """Test that _update_api_token_last_used_sync updates last_used timestamp."""
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            with patch("mcpgateway.db.utc_now") as mock_utc_now:
+                mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+                mock_utc_now.return_value = mock_time
+
+                _update_api_token_last_used_sync("jti-123")
+
+                # Verify last_used was updated
+                assert mock_api_token.last_used == mock_time
+                mock_db.commit.assert_called_once()
+
+    def test_update_api_token_last_used_sync_handles_missing_token(self):
+        """Test that _update_api_token_last_used_sync handles missing token gracefully."""
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None  # Token not found
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            # Should not raise exception
+            _update_api_token_last_used_sync("jti-nonexistent")
+
+            # Should not commit if token not found
+            mock_db.commit.assert_not_called()
+
+    def test_update_api_token_last_used_sync_rate_limits_with_redis(self):
+        """Test that _update_api_token_last_used_sync rate-limits updates using Redis."""
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+
+        mock_redis_client = MagicMock()
+        mock_redis_client.get.return_value = "1234567890.0"  # Last update timestamp
+
+        with (
+            patch("mcpgateway.auth._get_sync_redis_client", return_value=mock_redis_client),
+            patch("mcpgateway.auth.settings") as mock_settings,
+            patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session,
+            patch("time.time", return_value=1234567890.0),
+        ):  # Same time (no elapsed time)
+            mock_settings.token_last_used_update_interval_minutes = 5
+
+            _update_api_token_last_used_sync("jti-123")
+
+            # Should skip DB update due to rate limiting
+            mock_fresh_session.assert_not_called()
+            mock_redis_client.get.assert_called_once_with("api_token_last_used:jti-123")
+
+    def test_update_api_token_last_used_sync_updates_after_interval(self):
+        """Test that _update_api_token_last_used_sync updates after rate-limit interval."""
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        mock_redis_client = MagicMock()
+        # Last update was 400 seconds ago (> 5 minutes)
+        mock_redis_client.get.return_value = "1234567490.0"
+
+        with (
+            patch("mcpgateway.auth._get_sync_redis_client", return_value=mock_redis_client),
+            patch("mcpgateway.auth.settings") as mock_settings,
+            patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session,
+            patch("time.time", return_value=1234567890.0),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+        ):
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+            mock_utc_now.return_value = mock_time
+
+            _update_api_token_last_used_sync("jti-123")
+
+            # Should update DB after rate-limit interval
+            mock_fresh_session.assert_called_once()
+            mock_db.commit.assert_called_once()
+            assert mock_api_token.last_used == mock_time
+            # Should update Redis cache
+            mock_redis_client.setex.assert_called_once()
+
+    def test_update_api_token_last_used_sync_falls_back_to_memory_cache(self):
+        """Test that _update_api_token_last_used_sync falls back to in-memory cache when Redis unavailable."""
+        # Standard
+        import sys
+
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Clear the module-level in-memory cache
+        auth._LAST_USED_CACHE.clear()
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-fallback-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        # Mock the redis module to raise an exception
+        mock_redis_module = MagicMock()
+        mock_redis_module.from_url.side_effect = Exception("Redis unavailable")
+
+        with (
+            patch("mcpgateway.auth.settings") as mock_settings,
+            patch.dict(sys.modules, {"redis": mock_redis_module}),
+            patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session,
+            patch("time.time", return_value=1234567890.0),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+        ):
+            mock_settings.redis_url = "redis://localhost:6379/0"
+            mock_settings.cache_type = "redis"
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+            mock_utc_now.return_value = mock_time
+
+            # First call should update
+            _update_api_token_last_used_sync("jti-fallback-123")
+            mock_db.commit.assert_called_once()
+            assert mock_api_token.last_used == mock_time
+
+            # Second call immediately after should be rate-limited
+            mock_db.reset_mock()
+            _update_api_token_last_used_sync("jti-fallback-123")
+            mock_db.commit.assert_not_called()
+
+    def test_update_api_token_last_used_sync_redis_exception_falls_back_to_memory(self):
+        """Test that _update_api_token_last_used_sync falls back to memory cache when Redis operations fail."""
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        # First-Party
+        from mcpgateway import auth
+
+        # Clear the module-level in-memory cache
+        auth._LAST_USED_CACHE.clear()
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-redis-error-123"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        # Mock a Redis client that exists but throws exceptions on operations
+        mock_redis_client = MagicMock()
+        mock_redis_client.get.side_effect = Exception("Redis get failed")
+
+        with (
+            patch("mcpgateway.auth.settings") as mock_settings,
+            patch("mcpgateway.auth._get_sync_redis_client", return_value=mock_redis_client),
+            patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session,
+            patch("time.time", return_value=1234567890.0),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+        ):
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_time = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+            mock_utc_now.return_value = mock_time
+
+            # Should fall back to in-memory cache when Redis get fails
+            _update_api_token_last_used_sync("jti-redis-error-123")
+
+            # Verify Redis was attempted
+            mock_redis_client.get.assert_called()
+            # Verify DB update still occurred via fallback
+            mock_db.commit.assert_called_once()
+            assert mock_api_token.last_used == mock_time
+
+    @pytest.mark.asyncio
+    async def test_api_token_last_used_updated_on_jwt_auth(self, monkeypatch):
+        """Test that last_used is updated when API token is authenticated via JWT."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")
+
+        jwt_payload = {
+            "sub": "api@example.com",
+            "jti": "jti-api-456",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "user": {"auth_provider": "api_token"},
+        }
+
+        mock_user = EmailUser(
+            email="api@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
+                        with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                            user = await get_current_user(credentials=credentials, request=request)
+
+                            # Verify user was authenticated
+                            assert user.email == "api@example.com"
+
+                            # Verify auth_method was set to api_token
+                            assert request.state.auth_method == "api_token"
+
+                            # Verify JTI was stored in request.state
+                            assert request.state.jti == "jti-api-456"
+
+                            # Verify last_used update was called
+                            mock_update.assert_called_once_with("jti-api-456")
+
+    @pytest.mark.asyncio
+    async def test_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
+        """Test that authentication continues even if last_used update fails (lines 711-712)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="api_token_jwt")
+
+        jwt_payload = {
+            "sub": "api@example.com",
+            "jti": "jti-api-fail-123",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "user": {"auth_provider": "api_token"},
+        }
+
+        mock_user = EmailUser(
+            email="api@example.com",
+            password_hash="hash",
+            full_name="API User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        # Mock the update function to raise an exception
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        with patch("mcpgateway.auth._update_api_token_last_used_sync", side_effect=Exception("DB connection failed")):
+                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                # Authentication should succeed despite update failure
+                                user = await get_current_user(credentials=credentials, request=request)
+
+                                # Verify user was authenticated
+                                assert user.email == "api@example.com"
+
+                                # Verify auth_method was still set to api_token
+                                assert request.state.auth_method == "api_token"
+
+    @pytest.mark.asyncio
+    async def test_api_token_jti_stored_in_request_state(self, monkeypatch):
+        """Test that JTI is stored in request.state for middleware use."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="jwt_with_jti")
+
+        jwt_payload = {
+            "sub": "test@example.com",
+            "jti": "jti-store-test-789",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+            "user": {
+                "email": "test@example.com",
+                "auth_provider": "email",
+            },
+        }
+
+        mock_user = EmailUser(
+            email="test@example.com",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value="team_123"):
+                    user = await get_current_user(credentials=credentials, request=request)
+
+                    # Verify user was authenticated
+                    assert user.email == "test@example.com"
+
+                    # Verify JTI was stored in request.state
+                    assert hasattr(request.state, "jti")
+                    assert request.state.jti == "jti-store-test-789"
+
+    @pytest.mark.asyncio
+    async def test_legacy_api_token_last_used_updated(self, monkeypatch):
+        """Test that last_used is updated for legacy API tokens (DB lookup path)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")
+
+        # JWT payload without auth_provider (legacy format)
+        jwt_payload = {
+            "sub": "legacy@example.com",
+            "jti": "jti-legacy-999",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="legacy@example.com",
+            password_hash="hash",
+            full_name="Legacy User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                        with patch("mcpgateway.auth._update_api_token_last_used_sync") as mock_update:
+                            with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                user = await get_current_user(credentials=credentials, request=request)
+
+                                # Verify user was authenticated
+                                assert user.email == "legacy@example.com"
+
+                                # Verify auth_method was set to api_token
+                                assert request.state.auth_method == "api_token"
+
+                                # Verify last_used update was called for legacy token
+                                assert mock_update.call_count == 1
+                                mock_update.assert_called_with("jti-legacy-999")
+
+    @pytest.mark.asyncio
+    async def test_legacy_api_token_last_used_update_failure_continues_auth(self, monkeypatch):
+        """Test that authentication continues even if legacy token last_used update fails (lines 732-733)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="legacy_api_token")
+
+        # JWT payload without auth_provider (legacy format)
+        jwt_payload = {
+            "sub": "legacy@example.com",
+            "jti": "jti-legacy-fail-888",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+
+        mock_user = EmailUser(
+            email="legacy@example.com",
+            password_hash="hash",
+            full_name="Legacy User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        # Disable batch queries to use the standard code path that's already mocked
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        # Mock functions individually
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                    with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                        with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                            with patch("mcpgateway.auth._update_api_token_last_used_sync", side_effect=Exception("DB update failed")):
+                                with patch("mcpgateway.auth.asyncio.to_thread", AsyncMock(side_effect=lambda f, *args: f(*args))):
+                                    # Authentication should succeed despite update failure
+                                    user = await get_current_user(credentials=credentials, request=request)
+
+                                    # Verify user was authenticated
+                                    assert user.email == "legacy@example.com"
+
+                                    # Verify auth_method was still set to api_token
+                                    assert request.state.auth_method == "api_token"
+
+                                    # Verify JTI was stored in request.state
+                                    assert request.state.jti == "jti-legacy-fail-888"
+
+    def test_update_api_token_last_used_sync_evicts_old_cache_entries(self):
+        """Test that in-memory cache evicts oldest entries when max size is reached."""
+        # First-Party
+        from mcpgateway import auth
+        from mcpgateway.auth import _update_api_token_last_used_sync
+        from mcpgateway.db import EmailApiToken
+
+        # Clear the module-level cache
+        auth._LAST_USED_CACHE.clear()
+
+        mock_api_token = MagicMock(spec=EmailApiToken)
+        mock_api_token.jti = "jti-evict"
+        mock_api_token.last_used = None
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_api_token
+        mock_db.execute.return_value = mock_result
+
+        # Pre-fill cache to _MAX_CACHE_SIZE (1024) entries
+        base_time = 1000000.0
+        for i in range(1024):
+            auth._LAST_USED_CACHE[f"jti-old-{i}"] = base_time + i
+
+        assert len(auth._LAST_USED_CACHE) == 1024
+
+        with (
+            patch("mcpgateway.auth._get_sync_redis_client", return_value=None),
+            patch("mcpgateway.auth.settings") as mock_settings,
+            patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session,
+            patch("time.time", return_value=base_time + 2000),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+        ):
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+            mock_utc_now.return_value = datetime(2026, 2, 3, 12, 0, 0, tzinfo=timezone.utc)
+
+            _update_api_token_last_used_sync("jti-evict")
+
+        # Cache should have been evicted to ~512 + the new entry
+        assert len(auth._LAST_USED_CACHE) <= 513
+        assert "jti-evict" in auth._LAST_USED_CACHE
+        # Oldest entries (lower indices) should have been evicted
+        assert "jti-old-0" not in auth._LAST_USED_CACHE
+        # Newer entries should remain
+        assert "jti-old-1023" in auth._LAST_USED_CACHE
+
+    def test_update_api_token_last_used_sync_no_jti_in_api_token(self):
+        """Test that _set_auth_method_from_payload handles api_token without JTI."""
+        # This tests the branch where auth_provider == "api_token" but no JTI is present
+        # First-Party
+        from mcpgateway.auth import _update_api_token_last_used_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth._get_sync_redis_client", return_value=None), patch("mcpgateway.auth.settings") as mock_settings, patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_settings.token_last_used_update_interval_minutes = 5
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            # Should not raise when token not found
+            _update_api_token_last_used_sync("jti-nonexistent-xyz")
+
+            # DB was queried but no commit since token not found
+            mock_db.execute.assert_called_once()
+            mock_db.commit.assert_not_called()
+
+
 # ============================================================================
 # Coverage improvement tests
 # ============================================================================
@@ -873,6 +1641,7 @@ class TestSetAuthMethodFromPayload:
     @pytest.fixture(autouse=True)
     def disable_auth_cache(self, monkeypatch):
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
     @pytest.mark.asyncio
     async def test_api_token_auth_provider(self):
@@ -899,6 +1668,8 @@ class TestSetAuthMethodFromPayload:
 
         with (
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):
@@ -929,7 +1700,9 @@ class TestSetAuthMethodFromPayload:
 
         with (
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
             patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True),
+            patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
         ):

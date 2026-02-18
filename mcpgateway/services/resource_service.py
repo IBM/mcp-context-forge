@@ -534,7 +534,6 @@ class ResourceService:
                     "resource_name": db_resource.name,
                     "visibility": visibility,
                 },
-                db=db,
             )
 
             db_resource.team = self._get_team_name(db, db_resource.team_id)
@@ -554,7 +553,6 @@ class ResourceService:
                 custom_fields={
                     "resource_uri": resource.uri,
                 },
-                db=db,
             )
             raise ie
         except ResourceURIConflictError as rce:
@@ -572,7 +570,6 @@ class ResourceService:
                     "resource_uri": resource.uri,
                     "visibility": visibility,
                 },
-                db=db,
             )
             raise rce
         except Exception as e:
@@ -590,7 +587,6 @@ class ResourceService:
                 custom_fields={
                     "resource_uri": resource.uri,
                 },
-                db=db,
             )
             raise ResourceError(f"Failed to register resource: {str(e)}")
 
@@ -847,7 +843,6 @@ class ResourceService:
                 "visibility": visibility,
                 "conflict_strategy": conflict_strategy,
             },
-            db=db,
         )
 
         return stats
@@ -2527,7 +2522,6 @@ class ResourceService:
                         "resource_uri": resource.uri,
                         "enabled": resource.enabled,
                     },
-                    db=db,
                 )
 
             resource.team = self._get_team_name(db, resource.team_id)
@@ -2543,7 +2537,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise e
         except ResourceLockConflictError:
@@ -2565,7 +2558,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise ResourceError(f"Failed to set resource state: {str(e)}")
 
@@ -2842,7 +2834,6 @@ class ResourceService:
                     "resource_uri": resource.uri,
                     "version": resource.version,
                 },
-                db=db,
             )
 
             return self.convert_resource_to_read(resource)
@@ -2859,7 +2850,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=pe,
-                db=db,
             )
             raise
         except IntegrityError as ie:
@@ -2877,7 +2867,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=ie,
-                db=db,
             )
             raise ie
         except ResourceURIConflictError as pe:
@@ -2894,7 +2883,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=pe,
-                db=db,
             )
             raise pe
         except Exception as e:
@@ -2910,7 +2898,6 @@ class ResourceService:
                     resource_type="resource",
                     resource_id=str(resource_id),
                     error=e,
-                    db=db,
                 )
                 raise e
 
@@ -2925,7 +2912,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise ResourceError(f"Failed to update resource: {str(e)}")
 
@@ -3042,7 +3028,6 @@ class ResourceService:
                     "resource_uri": resource_uri,
                     "purge_metrics": purge_metrics,
                 },
-                db=db,
             )
 
         except PermissionError as pe:
@@ -3058,7 +3043,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=pe,
-                db=db,
             )
             raise
         except ResourceNotFoundError as rnfe:
@@ -3073,7 +3057,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=rnfe,
-                db=db,
             )
             raise
         except Exception as e:
@@ -3089,7 +3072,6 @@ class ResourceService:
                 resource_type="resource",
                 resource_id=str(resource_id),
                 error=e,
-                db=db,
             )
             raise ResourceError(f"Failed to delete resource: {str(e)}")
 
@@ -3151,7 +3133,6 @@ class ResourceService:
                 "resource_uri": resource.uri,
                 "include_inactive": include_inactive,
             },
-            db=db,
         )
 
         return resource_read

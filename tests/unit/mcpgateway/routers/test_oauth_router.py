@@ -525,6 +525,39 @@ class TestOAuthRouter:
                 assert "✅ OAuth Authorization Successful" in result.body.decode()
 
     @pytest.mark.asyncio
+    async def test_oauth_callback_provider_error_response(self, mock_db, mock_request):
+        """Test OAuth callback handles provider error payload without code."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        result = await oauth_callback(
+            code=None,
+            state="gateway123_abc123",
+            error="invalid_target",
+            error_description="AADSTS9010010: The resource parameter does not match the requested scopes.",
+            request=mock_request,
+            db=mock_db,
+        )
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        assert "OAuth Authorization Failed" in result.body.decode()
+        assert "invalid_target" in result.body.decode()
+        assert "AADSTS9010010" in result.body.decode()
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_missing_code_without_error(self, mock_db, mock_request):
+        """Test OAuth callback returns friendly message when code is missing."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        result = await oauth_callback(code=None, state="gateway123_abc123", request=mock_request, db=mock_db)
+
+        assert isinstance(result, HTMLResponse)
+        assert result.status_code == 400
+        assert "Missing authorization code" in result.body.decode()
+
+    @pytest.mark.asyncio
     async def test_oauth_callback_invalid_state(self, mock_db, mock_request):
         """Test OAuth callback with invalid state parameter."""
         # First-Party

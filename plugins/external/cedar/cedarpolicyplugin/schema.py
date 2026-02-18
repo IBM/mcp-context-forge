@@ -55,6 +55,6 @@ class CedarConfig(BaseModel):
     """
 
     policy_lang: str = "None"
-    policy: Union[list, str] = None
+    policy: Optional[Union[list, str]] = None
     policy_output_keywords: Optional[dict] = None
     policy_redaction_spec: Optional[Redaction] = None

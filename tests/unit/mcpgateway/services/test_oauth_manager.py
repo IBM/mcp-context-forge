@@ -2,7 +2,6 @@
 """Unit tests for OAuthManager service."""
 
 # Standard
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -491,6 +490,58 @@ async def test_refresh_token_with_resource_list(oauth_manager):
 
 
 @pytest.mark.asyncio
+async def test_exchange_code_for_tokens_omits_resource_for_entra_v2_scope_flow(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.raise_for_status = MagicMock()
+    mock_response.headers = {"content-type": "application/json"}
+    mock_response.json.return_value = {"access_token": "new-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager._exchange_code_for_tokens(
+            {
+                "client_id": "cid",
+                "token_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token",
+                "authorization_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize",
+                "redirect_uri": "https://gateway.example.com/oauth/callback",
+                "scopes": ["openid", "profile"],
+                "resource": "https://mcp.example.com",
+            },
+            code="auth-code",
+        )
+
+    assert result["access_token"] == "new-tok"
+    request_data = mock_client.post.call_args[1]["data"]
+    assert "resource" not in request_data
+
+
+@pytest.mark.asyncio
+async def test_refresh_token_omits_resource_for_entra_v2_scope_flow(oauth_manager):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"access_token": "new-tok"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    with patch.object(oauth_manager, "_get_client", new_callable=AsyncMock, return_value=mock_client):
+        result = await oauth_manager.refresh_token(
+            "old-rt",
+            {
+                "client_id": "cid",
+                "token_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token",
+                "authorization_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize",
+                "scopes": ["openid", "profile"],
+                "resource": "https://mcp.example.com",
+            },
+        )
+
+    assert result["access_token"] == "new-tok"
+    request_data = mock_client.post.call_args[1]["data"]
+    assert "resource" not in request_data
+
+
+@pytest.mark.asyncio
 async def test_refresh_token_500_retries_then_fails():
     with patch("mcpgateway.services.oauth_manager.get_settings") as mock_gs:
         mock_gs.return_value = MagicMock(
@@ -602,6 +653,91 @@ def test_create_authorization_url_with_pkce_resource_list(oauth_manager):
         code_challenge_method="S256",
     )
     assert "resource=" in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_sovereign_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.us/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_for_entra_v2_china_scope_flow(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.partner.microsoftonline.cn/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid", "profile"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "scope=openid+profile" in url or "scope=openid%20profile" in url
+    assert "resource=" not in url
+
+
+def test_create_authorization_url_keeps_resource_for_lookalike_host(oauth_manager):
+    """Ensure a host like login.microsoftonline.evil.com is NOT treated as Entra."""
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://login.microsoftonline.evil.com/tenant-id/oauth2/v2.0/authorize",
+            "scopes": ["openid"],
+            "resource": "https://mcp.example.com",
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "resource=" in url
+
+
+def test_create_authorization_url_with_pkce_omits_resource_when_flag_enabled(oauth_manager):
+    url = oauth_manager._create_authorization_url_with_pkce(
+        {
+            "client_id": "cid",
+            "redirect_uri": "https://cb",
+            "authorization_url": "https://auth.example.com/authorize",
+            "scopes": ["openid"],
+            "resource": "https://mcp.example.com",
+            "omit_resource": True,
+        },
+        state="st",
+        code_challenge="ch",
+        code_challenge_method="S256",
+    )
+    assert "resource=" not in url
 
 
 def test_create_authorization_url_with_pkce_no_scopes(oauth_manager):

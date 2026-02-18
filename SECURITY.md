@@ -16,7 +16,7 @@ MCP Gateway is currently in beta and should be treated as such until the 1.0 rel
 
 For production deployments:
 - **Disable features not used by your application**: use feature flags to disable unused features (ex: roots, resources, prompts) as per [537](https://github.com/IBM/mcp-context-forge/issues/537)
-- **Disable the Admin UI and APIs completely** (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=true` in `.env`)
+- **Disable the Admin UI and APIs completely** (`MCPGATEWAY_UI_ENABLED=false` and `MCPGATEWAY_ADMIN_API_ENABLED=false` in `.env`)
 - **Use only the REST API** with proper authentication
 - **Build your own production-grade UI** with appropriate security controls
 
@@ -91,13 +91,13 @@ This human-centered approach ensures that security is not just a technical imple
 
 Our security pipeline operates at multiple levels:
 
-**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, and Dodgy for hardcoded secrets detection, along with type checking and code quality enforcement. Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
+**Pre-commit Security Gates**: Before any code reaches our repository, it must pass through rigorous pre-commit hooks that include multiple security scanners like Bandit for common security issues, Semgrep for semantic pattern matching, Dodgy for hardcoded secrets detection, and detect-private-key for catching committed private keys, along with type checking and code quality enforcement. Pre-commit hooks also enforce **AI content integrity** (preventing AI-generated artifacts such as hallucinated citations, stock phrases, and malformed code fences) and **Unicode safety** (fixing smart quotes, ligatures, and forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)). Developers can run `make security-all` or `make pre-commit bandit semgrep dodgy lint` locally to execute these same security checks before pushing code.
 
-**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **30+ security scans** triggering automatically on every PR, including CodeQL and Semgrep for semantic analysis, Gitleaks for secret detection, comprehensive dependency vulnerability scanning with pip-audit, and container security assessment.
+**Continuous Integration Security**: Our GitHub Actions workflows implement automated security scanning on every pull request and commit, with **40+ security scans** triggering automatically on every PR, including CodeQL and Semgrep for semantic analysis, Gitleaks and TruffleHog for secret detection, comprehensive dependency vulnerability scanning with pip-audit, npm audit, and cargo audit, container security assessment with Trivy, Grype, Dockle, and Hadolint, IaC scanning with Checkov and kube-linter, GitHub Actions security linting with Zizmor, and multi-language static analysis across Python, Go, Rust, Shell, and JavaScript.
 
 **Code Review Security**: All code changes undergo mandatory peer review with security-focused review criteria, ensuring that security considerations are evaluated by human experts in addition to automated tooling.
 
-**Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards.
+**Supply Chain Security**: We maintain strict oversight of our software supply chain through automated dependency vulnerability scanning, Software Bill of Materials (SBOM) generation, and license compliance checking to ensure all components meet security standards. Automated dependency update PRs are managed via Renovate bot, and Snyk custom rules enforce detection of hardcoded JWT secrets and basic auth credentials (CWE-798). License policies explicitly deny strong-copyleft licenses (GPL-3.0, AGPL-3.0, SSPL) and flag licenses requiring review (MPL-2.0, LGPL-2.0, CC-BY-SA-4.0).
 
 **Container Security Hardening**: Our containerized deployments follow security best practices including multi-stage builds, minimal base images (UBI Micro) with the latest updates, non-root user execution, read-only filesystems, and comprehensive container scanning with tools like Trivy, Grype, Dockle, and OSV-Scanner.
 
@@ -105,15 +105,24 @@ Our security pipeline operates at multiple levels:
 
 ### Automated Security Toolchain
 
-Our security toolchain includes **30+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
+Our security toolchain includes **40+ different security and quality tools**, each serving a specific purpose in our defense strategy and executed on every pull request:
 
-- **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, and multiple type checkers
-- **Secret Detection**: Gitleaks for git history scanning, Dodgy for hardcoded secrets in code
-- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, pip-audit, npm audit, and GitHub dependency review
+- **Static Analysis Security Testing (SAST)**: CodeQL, Bandit, Semgrep, DevSkim (Microsoft security anti-patterns), and multiple type checkers
+- **Secret Detection**: Gitleaks for git history scanning, TruffleHog for filesystem-level secret scanning, Dodgy for hardcoded secrets in code, detect-private-key for committed private keys, and Snyk custom rules for hardcoded JWT secrets and credentials (CWE-798)
+- **Dependency Vulnerability Scanning**: OSV-Scanner, Trivy, Grype, pip-audit, npm audit, cargo audit (Rust), govulncheck (Go), and GitHub dependency review with license policy enforcement
 - **Container Security**: Hadolint for Dockerfile linting, Dockle for container security, and Trivy/Grype for vulnerability scanning
+- **Infrastructure as Code (IaC) Security**: Checkov for IaC security scanning (Dockerfiles, Helm charts, docker-compose), kube-linter for Kubernetes/Helm manifest best practices
+- **CI/CD Pipeline Security**: Zizmor for GitHub Actions workflow security linting, actionlint for workflow syntax validation
+- **Go Security**: gosec for Go static security analysis, golangci-lint with security rules, govulncheck for Go vulnerability database checking
+- **Rust Security**: cargo audit for Rust dependency vulnerability scanning, cargo clippy for Rust linting
+- **Shell Security**: shellcheck for shell script security and correctness linting
+- **Web & Frontend Security**: ESLint, HTMLHint, Stylelint, retire.js for known-vulnerable JS library detection, nodejsscan for JavaScript/Node.js security vulnerability scanning, npm audit for package vulnerabilities
 - **Code Quality & Best Practices**: Prospector comprehensive analysis, dlint for Python best practices, Interrogate for docstring coverage
 - **Code Modernization**: pyupgrade for syntax modernization to latest Python versions
+- **AI Content Integrity**: Pre-commit hooks preventing AI-generated artifacts (hallucinated citations, stock phrases, placeholder references, malformed code fences)
+- **Unicode & Trojan-Source Prevention**: texthooks for fixing smart quotes and ligatures, forbidding BiDi control characters to prevent [trojan-source attacks](https://trojansource.codes/)
 - **Documentation Security**: Spellcheck and markdown validation and gitleaks to prevent information disclosure
+- **Security Testing**: Playwright browser-driven security end-to-end tests, diff-cover enforcing 95% coverage on changed lines in PRs
 
 ### Developer Experience & Security
 
@@ -126,11 +135,12 @@ We believe that security should enhance rather than hinder the development proce
 
 **Individual Security Tools**:
 - `make pre-commit` - Run all pre-commit hooks locally (includes security scanning)
-- `make lint` - Comprehensive linting and security checking (30+ tools)
+- `make lint` - Comprehensive linting and security checking (40+ tools)
 - `make test` - Full test suite with coverage analysis and security validation
 - `make bandit` - Security scanner for Python code vulnerabilities
 - `make semgrep` - Advanced semantic code analysis for security patterns
 - `make dodgy` - Detect hardcoded passwords, API keys, and secrets
+- `make devskim` - DevSkim security anti-pattern detection (Microsoft)
 - `make gitleaks` - Scan git history for accidentally committed secrets
 - `make dlint` - Python security best practices enforcement
 - `make interrogate` - Ensure comprehensive docstring coverage
@@ -143,12 +153,22 @@ We believe that security should enhance rather than hinder the development proce
 - `make hadolint` - Dockerfile linting for security issues
 - `make osv-scan` - Open Source Vulnerability database scanning
 - `make sbom` - Software Bill of Materials generation and vulnerability assessment
-- `make lint-web` - Frontend security validation (HTML, CSS, JS vulnerability scanning)
+- `make lint-web` - Frontend security validation (HTML, CSS, JS, retire.js, nodejsscan, npm audit)
 - `make nodejsscan` - Run nodejsscan for JS security vulnerabilities
+
+**IaC, CI/CD & Multi-Language Security**:
+- `make linting-security-trufflehog` - TruffleHog filesystem secret scanning
+- `make linting-security-checkov` - Checkov IaC security scanning
+- `make linting-security-kube-linter` - Kubernetes/Helm manifest best-practice linting
+- `make linting-workflow-zizmor` - GitHub Actions workflow security linting
+- `make linting-workflow-actionlint` - GitHub Actions workflow syntax validation
+- `make linting-go-gosec` - Go security static analysis
+- `make linting-go-govulncheck` - Go vulnerability database checking
+- `make shell-lint` - Shell script linting with shellcheck
 
 **Local-First Security**: Developers are encouraged to run `make pre-commit` and `make test` before every commit, ensuring that security issues are caught and resolved locally before code reaches the repository. This "shift-left" approach means security problems are identified early in the development process, reducing the time and cost of remediation.
 
-**CI/CD Security Enforcement**: Even with local testing, our CI/CD pipeline runs the complete security suite on every pull request, with 24+ security scans executed automatically. This dual-layer approach ensures no security issues slip through, while the local tooling provides rapid feedback to developers.
+**CI/CD Security Enforcement**: Even with local testing, our CI/CD pipeline runs the complete security suite on every pull request, with 40+ security scans executed automatically across Python, Go, Rust, Shell, JavaScript, IaC, and container targets. This dual-layer approach ensures no security issues slip through, while the local tooling provides rapid feedback to developers.
 
 This approach ensures that security is integrated into daily development workflows rather than being an afterthought, while maintaining the aggressive response timelines our users expect.
 
@@ -286,6 +306,9 @@ flowchart TD
     B --> G[Bandit - Security Scanner]
     B --> G1[Semgrep - Semantic Security]
     B --> G2[Dodgy - Secret Detection]
+    B --> G3[detect-private-key]
+    B --> G4[AI Content Integrity Hooks]
+    B --> G5[Unicode/BiDi Safety - texthooks]
 
     C --> H[Pre-commit Success?]
     D --> H
@@ -294,6 +317,9 @@ flowchart TD
     G --> H
     G1 --> H
     G2 --> H
+    G3 --> H
+    G4 --> H
+    G5 --> H
 
     H -->|No| I[Fix Issues & Retry]
     I --> B
@@ -310,6 +336,8 @@ flowchart TD
     K --> Q[Lint & Static Analysis]
     K --> R[Docker Image Build]
     K --> S[Container Security Scan]
+    K --> IA[IaC & CI/CD Security]
+    K --> ML[Multi-Language Security]
 
     L --> L1[Python Build Test]
     L --> L2[Package Installation Test]
@@ -325,15 +353,39 @@ flowchart TD
     N --> N5[dlint - Best Practices]
     N --> N6[Prospector - Comprehensive Analysis]
     N --> N7[Interrogate - Docstring Coverage]
+    N --> N8[DevSkim - Security Anti-patterns]
+    N --> N9[TruffleHog - Filesystem Secrets]
 
     O --> O1[Dependency Vulnerability Check]
     O --> O2[License Compliance]
     O --> O3[Supply Chain Security]
     O --> O4[pip-audit - Python CVEs]
+    O --> O5[Snyk - Custom Security Rules]
+    O --> O6[Renovate - Automated Updates]
 
     P --> P1[pytest Unit Tests]
     P --> P2[Coverage Analysis]
     P --> P3[Integration Tests]
+    P --> P4[Playwright Security E2E]
+    P --> P5[diff-cover - PR Coverage Gate]
+
+    IA --> IA1[Checkov - IaC Security]
+    IA --> IA2[kube-linter - K8s Best Practices]
+    IA --> IA3[Zizmor - Actions Security]
+    IA --> IA4[actionlint - Actions Validation]
+
+    ML --> ML1[Go Security]
+    ML --> ML2[Rust Security]
+    ML --> ML3[Shell Security]
+
+    ML1 --> ML1A[gosec - Static Analysis]
+    ML1 --> ML1B[golangci-lint - Linting]
+    ML1 --> ML1C[govulncheck - Vuln DB]
+
+    ML2 --> ML2A[cargo audit - Dependency Vulns]
+    ML2 --> ML2B[cargo clippy - Linting]
+
+    ML3 --> ML3A[shellcheck - Script Analysis]
 
     Q --> Q1[Multiple Linters]
     Q --> Q2[Static Analysis Tools]
@@ -395,6 +447,13 @@ flowchart TD
     W --> W15[make grype-scan - Container Vulnerability]
     W --> W16[make dockle - Image Analysis]
     W --> W17[make hadolint - Dockerfile Linting]
+    W --> W18[make devskim - Security Anti-patterns]
+    W --> W19[make linting-security-trufflehog]
+    W --> W20[make linting-security-checkov]
+    W --> W21[make linting-security-kube-linter]
+    W --> W22[make linting-workflow-zizmor]
+    W --> W23[make linting-go-gosec]
+    W --> W24[make shell-lint - shellcheck]
 
     X --> X1[CycloneDX SBOM Generation]
     X --> X2[Dependency Inventory]
@@ -406,6 +465,7 @@ flowchart TD
     Y --> Y3[eslint - JavaScript Security]
     Y --> Y4[retire.js - JS Library Vulnerabilities]
     Y --> Y5[npm audit - Package Vulnerabilities]
+    Y --> Y6[nodejsscan - JS Security Vulns]
 
     Z[Additional Security Tools] --> Z1[SonarQube Analysis]
     Z --> Z2[WhiteSource Security Scanning]
@@ -439,11 +499,11 @@ flowchart TD
     classDef process fill:#fdcb6e,stroke:#e17055,stroke-width:2px
     classDef success fill:#55a3ff,stroke:#2d3436,stroke-width:2px
 
-    class G,G1,G2,M,N,O,W,W1,W2,W3,W4,W5,W6,W7,W8,W12,W13,Z1,Z2,AA,N1,N2,N3,N4,N5,N6,N7,O4 security
+    class G,G1,G2,G3,G4,G5,M,N,O,W,W1,W2,W3,W4,W5,W6,W7,W8,W12,W13,W18,W19,W20,W21,W22,W23,W24,Z1,Z2,AA,N1,N2,N3,N4,N5,N6,N7,N8,N9,O4,O5,O6,IA,IA1,IA2,IA3,IA4,ML,ML1,ML2,ML3,ML1A,ML1B,ML1C,ML2A,ML2B,ML3A,Y6 security
     class C,D,E,F,Q,Q1,Q1A,Q1B,Q1C,Q1D,Q1E,Q1F,Q1G,Q1H,V,W9,W10,W11,Q2I linting
     class R,S,S1,S2,S3,S4,S5,AA,AA1,AA2,AA3,AA4,W14,W15,W16,W17 container
     class B,H,K,L,P,T,U,V,W,X,Y,Z process
-    class L1,L2,M1,M2,M3,P1,P2,P3 success
+    class L1,L2,M1,M2,M3,P1,P2,P3,P4,P5 success
 ```
 
 </details>

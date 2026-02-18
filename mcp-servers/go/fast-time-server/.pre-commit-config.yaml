@@ -20,13 +20,13 @@ repos:
   # 🔐 Security / secret detection
   # ---------------------------------------------------------------------------
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.27.2
+    rev: v8.30.0
     hooks:
       - id: gitleaks
         name: 🔐 Gitleaks - Detect hard-coded secrets
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: detect-private-key
         name: 🔐 Detect Private Key
@@ -91,7 +91,7 @@ repos:
   # 🔤 Unicode text normalisation  (smart-quotes, ligatures, exotic spaces)
   # ---------------------------------------------------------------------------
   - repo: https://github.com/sirosen/texthooks
-    rev: 0.6.8
+    rev: 0.7.1
     hooks:
       - id: fix-smartquotes
         name: 📝 Normalize Smart Quotes
@@ -106,7 +106,7 @@ repos:
   # 🧹 Generic formatting & whitespace
   # ---------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
         name: 🧹 Fix End of Files
@@ -140,7 +140,7 @@ repos:
 
   # YAML linter
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         name: ✅ yamllint
@@ -150,7 +150,7 @@ repos:
 
   # CRLF / tab remover
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.5
+    rev: v1.5.6
     hooks:
       - id: remove-crlf
         name: 🚀 Remove CRLF
@@ -185,7 +185,7 @@ repos:
       - id: no-go-testing
 
   - repo: https://github.com/segmentio/golines
-    rev: v0.12.2
+    rev: v0.13.0
     hooks:
       - id: golines
         name: 🧹 golines - wrap long lines

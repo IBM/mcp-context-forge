@@ -66,8 +66,9 @@ describe("clearSearch", () => {
         expect(win.performTokenSearch).toHaveBeenCalledWith("");
     });
 
-    test("does not call legacy filter functions for panel entities", () => {
-        // Tools is in PANEL_SEARCH_CONFIG, so filterToolsTable should NOT be called
+    test("calls legacy filter function to immediately clear rows for panel entities", () => {
+        // clearSearch invokes the entity-specific filter as a fallback to keep
+        // rows visible even when the HTMX reload is delayed or missed.
         const original = win.filterToolsTable;
         win.filterToolsTable = vi.fn();
 
@@ -81,7 +82,7 @@ describe("clearSearch", () => {
 
         f()("tools");
 
-        expect(win.filterToolsTable).not.toHaveBeenCalled();
+        expect(win.filterToolsTable).toHaveBeenCalledWith("");
         win.filterToolsTable = original;
     });
 });

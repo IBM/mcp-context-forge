@@ -25,14 +25,14 @@ repos:
   # 🔐 Security and Secret Detection Hooks
   # -----------------------------------------------------------------------------
   - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.27.2
+    rev: v8.30.0
     hooks:
       - id: gitleaks
         name: 🔐 Gitleaks - Detect hardcoded secrets
         description: Scans for hardcoded secrets like API keys and passwords.
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       #   - id: detect-aws-credentials
       #     name: 🔐 Detect AWS Credentials
@@ -153,7 +153,7 @@ repos:
   # encoding bugs from creeping into the codebase.
   # -----------------------------------------------------------------------------
   - repo: https://github.com/sirosen/texthooks
-    rev: 0.6.8
+    rev: 0.7.1
     hooks:
       - id: fix-smartquotes
         name: 📝 Normalize Smart Quotes
@@ -172,7 +172,7 @@ repos:
   # 🧹 Formatting Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: end-of-file-fixer
         name: 🧹 Fix End of Files
@@ -226,7 +226,7 @@ repos:
   # ✅ Code Quality and Validation Hooks (LINTING ONLY)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-added-large-files
         name: ✅ Check Added Large Files
@@ -310,7 +310,7 @@ repos:
         types: [text]
 
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.37.1
+    rev: v1.38.0
     hooks:
       - id: yamllint
         name: ✅ YAMLlint - YAML Linter
@@ -331,7 +331,7 @@ repos:
   # 🐍 Python Code Quality Hooks (LINTING ONLY)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: check-ast
         name: 🐍 Check Python AST
@@ -369,7 +369,7 @@ repos:
         args: [--pytest-test-first] # `test_.*\.py`
 
   - repo: https://github.com/pycqa/flake8
-    rev: 7.2.0
+    rev: 7.3.0
     hooks:
       - id: flake8
         name: 🐍 Flake8 - Python Linter
@@ -403,7 +403,7 @@ repos:
   # -----------------------------------------------------------------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
     # Ruff version.
-    rev: v0.11.12
+    rev: v0.15.1
     hooks:
       # Run the linter.
       - id: ruff-check
@@ -416,7 +416,7 @@ repos:
       #   files: ^mcpgateway/
 
   - repo: https://github.com/psf/black
-    rev: 25.1.0
+    rev: 26.1.0
     hooks:
       - id: black
         name: 🐍 Black - Python Code Formatter
@@ -472,7 +472,7 @@ repos:
   # 🚀 Performance and Optimization Hooks (MODIFIES FILES)
   # -----------------------------------------------------------------------------
   - repo: https://github.com/Lucas-C/pre-commit-hooks
-    rev: v1.5.5
+    rev: v1.5.6
     hooks:
       - id: remove-crlf
         name: 🚀 Remove CRLF

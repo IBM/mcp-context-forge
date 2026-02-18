@@ -22,7 +22,7 @@ similarity = [
     "numpy>=2.4.2",
     "rank-bm25>=0.2.2",
     "scikit-learn>=1.8.0",
-    "sentence-transformers>=5.2.2",
+    "sentence-transformers>=5.2.3",
 ]
 dev = [
     "black>=26.1.0",
@@ -31,7 +31,7 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-httpx>=0.36.0",
-    "ruff>=0.15.0",
+    "ruff>=0.15.1",
 ]
 full = [
     "black>=26.1.0",
@@ -41,9 +41,9 @@ full = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-httpx>=0.36.0",
-    "ruff>=0.15.0",
+    "ruff>=0.15.1",
     "scikit-learn>=1.8.0",
-    "sentence-transformers>=5.2.2",
+    "sentence-transformers>=5.2.3",
 ]
 
 [build-system]

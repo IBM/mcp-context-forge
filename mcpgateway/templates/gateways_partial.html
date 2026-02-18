@@ -119,7 +119,5 @@
   {% set hx_indicator = '#gateways-loading' %}
   {% set table_name = 'gateways' %}
   {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}
-  {% autoescape false %}
   {% include 'pagination_controls.html' %}
-  {% endautoescape %}
 </div>
