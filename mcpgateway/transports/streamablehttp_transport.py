@@ -656,6 +656,75 @@ async def _proxy_get_prompt_to_gateway(gateway: Any, request_headers: dict, user
         return None
 
 
+async def _proxy_complete_to_gateway(  # pylint: disable=unused-argument
+    gateway: Any,
+    request_headers: dict,
+    user_context: dict,
+    ref: Any,
+    argument: Any,
+    context: Optional[Any] = None,
+    meta: Optional[Any] = None,
+) -> Optional[types.CompleteResult]:
+    """Proxy completion/complete request directly to remote MCP gateway using MCP SDK.
+
+    Uses session.send_request() when _meta is present (ClientSession.complete()
+    has no params argument), matching the pattern in _proxy_read_resource_to_gateway.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - auth comes from gateway config)
+        ref: PromptReference or ResourceTemplateReference
+        argument: CompletionArgument specifying name and partial value
+        context: Optional CompletionContext with previously resolved arguments
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        CompleteResult from remote server, or None on failure
+    """
+    try:
+        headers = build_gateway_auth_headers(gateway)
+
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying completion/complete to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                if meta:
+                    # ClientSession.complete() has no params arg, use send_request to forward _meta
+                    params_dict = CompleteRequestParams(ref=ref, argument=argument, context=context).model_dump()
+                    params_dict["_meta"] = meta
+                    result = await session.send_request(
+                        types.ClientRequest(CompleteRequest(params=CompleteRequestParams.model_validate(params_dict))),
+                        types.CompleteResult,
+                    )
+                else:
+                    ref_dict = ref.model_dump() if hasattr(ref, "model_dump") else ref
+                    arg_dict = argument.model_dump() if hasattr(argument, "model_dump") else argument
+                    context_args = context.arguments if context and hasattr(context, "arguments") else None
+                    result = await session.complete(
+                        ref=ref_dict,
+                        argument=arg_dict,
+                        context_arguments=context_args,
+                    )
+
+                logger.info(f"Received completion result from gateway {gateway.id}")
+                return result
+
+    except Exception as e:
+        logger.exception(f"Error proxying completion/complete to gateway {gateway.id}: {e}")
+        return None
+
+
 async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument
     """Proxy resources/read request directly to remote MCP gateway using MCP SDK.
 
