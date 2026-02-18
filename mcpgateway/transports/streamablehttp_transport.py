@@ -49,7 +49,16 @@ from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
+from mcp.types import (
+    CompleteRequest,
+    CompleteRequestParams,
+    GetPromptRequest,
+    GetPromptRequestParams,
+    JSONRPCMessage,
+    PaginatedRequestParams,
+    ReadResourceRequest,
+    ReadResourceRequestParams,
+)
 import orjson
 from sqlalchemy.orm import Session
 from starlette.datastructures import Headers
@@ -592,6 +601,59 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
     except Exception as e:
         logger.exception(f"Error proxying prompts/list to gateway {gateway.id}: {e}")
         return []
+
+
+async def _proxy_get_prompt_to_gateway(gateway: Any, request_headers: dict, user_context: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None) -> Optional[types.GetPromptResult]:  # pylint: disable=unused-argument
+    """Proxy prompts/get request directly to remote MCP gateway using MCP SDK.
+
+    Uses session.send_request() when _meta is present (ClientSession.get_prompt()
+    has no params argument), matching the pattern in _proxy_read_resource_to_gateway.
+
+    Args:
+        gateway: Gateway ORM instance
+        request_headers: Request headers from client
+        user_context: User context (not used - auth comes from gateway config)
+        name: Prompt name to retrieve
+        arguments: Optional argument substitutions
+        meta: Request metadata (_meta) from the original request
+
+    Returns:
+        GetPromptResult from remote server, or None on failure
+    """
+    try:
+        headers = build_gateway_auth_headers(gateway)
+
+        if gateway.passthrough_headers and request_headers:
+            for header_name in gateway.passthrough_headers:
+                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+                if header_value:
+                    headers[header_name] = header_value
+
+        logger.info(f"Proxying prompts/get '{name}' to gateway {gateway.id} at {gateway.url}")
+        if meta:
+            logger.debug(f"Forwarding _meta to remote gateway: {meta}")
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+
+                if meta:
+                    # ClientSession.get_prompt() has no params arg, use send_request to forward _meta
+                    params_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump()
+                    params_dict["_meta"] = meta
+                    result = await session.send_request(
+                        types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(params_dict))),
+                        types.GetPromptResult,
+                    )
+                else:
+                    result = await session.get_prompt(name, arguments=arguments)
+
+                logger.info(f"Received prompt '{name}' from gateway {gateway.id}")
+                return result
+
+    except Exception as e:
+        logger.exception(f"Error proxying prompts/get '{name}' to gateway {gateway.id}: {e}")
+        return None
 
 
 async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_context: dict, meta: Optional[Any] = None) -> List[Any]:  # pylint: disable=unused-argument

@@ -703,6 +703,118 @@ async def test_list_prompts_direct_proxy_access_denied(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# _proxy_get_prompt_to_gateway tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_proxy_get_prompt_returns_result(monkeypatch):
+    """_proxy_get_prompt_to_gateway fetches prompt from upstream."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_get_prompt_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hello"))
+    mock_result = types.GetPromptResult(description="A prompt", messages=[mock_message])
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.get_prompt = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-gp"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self): return mock_session
+        async def __aexit__(self, *a): pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="my-prompt", arguments={"lang": "en"}, meta=None)
+
+    assert result is not None
+    assert result.description == "A prompt"
+    mock_session.get_prompt.assert_called_once_with("my-prompt", arguments={"lang": "en"})
+
+
+@pytest.mark.asyncio
+async def test_proxy_get_prompt_forwards_meta_via_send_request(monkeypatch):
+    """_proxy_get_prompt_to_gateway uses send_request when _meta is present."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_get_prompt_to_gateway
+    from contextlib import asynccontextmanager
+    import mcp.types as types
+
+    mock_message = types.PromptMessage(role="user", content=types.TextContent(type="text", text="Hi"))
+    mock_result = types.GetPromptResult(description="d", messages=[mock_message])
+
+    mock_session = AsyncMock()
+    mock_session.initialize = AsyncMock()
+    mock_session.get_prompt = AsyncMock()
+    mock_session.send_request = AsyncMock(return_value=mock_result)
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-gp-meta"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    class FakeSession:
+        async def __aenter__(self): return mock_session
+        async def __aexit__(self, *a): pass
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        yield (MagicMock(), MagicMock(), MagicMock())
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
+
+    meta = {"progressToken": "tok-42"}
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="meta-prompt", arguments=None, meta=meta)
+
+    assert result is not None
+    mock_session.send_request.assert_called_once()
+    mock_session.get_prompt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_proxy_get_prompt_exception_returns_none(monkeypatch):
+    """_proxy_get_prompt_to_gateway returns None on exception."""
+    from mcpgateway.transports.streamablehttp_transport import _proxy_get_prompt_to_gateway
+    from contextlib import asynccontextmanager
+
+    mock_gateway = MagicMock()
+    mock_gateway.id = "gw-err"
+    mock_gateway.url = "http://upstream"
+    mock_gateway.passthrough_headers = []
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", lambda g: {})
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings", MagicMock(mcpgateway_direct_proxy_timeout=30))
+
+    @asynccontextmanager
+    async def fake_client(url, headers, timeout):
+        raise RuntimeError("upstream down")
+        yield
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
+
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="p", arguments=None)
+    assert result is None
+
+
+# ---------------------------------------------------------------------------
 # get_prompt tests
 # ---------------------------------------------------------------------------
 
