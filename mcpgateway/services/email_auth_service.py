@@ -1463,6 +1463,7 @@ class EmailAuthService:
         password_change_required: Optional[bool] = None,
         password: Optional[str] = None,
         admin_origin_source: Optional[str] = None,
+        disable_admin_protection: Optional[bool] = None,
     ) -> EmailUser:
         """Update user information.
 
@@ -1474,6 +1475,7 @@ class EmailAuthService:
             password_change_required: Whether user must change password on next login (optional)
             password: New password (optional, will be hashed)
             admin_origin_source: Source of admin change for tracking (e.g. "api", "ui"). Callers should pass explicitly.
+            disable_admin_protection: When removing admin priveledge, need to set it to "on". Callers should pass explicitly.
 
         Returns:
             EmailUser: Updated user object
@@ -1498,7 +1500,7 @@ class EmailAuthService:
             if user.is_admin and user.is_active:
                 would_lose_admin = (is_admin is not None and not is_admin) or (is_active is not None and not is_active)
                 if would_lose_admin:
-                    if settings.protect_all_admins:
+                    if settings.protect_all_admins and not bool(disable_admin_protection):
                         raise ValueError("Admin protection is enabled — cannot demote or deactivate any admin user")
                     if await self.is_last_active_admin(email):
                         raise ValueError("Cannot demote or deactivate the last remaining active admin user")

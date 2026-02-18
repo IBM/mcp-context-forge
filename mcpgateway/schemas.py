@@ -5606,6 +5606,7 @@ class AdminUserUpdateRequest(BaseModel):
         is_active: Whether account is active
         password_change_required: Whether user must change password on next login
         password: New password (admin can reset without old password)
+        disable_admin_protection: Whether user wants to remove admin protection when removing admin privileges
 
     Examples:
         >>> request = AdminUserUpdateRequest(
@@ -5626,6 +5627,7 @@ class AdminUserUpdateRequest(BaseModel):
     is_active: Optional[bool] = Field(None, description="Whether account is active")
     password_change_required: Optional[bool] = Field(None, description="Whether user must change password on next login")
     password: Optional[str] = Field(None, min_length=8, description="New password (admin reset)")
+    disable_admin_protection: Optional[bool] = Field(None, description="Whether user wants to remove admin protection when removing admin")
 
 
 class ErrorResponse(BaseModel):

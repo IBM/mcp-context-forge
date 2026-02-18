@@ -783,6 +783,7 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
             password_change_required=user_request.password_change_required,
             password=user_request.password,
             admin_origin_source="api",
+            disable_admin_protection=user_request.disable_admin_protection,
         )
 
         logger.info(f"Admin {current_user_ctx['email']} updated user: {user.email}")

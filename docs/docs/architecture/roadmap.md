@@ -798,7 +798,7 @@
     - ⏳ [**#2668**](https://github.com/IBM/mcp-context-forge/issues/2668) - [BUG]: Follow-up: Rate limiter — incorrect HTTP status, missing headers, and feature gaps (refs #2397)
     - ⏳ [**#2671**](https://github.com/IBM/mcp-context-forge/issues/2671) - [BUG]: ASGI protocol violation in streamable_http: response emitted after completion causing ClosedResourceError
     - ⏳ [**#2672**](https://github.com/IBM/mcp-context-forge/issues/2672) - [BUG]:  MCP Agent rejects valid A2A request as malformed (UAT agent only)
-    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - [BUG]: (X-exchange) - UI: “Failed to load plugin details: Not Found” when opening/enabling plugins in Admin Panel
+    - ⏳ [**#2674**](https://github.com/IBM/mcp-context-forge/issues/2674) - [BUG]: (X-exchange) - UI: "Failed to load plugin details: Not Found" when opening/enabling plugins in Admin Panel
     - ⏳ [**#2689**](https://github.com/IBM/mcp-context-forge/issues/2689) - [BUG]: MCP Servers/Virtual Servers/Tools - Double loading spinner on refresh
     - ⏳ [**#2784**](https://github.com/IBM/mcp-context-forge/issues/2784) - [BUG][API]: No tools listed via MCP after adding tool from REST API
     - ⏳ [**#2790**](https://github.com/IBM/mcp-context-forge/issues/2790) - [BUG][API]: Tools visible in Admin UI not exposed via /tools API — RPC calls fail with "Invalid method"
