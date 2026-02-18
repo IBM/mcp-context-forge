@@ -10132,7 +10132,19 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
-        """Execute an entity search and downgrade auth failures to empty results."""
+        """Execute an entity search and downgrade auth failures to empty results.
+
+        Args:
+            search_callable: Async entity-search callable to execute.
+            empty_key: Key used for the empty-list fallback payload.
+            **kwargs: Keyword arguments forwarded to ``search_callable``.
+
+        Returns:
+            dict[str, Any]: Search result payload or an empty fallback for auth-denied searches.
+
+        Raises:
+            HTTPException: Re-raises non-auth HTTP exceptions from the underlying search call.
+        """
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:
