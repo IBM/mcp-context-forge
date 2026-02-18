@@ -11,6 +11,7 @@ including all configuration combinations, edge cases, and integration scenarios.
 """
 
 # Standard
+from typing import Optional
 from unittest.mock import patch
 
 # Third-Party
@@ -70,8 +71,8 @@ class TestSecurityHeadersConfiguration:
             else:
                 assert "X-Content-Type-Options" not in response.headers
 
-    @pytest.mark.parametrize("frame_option", ["DENY", "SAMEORIGIN", ""])
-    def test_x_frame_options_configurable(self, frame_option: str):
+    @pytest.mark.parametrize("frame_option", ["DENY", "SAMEORIGIN", None])
+    def test_x_frame_options_configurable(self, frame_option: Optional[str]):
         """Test X-Frame-Options values are configurable."""
         app = FastAPI()
         app.add_middleware(SecurityHeadersMiddleware)
@@ -87,7 +88,9 @@ class TestSecurityHeadersConfiguration:
             if frame_option:
                 assert response.headers["X-Frame-Options"] == frame_option
             else:
+                # None means no X-Frame-Options header and no frame-ancestors (allows embedding)
                 assert "X-Frame-Options" not in response.headers
+                assert "frame-ancestors" not in response.headers.get("Content-Security-Policy", "")
 
     @pytest.mark.parametrize("xss_enabled", [True, False])
     def test_x_xss_protection_configurable(self, xss_enabled: bool):
@@ -409,7 +412,7 @@ class TestAllConfigurationCombinations:
             settings,
             security_headers_enabled=True,
             x_content_type_options_enabled=False,
-            x_frame_options="",  # Empty means disabled
+            x_frame_options=None,  # None means disabled (allows embedding)
             x_xss_protection_enabled=False,
             x_download_options_enabled=False,
             hsts_enabled=False,
@@ -428,6 +431,8 @@ class TestAllConfigurationCombinations:
             # These are always set when headers are enabled
             assert "Content-Security-Policy" in response.headers
             assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
+            # None means no frame-ancestors directive (allows embedding)
+            assert "frame-ancestors" not in response.headers["Content-Security-Policy"]
 
     def test_maximum_security_configuration(self):
         """Test configuration with all security features enabled."""
@@ -573,14 +578,15 @@ class TestConfigurationValidation:
         with patch.multiple(
             settings,
             security_headers_enabled=True,
-            x_frame_options="",  # Empty string
+            x_frame_options=None,  # None means disabled (allows embedding)
             hsts_max_age=0,
         ):  # Zero value
             client = TestClient(app)
             response = client.get("/test", headers={"X-Forwarded-Proto": "https"})
 
-            # Empty x_frame_options should result in no header
+            # None x_frame_options should result in no header and no frame-ancestors
             assert "X-Frame-Options" not in response.headers
+            assert "frame-ancestors" not in response.headers.get("Content-Security-Policy", "")
 
             # Zero max-age should still work
             if "Strict-Transport-Security" in response.headers:
@@ -622,7 +628,7 @@ class TestFrameAncestorsCSPConsistency:
             ("DENY", "'none'"),
             ("SAMEORIGIN", "'self'"),
             ("ALLOW-FROM https://example.com", "https://example.com"),
-            ("ALLOW-ALL", "*"),  # Empty string should allow all
+            ("ALLOW-ALL", "* file: http: https:"),  # ALLOW-ALL allows all protocols
             ("invalid-value", "'none'"),  # Unknown values default to none
         ],
     )
@@ -656,7 +662,7 @@ class TestFrameAncestorsCSPConsistency:
             expected_directive = f"frame-ancestors {expected_frame_ancestors}"
             assert expected_directive in csp_header, f"Expected CSP to contain '{expected_directive}' but got: {csp_header}"
 
-            # Check X-Frame-Options header is set correctly (or omitted for empty string)
+            # Check X-Frame-Options header is set correctly
             if x_frame_options:
                 assert response.headers.get("X-Frame-Options") == x_frame_options
             else:
