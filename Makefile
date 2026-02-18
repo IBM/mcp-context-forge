@@ -7494,6 +7494,8 @@ upgrade-validate:                         ## Validate fresh + upgrade DB startup
 .PHONY: rust-check-maturin rust-install-deps rust-install-targets
 .PHONY: rust-build-x86_64 rust-build-aarch64 rust-build-armv7 rust-build-s390x rust-build-ppc64le
 .PHONY: rust-build-all-linux rust-build-all-platforms rust-cross rust-cross-install-build
+.PHONY: rust-gateway-build rust-gateway-install rust-gateway-test rust-gateway-check rust-gateway-fmt rust-gateway-clippy rust-gateway-clean rust-gateway-verify rust-gateway-info
+.PHONY: rust-ensure-deps
 
 rust-build: rust-check-maturin          ## Build Rust plugins (release)
 	@echo "🦀 Building Rust plugins (release mode)..."
@@ -7602,6 +7604,62 @@ rust-cross: rust-install-targets rust-build-all-linux  ## Install targets + buil
 
 rust-cross-install-build: rust-install-deps rust-install-targets rust-build-all-platforms  ## Install targets + build all platforms (one command)
 	@echo "✅ Full cross-compilation setup and build complete"
+
+# -----------------------------------------------------------------------------
+# 🦀 Rust Gateway Workspace (mcpgateway_rust)
+# -----------------------------------------------------------------------------
+
+rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are installed
+	@if ! command -v rustup > /dev/null 2>&1; then \
+		echo "🦀 Rust not found. Installing Rust toolchain..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --component rustfmt clippy; \
+		echo "🦀 Rust installed. Sourcing environment..."; \
+		. "$$HOME/.cargo/env"; \
+	fi
+	@if ! command -v cargo > /dev/null 2>&1; then \
+		echo "⚠️  cargo not in PATH. Sourcing $$HOME/.cargo/env..."; \
+		. "$$HOME/.cargo/env"; \
+	fi
+	@rustup component add rustfmt clippy 2>/dev/null || true
+	@if ! command -v maturin > /dev/null 2>&1; then \
+		if [ -f "$(VENV_DIR)/bin/activate" ]; then \
+			echo "📦 Installing maturin into venv..."; \
+			/bin/bash -c "source $(VENV_DIR)/bin/activate && uv pip install maturin"; \
+		elif command -v pip > /dev/null 2>&1; then \
+			echo "📦 Installing maturin globally (venv not found)..."; \
+			pip install maturin; \
+		else \
+			echo "⚠️  maturin not found and cannot be installed (no venv or pip available)"; \
+			echo "   For building wheels, install maturin: pip install maturin"; \
+		fi; \
+	fi
+
+rust-gateway-build: rust-ensure-deps  ## Build Rust gateway workspace (release)
+	@$(MAKE) -C mcpgateway_rust build
+
+rust-gateway-install: rust-ensure-deps  ## Build and install all PyO3 gateway modules
+	@$(MAKE) -C mcpgateway_rust install
+
+rust-gateway-test: rust-ensure-deps  ## Run all Rust gateway tests
+	@$(MAKE) -C mcpgateway_rust test
+
+rust-gateway-check: rust-ensure-deps  ## Run cargo check on gateway workspace
+	@$(MAKE) -C mcpgateway_rust check
+
+rust-gateway-fmt: rust-ensure-deps  ## Format Rust gateway code
+	@$(MAKE) -C mcpgateway_rust fmt
+
+rust-gateway-clippy: rust-ensure-deps  ## Run clippy on gateway workspace
+	@$(MAKE) -C mcpgateway_rust clippy
+
+rust-gateway-clean: rust-ensure-deps  ## Clean Rust gateway build artifacts
+	@$(MAKE) -C mcpgateway_rust clean
+
+rust-gateway-verify: rust-ensure-deps  ## Run all gateway verification checks
+	@$(MAKE) -C mcpgateway_rust verify
+
+rust-gateway-info: rust-ensure-deps  ## Show Rust gateway workspace information
+	@$(MAKE) -C mcpgateway_rust info
 
 # -----------------------------------------------------------------------------
 # Temporary CI toggle for Conventional Commit message linting

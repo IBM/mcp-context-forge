@@ -102,6 +102,15 @@ recursive-include plugins_rust *.py
 include plugins_rust/Makefile
 prune plugins_rust/target
 
+# Rust service components (mcpgateway_rust)
+recursive-include mcpgateway_rust *.rs
+recursive-include mcpgateway_rust *.toml
+recursive-include mcpgateway_rust *.lock
+recursive-include mcpgateway_rust *.md
+recursive-include mcpgateway_rust *.py
+include mcpgateway_rust/Makefile
+prune mcpgateway_rust/target
+
 # 5️⃣  (Optional) include MKDocs-based docs in the sdist
 # graft docs
 
