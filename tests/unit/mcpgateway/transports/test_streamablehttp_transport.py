@@ -5413,7 +5413,7 @@ async def test_forwarded_post_exception_falls_through(monkeypatch):
 @pytest.mark.asyncio
 async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
     """Test internally-forwarded POST injects server_id from URL path into JSON-RPC params.
-    
+
     This verifies the bug fix at lines 1861-1868 where server_id extraction from
     /servers/{server_id}/mcp URL pattern is injected into params before forwarding to /rpc.
     """
@@ -5458,7 +5458,7 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
         mock_client.post.assert_called_once()
         posted_content = mock_client.post.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
-        
+
         assert "params" in posted_json
         assert posted_json["params"]["server_id"] == server_id
 
@@ -5469,7 +5469,7 @@ async def test_forwarded_post_injects_server_id_from_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
     """Test internally-forwarded POST without server_id pattern in URL does not inject server_id.
-    
+
     Verifies that requests to paths like /mcp (without /servers/{id}/) don't get
     server_id injection, ensuring the fix only applies to the correct URL pattern.
     """
@@ -5513,7 +5513,7 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
         mock_client.post.assert_called_once()
         posted_content = mock_client.post.call_args.kwargs["content"]
         posted_json = orjson.loads(posted_content)
-        
+
         # Body should be unchanged - no server_id injection
         assert posted_json["params"] == {"other": "value"}
         assert "server_id" not in posted_json["params"]
@@ -5525,7 +5525,7 @@ async def test_forwarded_post_no_server_id_in_url_no_injection(monkeypatch):
 @pytest.mark.asyncio
 async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
     """Test internally-forwarded notification does not inject server_id.
-    
+
     Notifications return 202 early and should not go through server_id injection
     or routing to /rpc, even if the URL contains /servers/{id}/.
     """
@@ -5552,7 +5552,7 @@ async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
 
     # No httpx mock needed - should return 202 before any HTTP call
     await wrapper.handle_streamable_http(scope, _make_receive(body), send)
-    
+
     await wrapper.shutdown()
     # Should return 202 Accepted for notification, not route to /rpc
     assert messages[0]["status"] == 202
@@ -5561,7 +5561,7 @@ async def test_forwarded_post_notification_no_server_id_injection(monkeypatch):
 @pytest.mark.asyncio
 async def test_local_affinity_post_injects_server_id_regression(monkeypatch):
     """Test local-owner affinity POST still injects server_id (regression test).
-    
+
     Verifies that the existing server_id injection for local-owner requests
     (lines 1565-1572) continues to work after the internally-forwarded fix.
     """
