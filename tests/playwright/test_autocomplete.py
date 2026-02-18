@@ -67,6 +67,8 @@ class TestAutocompleteAttributes:
 
     def test_llm_provider_api_key_has_autocomplete_off(self, admin_page: AdminPage):
         """LLM provider API key field should not trigger browser autofill."""
+        if admin_page.page.locator("#tab-llm-settings").count() == 0:
+            pytest.skip("LLM settings tab not available in this UI configuration.")
         admin_page.sidebar.click_tab_by_id("tab-llm-settings", "llm-settings-panel")
         api_key_input = admin_page.page.locator("#llm-provider-api-key")
         expect(api_key_input).to_have_attribute("autocomplete", "off")

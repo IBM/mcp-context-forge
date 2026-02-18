@@ -450,3 +450,201 @@ describe("getDefaultTabName edge cases", () => {
         expect(win.getDefaultTabName()).toBe("overview");
     });
 });
+
+describe("overview drilldown routing", () => {
+    test("navigates to observability and applies drilldown filters", () => {
+        createTab("overview");
+        const { panel: observabilityPanel } = createTab("observability");
+
+        const applyFilters = vi.fn();
+        const refreshStats = vi.fn();
+        const observabilityContainer = doc.createElement("div");
+        observabilityContainer.className = "observability-container";
+        observabilityContainer.__x = {
+            $data: {
+                timeRange: "24h",
+                statusFilter: "all",
+                toolName: "",
+                viewMode: "traces",
+                applyFilters,
+                refreshStats,
+            },
+        };
+        observabilityPanel.appendChild(observabilityContainer);
+
+        const result = win.navigateOverviewDrilldown(
+            {
+                tab: "observability",
+                entity: "ingress",
+                statusFilter: "error",
+                viewMode: "tools",
+            },
+            "6h",
+        );
+
+        expect(result).toBe("observability");
+        expect(observabilityContainer.__x.$data.timeRange).toBe("6h");
+        expect(observabilityContainer.__x.$data.statusFilter).toBe("error");
+        expect(observabilityContainer.__x.$data.viewMode).toBe("tools");
+        expect(applyFilters).toHaveBeenCalled();
+        expect(refreshStats).toHaveBeenCalled();
+
+        const params = new URL(win.location.href).searchParams;
+        expect(params.get("overview_time_range")).toBe("6h");
+        expect(params.get("overview_entity")).toBe("ingress");
+        expect(params.get("overview_status")).toBe("error");
+        expect(params.get("overview_view_mode")).toBe("tools");
+    });
+
+    test("applies pending overview drilldown after observability panel settles", () => {
+        createTab("overview");
+        const { panel: observabilityPanel } = createTab("observability");
+
+        const applyFilters = vi.fn();
+        const refreshStats = vi.fn();
+        const observabilityContainer = doc.createElement("div");
+        observabilityContainer.className = "observability-container";
+        observabilityContainer.__x = {
+            $data: {
+                timeRange: "24h",
+                statusFilter: "all",
+                toolName: "",
+                viewMode: "traces",
+                applyFilters,
+                refreshStats,
+            },
+        };
+        observabilityPanel.appendChild(observabilityContainer);
+
+        win.__pendingOverviewDrilldown = {
+            tab: "observability",
+            entity: "egress",
+            timeRange: "1h",
+            statusFilter: "error",
+            toolName: "weather_tool",
+            viewMode: "traces",
+        };
+
+        doc.dispatchEvent(
+            new win.CustomEvent("htmx:afterSettle", {
+                detail: { target: observabilityPanel },
+            }),
+        );
+
+        expect(observabilityContainer.__x.$data.timeRange).toBe("1h");
+        expect(observabilityContainer.__x.$data.statusFilter).toBe("error");
+        expect(observabilityContainer.__x.$data.toolName).toBe("weather_tool");
+        expect(win.__pendingOverviewDrilldown).toBeNull();
+        expect(applyFilters).toHaveBeenCalledTimes(1);
+        expect(refreshStats).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("overview dashboard health behavior", () => {
+    test("marks stale data explicitly when age crosses threshold", () => {
+        const dashboard = win.overviewDashboard({
+            nodes: [],
+            edges: [],
+            dataAgeSeconds: 305,
+            staleAfterSeconds: 300,
+            isStale: false,
+        });
+
+        dashboard.updateFreshnessState(false);
+
+        expect(dashboard.isStale).toBe(true);
+        expect(dashboard.freshnessLabel()).toContain("Stale");
+    });
+
+    test("refreshHealthSignals updates core and flow metrics from observability endpoints", async () => {
+        const dashboard = win.overviewDashboard({
+            nodes: [
+                {
+                    id: "core",
+                    title: "ContextForge Core",
+                    active: 2,
+                    total: 2,
+                    successRate: 100,
+                    latencyMs: 20,
+                    status: "healthy",
+                },
+            ],
+            edges: [
+                {
+                    id: "ingress-flow",
+                    title: "Ingress",
+                    throughput: 0,
+                    successRate: 100,
+                    latencyMs: 20,
+                    status: "healthy",
+                },
+                {
+                    id: "egress-flow",
+                    title: "Egress",
+                    throughput: 0,
+                    successRate: 100,
+                    latencyMs: 20,
+                    status: "healthy",
+                },
+            ],
+            dataAgeSeconds: 10,
+            staleAfterSeconds: 300,
+            isStale: false,
+        });
+
+        const fetchSpy = vi
+            .spyOn(win, "fetchWithAuth")
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    request_count: [100],
+                    success_count: [95],
+                    error_count: [5],
+                }),
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                json: async () => ({
+                    p90: [250],
+                }),
+            });
+
+        await dashboard.refreshHealthSignals();
+
+        const core = dashboard.flowNodes[0];
+        expect(core.successRate).toBeCloseTo(95, 3);
+        expect(core.latencyMs).toBe(250);
+        expect(core.status).toBe("degraded");
+        expect(dashboard.flowEdges[0].throughput).toBe(100);
+        expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    test("refreshHealthSignals reports fallback announcement when observability fetch fails", async () => {
+        const dashboard = win.overviewDashboard({
+            nodes: [],
+            edges: [],
+            dataAgeSeconds: 10,
+            staleAfterSeconds: 300,
+            isStale: false,
+        });
+
+        vi.spyOn(win, "fetchWithAuth").mockResolvedValue({
+            ok: false,
+            json: async () => ({}),
+        });
+
+        await dashboard.refreshHealthSignals();
+
+        expect(dashboard.announcement).toContain("Health refresh failed");
+    });
+
+    test("overviewDashboard provides safe defaults when payload is omitted", () => {
+        const dashboard = win.overviewDashboard();
+
+        expect(Array.isArray(dashboard.flowNodes)).toBe(true);
+        expect(Array.isArray(dashboard.flowEdges)).toBe(true);
+        expect(dashboard.selectedTimeRange).toBe("24h");
+        expect(dashboard.topologyInfrastructure.database.status).toBe("unknown");
+        expect(dashboard.topologyInfrastructure.cache.status).toBe("unknown");
+    });
+});
