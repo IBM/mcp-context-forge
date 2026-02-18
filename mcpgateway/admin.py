@@ -7309,6 +7309,7 @@ async def admin_update_user(
         is_admin = form.get("is_admin") == "on"
         password = form.get("password")
         confirm_password = form.get("confirm_password")
+        disable_admin_protection = form.get("disable_admin_protection")
 
         # Validate password confirmation if password is being changed
         if password and password != confirm_password:

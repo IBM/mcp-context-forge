@@ -304,6 +304,9 @@ document.addEventListener("DOMContentLoaded", function () {
     initializePasswordValidation();
     initializeAddMembersForms();
 
+    //Explicitly allow an admin to revoke another user's admin access. This bypasses the default admin-protection safeguard
+    initializeDisableAdminProtection();
+
     // Event delegation for team member search - server-side search for unified view
     // This handler is initialized here for early binding, but the actual search logic
     // is in performUserSearch() which is attached when the form is initialized
@@ -23093,6 +23096,7 @@ function registerAdminActionListeners() {
     document.body.addEventListener("htmx:afterSwap", function (event) {
         initializeAddMembersForms(event.target);
         initializePasswordValidation(event.target);
+        initializeDisableAdminProtection(event.target);
         const target = event.target;
         if (
             target &&
@@ -23110,6 +23114,7 @@ function registerAdminActionListeners() {
     document.body.addEventListener("htmx:load", function (event) {
         initializeAddMembersForms(event.target);
         initializePasswordValidation(event.target);
+        initializeDisableAdminProtection(event.target);
     });
 }
 
@@ -23645,9 +23650,32 @@ function validatePasswordMatch() {
     }
 }
 
+function initializeDisableAdminProtection(root = document) {
+    if (
+        root?.querySelector?.("#admin-field") ||
+        document.getElementById("admin-field")
+    ) {
+        disableAdminProtection();
+    }
+}
+
+function disableAdminProtection() {
+    const admin = document.getElementById("admin-field");
+    const hiddenDisableAdminOverride = document.getElementById(
+        "disable-admin-protection-field",
+    );
+
+    if (!admin || !hiddenDisableAdminOverride) {
+        return;
+    }
+
+    hiddenDisableAdminOverride.value = !admin.checked ? "on" : "";
+}
+
 // Expose password validation function to global scope
 window.validatePasswordMatch = validatePasswordMatch;
 window.validatePasswordRequirements = validatePasswordRequirements;
+window.disableAdminProtection = disableAdminProtection;
 
 // ===================================================================
 // SELECTIVE IMPORT FUNCTIONS
