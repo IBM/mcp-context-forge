@@ -3351,7 +3351,9 @@ async def approve_skill_request(
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Approve a pending skill request."""
-    _ = server_id
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
     reviewer_email = get_user_email(user)
     notes = payload.get("notes")
     approval = await code_execution_service.approve_skill(db=db, approval_id=approval_id, reviewer_email=reviewer_email, approve=True, reason=notes)
@@ -3368,7 +3370,9 @@ async def reject_skill_request(
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Reject a pending skill request."""
-    _ = server_id
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
     reviewer_email = get_user_email(user)
     reason = str(payload.get("reason") or "Rejected")
     approval = await code_execution_service.approve_skill(db=db, approval_id=approval_id, reviewer_email=reviewer_email, approve=False, reason=reason)
@@ -3385,7 +3389,9 @@ async def revoke_skill(
     user=Depends(get_current_user_with_permissions),
 ) -> Dict[str, Any]:
     """Revoke an existing skill."""
-    _ = server_id
+    server = await code_execution_service.get_server_or_none(db, server_id)
+    if not code_execution_service.is_code_execution_server(server):
+        raise HTTPException(status_code=404, detail="code_execution server not found")
     reviewer_email = get_user_email(user)
     reason = payload.get("reason")
     skill = await code_execution_service.revoke_skill(db=db, skill_id=skill_id, reviewer_email=reviewer_email, reason=reason)
