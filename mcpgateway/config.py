@@ -51,6 +51,7 @@ Examples:
 from functools import lru_cache
 from importlib.resources import files
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -157,9 +158,32 @@ def get_default_require_strong_secrets() -> bool:
     """
     Dynamically determine the default for REQUIRE_STRONG_SECRETS.
     Returns True if ENVIRONMENT is 'production', otherwise False.
-    Required by US-1 for environment-aware security enforcement.
+
+    Returns:
+        bool: True if ENVIRONMENT is 'production', otherwise False.
     """
     return os.getenv("ENVIRONMENT", "development").lower() == "production"
+
+
+class SecurityConfigurationError(Exception):
+    """Exception for critical security configuration issues."""
+    pass
+
+
+def calculate_entropy(text: str) -> float:
+    """
+        Calculate Shannon entropy to detect low-randomness secrets.
+
+        Args:
+            text (str): The secret string to evaluate.
+
+        Returns:
+            float: The calculated entropy score.
+        """
+    if not text:
+        return 0.0
+    probabilities = [text.count(c) / len(text) for c in set(text)]
+    return -sum(p * math.log2(p) for p in probabilities)
 
 
 class Settings(BaseSettings):
@@ -711,7 +735,10 @@ class Settings(BaseSettings):
 
     # Values used to detect unconfigured or insecure deployment states
     SENTINEL_VALUES: ClassVar[list[str]] = ["", "UNCONFIGURED"]
-    WEAK_VALUES: ClassVar[list[str]] = ["my-test-key", "my-test-salt", "changeme", "secret", "password"]
+    WEAK_VALUES: ClassVar[list[str]] = [
+        "my-test-key", "my-test-salt", "changeme", "secret", "password",
+        "test-secret", "my-secret", "12345678"
+    ]
 
     # database-backed polling settings for session message delivery
     poll_interval: float = Field(default=1.0, description="Initial polling interval in seconds for checking new session messages")
@@ -1001,20 +1028,32 @@ class Settings(BaseSettings):
         remediation_cmd = "Run 'python3 -m mcpgateway.scripts.init_secrets' to generate secure keys."
 
         # Evaluate specific critical secrets
-        critical_secrets = {"JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(), "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value()}
+        critical_secrets = {
+            "JWT_SECRET_KEY": self.jwt_secret_key.get_secret_value(),
+            "AUTH_ENCRYPTION_SECRET": self.auth_encryption_secret.get_secret_value(),
+            "BASIC_AUTH_PASSWORD": self.basic_auth_password.get_secret_value()
+        }
 
         for name, value in critical_secrets.items():
+            if name == "BASIC_AUTH_PASSWORD" and not self.mcpgateway_ui_enabled:
+                continue
+            is_sentinel = value in self.SENTINEL_VALUES
+            is_weak = value.lower() in self.WEAK_VALUES or calculate_entropy(value) < 3.5
             # Check for empty or "UNCONFIGURED" values
-            if value in self.SENTINEL_VALUES:
+            if is_sentinel:
                 error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
                 if is_prod:
                     return self._build_security_response("FAIL", "ERR_MISSING_CONFIG", error_msg, remediation_cmd)
+                else:
+                    logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
 
             # Check for known weak values
-            if self.require_strong_secrets and value in self.WEAK_VALUES:
+            if self.require_strong_secrets and is_weak:
                 error_msg = f"Weak {name} detected. Using default values in production exposes the gateway to unauthorized access."
                 if is_prod:
                     return self._build_security_response("FAIL", "ERR_WEAK_SECRET", error_msg, remediation_cmd)
+                else:
+                    logger.warning(f"DEV WARNING: {error_msg} {remediation_cmd}")
 
         # Compute a security score: 100 minus 10 for each warning
         security_score = max(0, 100 - 10 * len(self.get_security_warnings()))
@@ -1037,6 +1076,9 @@ class Settings(BaseSettings):
     def log_critical_issues(self, status: SecurityStatus) -> None:
         """
         Logs critical security issues and provides remediation steps.
+
+        Args:
+            status (SecurityStatus): The security status dictionary to log.
         """
         if status["status"] == "FAIL":
             # [Requirement]: Explain specific risk
@@ -1050,7 +1092,18 @@ class Settings(BaseSettings):
             logger.info("REFERENCE: For full security configuration guide, see: https://github.com/IBM/mcp-context-forge/blob/main/docs/docs/operations/config-validation.md")
 
     def _build_security_response(self, status: str, code: str, msg: str, remediation: str) -> SecurityStatus:
-        """Helper to build a failure response for get_security_status."""
+        """
+        Helper to build a failure response for get_security_status.
+
+        Args:
+            status (str): The overall security status (e.g., "FAIL").
+            code (str): The specific error code.
+            msg (str): The error description.
+            remediation (str): The suggested fix for the user.
+
+        Returns:
+            SecurityStatus: A dictionary containing the structured security response.
+        """
         logger.error(f"[{code}] CRITICAL SECURITY ISSUE: {msg}")
         return {
             "status": status,
@@ -2413,6 +2466,9 @@ def get_settings(**kwargs: Any) -> Settings:
     Returns:
         Settings: A cached instance of the Settings class.
 
+    Raises:
+        SecurityConfigurationError: If critical security checks fail in production.
+
     Examples:
         >>> settings = get_settings()
         >>> isinstance(settings, Settings)
@@ -2436,11 +2492,7 @@ def get_settings(**kwargs: Any) -> Settings:
     if security_status["status"] == "FAIL":
         # Log the critical issues (remediation, risk, documentation)
         cfg.log_critical_issues(security_status)
-
-        # Fail-Closed ONLY in production
-        if cfg.environment == "production":
-            logger.error("FAIL-CLOSED: Gateway startup aborted due to critical security risks.")
-            sys.exit(1)
+        raise SecurityConfigurationError(security_status["message"])
     # Return the one-and-only Settings instance (cached).
     return cfg
 
