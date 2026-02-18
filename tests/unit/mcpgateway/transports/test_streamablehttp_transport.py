@@ -22,6 +22,7 @@ have no heavy dependencies.
 from __future__ import annotations
 
 # Standard
+import json
 from contextlib import asynccontextmanager
 from typing import List
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8671,9 +8672,6 @@ async def test_local_affinity_post_no_injection_without_server_url(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_rehydrate_unknown_type_produces_valid_json(monkeypatch):
     """When _rehydrate_content_items encounters an unknown content type dict, it should serialize as valid JSON."""
-    # Standard
-    import json
-
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
@@ -8725,9 +8723,6 @@ async def test_call_tool_rehydrate_unknown_type_produces_valid_json(monkeypatch)
 @pytest.mark.asyncio
 async def test_call_tool_rehydrate_fallback_on_validation_error(monkeypatch):
     """When model_validate fails for a known type, fallback should produce valid JSON."""
-    # Standard
-    import json
-
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import (
         call_tool,
@@ -8781,9 +8776,6 @@ async def test_call_tool_rehydrate_fallback_on_validation_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_call_tool_unknown_content_type_local_path(monkeypatch):
     """When local invoke returns unknown content type, it should serialize as valid JSON via orjson."""
-    # Standard
-    import json
-
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service, types
 
