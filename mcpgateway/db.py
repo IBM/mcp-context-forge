@@ -472,15 +472,13 @@ def before_commit_handler(session):
     """Handler before commit to ensure transaction is in good state.
 
     This is called before COMMIT, ensuring any pending work is flushed.
+    If the flush fails, the exception is propagated so the commit also fails
+    and the caller's error handling (e.g. get_db rollback) can clean up properly.
 
     Args:
         session: The SQLAlchemy session about to commit.
     """
-    try:
-        session.flush()
-    except Exception:  # nosec B110
-        # If flush fails, the commit will also fail and trigger rollback
-        pass
+    session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -5165,6 +5163,7 @@ class SSOProvider(Base):
         token_url (str): OAuth token endpoint
         userinfo_url (str): User info endpoint
         issuer (str): OIDC issuer (optional)
+        jwks_uri (str): OIDC JWKS endpoint for token signature verification (optional)
         trusted_domains (List[str]): Auto-approved email domains
         scope (str): OAuth scope string
         auto_create_users (bool): Auto-create users on first login
@@ -5202,6 +5201,7 @@ class SSOProvider(Base):
     token_url: Mapped[str] = mapped_column(String(500), nullable=False)
     userinfo_url: Mapped[str] = mapped_column(String(500), nullable=False)
     issuer: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # For OIDC
+    jwks_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)  # OIDC JWKS endpoint for token signature verification
 
     # Provider Settings
     trusted_domains: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)

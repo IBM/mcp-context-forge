@@ -1619,12 +1619,13 @@ def test_reset_connection_on_reset_swallows_rollback_failure():
     db.reset_connection_on_reset(Conn(), None, None)
 
 
-def test_before_commit_handler_flush_failure_is_swallowed():
+def test_before_commit_handler_flush_failure_propagates():
     class DummySession:
         def flush(self):
             raise RuntimeError("boom")
 
-    db.before_commit_handler(DummySession())
+    with pytest.raises(RuntimeError, match="boom"):
+        db.before_commit_handler(DummySession())
 
 
 # --- Slug/name refresh helpers ---

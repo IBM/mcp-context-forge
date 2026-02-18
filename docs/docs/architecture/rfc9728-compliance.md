@@ -105,7 +105,7 @@ The endpoint validates that `server_id` is a valid UUID using regex pattern matc
 - Private/team servers return 404 (prevents information leakage)
 - OAuth must be explicitly enabled on the server
 
-**Implementation:** [`mcpgateway/routers/well_known.py:39`](../../mcpgateway/routers/well_known.py#L39)
+**Implementation:** [`mcpgateway/routers/well_known.py:39`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/mcpgateway/routers/well_known.py#L39)
 
 ```python
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
@@ -184,7 +184,7 @@ This is automatically wrapped in an array in the response.
 
 ### Unit Tests
 
-Comprehensive test suite: [`tests/unit/mcpgateway/routers/test_well_known_rfc9728.py`](../../tests/unit/mcpgateway/routers/test_well_known_rfc9728.py)
+Comprehensive test suite: [`tests/unit/mcpgateway/routers/test_well_known_rfc9728.py`](https://github.com/IBM/mcp-context-forge/blob/0c13cc9bcd78d4e70a4a62d00bb6785f7630eed6/tests/unit/mcpgateway/routers/test_well_known_rfc9728.py)
 
 **Test Coverage:**
 

@@ -483,6 +483,7 @@ class TestGatewayService:
     async def test_register_gateway_value_error(self, gateway_service, test_db):
         """Test ValueError during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.rollback = Mock()
 
         gateway_service._initialize_gateway = AsyncMock(side_effect=ValueError("Invalid gateway configuration"))
 
@@ -496,11 +497,13 @@ class TestGatewayService:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         assert "Invalid gateway configuration" in str(exc_info.value)
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_register_gateway_runtime_error(self, gateway_service, test_db):
         """Test RuntimeError during gateway registration."""
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
+        test_db.rollback = Mock()
 
         gateway_service._initialize_gateway = AsyncMock(side_effect=RuntimeError("Runtime error occurred"))
 
@@ -514,6 +517,7 @@ class TestGatewayService:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         assert "Runtime error occurred" in str(exc_info.value)
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_register_gateway_integrity_error(self, gateway_service, test_db):
@@ -523,6 +527,7 @@ class TestGatewayService:
 
         test_db.execute = Mock(return_value=_make_execute_result(scalar=None))
         test_db.add = Mock()
+        test_db.rollback = Mock()
         test_db.flush = Mock(side_effect=SQLIntegrityError("statement", "params", BaseException("orig")))  # Implementation uses flush()
         # Mock query for _check_gateway_uniqueness
         test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(all=Mock(return_value=[])))))
@@ -537,6 +542,8 @@ class TestGatewayService:
 
         with pytest.raises(SQLIntegrityError):
             await gateway_service.register_gateway(test_db, gateway_create)
+
+        test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_register_gateway_masked_auth_value(self, gateway_service, test_db, monkeypatch):
@@ -603,8 +610,7 @@ class TestGatewayService:
             await gateway_service.register_gateway(test_db, gateway_create)
 
         assert "Flush failed" in str(exc_info.value)  # Error message matches the mocked exception
-        # The register_gateway method doesn't actually call rollback in the exception handler
-        # It just re-raises the exception, so we shouldn't expect rollback to be called
+        test_db.rollback.assert_called_once()  # Exception handlers now rollback to prevent orphaned records
 
     @pytest.mark.asyncio
     async def test_register_gateway_with_existing_tools(self, gateway_service, test_db, monkeypatch):

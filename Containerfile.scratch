@@ -29,7 +29,7 @@ ARG ENABLE_RUST=false
 # To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
 # To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
-FROM quay.io/pypa/manylinux2014:2025.10.19-2 AS rust-builder-base
+FROM quay.io/pypa/manylinux2014:2026.02.06-1 AS rust-builder-base
 ARG ENABLE_RUST
 
 # Set shell with pipefail for safety
@@ -71,7 +71,7 @@ FROM rust-builder-base AS rust-builder
 ###########################
 # Builder stage
 ###########################
-FROM registry.access.redhat.com/ubi10/ubi:10.0-1760519443 AS builder
+FROM registry.access.redhat.com/ubi10/ubi:10.1-1770180700 AS builder
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 
 ARG PYTHON_VERSION
