@@ -4,17 +4,17 @@
 
 ---
 
-## [1.0.0-RC1] - 2026-01-28 - Security Hardening, Enterprise Controls & Quality
+## [1.0.0-RC1] - 2026-02-17 - Security Hardening, Enterprise Controls & Quality
 
 ### Overview
 
-This release delivers **enterprise security hardening**, **comprehensive RBAC improvements**, and **production-quality enforcement** with **182 issues resolved** (30 features/epics, 102 bugs, 9 performance, 4 security, 22 chores, 12 testing, 3 docs):
+This release delivers **enterprise security hardening**, **comprehensive RBAC improvements**, and **production-quality enforcement** with **189 issues resolved** (31 features/epics, 106 bugs, 9 performance, 4 security, 22 chores, 14 testing, 3 docs):
 
-- **🔐 30 Features** - Enterprise security controls, unified policy decision point (Cedar/OPA), tool circuit breakers, session affinity, zero-config TLS, elicitation support, unified search, self-service password reset, license compliance, encoded exfiltration detector
-- **🔧 102 Bug Fixes** - Authentication flows, RBAC, Admin UI, MCP protocol, team management, multi-tenancy, pre-commit hooks, pagination, token handling, migration compatibility
+- **🔐 31 Features** - Enterprise security controls, unified policy decision point (Cedar/OPA), tool circuit breakers, session affinity, zero-config TLS, elicitation support, unified search, self-service password reset, license compliance, encoded exfiltration detector, flexible UI sections
+- **🔧 106 Bug Fixes** - Authentication flows, RBAC, Admin UI, MCP protocol, team management, multi-tenancy, pre-commit hooks, pagination, token handling, migration compatibility, SSO/OAuth, session affinity
 - **🛡️ 4 Security Fixes** - ReDoS vulnerabilities in validators and plugins, WebSocket token validation, encryption and secrets testing
 - **⚡ 9 Performance** - Plugin regex precompilation, crypto threadpool offload, Cedar async, llm-guard optimization
-- **🧪 12 Testing** - 80%+ code coverage gate, JMeter baseline, Playwright improvements, manual test plans, local load testing
+- **🧪 14 Testing** - 80%+ code coverage gate, JMeter baseline, Playwright improvements, manual test plans, local load testing, edge-case boundary conditions, iFrame mode
 - **🔧 22 Chores** - SonarQube cleanup, dependency updates, Helm improvements, linting fixes, CI/CD migration validation, template scaffolding
 - **📝 3 Documentation** - Password reset guide, contributing guide fixes
 
@@ -103,6 +103,48 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 
 > **Migration**: Run `alembic upgrade head` to apply the role assignment migration. Review assigned roles in Admin UI after upgrade.
 
+#### **🌐 RFC 9728 OAuth Protected Resource Metadata** ([#2706](https://github.com/IBM/mcp-context-forge/issues/2706))
+
+**Action Required**: OAuth Protected Resource Metadata endpoint URLs have changed for RFC 9728 compliance.
+
+* `GET /.well-known/oauth-protected-resource?server_id={id}` now returns **HTTP 404** (previously returned metadata)
+* `GET /servers/{id}/.well-known/oauth-protected-resource` now returns **HTTP 301** redirect to the new path
+* New canonical endpoint: `GET /.well-known/oauth-protected-resource/servers/{UUID}/mcp`
+* Response field `authorization_servers` is now a **JSON array** (was a string)
+
+> **Migration**: Update MCP clients and integrations to use the new path-based endpoint. Ensure clients handle the `authorization_servers` field as an array.
+
+#### **🔑 Token Expiration Enforced at Creation** ([#2898](https://github.com/IBM/mcp-context-forge/issues/2898))
+
+**Action Required**: Token creation now rejects tokens without expiration when `REQUIRE_TOKEN_EXPIRATION=true` (the default).
+
+* `POST /tokens` returns **HTTP 400** if `expires_in_days` is not provided
+* Previously, `REQUIRE_TOKEN_EXPIRATION` only validated incoming tokens at authentication time
+
+> **Migration**: Update any automation or scripts that create tokens via the API to include `expires_in_days`. Set `REQUIRE_TOKEN_EXPIRATION=false` to restore previous behavior.
+
+#### **🔒 Account Lockout Defaults Changed** ([#2628](https://github.com/IBM/mcp-context-forge/issues/2628))
+
+* `MAX_FAILED_LOGIN_ATTEMPTS` default changed from `5` to `10`
+* `ACCOUNT_LOCKOUT_DURATION_MINUTES` default changed from `30` to `1`
+
+> **Migration**: If your deployment relies on specific lockout thresholds for compliance, set `MAX_FAILED_LOGIN_ATTEMPTS` and `ACCOUNT_LOCKOUT_DURATION_MINUTES` explicitly in your `.env`.
+
+#### **🖼️ X-Frame-Options Empty String Behavior** ([#2958](https://github.com/IBM/mcp-context-forge/issues/2958))
+
+* Setting `X_FRAME_OPTIONS=""` (empty string) previously fell through to `DENY` (blocking iframe embedding)
+* Empty string is now normalized to `None`, which **omits the header entirely** and allows iframe embedding from any origin
+
+> **Migration**: If you intend to block iframe embedding, set `X_FRAME_OPTIONS=DENY` explicitly. Use `X_FRAME_OPTIONS=SAMEORIGIN` to allow same-origin iframes only.
+
+#### **🔐 Encryption Service v2 Format** ([#2724](https://github.com/IBM/mcp-context-forge/issues/2724))
+
+* New secret encryptions use `v2:{json}` format with Argon2id-derived keys (old PBKDF2HMAC format still readable)
+* `encrypt_secret()` now raises `AlreadyEncryptedError` if called on already-encrypted data
+* `decrypt_secret()` now raises `NotEncryptedError` if called on plaintext data
+
+> **Migration**: Custom plugins or extensions calling `EncryptionService.encrypt_secret()` or `decrypt_secret()` directly must handle the new exceptions. Use `decrypt_secret_or_plaintext()` for idempotent decryption behavior.
+
 #### **📊 Admin UI Behavior Changes**
 * Non-admin users no longer see admin-only menu entries ([#2675](https://github.com/IBM/mcp-context-forge/issues/2675))
 * Delete and Update buttons hidden for public MCP servers created by other users/teams ([#2760](https://github.com/IBM/mcp-context-forge/issues/2760))
@@ -145,6 +187,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Slow Time Server** ([#2783](https://github.com/IBM/mcp-context-forge/issues/2783)) - Configurable-latency MCP server for timeout, resilience, and load testing
 * **Custom Tool Descriptions** ([#2893](https://github.com/IBM/mcp-context-forge/issues/2893)) - Maintain custom and original description for tools
 * **Team Member Backend API** ([#2905](https://github.com/IBM/mcp-context-forge/issues/2905)) - New backend API to add a team member
+* **Flexible UI Sections** ([#2075](https://github.com/IBM/mcp-context-forge/issues/2075)) - Flexible UI sections for embedded contexts
 
 #### **🧪 Testing & Quality**
 * **80%+ Code Coverage Gate** ([#2625](https://github.com/IBM/mcp-context-forge/issues/2625)) - CI/CD enforcement of code coverage thresholds
@@ -158,6 +201,8 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **RBAC Automated Regression Suite** ([#2387](https://github.com/IBM/mcp-context-forge/issues/2387)) - Automated regression tests for visibility, teams, and token scope
 * **MCP 2025-11-25 Protocol Compliance Test Suite** ([#2525](https://github.com/IBM/mcp-context-forge/issues/2525)) - Protocol compliance test suite for MCP 2025-11-25
 * **Lightweight Local Load Testing** ([#2815](https://github.com/IBM/mcp-context-forge/issues/2815)) - Lightweight local load testing and monitoring setup
+* **Edge-Case Boundary Testing** ([#2487](https://github.com/IBM/mcp-context-forge/issues/2487)) - Boundary conditions, empty states, maximum limits, and null handling test plan
+* **iFrame Mode Testing** ([#2492](https://github.com/IBM/mcp-context-forge/issues/2492)) - iFrame mode (X-Frame-Options) test plan
 
 ### Fixed
 
@@ -189,6 +234,9 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Team Default Role** ([#2908](https://github.com/IBM/mcp-context-forge/issues/2908)) - Teams can deploy gateways with developer as default role for team members
 * **RBAC Role DELETE 500** ([#2917](https://github.com/IBM/mcp-context-forge/issues/2917)) - RBAC role DELETE no longer returns 500 due to incorrect SQLAlchemy query
 * **Error Creating API Token** ([#2725](https://github.com/IBM/mcp-context-forge/issues/2725)) - Fixed error when creating API token
+* **OAuth2 Entra v2 Scope Conflict** ([#2881](https://github.com/IBM/mcp-context-forge/issues/2881)) - Fixed OAuth2 with Microsoft Entra v2 failing with resource+scope conflict (AADSTS9010010)
+* **SSO Bootstrap jwks_uri** ([#3010](https://github.com/IBM/mcp-context-forge/issues/3010)) - Fixed SSO provider bootstrap failure due to `jwks_uri` being an invalid keyword argument for SSOProvider
+* **Session Affinity server_id** ([#2973](https://github.com/IBM/mcp-context-forge/issues/2973)) - Fixed server ID context being dropped during stateful session/session affinity processing
 
 #### **👥 Multi-Tenancy & Teams**
 * **list_teams Null DB** ([#2608](https://github.com/IBM/mcp-context-forge/issues/2608)) - Fixed `current_user_ctx["db"]` always being None in list_teams
@@ -226,6 +274,7 @@ This release delivers **enterprise security hardening**, **comprehensive RBAC im
 * **Inconsistent Loading Messages** ([#2946](https://github.com/IBM/mcp-context-forge/issues/2946)) - Loading messages now consistent across all pages while waiting for API response
 * **Pagination Behind Reverse Proxies** ([#2845](https://github.com/IBM/mcp-context-forge/issues/2845)) - Admin UI pagination no longer breaks behind reverse proxies and shows correct counts
 * **Raw JSON Error on Deleted User** ([#2965](https://github.com/IBM/mcp-context-forge/issues/2965)) - Admin UI redirects to login instead of showing raw JSON error when user is deleted
+* **API Tokens Usage Stats** ([#2572](https://github.com/IBM/mcp-context-forge/issues/2572)) - API Tokens Last Used and Usage Stats now show data correctly
 
 #### **🔧 MCP Protocol & Tools**
 * **Tool Schema Breakage** ([#1430](https://github.com/IBM/mcp-context-forge/issues/1430)) - REST API tools with incorrect input schema no longer break GET tools
