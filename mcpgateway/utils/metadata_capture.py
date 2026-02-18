@@ -19,7 +19,7 @@ Examples:
     >>> request.client.host = "192.168.1.1"
     >>> request.headers = {"user-agent": "test/1.0"}
     >>> request.url = SimpleNamespace()
-    >>> request.url.path = "/admin/tools"
+    >>> request.url.path = "/ui/tools"  # UI base path is /ui by default
     >>> # Metadata capture during entity creation
     >>> metadata = MetadataCapture.extract_creation_metadata(request, user="admin")
     >>> metadata["created_by"]
@@ -192,7 +192,7 @@ class MetadataCapture:
             >>> mock_request.client.host = "172.16.0.1"
             >>> mock_request.headers = {"user-agent": "HTTPie/2.4.0"}
             >>> mock_request.url = SimpleNamespace()
-            >>> mock_request.url.path = "/admin/tools/123/edit"
+            >>> mock_request.url.path = "/ui/tools/123/edit"  # UI base path is /ui by default
             >>> metadata = MetadataCapture.extract_modification_metadata(mock_request, "alice", 2)
             >>> metadata["modified_by"]
             'alice'
