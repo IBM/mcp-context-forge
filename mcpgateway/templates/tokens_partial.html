@@ -121,7 +121,7 @@
 <!-- Out-of-band swap for pagination controls -->
 <div id="tokens-pagination-controls" hx-swap-oob="true">
   {% set base_url = root_path + '/admin/tokens/partial' %} {% set hx_target =
-  '#tokens-table' %} {% set hx_indicator = '#tokens-loading' %} {% set
+  '#tokens-table' %} {% set hx_swap = 'outerHTML' %} {% set hx_indicator = '#tokens-loading' %} {% set
   table_name = 'tokens' %} {% set query_params = {'include_inactive':
   include_inactive} %} {% if team_id %}{% set _ = query_params.update({'team_id': team_id}) %}{% endif %} {% include
   'pagination_controls.html' %}
