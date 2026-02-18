@@ -1003,6 +1003,53 @@ async def test_docker_backend_builds_github_using_clone_relative_dockerfile_path
 
 
 @pytest.mark.asyncio
+async def test_docker_backend_builds_github_with_subdirectory_dockerfile_uses_subdirectory_context(monkeypatch, tmp_path):
+    backend = DockerRuntimeBackend(docker_binary="docker")
+
+    temp_root = tmp_path / "runtime-workdir-subdir"
+    clone_dir = temp_root / "src"
+    subdir = clone_dir / "mcp-servers" / "go" / "fast-time-server"
+    calls: list[list[str]] = []
+
+    class _TempDir:
+        def __enter__(self):
+            temp_root.mkdir(parents=True, exist_ok=True)
+            return str(temp_root)
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            return False
+
+    async def _fake_run(cmd, timeout=300):  # noqa: ANN001
+        calls.append(cmd)
+        if cmd[:2] == ["git", "clone"]:
+            subdir.mkdir(parents=True, exist_ok=True)
+            (subdir / "Dockerfile").write_text("FROM scratch\\n", encoding="utf-8")
+        return "ok"
+
+    monkeypatch.setattr("mcpgateway.runtimes.docker_backend.tempfile.TemporaryDirectory", lambda prefix: _TempDir())
+    monkeypatch.setattr(backend, "_run", _fake_run)
+
+    await backend._build_image_from_github(
+        RuntimeBackendDeployRequest(
+            runtime_id="22345678-1234-1234-1234-123456789abc",
+            name="github-runtime-subdir",
+            source_type="github",
+            source={
+                "type": "github",
+                "repo": "acme/runtime",
+                "branch": "main",
+                "dockerfile": "mcp-servers/go/fast-time-server/Dockerfile",
+            },
+        )
+    )
+
+    build_cmd = next(cmd for cmd in calls if len(cmd) > 1 and cmd[1] == "build")
+    dockerfile_arg = build_cmd[build_cmd.index("-f") + 1]
+    assert Path(dockerfile_arg) == (subdir / "Dockerfile").resolve()
+    assert Path(build_cmd[-1]) == subdir.resolve()
+
+
+@pytest.mark.asyncio
 async def test_docker_backend_deploy_ignores_k8s_seccomp_and_missing_apparmor(monkeypatch):
     backend = DockerRuntimeBackend(docker_binary="docker")
     seen_run_cmd: list[str] = []

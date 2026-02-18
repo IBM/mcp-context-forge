@@ -206,7 +206,7 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
                         last_retry_error = retry_exc
                 else:
                     if last_retry_error:
-                        raise last_retry_error
+                        raise RuntimeBackendError(str(last_retry_error)) from last_retry_error
                     raise
             else:
                 raise
@@ -403,10 +403,15 @@ class DockerRuntimeBackend(RuntimeBackend):  # pragma: no cover - exercised in e
             if not resolved_dockerfile.exists():
                 raise RuntimeBackendError(f"Dockerfile not found in repository: {dockerfile_path}")
 
+            # Default build context to the Dockerfile directory so repositories with
+            # subdirectory Dockerfiles (for example monorepos) build correctly.
+            dockerfile_parent = resolved_dockerfile.parent
+            build_context = dockerfile_parent if dockerfile_parent != clone_root else clone_root
+
             cmd = [self.docker_binary, "build", "-t", local_tag, "-f", str(resolved_dockerfile)]
             for key, value in build_args.items():
                 cmd.extend(["--build-arg", f"{key}={value}"])
-            cmd.append(str(clone_root))
+            cmd.append(str(build_context))
             await self._run(cmd, timeout=1800)
             logs.append(f"Built image {local_tag}")
 

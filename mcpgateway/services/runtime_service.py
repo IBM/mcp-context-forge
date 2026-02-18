@@ -611,7 +611,11 @@ class RuntimeService:
         Raises:
             RuntimeBackendError: If approval is invalid or expired.
         """
-        approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id)).scalar_one_or_none()
+        approval = db.execute(
+            select(RuntimeDeploymentApproval)
+            .where(RuntimeDeploymentApproval.id == approval_id)
+            .with_for_update()
+        ).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
         if approval.status != "pending":
@@ -661,7 +665,11 @@ class RuntimeService:
         Raises:
             RuntimeBackendError: If approval is invalid.
         """
-        approval = db.execute(select(RuntimeDeploymentApproval).where(RuntimeDeploymentApproval.id == approval_id)).scalar_one_or_none()
+        approval = db.execute(
+            select(RuntimeDeploymentApproval)
+            .where(RuntimeDeploymentApproval.id == approval_id)
+            .with_for_update()
+        ).scalar_one_or_none()
         if not approval:
             raise RuntimeBackendError(f"Approval '{approval_id}' not found")
         if approval.status != "pending":
