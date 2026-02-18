@@ -55,7 +55,7 @@ test: ## Run Rust tests
 
 test-python: ## Run Python tests (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd ../.. && pytest tests -k url_reputation -v
+	cd ../.. && uv run pytest tests -k url_reputation -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
