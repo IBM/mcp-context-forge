@@ -1378,7 +1378,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         >>> sig.return_annotation.__name__
         'GetPromptResult'
     """
-    server_id, _, user_context = await _get_request_context_or_default()
+    server_id, request_headers, user_context = await _get_request_context_or_default()
 
     # Extract authorization parameters from user context (same pattern as list_prompts)
     user_email = user_context.get("email") if user_context else None
@@ -1404,6 +1404,33 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 
     try:
         async with get_db() as db:
+            # Check for direct_proxy mode (uses the same DB session as cache path)
+            if server_id:
+                gateway_id = extract_gateway_id_from_headers(request_headers)
+
+                if gateway_id:
+                    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+
+                    gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
+                    if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
+                        if not await check_gateway_access(db, gateway, user_email, token_teams):
+                            logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
+                            return []
+
+                        logger.info(f"[GET PROMPT] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
+                        result = await _proxy_get_prompt_to_gateway(gateway, request_headers, user_context, name=prompt_id, arguments=arguments, meta=meta_data)
+                        if not result or not result.messages:
+                            logger.warning(f"No content returned by upstream prompt: {prompt_id}")
+                            return []
+                        message_dicts = [message.model_dump() for message in result.messages]
+                        return types.GetPromptResult(messages=message_dicts, description=result.description)
+
+                    if gateway:
+                        logger.debug(f"Gateway {gateway_id} found but not in direct_proxy mode (mode: {getattr(gateway, 'gateway_mode', 'cache')}), using cache mode")
+                    else:
+                        logger.warning(f"Gateway {gateway_id} specified in {GATEWAY_ID_HEADER} header not found")
+
             try:
                 result = await prompt_service.get_prompt(
                     db=db,
