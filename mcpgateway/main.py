@@ -3,7 +3,7 @@
 """Location: ./mcpgateway/main.py
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
-Authors: Mihai Criveti
+Authors: Mihai Criveti, Eleni Kechrioti
 
 MCP Gateway - Main FastAPI Application.
 
@@ -71,7 +71,7 @@ from mcpgateway.cache import ResourceCache, SessionRegistry
 from mcpgateway.common.models import InitializeResult
 from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
-from mcpgateway.config import settings
+from mcpgateway.config import get_settings, SecurityConfigurationError, settings
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.handlers.sampling import SamplingHandler
@@ -988,45 +988,33 @@ def validate_security_configuration():
      Raises: Passthrough Errors/Exceptions but doesn't raise any of its own.
     """
     logger.info("🔒 Validating security configuration...")
+    try:
+        current_settings = get_settings()
+        # Get security status
+        security_status: settings.SecurityStatus = current_settings.get_security_status()
+        security_warnings = security_status["warnings"]
 
-    # Get security status
-    security_status: settings.SecurityStatus = settings.get_security_status()
-    security_warnings = security_status["warnings"]
+        log_security_warnings(security_warnings)
 
-    log_security_warnings(security_warnings)
+        # Warn about ephemeral storage without strict user-in-DB mode
+        if not getattr(current_settings, "require_user_in_db", False):
+            is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
+            if is_ephemeral:
+                logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
 
-    # Critical security checks (fail startup only if REQUIRE_STRONG_SECRETS=true)
-    critical_issues = []
+        # Warn about default JWT issuer/audience in non-development environments
+        if current_settings.environment != "development":
+            if current_settings.jwt_issuer == "mcpgateway":
+                logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
+            if current_settings.jwt_audience == "mcpgateway-api":
+                logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
 
-    if settings.jwt_secret_key == "my-test-key" and not settings.dev_mode:  # nosec B105 - checking for default value
-        critical_issues.append("Using default JWT secret in non-dev mode. Set JWT_SECRET_KEY environment variable!")
-
-    if settings.basic_auth_password.get_secret_value() == "changeme" and settings.mcpgateway_ui_enabled:  # nosec B105 - checking for default value
-        critical_issues.append("Admin UI enabled with default password. Set BASIC_AUTH_PASSWORD environment variable!")
-
-    log_critical_issues(critical_issues)
-
-    # Warn about ephemeral storage without strict user-in-DB mode
-    if not getattr(settings, "require_user_in_db", False):
-        is_ephemeral = ":memory:" in settings.database_url or settings.database_url == "sqlite:///./mcp.db"
-        if is_ephemeral:
-            logger.warning("Using potentially ephemeral storage with platform admin bootstrap enabled. Consider using persistent storage or setting REQUIRE_USER_IN_DB=true for production.")
-
-    # Warn about default JWT issuer/audience in non-development environments
-    if settings.environment != "development":
-        if settings.jwt_issuer == "mcpgateway":
-            logger.warning("Using default JWT_ISSUER in %s environment. Set a unique JWT_ISSUER per environment to prevent cross-environment token acceptance.", settings.environment)
-        if settings.jwt_audience == "mcpgateway-api":
-            logger.warning("Using default JWT_AUDIENCE in %s environment. Set a unique JWT_AUDIENCE per environment to prevent cross-environment token acceptance.", settings.environment)
-
-    # Audit logging for explicit security overrides in production
-    if settings.environment == "production" and not settings.require_strong_secrets:
-        logger.warning(
-            "SECURITY AUDIT: REQUIRE_STRONG_SECRETS is explicitly disabled in a production environment. "
-            "This override is being logged for audit purposes as per US-1 requirements."
-        )
-
-    log_security_recommendations(security_status)
+        log_security_recommendations(security_status)
+    except SecurityConfigurationError as e:
+        logger.critical(f"FAIL-CLOSED: {e}")
+        # Standard
+        import sys
+        sys.exit(1)
 
 
 def log_security_warnings(security_warnings: list[str]):
