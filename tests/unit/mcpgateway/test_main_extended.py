@@ -4951,6 +4951,98 @@ class TestRemainingCoverageGaps:
         )
         assert result == data
 
+    async def test_get_tool_apijsonpath_string_parsing_error(self, monkeypatch):
+        """Test get_tool with invalid apijsonpath string (lines 3827-3830)."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        data = MagicMock()
+        data.to_dict.return_value = {"id": "t1"}
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
+
+        # Invalid JSON string for apijsonpath - the HTTPException is caught and re-raised as 404
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_tool.__wrapped__(
+                "tool-1",
+                request=request,
+                db=MagicMock(),
+                user={"email": "u"},
+                apijsonpath="{invalid json"
+            )
+        # The outer exception handler converts it to 404, but the detail contains the original error
+        assert excinfo.value.status_code == 404
+        assert "Invalid apijsonpath JSON" in str(excinfo.value.detail)
+
+    async def test_get_tool_jsonpath_modifier_exception(self, monkeypatch):
+        """Test get_tool jsonpath_modifier exception (lines 3841-3843)."""
+        import mcpgateway.main as main_mod
+        from mcpgateway.schemas import JsonPathModifier
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        data = MagicMock()
+        data.to_dict.return_value = {"id": "t1"}
+
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
+        monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
+
+        # Make jsonpath_modifier raise an exception
+        monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(side_effect=RuntimeError("jsonpath error")))
+
+        apijsonpath = JsonPathModifier(jsonpath="$", mapping={})
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.get_tool.__wrapped__(
+                "tool-1",
+                request=request,
+                db=MagicMock(),
+                user={"email": "u"},
+                apijsonpath=apijsonpath
+            )
+        # The outer exception handler converts it to 404, but the detail contains the original error
+        assert excinfo.value.status_code == 404
+        assert "JSONPath modifier error" in str(excinfo.value.detail)
+
+    async def test_list_tools_apijsonpath_jsonpathmodifier_becomes_none_with_pagination(self, monkeypatch):
+        """Test list_tools when JsonPathModifier instance results in parsed_apijsonpath=None with pagination (lines 3676-3681)."""
+        import mcpgateway.main as main_mod
+
+        request = MagicMock(spec=Request)
+        request.state = SimpleNamespace(team_id=None)
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"id": "t1", "name": "test"}
+        monkeypatch.setattr(main_mod, "_get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], "cursor_abc")))
+
+        # Pass apijsonpath as something that's not a string and not a JsonPathModifier
+        # This will cause parsed_apijsonpath to remain None, triggering lines 3676-3681
+        result = await main_mod.list_tools.__wrapped__(
+            request,
+            cursor=None,
+            include_pagination=True,
+            limit=None,
+            include_inactive=False,
+            tags=None,
+            team_id=None,
+            visibility=None,
+            gateway_id=None,
+            db=MagicMock(),
+            apijsonpath=123,  # Not a string, not a JsonPathModifier - will be None after parsing
+            user={"email": "user@example.com"},
+        )
+
+        # Should return pagination format when parsed_apijsonpath is None and include_pagination is True
+        assert "tools" in result
+        assert "nextCursor" in result
+        assert result["nextCursor"] == "cursor_abc"
+
     async def test_create_tool_endpoint_coverage(self, monkeypatch):
         """Test create_tool endpoint (lines 3695-3698)."""
         import mcpgateway.main as main_mod
