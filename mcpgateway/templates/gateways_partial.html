@@ -116,6 +116,7 @@
 <div id="gateways-pagination-controls" hx-swap-oob="true">
   {% set base_url = root_path + '/admin/gateways/partial' %}
   {% set hx_target = '#gateways-table' %}
+  {% set hx_swap = 'outerHTML' %}
   {% set hx_indicator = '#gateways-loading' %}
   {% set table_name = 'gateways' %}
   {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}
