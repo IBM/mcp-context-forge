@@ -489,6 +489,8 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
     if not jsonpath:
         jsonpath = "$[*]"
 
+    logger.info(f"jsonpath_modifier called with jsonpath='{jsonpath}', mappings={mappings}, data type={type(data)}, data length={len(data) if isinstance(data, list) else 'N/A'}")
+
     try:
         main_expr: JSONPath = _parse_jsonpath(jsonpath)
     except Exception as e:
@@ -500,13 +502,18 @@ def jsonpath_modifier(data: Any, jsonpath: str = "$[*]", mappings: Optional[Dict
         raise HTTPException(status_code=400, detail=f"Error executing main JSONPath: {e}")
 
     results = [match.value for match in main_matches]
+    logger.info(f"JSONPath '{jsonpath}' matched {len(results)} items")
 
     if mappings:
+        logger.info(f"Applying mappings: {mappings}")
         results = transform_data_with_mappings(results, mappings)
+        logger.info(f"After mapping, got {len(results)} results")
 
     if len(results) == 1 and isinstance(results[0], dict):
+        logger.info("Returning single dict result")
         return results[0]
 
+    logger.info(f"Returning list of {len(results)} results")
     return results
 
 
@@ -3678,9 +3685,14 @@ async def list_tools(
         return data
 
     tools_dict_list = [tool.to_dict(use_alias=True) for tool in data]
+    logger.info(f"Converting {len(tools_dict_list)} tools to dict for JSONPath processing")
+    if tools_dict_list:
+        logger.info(f"Sample tool dict keys: {list(tools_dict_list[0].keys())[:10]}")
     try:
         result = jsonpath_modifier(tools_dict_list, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
-        return result
+        logger.info(f"JSONPath modifier returned {len(result) if isinstance(result, list) else 1} results")
+        # Return ORJSONResponse to bypass FastAPI's response_model validation
+        return ORJSONResponse(content=result)
     except Exception:
         logger.exception("JSONPath modifier failed while processing tools list")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")
@@ -3832,7 +3844,8 @@ async def get_tool(
         data_dict = data.to_dict(use_alias=True)
         try:
             result = jsonpath_modifier(data_dict, parsed_apijsonpath.jsonpath, parsed_apijsonpath.mapping)
-            return result
+            # Return ORJSONResponse to bypass FastAPI's response_model validation
+            return ORJSONResponse(content=result)
         except Exception:
             logger.exception("JSONPath modifier failed while processing single tool")
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="JSONPath modifier error")

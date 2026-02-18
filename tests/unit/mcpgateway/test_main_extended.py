@@ -4758,6 +4758,8 @@ class TestRemainingCoverageGaps:
     async def test_list_tools_and_get_tool_jsonpath_modifier(self, monkeypatch):
         import mcpgateway.main as main_mod
         from mcpgateway.schemas import JsonPathModifier
+        from mcpgateway.utils.orjson_response import ORJSONResponse
+        import orjson
 
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
@@ -4783,13 +4785,15 @@ class TestRemainingCoverageGaps:
             apijsonpath=apijsonpath,
             user={"email": "user@example.com"},
         )
-        assert result == {"filtered": True}
+        assert isinstance(result, ORJSONResponse)
+        assert orjson.loads(result.body) == {"filtered": True}
 
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
         result = await main_mod.get_tool.__wrapped__("tool-1", request=request, db=MagicMock(), user={"email": "u"}, apijsonpath=apijsonpath)
-        assert result == {"filtered": True}
+        assert isinstance(result, ORJSONResponse)
+        assert orjson.loads(result.body) == {"filtered": True}
 
     async def test_deprecated_toggle_endpoints(self, monkeypatch):
         import mcpgateway.main as main_mod
