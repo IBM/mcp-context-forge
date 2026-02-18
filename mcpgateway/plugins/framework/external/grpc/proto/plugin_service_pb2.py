@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # noqa: D100, D101, D102, D103, D104, D107, D400, D415
 # ruff: noqa
 # type: ignore
@@ -9,64 +10,58 @@
 # source: plugin_service.proto
 # Protobuf Python Version: 6.31.1
 """Generated protocol buffer code."""
+# Third-Party
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import descriptor_pool as _descriptor_pool
 from google.protobuf import runtime_version as _runtime_version
 from google.protobuf import symbol_database as _symbol_database
 from google.protobuf.internal import builder as _builder
-_runtime_version.ValidateProtobufRuntimeVersion(
-    _runtime_version.Domain.PUBLIC,
-    6,
-    31,
-    1,
-    '',
-    'plugin_service.proto'
-)
+
+_runtime_version.ValidateProtobufRuntimeVersion(_runtime_version.Domain.PUBLIC, 6, 31, 1, "", "plugin_service.proto")
 # @@protoc_insertion_point(imports)
 
 _sym_db = _symbol_database.Default()
 
 
-from google.protobuf import struct_pb2 as google_dot_protobuf_dot_struct__pb2
-
-
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x14plugin_service.proto\x12\x12mcpgateway.plugins\x1a\x1cgoogle/protobuf/struct.proto\"&\n\x16GetPluginConfigRequest\x12\x0c\n\x04name\x18\x01 \x01(\t\"Q\n\x17GetPluginConfigResponse\x12\r\n\x05\x66ound\x18\x01 \x01(\x08\x12\'\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x19\n\x17GetPluginConfigsRequest\"D\n\x18GetPluginConfigsResponse\x12(\n\x07\x63onfigs\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct\"\x99\x01\n\x11InvokeHookRequest\x12\x11\n\thook_type\x18\x01 \x01(\t\x12\x13\n\x0bplugin_name\x18\x02 \x01(\t\x12(\n\x07payload\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x32\n\x07\x63ontext\x18\x04 \x01(\x0b\x32!.mcpgateway.plugins.PluginContext\"\xf1\x01\n\x12InvokeHookResponse\x12\x13\n\x0bplugin_name\x18\x01 \x01(\t\x12\'\n\x06result\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x32\n\x07\x63ontext\x18\x03 \x01(\x0b\x32!.mcpgateway.plugins.PluginContext\x12.\n\x05\x65rror\x18\x04 \x01(\x0b\x32\x1f.mcpgateway.plugins.PluginError\x12\x39\n\x0bresult_base\x18\x05 \x01(\x0b\x32$.mcpgateway.plugins.PluginResultBase\"\xf1\x01\n\rGlobalContext\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x11\n\tserver_id\x18\x02 \x01(\t\x12\x11\n\ttenant_id\x18\x03 \x01(\t\x12\x15\n\x0buser_string\x18\x04 \x01(\tH\x00\x12.\n\x0buser_struct\x18\x05 \x01(\x0b\x32\x17.google.protobuf.StructH\x00\x12)\n\x08metadata\x18\x06 \x01(\x0b\x32\x17.google.protobuf.Struct\x12&\n\x05state\x18\x07 \x01(\x0b\x32\x17.google.protobuf.StructB\x0c\n\nuser_value\"\x9d\x01\n\rPluginContext\x12\x39\n\x0eglobal_context\x18\x01 \x01(\x0b\x32!.mcpgateway.plugins.GlobalContext\x12&\n\x05state\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12)\n\x08metadata\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x9b\x01\n\x0fPluginViolation\x12\x0e\n\x06reason\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12\x13\n\x0bplugin_name\x18\x04 \x01(\t\x12(\n\x07\x64\x65tails\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x16\n\x0emcp_error_code\x18\x06 \x01(\x05\"\x92\x01\n\x10PluginResultBase\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12\x36\n\tviolation\x18\x02 \x01(\x0b\x32#.mcpgateway.plugins.PluginViolation\x12)\n\x08metadata\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\"\x83\x01\n\x0bPluginError\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\x13\n\x0bplugin_name\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x16\n\x0emcp_error_code\x18\x05 \x01(\x05\"%\n\x12HealthCheckRequest\x12\x0f\n\x07service\x18\x01 \x01(\t\"\xad\x01\n\x13HealthCheckResponse\x12\x45\n\x06status\x18\x01 \x01(\x0e\x32\x35.mcpgateway.plugins.HealthCheckResponse.ServingStatus\"O\n\rServingStatus\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x0b\n\x07SERVING\x10\x01\x12\x0f\n\x0bNOT_SERVING\x10\x02\x12\x13\n\x0fSERVICE_UNKNOWN\x10\x03\x32\xc7\x02\n\rPluginService\x12j\n\x0fGetPluginConfig\x12*.mcpgateway.plugins.GetPluginConfigRequest\x1a+.mcpgateway.plugins.GetPluginConfigResponse\x12m\n\x10GetPluginConfigs\x12+.mcpgateway.plugins.GetPluginConfigsRequest\x1a,.mcpgateway.plugins.GetPluginConfigsResponse\x12[\n\nInvokeHook\x12%.mcpgateway.plugins.InvokeHookRequest\x1a&.mcpgateway.plugins.InvokeHookResponse2b\n\x06Health\x12X\n\x05\x43heck\x12&.mcpgateway.plugins.HealthCheckRequest\x1a\'.mcpgateway.plugins.HealthCheckResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(
+    b'\n\x14plugin_service.proto\x12\x12mcpgateway.plugins\x1a\x1cgoogle/protobuf/struct.proto"&\n\x16GetPluginConfigRequest\x12\x0c\n\x04name\x18\x01 \x01(\t"Q\n\x17GetPluginConfigResponse\x12\r\n\x05\x66ound\x18\x01 \x01(\x08\x12\'\n\x06\x63onfig\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct"\x19\n\x17GetPluginConfigsRequest"D\n\x18GetPluginConfigsResponse\x12(\n\x07\x63onfigs\x18\x01 \x03(\x0b\x32\x17.google.protobuf.Struct"\x99\x01\n\x11InvokeHookRequest\x12\x11\n\thook_type\x18\x01 \x01(\t\x12\x13\n\x0bplugin_name\x18\x02 \x01(\t\x12(\n\x07payload\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x32\n\x07\x63ontext\x18\x04 \x01(\x0b\x32!.mcpgateway.plugins.PluginContext"\xf1\x01\n\x12InvokeHookResponse\x12\x13\n\x0bplugin_name\x18\x01 \x01(\t\x12\'\n\x06result\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x32\n\x07\x63ontext\x18\x03 \x01(\x0b\x32!.mcpgateway.plugins.PluginContext\x12.\n\x05\x65rror\x18\x04 \x01(\x0b\x32\x1f.mcpgateway.plugins.PluginError\x12\x39\n\x0bresult_base\x18\x05 \x01(\x0b\x32$.mcpgateway.plugins.PluginResultBase"\xf1\x01\n\rGlobalContext\x12\x12\n\nrequest_id\x18\x01 \x01(\t\x12\x11\n\tserver_id\x18\x02 \x01(\t\x12\x11\n\ttenant_id\x18\x03 \x01(\t\x12\x15\n\x0buser_string\x18\x04 \x01(\tH\x00\x12.\n\x0buser_struct\x18\x05 \x01(\x0b\x32\x17.google.protobuf.StructH\x00\x12)\n\x08metadata\x18\x06 \x01(\x0b\x32\x17.google.protobuf.Struct\x12&\n\x05state\x18\x07 \x01(\x0b\x32\x17.google.protobuf.StructB\x0c\n\nuser_value"\x9d\x01\n\rPluginContext\x12\x39\n\x0eglobal_context\x18\x01 \x01(\x0b\x32!.mcpgateway.plugins.GlobalContext\x12&\n\x05state\x18\x02 \x01(\x0b\x32\x17.google.protobuf.Struct\x12)\n\x08metadata\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct"\x9b\x01\n\x0fPluginViolation\x12\x0e\n\x06reason\x18\x01 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12\x13\n\x0bplugin_name\x18\x04 \x01(\t\x12(\n\x07\x64\x65tails\x18\x05 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x16\n\x0emcp_error_code\x18\x06 \x01(\x05"\x92\x01\n\x10PluginResultBase\x12\x1b\n\x13\x63ontinue_processing\x18\x01 \x01(\x08\x12\x36\n\tviolation\x18\x02 \x01(\x0b\x32#.mcpgateway.plugins.PluginViolation\x12)\n\x08metadata\x18\x03 \x01(\x0b\x32\x17.google.protobuf.Struct"\x83\x01\n\x0bPluginError\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\x13\n\x0bplugin_name\x18\x02 \x01(\t\x12\x0c\n\x04\x63ode\x18\x03 \x01(\t\x12(\n\x07\x64\x65tails\x18\x04 \x01(\x0b\x32\x17.google.protobuf.Struct\x12\x16\n\x0emcp_error_code\x18\x05 \x01(\x05"%\n\x12HealthCheckRequest\x12\x0f\n\x07service\x18\x01 \x01(\t"\xad\x01\n\x13HealthCheckResponse\x12\x45\n\x06status\x18\x01 \x01(\x0e\x32\x35.mcpgateway.plugins.HealthCheckResponse.ServingStatus"O\n\rServingStatus\x12\x0b\n\x07UNKNOWN\x10\x00\x12\x0b\n\x07SERVING\x10\x01\x12\x0f\n\x0bNOT_SERVING\x10\x02\x12\x13\n\x0fSERVICE_UNKNOWN\x10\x03\x32\xc7\x02\n\rPluginService\x12j\n\x0fGetPluginConfig\x12*.mcpgateway.plugins.GetPluginConfigRequest\x1a+.mcpgateway.plugins.GetPluginConfigResponse\x12m\n\x10GetPluginConfigs\x12+.mcpgateway.plugins.GetPluginConfigsRequest\x1a,.mcpgateway.plugins.GetPluginConfigsResponse\x12[\n\nInvokeHook\x12%.mcpgateway.plugins.InvokeHookRequest\x1a&.mcpgateway.plugins.InvokeHookResponse2b\n\x06Health\x12X\n\x05\x43heck\x12&.mcpgateway.plugins.HealthCheckRequest\x1a\'.mcpgateway.plugins.HealthCheckResponseb\x06proto3'
+)
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
-_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'plugin_service_pb2', _globals)
+_builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, "plugin_service_pb2", _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
-  DESCRIPTOR._loaded_options = None
-  _globals['_GETPLUGINCONFIGREQUEST']._serialized_start=74
-  _globals['_GETPLUGINCONFIGREQUEST']._serialized_end=112
-  _globals['_GETPLUGINCONFIGRESPONSE']._serialized_start=114
-  _globals['_GETPLUGINCONFIGRESPONSE']._serialized_end=195
-  _globals['_GETPLUGINCONFIGSREQUEST']._serialized_start=197
-  _globals['_GETPLUGINCONFIGSREQUEST']._serialized_end=222
-  _globals['_GETPLUGINCONFIGSRESPONSE']._serialized_start=224
-  _globals['_GETPLUGINCONFIGSRESPONSE']._serialized_end=292
-  _globals['_INVOKEHOOKREQUEST']._serialized_start=295
-  _globals['_INVOKEHOOKREQUEST']._serialized_end=448
-  _globals['_INVOKEHOOKRESPONSE']._serialized_start=451
-  _globals['_INVOKEHOOKRESPONSE']._serialized_end=692
-  _globals['_GLOBALCONTEXT']._serialized_start=695
-  _globals['_GLOBALCONTEXT']._serialized_end=936
-  _globals['_PLUGINCONTEXT']._serialized_start=939
-  _globals['_PLUGINCONTEXT']._serialized_end=1096
-  _globals['_PLUGINVIOLATION']._serialized_start=1099
-  _globals['_PLUGINVIOLATION']._serialized_end=1254
-  _globals['_PLUGINRESULTBASE']._serialized_start=1257
-  _globals['_PLUGINRESULTBASE']._serialized_end=1403
-  _globals['_PLUGINERROR']._serialized_start=1406
-  _globals['_PLUGINERROR']._serialized_end=1537
-  _globals['_HEALTHCHECKREQUEST']._serialized_start=1539
-  _globals['_HEALTHCHECKREQUEST']._serialized_end=1576
-  _globals['_HEALTHCHECKRESPONSE']._serialized_start=1579
-  _globals['_HEALTHCHECKRESPONSE']._serialized_end=1752
-  _globals['_HEALTHCHECKRESPONSE_SERVINGSTATUS']._serialized_start=1673
-  _globals['_HEALTHCHECKRESPONSE_SERVINGSTATUS']._serialized_end=1752
-  _globals['_PLUGINSERVICE']._serialized_start=1755
-  _globals['_PLUGINSERVICE']._serialized_end=2082
-  _globals['_HEALTH']._serialized_start=2084
-  _globals['_HEALTH']._serialized_end=2182
+    DESCRIPTOR._loaded_options = None
+    _globals["_GETPLUGINCONFIGREQUEST"]._serialized_start = 74
+    _globals["_GETPLUGINCONFIGREQUEST"]._serialized_end = 112
+    _globals["_GETPLUGINCONFIGRESPONSE"]._serialized_start = 114
+    _globals["_GETPLUGINCONFIGRESPONSE"]._serialized_end = 195
+    _globals["_GETPLUGINCONFIGSREQUEST"]._serialized_start = 197
+    _globals["_GETPLUGINCONFIGSREQUEST"]._serialized_end = 222
+    _globals["_GETPLUGINCONFIGSRESPONSE"]._serialized_start = 224
+    _globals["_GETPLUGINCONFIGSRESPONSE"]._serialized_end = 292
+    _globals["_INVOKEHOOKREQUEST"]._serialized_start = 295
+    _globals["_INVOKEHOOKREQUEST"]._serialized_end = 448
+    _globals["_INVOKEHOOKRESPONSE"]._serialized_start = 451
+    _globals["_INVOKEHOOKRESPONSE"]._serialized_end = 692
+    _globals["_GLOBALCONTEXT"]._serialized_start = 695
+    _globals["_GLOBALCONTEXT"]._serialized_end = 936
+    _globals["_PLUGINCONTEXT"]._serialized_start = 939
+    _globals["_PLUGINCONTEXT"]._serialized_end = 1096
+    _globals["_PLUGINVIOLATION"]._serialized_start = 1099
+    _globals["_PLUGINVIOLATION"]._serialized_end = 1254
+    _globals["_PLUGINRESULTBASE"]._serialized_start = 1257
+    _globals["_PLUGINRESULTBASE"]._serialized_end = 1403
+    _globals["_PLUGINERROR"]._serialized_start = 1406
+    _globals["_PLUGINERROR"]._serialized_end = 1537
+    _globals["_HEALTHCHECKREQUEST"]._serialized_start = 1539
+    _globals["_HEALTHCHECKREQUEST"]._serialized_end = 1576
+    _globals["_HEALTHCHECKRESPONSE"]._serialized_start = 1579
+    _globals["_HEALTHCHECKRESPONSE"]._serialized_end = 1752
+    _globals["_HEALTHCHECKRESPONSE_SERVINGSTATUS"]._serialized_start = 1673
+    _globals["_HEALTHCHECKRESPONSE_SERVINGSTATUS"]._serialized_end = 1752
+    _globals["_PLUGINSERVICE"]._serialized_start = 1755
+    _globals["_PLUGINSERVICE"]._serialized_end = 2082
+    _globals["_HEALTH"]._serialized_start = 2084
+    _globals["_HEALTH"]._serialized_end = 2182
 # @@protoc_insertion_point(module_scope)

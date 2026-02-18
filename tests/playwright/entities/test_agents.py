@@ -66,7 +66,7 @@ class TestAgentsEntity:
                 option_values.append(value)
 
         # Verify expected agent types
-        expected_types = ["generic", "openai", "anthropic", "custom"]
+        expected_types = ["a2a-jsonrpc", "a2a-rest", "a2a-grpc", "rest-passthrough", "custom"]
         for expected_type in expected_types:
             assert expected_type in option_values, f"Agent type '{expected_type}' should be available"
 
@@ -108,7 +108,7 @@ class TestAgentsEntity:
 
         # Check default agent type
         default_agent_type = agents_page.agent_type_select.input_value()
-        assert default_agent_type == "generic", "Default agent type should be 'generic'"
+        assert default_agent_type == "a2a-jsonrpc", "Default agent type should be 'a2a-jsonrpc'"
 
         # Check default auth type (should be empty/none)
         default_auth_type = agents_page.auth_type_select.input_value()

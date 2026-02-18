@@ -2481,6 +2481,102 @@ class TestA2AAgentEndpoints:
         assert response.status_code == 200
         mock_service.invoke_agent.assert_called_once()
 
+    @patch("mcpgateway.main.a2a_service")
+    def test_send_a2a_message(self, mock_service, test_client, auth_headers):
+        """Test message/send route proxies to service."""
+        mock_service.send_message = AsyncMock(return_value={"id": "task-1", "status": {"state": "completed"}})
+        response = test_client.post(
+            "/a2a/agent-1/message/send",
+            json={"message": {"role": "user", "parts": [{"kind": "text", "text": "hello"}]}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == "task-1"
+        mock_service.send_message.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_send_a2a_message_agent_not_found(self, mock_service, test_client, auth_headers):
+        """Test message/send returns 404 for unknown agent."""
+        from mcpgateway.services.a2a_service import A2AAgentNotFoundError
+
+        mock_service.send_message = AsyncMock(side_effect=A2AAgentNotFoundError("not found"))
+        response = test_client.post("/a2a/nonexistent/message/send", json={}, headers=auth_headers)
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_stream_a2a_message(self, mock_service, test_client, auth_headers):
+        """Test message/stream route returns streaming response."""
+
+        async def _fake_stream():
+            yield b"event: message\ndata: {}\n\n"
+
+        mock_service.stream_message = AsyncMock(return_value=_fake_stream())
+        response = test_client.post(
+            "/a2a/agent-1/message/stream",
+            json={"message": {"role": "user", "parts": [{"kind": "text", "text": "hi"}]}},
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_list_a2a_tasks(self, mock_service, test_client, auth_headers):
+        """Test tasks/list route proxies to service."""
+        mock_service.list_tasks = AsyncMock(return_value={"tasks": [{"id": "t1", "status": {"state": "completed"}}]})
+        response = test_client.get("/a2a/agent-1/tasks?state=completed&limit=10", headers=auth_headers)
+        assert response.status_code == 200
+        assert "tasks" in response.json()
+        mock_service.list_tasks.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_get_a2a_task(self, mock_service, test_client, auth_headers):
+        """Test tasks/get route proxies to service."""
+        mock_service.get_task = AsyncMock(return_value={"id": "t1", "status": {"state": "completed"}})
+        response = test_client.get("/a2a/agent-1/tasks/t1", headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["id"] == "t1"
+        mock_service.get_task.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_cancel_a2a_task(self, mock_service, test_client, auth_headers):
+        """Test tasks/cancel route proxies to service."""
+        mock_service.cancel_task = AsyncMock(return_value={"id": "t1", "status": {"state": "canceled"}})
+        response = test_client.post("/a2a/agent-1/tasks/t1/cancel", json={}, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.json()["status"]["state"] == "canceled"
+        mock_service.cancel_task.assert_called_once()
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_subscribe_a2a_task(self, mock_service, test_client, auth_headers):
+        """Test tasks/subscribe route returns streaming response."""
+
+        async def _fake_stream():
+            yield b"event: status\ndata: {}\n\n"
+
+        mock_service.subscribe_task = AsyncMock(return_value=_fake_stream())
+        response = test_client.post("/a2a/agent-1/tasks/t1/subscribe", json={}, headers=auth_headers)
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/event-stream")
+
+    @patch("mcpgateway.main.a2a_service")
+    def test_a2a_service_unavailable_returns_503(self, mock_service, test_client, auth_headers):
+        """All A2A v0.3 routes return 503 when service is None."""
+        # Patch the service attribute to None in each route
+        import mcpgateway.main as main_module
+
+        original = main_module.a2a_service
+        main_module.a2a_service = None
+        try:
+            assert test_client.post("/a2a/agent-1/message/send", json={}, headers=auth_headers).status_code == 503
+            assert test_client.post("/a2a/agent-1/message/stream", json={}, headers=auth_headers).status_code == 503
+            assert test_client.get("/a2a/agent-1/tasks", headers=auth_headers).status_code == 503
+            assert test_client.get("/a2a/agent-1/tasks/t1", headers=auth_headers).status_code == 503
+            assert test_client.post("/a2a/agent-1/tasks/t1/cancel", json={}, headers=auth_headers).status_code == 503
+            assert test_client.post("/a2a/agent-1/tasks/t1/subscribe", json={}, headers=auth_headers).status_code == 503
+            assert test_client.get("/a2a/agent-1/card", headers=auth_headers).status_code == 503
+        finally:
+            main_module.a2a_service = original
+
 
 # ----------------------------------------------------- #
 # Middleware & Security Tests                           #

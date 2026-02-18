@@ -2836,6 +2836,360 @@ class TestInvokeAgentGrpcTransport:
         channel.close.assert_awaited_once()
 
 
+class TestA2AServiceWrapperMethods:
+    """Cover the v0.3 wrapper methods that delegate to invoke_agent/_build_sse_stream."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_send_message_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+        """send_message wraps invoke_agent with method='message/send'."""
+        mock_db = MagicMock(spec=Session)
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"result": {"id": "t1"}}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.send_message(db=mock_db, agent_name="ag", message_params={"message": {"role": "user", "parts": [{"kind": "text", "text": "hi"}]}})
+        assert result == {"id": "t1"}
+        post_data = mock_client.post.call_args.kwargs["json"]
+        assert post_data["method"] == "message/send"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_get_task_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+        """get_task wraps invoke_agent with method='tasks/get' and params.id=task_id."""
+        mock_db = MagicMock(spec=Session)
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"result": {"id": "t1", "status": {"state": "completed"}}}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.get_task(db=mock_db, agent_name="ag", task_id="t1")
+        assert result["id"] == "t1"
+        post_data = mock_client.post.call_args.kwargs["json"]
+        assert post_data["method"] == "tasks/get"
+        assert post_data["params"]["id"] == "t1"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_list_tasks_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+        """list_tasks wraps invoke_agent with method='tasks/list'."""
+        mock_db = MagicMock(spec=Session)
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"result": {"tasks": []}}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.list_tasks(db=mock_db, agent_name="ag", params={"state": "completed"})
+        post_data = mock_client.post.call_args.kwargs["json"]
+        assert post_data["method"] == "tasks/list"
+        assert post_data["params"]["state"] == "completed"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_cancel_task_delegates_to_invoke_agent(self, mock_get_client, mock_fresh_db, mock_metrics_fn, service, monkeypatch):
+        """cancel_task wraps invoke_agent with method='tasks/cancel' and params.id=task_id."""
+        mock_db = MagicMock(spec=Session)
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200, json=MagicMock(return_value={"result": {"id": "t1", "status": {"state": "canceled"}}}))
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_fn.return_value = MagicMock()
+
+        result = await service.cancel_task(db=mock_db, agent_name="ag", task_id="t1")
+        post_data = mock_client.post.call_args.kwargs["json"]
+        assert post_data["method"] == "tasks/cancel"
+        assert post_data["params"]["id"] == "t1"
+
+    async def test_stream_message_calls_build_sse_stream(self, service, monkeypatch):
+        """stream_message delegates to _build_sse_stream with correct method."""
+
+        async def _fake_gen():
+            yield b"data: {}\n\n"
+
+        async def _fake_build(*args, **kwargs):
+            assert kwargs["rpc_method"] == "message/stream"
+            assert kwargs["interaction_type"] == "message_stream"
+            return _fake_gen()
+
+        monkeypatch.setattr(service, "_build_sse_stream", _fake_build)
+        result = await service.stream_message(db=MagicMock(), agent_name="ag", message_params={"message": {"parts": []}})
+        chunks = [chunk async for chunk in result]
+        assert len(chunks) == 1
+
+    async def test_subscribe_task_calls_build_sse_stream(self, service, monkeypatch):
+        """subscribe_task delegates to _build_sse_stream with tasks/subscribe method."""
+
+        async def _fake_gen():
+            yield b"event: status\n"
+
+        async def _fake_build(*args, **kwargs):
+            assert kwargs["rpc_method"] == "tasks/subscribe"
+            assert kwargs["interaction_type"] == "tasks_subscribe"
+            assert kwargs["rpc_params"]["id"] == "t1"
+            return _fake_gen()
+
+        monkeypatch.setattr(service, "_build_sse_stream", _fake_build)
+        result = await service.subscribe_task(db=MagicMock(), agent_name="ag", task_id="t1")
+        chunks = [chunk async for chunk in result]
+        assert len(chunks) == 1
+
+    async def test_get_agent_card_delegates_to_invoke_agent(self, service, monkeypatch):
+        """get_agent_card wraps invoke_agent with method='agent/getCard'."""
+        captured = {}
+
+        async def _fake_invoke(db, agent_name, parameters, interaction_type, **kw):
+            captured["method"] = parameters.get("method")
+            captured["interaction_type"] = interaction_type
+            return {"name": "test-agent", "url": "https://example.com"}
+
+        monkeypatch.setattr(service, "invoke_agent", _fake_invoke)
+        result = await service.get_agent_card(db=MagicMock(), agent_name="ag")
+        assert result["name"] == "test-agent"
+        assert captured["method"] == "agent/getCard"
+        assert captured["interaction_type"] == "agent_card"
+
+
+class TestBuildSseStream:
+    """Cover _build_sse_stream for HTTP and error paths."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    async def test_build_sse_stream_agent_not_found(self, service, monkeypatch):
+        """_build_sse_stream raises A2AAgentNotFoundError for missing agent."""
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with pytest.raises(A2AAgentNotFoundError):
+            await service._build_sse_stream(db=mock_db, agent_name="missing", rpc_method="message/stream", rpc_params={}, interaction_type="stream")
+
+    async def test_build_sse_stream_agent_disabled(self, service, monkeypatch):
+        """_build_sse_stream raises A2AAgentError for disabled agent."""
+        mock_db = MagicMock(spec=Session)
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=False, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+
+        with pytest.raises(A2AAgentError, match="disabled"):
+            await service._build_sse_stream(db=mock_db, agent_name="ag", rpc_method="message/stream", rpc_params={}, interaction_type="stream")
+
+    async def test_build_sse_stream_access_denied(self, service, monkeypatch):
+        """_build_sse_stream raises A2AAgentNotFoundError for denied access."""
+        mock_db = MagicMock(spec=Session)
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="private", team_id=None, owner_email="other@example.com",
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+
+        with pytest.raises(A2AAgentNotFoundError):
+            await service._build_sse_stream(
+                db=mock_db, agent_name="ag",
+                rpc_method="message/stream", rpc_params={},
+                interaction_type="stream",
+                user_email="someone@test.com", token_teams=[],
+            )
+
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    async def test_build_sse_stream_jsonrpc_transport(self, mock_get_client, service, monkeypatch):
+        """_build_sse_stream returns HTTP stream for a2a-jsonrpc transport."""
+        mock_db = MagicMock(spec=Session)
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="a2a-jsonrpc", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        # The generator is returned immediately; we just verify it's an async generator.
+        result = await service._build_sse_stream(
+            db=mock_db, agent_name="ag",
+            rpc_method="message/stream", rpc_params={"message": {"parts": []}},
+            interaction_type="message_stream",
+        )
+        # Result should be an async generator (not None)
+        assert hasattr(result, "__aiter__")
+
+    async def test_build_sse_stream_unsupported_transport_raises(self, service, monkeypatch):
+        """_build_sse_stream raises for unsupported transport types."""
+        mock_db = MagicMock(spec=Session)
+        agent = SimpleNamespace(
+            id="a1", name="ag", enabled=True, endpoint_url="https://x.com",
+            auth_type=None, auth_value=None, auth_query_params=None,
+            visibility="public", team_id=None, owner_email=None,
+            agent_type="custom", protocol_version="0.3", oauth_config=None,
+        )
+        mock_db.execute.return_value.scalar_one_or_none.return_value = "a1"
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_for_update", lambda *a, **kw: agent)
+        mock_db.commit = MagicMock()
+        mock_db.close = MagicMock()
+
+        with pytest.raises(A2AAgentError, match="not supported"):
+            await service._build_sse_stream(
+                db=mock_db, agent_name="ag",
+                rpc_method="message/stream", rpc_params={},
+                interaction_type="stream",
+            )
+
+
+class TestExtractAndUpsertTasks:
+    """Cover _extract_task_payloads and _upsert_a2a_task."""
+
+    @pytest.fixture
+    def service(self):
+        return A2AAgentService()
+
+    def test_extract_task_payloads_from_result(self, service):
+        """Extract tasks from a JSON-RPC result envelope."""
+        payload = {
+            "result": {
+                "id": "t1",
+                "status": {"state": "completed"},
+            }
+        }
+        tasks = service._extract_task_payloads(payload)
+        assert len(tasks) == 1
+        assert tasks[0]["id"] == "t1"
+
+    def test_extract_task_payloads_from_list(self, service):
+        """Extract multiple tasks from a list response."""
+        payload = {
+            "tasks": [
+                {"id": "t1", "status": {"state": "completed"}},
+                {"id": "t2", "status": {"state": "working"}},
+            ]
+        }
+        tasks = service._extract_task_payloads(payload)
+        assert len(tasks) == 2
+        task_ids = {t["id"] for t in tasks}
+        assert task_ids == {"t1", "t2"}
+
+    def test_extract_task_payloads_deduplicates(self, service):
+        """Same task_id appearing multiple times is deduplicated."""
+        payload = {
+            "result": {"id": "t1", "status": {"state": "completed"}},
+            "task": {"id": "t1", "status": {"state": "working"}},
+        }
+        tasks = service._extract_task_payloads(payload)
+        assert len(tasks) == 1
+
+    def test_extract_task_payloads_ignores_non_tasks(self, service):
+        """Payloads without id+status dict are not extracted."""
+        payload = {"result": {"message": "hello"}}
+        tasks = service._extract_task_payloads(payload)
+        assert len(tasks) == 0
+
+    def test_upsert_a2a_task_creates_new(self, service):
+        """_upsert_a2a_task inserts a new task row."""
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        now = datetime.now(timezone.utc)
+        result = service._upsert_a2a_task(mock_db, "agent-1", {"id": "t1", "status": {"state": "working"}}, now)
+        assert result is True
+        mock_db.add.assert_called_once()
+
+    def test_upsert_a2a_task_updates_existing(self, service):
+        """_upsert_a2a_task updates an existing task row."""
+        mock_db = MagicMock(spec=Session)
+        existing = MagicMock()
+        mock_db.execute.return_value.scalar_one_or_none.return_value = existing
+
+        now = datetime.now(timezone.utc)
+        result = service._upsert_a2a_task(mock_db, "agent-1", {"id": "t1", "status": {"state": "completed"}}, now)
+        assert result is True
+        assert existing.state == "completed"
+        assert existing.completed_at == now
+
+    def test_upsert_a2a_task_rejects_missing_id(self, service):
+        """_upsert_a2a_task returns False for payloads without task id."""
+        mock_db = MagicMock(spec=Session)
+        now = datetime.now(timezone.utc)
+        result = service._upsert_a2a_task(mock_db, "agent-1", {"status": {"state": "completed"}}, now)
+        assert result is False
+
+
 class TestConvertAgentToRead:
     """Cover convert_agent_to_read branches: not found, team lookup, metrics."""
 

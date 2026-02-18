@@ -431,6 +431,7 @@ class A2AAgentService:
             headers.update(auth_headers)
 
         async def _fetch_first_card(candidate_urls: List[str]) -> Optional[Dict[str, Any]]:
+            """Try each candidate URL and return the first valid agent card."""
             client = await get_http_client()
             for candidate_url in candidate_urls:
                 try:
@@ -553,10 +554,12 @@ class A2AAgentService:
                 rest_base = f"{rest_base}/v1"
 
         def _task_id_from(payload: Dict[str, Any]) -> Optional[str]:
+            """Extract task ID from 'id' or 'taskId' fields."""
             task_id = payload.get("id") or payload.get("taskId")
             return str(task_id) if task_id is not None else None
 
         def _config_id_from(payload: Dict[str, Any]) -> Optional[str]:
+            """Extract push notification config ID from payload."""
             cfg_id = payload.get("pushNotificationConfigId") or payload.get("configId")
             return str(cfg_id) if cfg_id is not None else None
 
@@ -661,6 +664,7 @@ class A2AAgentService:
         tasks: Dict[str, Dict[str, Any]] = {}
 
         def _collect(candidate: Any) -> None:
+            """Recursively collect task objects by ID into the tasks dict."""
             if isinstance(candidate, list):
                 for item in candidate:
                     _collect(item)
@@ -2400,7 +2404,7 @@ class A2AAgentService:
                     metadata={"event": "a2a_call_completed", "agent_name": agent_name, "agent_id": agent_id, "method": rpc_method, "transport": "a2a-grpc", "success": True},
                 )
                 return response
-            else:
+            else:  # pylint: disable=no-else-return
                 raise A2AAgentError(f"Unsupported A2A transport: {normalized_agent_type}")
 
             call_duration_ms = (datetime.now(timezone.utc) - call_start_time).total_seconds() * 1000
@@ -2606,10 +2610,16 @@ class A2AAgentService:
         from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
 
         def _sse_event(event_type: str, data: Dict[str, Any]) -> bytes:
+            """Format a single SSE event as UTF-8 bytes."""
             payload = orjson.dumps(data)
             return b"event: " + event_type.encode("utf-8") + b"\n" + b"data: " + payload + b"\n\n"
 
         async def _grpc_stream() -> AsyncGenerator[bytes, None]:  # pylint: disable=no-member
+            """Proxy a gRPC streaming call as SSE events.
+
+            Yields:
+                SSE-formatted event bytes.
+            """
             # Third-Party
             from google.protobuf import json_format  # pylint: disable=import-outside-toplevel
             import grpc  # pylint: disable=import-outside-toplevel
@@ -2660,6 +2670,11 @@ class A2AAgentService:
                     await channel.close()
 
         async def _http_stream(http_method: str, url: str, json_body: Any, query: Optional[Dict[str, Any]]) -> AsyncGenerator[bytes, None]:
+            """Proxy an HTTP streaming response as SSE events.
+
+            Yields:
+                SSE-formatted event bytes.
+            """
             client = await get_http_client()
             headers: Dict[str, str] = {"Accept": "text/event-stream", "Content-Type": "application/json"}
             headers.update(auth_headers)
