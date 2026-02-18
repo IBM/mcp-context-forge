@@ -304,11 +304,6 @@ repos:
         description: Checks XML files for parseable syntax.
         types: [xml]
 
-      - id: fix-byte-order-marker
-        name: ✅ Fix Byte Order Marker
-        description: Removes UTF-8 byte-order marker.
-        types: [text]
-
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.38.0
     hooks:

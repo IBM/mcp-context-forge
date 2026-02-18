@@ -1,0 +1,21 @@
+[package]
+name = "a2a_service"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "High-performance A2A agent invocation service with PyO3 bindings"
+
+[lib]
+name = "a2a_service"
+crate-type = ["rlib"]
+
+[dependencies]
+pyo3.workspace = true
+reqwest.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
