@@ -603,7 +603,9 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
         return []
 
 
-async def _proxy_get_prompt_to_gateway(gateway: Any, request_headers: dict, user_context: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None) -> Optional[types.GetPromptResult]:  # pylint: disable=unused-argument
+async def _proxy_get_prompt_to_gateway(
+    gateway: Any, request_headers: dict, user_context: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None
+) -> Optional[types.GetPromptResult]:  # pylint: disable=unused-argument
     """Proxy prompts/get request directly to remote MCP gateway using MCP SDK.
 
     Uses session.send_request() when _meta is present (ClientSession.get_prompt()
@@ -1385,7 +1387,10 @@ async def list_prompts() -> List[types.Prompt]:
                 gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 if gateway_id:
+                    # Third-Party
                     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
                     from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -1478,7 +1483,10 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                 gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 if gateway_id:
+                    # Third-Party
                     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
                     from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -1856,7 +1864,10 @@ async def complete(
                 gateway_id = extract_gateway_id_from_headers(request_headers)
 
                 if gateway_id:
+                    # Third-Party
                     from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+                    # First-Party
                     from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
                     gateway = db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
@@ -1870,8 +1881,13 @@ async def complete(
 
                         logger.info(f"[COMPLETE] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
                         result = await _proxy_complete_to_gateway(
-                            gateway, request_headers, user_context,
-                            ref=ref, argument=argument, context=context, meta=meta_data,
+                            gateway,
+                            request_headers,
+                            user_context,
+                            ref=ref,
+                            argument=argument,
+                            context=context,
+                            meta=meta_data,
                         )
                         if result is None:
                             return types.Completion(values=[], total=0, hasMore=False)
