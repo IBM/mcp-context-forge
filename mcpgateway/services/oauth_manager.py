@@ -516,6 +516,84 @@ class OAuthManager:
         # This should never be reached due to the exception above, but needed for type safety
         raise OAuthError("Failed to exchange code for token after all retry attempts")
 
+    async def token_exchange(
+        self,
+        token_url: str,
+        subject_token: str,
+        client_id: str,
+        client_secret: str,
+        audience: Optional[str] = None,
+        scope: Optional[str] = None,
+        requested_token_type: str = "urn:ietf:params:oauth:token-type:access_token",
+    ) -> Dict[str, Any]:
+        """RFC 8693 token exchange for on-behalf-of flows.
+
+        Exchanges a subject token (e.g. the gateway's JWT) for a new token
+        scoped to a downstream service, enabling the downstream to act on
+        behalf of the original user.
+
+        Args:
+            token_url: Token endpoint of the authorization server.
+            subject_token: The original user's access token.
+            client_id: Client ID for the gateway.
+            client_secret: Client secret for the gateway.
+            audience: Intended audience for the exchanged token.
+            scope: Requested scope for the exchanged token.
+            requested_token_type: The type of token being requested.
+
+        Returns:
+            Dict with ``access_token``, ``token_type``, and optionally
+            ``expires_in`` and ``scope``.
+
+        Raises:
+            OAuthError: If token exchange fails after all retries.
+        """
+        # Decrypt client secret if encrypted
+        if client_secret:
+            try:
+                settings = get_settings()
+                encryption = get_encryption_service(settings.auth_encryption_secret)
+                if encryption.is_encrypted(client_secret):
+                    decrypted = await encryption.decrypt_secret_async(client_secret)
+                    if decrypted:
+                        client_secret = decrypted
+            except Exception as e:
+                logger.warning(f"Failed to decrypt client secret for token exchange: {e}")
+
+        token_data: Dict[str, str] = {
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "subject_token": subject_token,
+            "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+            "requested_token_type": requested_token_type,
+            "client_id": client_id,
+            "client_secret": client_secret,
+        }
+        if audience:
+            token_data["audience"] = audience
+        if scope:
+            token_data["scope"] = scope
+
+        for attempt in range(self.max_retries):
+            try:
+                client = await self._get_client()
+                response = await client.post(token_url, data=token_data, timeout=self.request_timeout)
+                response.raise_for_status()
+
+                token_response = response.json()
+                if "access_token" not in token_response:
+                    raise OAuthError(f"No access_token in token exchange response: {token_response}")
+
+                logger.info("Successfully performed RFC 8693 token exchange")
+                return token_response
+
+            except httpx.HTTPError as e:
+                logger.warning(f"Token exchange attempt {attempt + 1} failed: {e}")
+                if attempt == self.max_retries - 1:
+                    raise OAuthError(f"Token exchange failed after {self.max_retries} attempts: {e}")
+                await asyncio.sleep(2**attempt)
+
+        raise OAuthError("Token exchange failed after all retry attempts")
+
     async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 

@@ -12,6 +12,7 @@ functions for protecting routes.
 """
 
 # Standard
+from datetime import datetime, timezone
 import functools
 from functools import wraps
 import logging
@@ -27,6 +28,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.plugins.framework.models import GlobalContext, UserContext
 from mcpgateway.services.permission_service import PermissionService
 
 logger = logging.getLogger(__name__)
@@ -152,6 +154,32 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                     except Exception as e:
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
+
+                # Populate UserContext for proxy auth
+                try:
+                    user_ctx = UserContext(
+                        user_id=proxy_user,
+                        email=proxy_user,
+                        full_name=str(full_name) if isinstance(full_name, str) else proxy_user,
+                        is_admin=bool(is_admin) if isinstance(is_admin, bool) else False,
+                        team_id=getattr(request.state, "team_id", None),
+                        auth_method="proxy",
+                        authenticated_at=datetime.now(timezone.utc),
+                    )
+                    if plugin_global_context:
+                        plugin_global_context.user_context = user_ctx
+                    else:
+                        # First-Party
+                        from mcpgateway.utils.correlation_id import get_correlation_id  # pylint: disable=import-outside-toplevel
+
+                        request_id = get_correlation_id() or getattr(request.state, "request_id", None) or uuid.uuid4().hex
+                        plugin_global_context = GlobalContext(
+                            request_id=request_id,
+                            user={"email": proxy_user, "is_admin": is_admin, "full_name": full_name},
+                            user_context=user_ctx,
+                        )
+                except Exception as ctx_err:
+                    logger.debug(f"Could not build UserContext for proxy auth: {ctx_err}")
 
                 return {
                     "email": proxy_user,

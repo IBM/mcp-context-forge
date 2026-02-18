@@ -301,6 +301,18 @@ services:
       # - SSRF_ALLOW_PRIVATE_NETWORKS=false
       # - SSRF_DNS_FAIL_CLOSED=true
 
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Identity Propagation
+      # ═══════════════════════════════════════════════════════════════════════════
+      # Forward end-user identity (email, groups, roles) to upstream MCP servers.
+      # Supports HTTP headers (X-Forwarded-User-*) and MCP _meta field propagation.
+      # - IDENTITY_PROPAGATION_ENABLED=false      # Master switch (default: false)
+      # - IDENTITY_PROPAGATION_MODE=both          # headers, meta, or both
+      # - IDENTITY_PROPAGATION_HEADERS_PREFIX=X-Forwarded-User
+      # - IDENTITY_SENSITIVE_ATTRIBUTES=["password_hash","internal_id","ssn"]
+      # - IDENTITY_SIGN_CLAIMS=false              # HMAC-sign propagated claims
+      # - IDENTITY_CLAIMS_SECRET=                 # uses JWT_SECRET_KEY if unset
+
       # Uncomment to enable stateful sessions for Streamable HTTP transport
       # - USE_STATEFUL_SESSIONS=true
 

@@ -65,6 +65,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -1735,6 +1736,14 @@ class ResourceService:
                             else:
                                 headers = {}
 
+                        # Inject identity propagation headers if user_identity is a UserContext
+                        if user_identity:
+                            # First-Party
+                            from mcpgateway.plugins.framework.models import UserContext as UserCtx  # pylint: disable=import-outside-toplevel  # noqa: N814
+
+                            if isinstance(user_identity, UserCtx):
+                                headers.update(build_identity_headers(user_identity))
+
                         async def connect_to_sse_session(server_url: str, uri: str, authentication: Optional[Dict[str, str]] = None) -> str | None:
                             """
                             Connect to an SSE-based gateway and retrieve the text content of a resource.
@@ -2189,6 +2198,10 @@ class ResourceService:
 
                             # Prepare headers with gateway auth
                             headers = build_gateway_auth_headers(gateway)
+
+                            # Inject identity propagation headers
+                            if plugin_global_context and plugin_global_context.user_context:
+                                headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
 
                             # Use MCP SDK to connect and read resource
                             async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
