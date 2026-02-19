@@ -1897,6 +1897,322 @@ class TestFsBrowseEdgeCases:
         assert ".hidden" not in names
         assert "visible.txt" in names
 
+    @pytest.mark.asyncio
+    async def test_fs_browse_root_returns_virtual_roots(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """Browsing '/' returns a synthetic listing of the four virtual roots."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        # Put a file in /tools so the size_bytes count is > 0
+        (session.tools_dir / "stub.py").write_text("pass", encoding="utf-8")
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_browse(
+            db=SimpleNamespace(),
+            server=SimpleNamespace(stub_language="python"),
+            path="/",
+            include_hidden=False,
+            max_entries=100,
+            user_email="u",
+            token_teams=None,
+        )
+        assert result["path"] == "/"
+        assert result["truncated"] is False
+        names = [e["name"] for e in result["entries"]]
+        assert names == ["tools", "scratch", "skills", "results"]
+        for entry in result["entries"]:
+            assert entry["type"] == "directory"
+            assert "description" in entry
+
+
+# ===================================================================
+# fs_read meta-tool
+# ===================================================================
+
+
+class TestFsRead:
+    @pytest.mark.asyncio
+    async def test_fs_read_returns_file_content(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_read returns content for a valid readable file."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.tools_dir / "my-server").mkdir()
+        (session.tools_dir / "my-server" / "hello.py").write_text("print('hi')", encoding="utf-8")
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_read(
+            db=SimpleNamespace(),
+            server=SimpleNamespace(stub_language="python"),
+            path="/tools/my-server/hello.py",
+            user_email="u",
+            token_teams=None,
+        )
+        assert result["path"] == "/tools/my-server/hello.py"
+        assert result["content"] == "print('hi')"
+        assert result["size_bytes"] > 0
+        assert "modified_at" in result
+
+    @pytest.mark.asyncio
+    async def test_fs_read_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fs_read raises when disabled by configuration."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", False, raising=False)
+        svc = CodeExecutionService()
+        with pytest.raises(CodeExecutionError, match="disabled"):
+            await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/tools/x", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_read_empty_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fs_read raises on empty path."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        with pytest.raises(CodeExecutionError, match="path is required"):
+            await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_read_outside_vfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_read raises for paths outside the virtual filesystem."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        with pytest.raises(CodeExecutionSecurityError):
+            await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/etc/passwd", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_read_nonexistent_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_read raises for files that don't exist."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        with pytest.raises(CodeExecutionError, match="not found"):
+            await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/tools/nope.py", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_read_directory_path(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_read raises when path points to a directory."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        with pytest.raises(CodeExecutionError, match="directory"):
+            await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/tools", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_read_file_too_large(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_read raises when file exceeds the size limit."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_max_size_bytes", 10, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.scratch_dir / "big.txt").write_text("x" * 100, encoding="utf-8")
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        with pytest.raises(CodeExecutionError, match="too large"):
+            await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/scratch/big.txt", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_read_scratch_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_read can read files from /scratch."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.scratch_dir / "data.json").write_text('{"key": "value"}', encoding="utf-8")
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_read(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/scratch/data.json", user_email="u", token_teams=None)
+        assert result["content"] == '{"key": "value"}'
+
+
+# ===================================================================
+# fs_write meta-tool
+# ===================================================================
+
+
+class TestFsWrite:
+    @pytest.mark.asyncio
+    async def test_fs_write_creates_file(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write creates a new file in a writable root."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_write(
+            db=SimpleNamespace(),
+            server=SimpleNamespace(stub_language="python"),
+            path="/scratch/output.txt",
+            content="hello world",
+            user_email="u",
+            token_teams=None,
+        )
+        assert result["path"] == "/scratch/output.txt"
+        assert result["size_bytes"] == len("hello world")
+        assert "modified_at" in result
+        assert (session.scratch_dir / "output.txt").read_text(encoding="utf-8") == "hello world"
+
+    @pytest.mark.asyncio
+    async def test_fs_write_creates_subdirectories(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write creates parent directories as needed."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_write(
+            db=SimpleNamespace(),
+            server=SimpleNamespace(stub_language="python"),
+            path="/results/sub/dir/report.txt",
+            content="report data",
+            user_email="u",
+            token_teams=None,
+        )
+        assert result["path"] == "/results/sub/dir/report.txt"
+        assert (session.results_dir / "sub" / "dir" / "report.txt").read_text(encoding="utf-8") == "report data"
+
+    @pytest.mark.asyncio
+    async def test_fs_write_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fs_write raises when disabled by configuration."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", False, raising=False)
+        svc = CodeExecutionService()
+        with pytest.raises(CodeExecutionError, match="disabled"):
+            await svc.fs_write(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/scratch/x", content="x", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_write_empty_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """fs_write raises on empty path."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        with pytest.raises(CodeExecutionError, match="path is required"):
+            await svc.fs_write(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="", content="x", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_write_read_only_path_rejected(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write rejects writes to read-only paths like /tools."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        with pytest.raises(CodeExecutionSecurityError, match="write denied"):
+            await svc.fs_write(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/tools/bad.py", content="x", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_write_outside_vfs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write rejects paths outside the virtual filesystem."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        with pytest.raises(CodeExecutionSecurityError):
+            await svc.fs_write(db=SimpleNamespace(), server=SimpleNamespace(stub_language="python"), path="/etc/evil", content="x", user_email="u", token_teams=None)
+
+    @pytest.mark.asyncio
+    async def test_fs_write_content_too_large(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write rejects content exceeding the file size policy."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        # Policy with 0 MB limit (effectively 0 bytes)
+        svc._sandbox_limit_defaults["max_file_size_mb"] = 0
+        with pytest.raises(CodeExecutionError, match="too large"):
+            await svc.fs_write(
+                db=SimpleNamespace(),
+                server=SimpleNamespace(stub_language="python", sandbox_policy=None),
+                path="/scratch/big.txt",
+                content="x" * 100,
+                user_email="u",
+                token_teams=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_fs_write_overwrites_existing(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write overwrites an existing file."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+        (session.scratch_dir / "existing.txt").write_text("old", encoding="utf-8")
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_write(
+            db=SimpleNamespace(),
+            server=SimpleNamespace(stub_language="python"),
+            path="/scratch/existing.txt",
+            content="new",
+            user_email="u",
+            token_teams=None,
+        )
+        assert (session.scratch_dir / "existing.txt").read_text(encoding="utf-8") == "new"
+        assert result["size_bytes"] == 3
+
+    @pytest.mark.asyncio
+    async def test_fs_write_results_dir(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """fs_write can write to /results."""
+        monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", True, raising=False)
+        svc = CodeExecutionService()
+        session = _make_session(tmp_path)
+
+        async def _fake(**_kwargs: Any) -> CodeExecutionSession:
+            return session
+
+        svc._get_or_create_session = _fake  # type: ignore[method-assign]
+        result = await svc.fs_write(
+            db=SimpleNamespace(),
+            server=SimpleNamespace(stub_language="python"),
+            path="/results/out.csv",
+            content="a,b\n1,2\n",
+            user_email="u",
+            token_teams=None,
+        )
+        assert result["path"] == "/results/out.csv"
+        assert (session.results_dir / "out.csv").read_text(encoding="utf-8") == "a,b\n1,2\n"
+
 
 # ===================================================================
 # Resolve runtime tool name

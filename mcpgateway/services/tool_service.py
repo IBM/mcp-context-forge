@@ -2747,6 +2747,23 @@ class ToolService:
                     user_email=user_email,
                     token_teams=token_teams,
                 )
+            elif name == "fs_read":
+                payload = await code_execution_service.fs_read(
+                    db=db,
+                    server=server,
+                    path=str(arguments.get("path") or ""),
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
+            elif name == "fs_write":
+                payload = await code_execution_service.fs_write(
+                    db=db,
+                    server=server,
+                    path=str(arguments.get("path") or ""),
+                    content=str(arguments.get("content") or ""),
+                    user_email=user_email,
+                    token_teams=token_teams,
+                )
             else:
                 raise ToolNotFoundError(f"Tool not found: {name}")
         except CodeExecutionError as exc:
