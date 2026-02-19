@@ -750,7 +750,7 @@ async def test_proxy_get_prompt_returns_result(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
 
-    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="my-prompt", arguments={"lang": "en"}, meta=None)
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "my-prompt", {"lang": "en"}, None)
 
     assert result is not None
     assert result.description == "A prompt"
@@ -795,7 +795,7 @@ async def test_proxy_get_prompt_forwards_meta_via_send_request(monkeypatch):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.ClientSession", lambda r, w: FakeSession())
 
     meta = {"progressToken": "tok-42"}
-    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="meta-prompt", arguments=None, meta=meta)
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "meta-prompt", None, meta)
 
     assert result is not None
     mock_session.send_request.assert_called_once()
@@ -823,7 +823,7 @@ async def test_proxy_get_prompt_exception_returns_none(monkeypatch):
 
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", fake_client)
 
-    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, {}, name="p", arguments=None)
+    result = await _proxy_get_prompt_to_gateway(mock_gateway, {}, "p", None, None)
     assert result is None
 
 
