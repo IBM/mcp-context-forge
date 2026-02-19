@@ -3904,7 +3904,12 @@ def _make_standard_server(server_id: str = "srv-std"):
 
 
 def _build_test_client():
-    """Return (client, mock_db, app_instance) with auth overridden."""
+    """Return (client, mock_db, app_instance) with auth overridden.
+
+    IMPORTANT: Callers MUST call _cleanup_test_client(app_instance) in a
+    finally block to restore PermissionService.check_permission and clear
+    dependency overrides.
+    """
     from mcpgateway.main import app
     from mcpgateway.db import get_db
     from mcpgateway.middleware.rbac import get_current_user_with_permissions
@@ -3932,14 +3937,29 @@ def _build_test_client():
     app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user
     app.dependency_overrides[get_db] = _override_db
 
-    # Always allow permissions
+    # Save original and monkey-patch for the duration of the test
+    _original_check = PermissionService.check_permission
+
     async def _allow_all(self, *a, **kw):
         return True
 
     PermissionService.check_permission = _allow_all
 
     client = TestClient(app, raise_server_exceptions=False)
+    # Stash original so cleanup can restore it
+    app._test_original_check_permission = _original_check
     return client, mock_db, app
+
+
+def _cleanup_test_client(app_inst):
+    """Restore PermissionService.check_permission and clear dependency overrides."""
+    from mcpgateway.services.permission_service import PermissionService
+
+    original = getattr(app_inst, "_test_original_check_permission", None)
+    if original is not None:
+        PermissionService.check_permission = original
+        del app_inst._test_original_check_permission
+    app_inst.dependency_overrides.clear()
 
 
 # ===========================================================================
@@ -3981,7 +4001,7 @@ class TestMainListCodeExecutionRuns:
             assert data[0]["id"] == "run-1"
             assert data[0]["status"] == "completed"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_returns_404_for_non_code_exec_server(self):
         """Returns 404 when server is not a code_execution type."""
@@ -3994,7 +4014,7 @@ class TestMainListCodeExecutionRuns:
                 resp = client.get("/servers/srv-std/code/runs")
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_run_with_none_timestamps(self):
         """Runs with None timestamps produce null in JSON response."""
@@ -4026,7 +4046,7 @@ class TestMainListCodeExecutionRuns:
             assert data[0]["metrics"] == {}
             assert data[0]["tool_calls_made"] == []
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4050,7 +4070,7 @@ class TestMainListCodeExecutionSessions:
             assert resp.status_code == 200
             assert resp.json() == sessions
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_returns_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4063,7 +4083,7 @@ class TestMainListCodeExecutionSessions:
                 resp = client.get("/servers/srv-1/code/sessions")
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4098,7 +4118,7 @@ class TestMainListCodeExecutionSecurityEvents:
             assert data[0]["run_id"] == "run-1"
             assert data[0]["server_id"] == "srv-1"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_non_dict_security_event_wrapped_in_message(self):
         """Non-dict security events get wrapped in a message key."""
@@ -4121,7 +4141,7 @@ class TestMainListCodeExecutionSecurityEvents:
             data = resp.json()
             assert data[0]["message"] == "string event description"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_returns_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4134,7 +4154,7 @@ class TestMainListCodeExecutionSecurityEvents:
                 resp = client.get("/servers/srv-1/code/security-events")
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_run_with_none_security_events_skipped(self):
         """Runs with None security_events produce empty events list."""
@@ -4156,7 +4176,7 @@ class TestMainListCodeExecutionSecurityEvents:
             assert resp.status_code == 200
             assert resp.json() == []
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4187,7 +4207,7 @@ class TestMainReplayCodeExecutionRun:
             assert resp.status_code == 200
             assert resp.json()["output"] == "hello"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_replay_returns_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4200,7 +4220,7 @@ class TestMainReplayCodeExecutionRun:
                 resp = client.post("/servers/srv-1/code/runs/run-1/replay")
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_replay_code_execution_error_raises_400(self):
         """CodeExecutionError from replay_run produces 400."""
@@ -4216,7 +4236,7 @@ class TestMainReplayCodeExecutionRun:
             assert resp.status_code == 400
             assert "run not found" in resp.json()["detail"]
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4259,7 +4279,7 @@ class TestMainListCodeExecutionSkills:
             assert data[0]["name"] == "my_skill"
             assert data[0]["status"] == "approved"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_returns_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4272,7 +4292,7 @@ class TestMainListCodeExecutionSkills:
                 resp = client.get("/servers/srv-1/skills")
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_skill_with_none_timestamps(self):
         """Skills with None timestamps produce null in JSON response."""
@@ -4305,7 +4325,7 @@ class TestMainListCodeExecutionSkills:
             assert data[0]["approved_at"] is None
             assert data[0]["created_at"] is None
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4344,7 +4364,7 @@ class TestMainCreateCodeExecutionSkill:
             assert data["name"] == "new_skill"
             assert data["status"] == "approved"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_create_skill_missing_name_returns_422(self):
         """Missing name in payload returns 422."""
@@ -4357,7 +4377,7 @@ class TestMainCreateCodeExecutionSkill:
                 resp = client.post("/servers/srv-1/skills", json={"source_code": "print('hi')"})
             assert resp.status_code == 422
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_create_skill_empty_source_code_returns_422(self):
         """Empty source_code in payload returns 422."""
@@ -4370,7 +4390,7 @@ class TestMainCreateCodeExecutionSkill:
                 resp = client.post("/servers/srv-1/skills", json={"name": "skill", "source_code": "   "})
             assert resp.status_code == 422
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_create_skill_code_execution_error_returns_400(self):
         """CodeExecutionError from create_skill returns 400."""
@@ -4387,7 +4407,7 @@ class TestMainCreateCodeExecutionSkill:
                 resp = client.post("/servers/srv-1/skills", json={"name": "bad_skill", "source_code": "__import__('os').system('rm -rf /')"})
             assert resp.status_code == 400
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_create_skill_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4400,7 +4420,7 @@ class TestMainCreateCodeExecutionSkill:
                 resp = client.post("/servers/srv-1/skills", json={"name": "skill", "source_code": "print('x')"})
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_create_skill_long_name_returns_422(self):
         """name > 255 chars returns 422."""
@@ -4414,7 +4434,7 @@ class TestMainCreateCodeExecutionSkill:
                 resp = client.post("/servers/srv-1/skills", json={"name": long_name, "source_code": "print('x')"})
             assert resp.status_code == 422
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4465,7 +4485,7 @@ class TestMainListSkillApprovals:
                 resp = client.get("/servers/srv-1/skills/approvals")
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_teamless_server_blocks_non_admin(self):
         """Non-admin cannot moderate approvals on teamless server."""
@@ -4484,6 +4504,8 @@ class TestMainListSkillApprovals:
 
         from mcpgateway.services.permission_service import PermissionService
 
+        _original_check = PermissionService.check_permission
+
         async def _allow_all(self, *a, **kw):
             return True
 
@@ -4498,6 +4520,7 @@ class TestMainListSkillApprovals:
                 resp = client.get("/servers/srv-1/skills/approvals")
             assert resp.status_code == 403
         finally:
+            PermissionService.check_permission = _original_check
             app.dependency_overrides.clear()
 
 
@@ -4526,7 +4549,7 @@ class TestMainApproveSkillRequest:
             assert resp.status_code == 200
             assert resp.json()["status"] == "approved"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_approve_skill_code_execution_error_returns_400(self):
         """CodeExecutionError during approve returns 400."""
@@ -4541,7 +4564,7 @@ class TestMainApproveSkillRequest:
                 resp = client.post("/servers/srv-1/skills/approvals/appr-1/approve", json={})
             assert resp.status_code == 400
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_approve_skill_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4554,7 +4577,7 @@ class TestMainApproveSkillRequest:
                 resp = client.post("/servers/srv-1/skills/approvals/appr-1/approve", json={})
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4582,7 +4605,7 @@ class TestMainRejectSkillRequest:
             assert resp.status_code == 200
             assert resp.json()["status"] == "rejected"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_reject_skill_code_execution_error_returns_400(self):
         """CodeExecutionError during reject returns 400."""
@@ -4597,7 +4620,7 @@ class TestMainRejectSkillRequest:
                 resp = client.post("/servers/srv-1/skills/approvals/appr-1/reject", json={"reason": "nope"})
             assert resp.status_code == 400
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_reject_skill_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4610,7 +4633,7 @@ class TestMainRejectSkillRequest:
                 resp = client.post("/servers/srv-1/skills/approvals/appr-1/reject", json={})
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -4637,7 +4660,7 @@ class TestMainRevokeSkill:
             assert resp.status_code == 200
             assert resp.json()["status"] == "revoked"
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_revoke_skill_code_execution_error_returns_400(self):
         """CodeExecutionError during revoke returns 400."""
@@ -4652,7 +4675,7 @@ class TestMainRevokeSkill:
                 resp = client.post("/servers/srv-1/skills/skill-1/revoke", json={})
             assert resp.status_code == 400
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_revoke_skill_404_for_standard_server(self):
         """Returns 404 when server is not code_execution."""
@@ -4665,7 +4688,7 @@ class TestMainRevokeSkill:
                 resp = client.post("/servers/srv-1/skills/skill-1/revoke", json={})
             assert resp.status_code == 404
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
@@ -6463,7 +6486,7 @@ class TestMainCreateSkillValidation:
                 )
             assert resp.status_code == 422
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_description_too_long_returns_422(self):
         """description exceeding 10,000 characters returns 422."""
@@ -6484,7 +6507,7 @@ class TestMainCreateSkillValidation:
                 )
             assert resp.status_code == 422
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 class TestMainListSkillApprovalsWithStatusFilter:
@@ -6955,10 +6978,13 @@ class TestAdminParseOptionalJsonField:
         app.dependency_overrides[get_current_user_with_permissions] = lambda: admin_user
         app.dependency_overrides[get_db] = _override_db
 
+        _original_check = PermissionService.check_permission
+
         async def _allow_all(self, *a, **kw):
             return True
 
         PermissionService.check_permission = _allow_all
+        app._test_original_check_permission = _original_check
         client = TestClient(app, raise_server_exceptions=False)
         return client, mock_db, app
 
@@ -7066,7 +7092,7 @@ class TestAdminParseOptionalJsonField:
             # Admin route may return 401 if session auth is required
             assert resp.status_code in {200, 303, 302, 401, 422}
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
     def test_admin_create_server_standard_clears_code_exec_fields(self) -> None:
         """Admin route: standard server_type clears all code_execution fields."""
@@ -7093,7 +7119,7 @@ class TestAdminParseOptionalJsonField:
                 )
             assert resp.status_code in {200, 303, 302, 401, 422}
         finally:
-            app_inst.dependency_overrides.clear()
+            _cleanup_test_client(app_inst)
 
 
 # ===========================================================================
