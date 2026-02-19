@@ -17994,6 +17994,7 @@ const GLOBAL_SEARCH_ENTITY_CONFIG = {
     },
     teams: { label: "Teams", tab: "teams", viewFunction: "showTeamEditModal" },
     users: { label: "Users", tab: "users", viewFunction: "showUserEditModal" },
+    roots: { label: "Roots", tab: "roots", viewFunction: "viewRoot" },
 };
 
 let globalSearchDebounceTimer = null;
@@ -18097,6 +18098,7 @@ async function runGlobalSearch(query) {
         "agents",
         "teams",
         "users",
+        "roots",
     ];
     const visibleEntityTypes = searchableEntityTypes.filter((entityType) => {
         if (entityType === "users" && !isAdminUser()) {
@@ -18214,6 +18216,12 @@ function initializeGlobalSearch() {
                 return;
             }
             if (event.key === "Enter") {
+                const currentValue = (input.value || "").trim();
+                if (!currentValue) {
+                    renderGlobalSearchMessage("Please enter a search term.");
+                    event.preventDefault();
+                    return;
+                }
                 const firstResult = document.querySelector(
                     "#global-search-results .global-search-result-item",
                 );
