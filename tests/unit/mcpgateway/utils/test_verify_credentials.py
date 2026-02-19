@@ -1513,6 +1513,37 @@ async def test_require_auth_header_first_no_auth_method_configured_raises_401(mo
 
 
 @pytest.mark.asyncio
+async def test_require_auth_header_first_proxy_trust_no_header_auth_not_required_returns_anonymous(monkeypatch):
+    """Line 928: trust_proxy_auth=True but no proxy header and auth_required=False returns 'anonymous'."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}  # No proxy user header
+    mock_request.cookies = {}
+
+    result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+    assert result == "anonymous"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_no_auth_method_not_required_returns_anonymous(monkeypatch):
+    """Line 935: mcp_client_auth_enabled=False, trust_proxy_auth=False, auth_required=False returns 'anonymous'."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+    assert result == "anonymous"
+
+
+@pytest.mark.asyncio
 async def test_require_auth_header_first_basic_auth_when_docs_allowed(monkeypatch):
     """Basic auth header is handled when docs_allow_basic_auth=True."""
     monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
