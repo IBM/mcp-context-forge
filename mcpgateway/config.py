@@ -580,8 +580,8 @@ class Settings(BaseSettings):
     default_team_member_role: str = Field(default="viewer", description="Team-scoped role assigned to team members")
 
     # UI/Admin Feature Flags
-    mcpgateway_ui_enabled: bool = False
-    mcpgateway_admin_api_enabled: bool = False
+    mcpgateway_ui_enabled: bool = Field(default=False, description="Enable the Admin UI web interface (served at /admin)")
+    mcpgateway_admin_api_enabled: bool = Field(default=False, description="Enable the Admin REST API endpoints (under /admin/api/)")
     mcpgateway_ui_airgapped: bool = Field(default=False, description="Use local CDN assets instead of external CDNs for airgapped deployments")
     mcpgateway_ui_embedded: bool = Field(default=False, description="Enable embedded UI mode (hides select header controls by default)")
     mcpgateway_ui_hide_sections: Annotated[list[str], NoDecode] = Field(
@@ -607,7 +607,7 @@ class Settings(BaseSettings):
     mcpgateway_tool_cancellation_enabled: bool = Field(default=True, description="Enable gateway-authoritative tool execution cancellation with REST API endpoints")
 
     # A2A (Agent-to-Agent) Feature Flags
-    mcpgateway_a2a_enabled: bool = True
+    mcpgateway_a2a_enabled: bool = Field(default=True, description="Enable Agent-to-Agent (A2A) protocol support")
     mcpgateway_a2a_max_agents: int = 100
     mcpgateway_a2a_default_timeout: int = 30
     mcpgateway_a2a_max_retries: int = 3

@@ -41,8 +41,8 @@ These values in `.env.example` differ from code defaults to provide a working lo
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HOST` | Bind address | `0.0.0.0` |
-| `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `true` |
-| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `true` |
+| `MCPGATEWAY_UI_ENABLED` | Enable Admin UI dashboard | `false` |
+| `MCPGATEWAY_ADMIN_API_ENABLED` | Enable Admin API endpoints | `false` |
 | `DATABASE_URL` | SQLAlchemy connection URL | `sqlite:///./mcp.db` |
 
 ---
@@ -693,6 +693,8 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
 | `MIN_SECRET_LENGTH`       | Minimum length for secret keys (JWT, encryption) | `32`                                | int        |
 | `MIN_PASSWORD_LENGTH`     | Minimum length for passwords   | `12`                                           | int        |
 | `REQUIRE_STRONG_SECRETS`  | Enforce strong secrets (fail startup on weak secrets) | `false`                        | bool       |
+| `VALIDATION_MIDDLEWARE_ENABLED` | Enable validation middleware for all requests | `false`                    | bool       |
+| `CORRELATION_ID_ENABLED` | Enable automatic correlation ID tracking for requests | `true`                   | bool       |
 
 !!! info "CORS Configuration"
     When `ENVIRONMENT=development`, CORS origins are automatically configured for common development ports (3000, 8080, gateway port). In production, origins are constructed from `APP_DOMAIN`. Override with `ALLOWED_ORIGINS`.
@@ -809,6 +811,11 @@ MCP Gateway includes automatic response compression middleware that reduces band
 | `LOG_BACKUP_COUNT`      | Number of backup files to keep     | `5`               | int                        |
 | `LOG_BUFFER_SIZE_MB`    | Size of in-memory log buffer (MB)  | `1.0`             | float > 0                  |
 | `PERMISSION_AUDIT_ENABLED` | Enable permission audit logging (writes a row per permission check) | `false` | bool |
+| `STRUCTURED_LOGGING_DATABASE_ENABLED` | Persist structured logs to database (enables `/api/logs/*` endpoints, impacts performance) | `false` | bool |
+| `AUDIT_TRAIL_ENABLED` | Enable audit trail logging to database for compliance | `false` | bool |
+| `SECURITY_LOGGING_ENABLED` | Enable security event logging to database | `false` | bool |
+| `TOKEN_USAGE_LOGGING_ENABLED` | Enable API token usage logging middleware | `true` | bool |
+| `TOKEN_LAST_USED_UPDATE_INTERVAL_MINUTES` | Minimum minutes between `last_used` timestamp updates (rate-limits DB writes) | `5` | int (1-1440) |
 
 ### Observability (OpenTelemetry)
 
@@ -885,6 +892,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS` | Hours to retain raw when rollup exists        | `1`      | 1-8760      |
 | `USE_POSTGRESDB_PERCENTILES`         | Use PostgreSQL-native percentile_cont            | `true`   | bool        |
 | `YIELD_BATCH_SIZE`                   | Rows per batch when streaming rollup queries     | `1000`   | 100-10000   |
+| `METRICS_AGGREGATION_AUTO_START`     | Auto-run log aggregation loop on application startup | `false` | bool       |
 
 ### Transport
 
@@ -1037,6 +1045,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `DEV_MODE` | Enable dev mode        | `false` | bool    |
 | `RELOAD`   | Auto-reload on changes | `false` | bool    |
 | `DEBUG`    | Debug logging          | `false` | bool    |
+| `TEMPLATES_AUTO_RELOAD` | Auto-reload Jinja2 templates on change | `false` | bool |
 
 ### Well-Known URI Configuration
 
