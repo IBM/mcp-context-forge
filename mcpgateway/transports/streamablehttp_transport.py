@@ -468,6 +468,30 @@ def get_user_email_from_context() -> str:
         return user.get("email") or user.get("sub") or "unknown"
     return str(user) if user else "unknown"
 
+async def update_headers_with_passthrough_headers(gateway: Any, request_headers: dict) -> dict:
+    """
+    Build headers for forwarding to remote gateway, including auth headers and passthrough headers.
+
+    Args:
+        gateway: Gateway ORM instance containing auth config and passthrough header list
+        request_headers: Original request headers from the client
+
+    Returns:
+        Dictionary of headers to include in the proxied request to the remote gateway    
+    """
+
+    headers = build_gateway_auth_headers(gateway)
+
+    # Forward passthrough headers if configured
+    if gateway.passthrough_headers and request_headers:
+        for header_name in gateway.passthrough_headers:
+            header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
+            if header_value:
+                headers[header_name] = header_value
+
+    return headers
+
+
 
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
@@ -483,14 +507,7 @@ async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user
     """
     try:
         # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         # Use MCP SDK to connect and list tools
         async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
@@ -526,14 +543,7 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
     """
     try:
         # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         logger.info(f"Proxying resources/list to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -574,13 +584,7 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
         List of Prompt objects from remote server
     """
     try:
-        headers = build_gateway_auth_headers(gateway)
-
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         logger.info(f"Proxying prompts/list to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -623,13 +627,7 @@ async def _proxy_get_prompt_to_gateway(
         GetPromptResult from remote server, or None on failure
     """
     try:
-        headers = build_gateway_auth_headers(gateway)
-
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         logger.info(f"Proxying prompts/get '{name}' to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -685,13 +683,7 @@ async def _proxy_complete_to_gateway(  # pylint: disable=unused-argument
         CompleteResult from remote server, or None on failure
     """
     try:
-        headers = build_gateway_auth_headers(gateway)
-
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         logger.info(f"Proxying completion/complete to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -740,23 +732,15 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
         List of content objects (TextResourceContents or BlobResourceContents) from remote server
     """
     try:
-        # Prepare headers with gateway auth
-        headers = build_gateway_auth_headers(gateway)
-
         # Get request headers
         request_headers = request_headers_var.get()
+
+        headers = await update_headers_with_passthrough_headers(gateway=gateway, request_headers=request_headers)
 
         # Forward X-Context-Forge-Gateway-Id header
         gw_id = extract_gateway_id_from_headers(request_headers)
         if gw_id:
             headers[GATEWAY_ID_HEADER] = gw_id
-
-        # Forward passthrough headers if configured
-        if gateway.passthrough_headers and request_headers:
-            for header_name in gateway.passthrough_headers:
-                header_value = request_headers.get(header_name.lower()) or request_headers.get(header_name)
-                if header_value:
-                    headers[header_name] = header_value
 
         logger.info(f"Proxying resources/read for {resource_uri} to gateway {gateway.id} at {gateway.url}")
         if meta:
@@ -1440,7 +1424,6 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
 
     Returns:
         GetPromptResult: Object containing the prompt messages and description.
-        Returns an empty list on failure or if no prompt content is found.
 
     Logs exceptions if any errors occur during retrieval.
 
@@ -1493,13 +1476,13 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     if gateway and getattr(gateway, "gateway_mode", "cache") == "direct_proxy" and settings.mcpgateway_direct_proxy_enabled:
                         if not await check_gateway_access(db, gateway, user_email, token_teams):
                             logger.warning(f"Access denied to gateway {gateway_id} in direct_proxy mode for user {user_email}")
-                            return []
+                            return types.GetPromptResult(messages=[], description=None)
 
                         logger.info(f"[GET PROMPT] Using direct_proxy mode for server {server_id}, gateway {gateway.id}")
                         result = await _proxy_get_prompt_to_gateway(gateway, request_headers, user_context, name=prompt_id, arguments=arguments, meta=meta_data)
                         if not result or not result.messages:
                             logger.warning(f"No content returned by upstream prompt: {prompt_id}")
-                            return []
+                            return types.GetPromptResult(messages=[], description=None)
                         message_dicts = [message.model_dump() for message in result.messages]
                         return types.GetPromptResult(messages=message_dicts, description=result.description)
 
