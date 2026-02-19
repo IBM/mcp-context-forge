@@ -6739,25 +6739,17 @@ async function editServer(serverId) {
 
         // Seed the persistent selection store with all associated item IDs
         resetEditSelections();
-        console.log("[Edit Server] Seeding selection store from server data:", {
-            associatedToolIds: server.associatedToolIds,
-            associatedResources: server.associatedResources,
-            associatedPrompts: server.associatedPrompts,
-        });
         if (server.associatedToolIds) {
             const toolSel = getEditSelections("edit-server-tools");
             server.associatedToolIds.forEach((id) => toolSel.add(String(id)));
-            console.log("[Edit Server] Seeded tools:", Array.from(toolSel));
         }
         if (server.associatedResources) {
             const resSel = getEditSelections("edit-server-resources");
             server.associatedResources.forEach((id) => resSel.add(String(id)));
-            console.log("[Edit Server] Seeded resources:", Array.from(resSel));
         }
         if (server.associatedPrompts) {
             const promptSel = getEditSelections("edit-server-prompts");
             server.associatedPrompts.forEach((id) => promptSel.add(String(id)));
-            console.log("[Edit Server] Seeded prompts:", Array.from(promptSel));
         }
         ensureEditStoreListeners();
 
@@ -7138,21 +7130,9 @@ function ensureEditStoreListeners() {
                 const value = String(target.value);
                 if (target.checked) {
                     sel.add(value);
-                    console.log(
-                        `[Selection Store] Added ${value} to ${containerId}. Size:`,
-                        sel.size,
-                    );
                 } else {
                     sel.delete(value);
-                    console.log(
-                        `[Selection Store] Removed ${value} from ${containerId}. Size:`,
-                        sel.size,
-                    );
                 }
-                console.log(
-                    `[Selection Store] Current contents of ${containerId}:`,
-                    Array.from(sel),
-                );
             }
         });
     });
@@ -15560,11 +15540,6 @@ async function handleServerFormSubmit(e) {
                 persistedToolIds = window._selectedAssociatedTools.slice();
             }
 
-            console.log(
-                "[Add Server] Persisted tool IDs from attribute/global:",
-                persistedToolIds,
-            );
-
             // Also capture currently visible checked boxes
             const visibleChecked = Array.from(
                 toolsContainer.querySelectorAll(
@@ -15572,22 +15547,12 @@ async function handleServerFormSubmit(e) {
                 ),
             ).map((cb) => cb.value);
 
-            console.log(
-                "[Add Server] Currently visible checked tool IDs:",
-                visibleChecked,
-            );
-
             // Merge visible selections into persisted set
             visibleChecked.forEach((id) => {
                 if (!persistedToolIds.includes(id)) {
                     persistedToolIds.push(id);
                 }
             });
-
-            console.log(
-                "[Add Server] Merged tool IDs for submission:",
-                persistedToolIds,
-            );
 
             // Override FormData with the full merged set
             if (persistedToolIds.length > 0) {
@@ -15597,12 +15562,6 @@ async function handleServerFormSubmit(e) {
                 });
             }
 
-            // Debug logging
-            const formDataValues = formData.getAll("associatedTools");
-            console.log(
-                "[Add Server] Final associatedTools in FormData:",
-                formDataValues,
-            );
         }
 
         // Handle resources
@@ -15648,10 +15607,6 @@ async function handleServerFormSubmit(e) {
                 });
             }
 
-            console.log(
-                "[Add Server] Final associatedResources in FormData:",
-                formData.getAll("associatedResources"),
-            );
         }
 
         // Handle prompts
@@ -15694,10 +15649,6 @@ async function handleServerFormSubmit(e) {
                 });
             }
 
-            console.log(
-                "[Add Server] Final associatedPrompts in FormData:",
-                formData.getAll("associatedPrompts"),
-            );
         }
 
         const response = await fetch(`${window.ROOT_PATH}/admin/servers`, {
@@ -16281,28 +16232,11 @@ async function handleEditServerFormSubmit(e) {
                     }
                 });
 
-            // Debug logging
-            console.log(
-                `[Edit Server Save] ${fieldName} selection store size:`,
-                sel.size,
-            );
-            console.log(
-                `[Edit Server Save] ${fieldName} selection store contents:`,
-                Array.from(sel),
-            );
-
             // Override FormData with the full store contents
             if (sel.size > 0) {
                 formData.delete(fieldName);
                 sel.forEach((uuid) => formData.append(fieldName, uuid));
             }
-
-            // Debug logging
-            const formDataValues = formData.getAll(fieldName);
-            console.log(
-                `[Edit Server Save] ${fieldName} in FormData after override:`,
-                formDataValues,
-            );
         });
 
         // Submit via fetch
@@ -28054,7 +27988,7 @@ async function serverSidePromptSearch(searchTerm) {
 
                     if (Array.isArray(selectedIds) && selectedIds.length > 0) {
                         const checkboxes = container.querySelectorAll(
-                            'input[name="associatedTools"]',
+                            'input[name="associatedPrompts"]',
                         );
                         // Convert all IDs to strings for comparison
                         const normalizedIds = selectedIds.map((id) =>
@@ -28569,10 +28503,6 @@ async function serverSideEditToolSearch(searchTerm) {
     const gatewayIdParam =
         selectedGatewayIds.length > 0 ? selectedGatewayIds.join(",") : "";
 
-    console.log(
-        `[Edit Tool Search] Searching with gateway filter: ${gatewayIdParam || "none (showing all)"}`,
-    );
-
     // Persist current selections before we replace/clear the container
     let serverToolsData = null;
     let currentCheckedTools = [];
@@ -28585,10 +28515,6 @@ async function serverSideEditToolSearch(searchTerm) {
 
         // Flush DOM state into the persistent store
         const toolSel = getEditSelections("edit-server-tools");
-        console.log(
-            "[Search Pre] Store contents before flush:",
-            Array.from(toolSel),
-        );
         container
             .querySelectorAll('input[name="associatedTools"]')
             .forEach((cb) => {
@@ -28599,20 +28525,11 @@ async function serverSideEditToolSearch(searchTerm) {
                     toolSel.delete(value);
                 }
             });
-        console.log(
-            "[Search Pre] Store contents after flush:",
-            Array.from(toolSel),
-        );
 
         // Also capture currently checked items (for backward compat with clear-search path)
         currentCheckedTools = Array.from(
             container.querySelectorAll('input[type="checkbox"]:checked'),
         ).map((cb) => cb.value);
-
-        console.log(
-            `[Edit Tool Search] Persisted ${currentCheckedTools.length} checked tools before search:`,
-            currentCheckedTools,
-        );
     } catch (e) {
         console.error(
             "Error preserving selections before edit tool search:",
@@ -28637,10 +28554,6 @@ async function serverSideEditToolSearch(searchTerm) {
             const toolsUrl = gatewayIdParam
                 ? `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector&gateway_id=${encodeURIComponent(gatewayIdParam)}`
                 : `${window.ROOT_PATH}/admin/tools/partial?page=1&per_page=50&render=selector`;
-
-            console.log(
-                `[Edit Tool Search] Loading default tools with URL: ${toolsUrl}`,
-            );
 
             const response = await fetch(toolsUrl);
             if (response.ok) {
@@ -28763,10 +28676,6 @@ async function serverSideEditToolSearch(searchTerm) {
         }
         const searchUrl = `${window.ROOT_PATH}/admin/tools/search?${params.toString()}`;
 
-        console.log(
-            `[Edit Tool Search] Searching tools with URL: ${searchUrl}`,
-        );
-
         const response = await fetch(searchUrl);
 
         if (!response.ok) {
@@ -28813,15 +28722,6 @@ async function serverSideEditToolSearch(searchTerm) {
                 const dataAttr = container.getAttribute("data-server-tools");
                 const serverToolNames = new Set();
 
-                console.log(
-                    "[Search Restore] Store contents before restore:",
-                    Array.from(persistedToolIds),
-                );
-                console.log(
-                    "[Search Restore] data-server-tools attribute:",
-                    dataAttr,
-                );
-
                 if (dataAttr) {
                     const serverTools = JSON.parse(dataAttr);
                     if (Array.isArray(serverTools)) {
@@ -28831,19 +28731,9 @@ async function serverSideEditToolSearch(searchTerm) {
                     }
                 }
 
-                console.log(
-                    "[Search Restore] serverToolNames:",
-                    Array.from(serverToolNames),
-                );
-
                 if (persistedToolIds.size > 0 || serverToolNames.size > 0) {
                     const checkboxes = container.querySelectorAll(
                         'input[name="associatedTools"]',
-                    );
-                    console.log(
-                        "[Search Restore] Found",
-                        checkboxes.length,
-                        "checkboxes to check",
                     );
                     checkboxes.forEach((cb) => {
                         const toolId = String(cb.value);
@@ -28853,10 +28743,6 @@ async function serverSideEditToolSearch(searchTerm) {
                         const shouldCheck =
                             persistedToolIds.has(toolId) ||
                             (toolName && serverToolNames.has(String(toolName)));
-                        console.log(
-                            `[Search Restore] Tool ${toolId} (${toolName}):`,
-                            shouldCheck ? "CHECKING" : "not checking",
-                        );
                         if (shouldCheck) {
                             cb.checked = true;
                             persistedToolIds.add(toolId);
