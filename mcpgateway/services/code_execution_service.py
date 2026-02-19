@@ -1934,7 +1934,8 @@ class CodeExecutionService:
 
     def _tool_matches_mount_rules(self, tool: DbTool, mount_rules: Dict[str, Any]) -> bool:
         """Evaluate include/exclude mount rules against a candidate tool."""
-        tags = set(tool.tags or [])
+        raw_tags = tool.tags or []
+        tags = set(t if isinstance(t, str) else t.get("name", str(t)) for t in raw_tags)
         include_tags = set(mount_rules.get("include_tags") or [])
         exclude_tags = set(mount_rules.get("exclude_tags") or [])
         include_tools = set(mount_rules.get("include_tools") or [])
