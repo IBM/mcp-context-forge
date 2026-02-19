@@ -10675,6 +10675,72 @@ async def admin_delete_tool(tool_id: str, request: Request, db: Session = Depend
     return RedirectResponse(f"{root_path}/admin#tools", status_code=303)
 
 
+@admin_router.get("/fetch-openapi-spec")
+@require_permission("tools.read", allow_admin_bypass=False)
+async def fetch_openapi_spec(
+    base_url: str = Query(..., description="Base URL to fetch OpenAPI spec from"),
+    user=Depends(get_current_user_with_permissions),
+) -> JSONResponse:
+    """
+    Fetch OpenAPI spec from a given base URL.
+    
+    This endpoint acts as a proxy to fetch OpenAPI specs from external services,
+    avoiding CORS issues when fetching from the browser.
+    
+    Args:
+        base_url: The base URL to fetch the OpenAPI spec from
+        user: Authenticated user dependency
+        
+    Returns:
+        JSONResponse with the OpenAPI spec or error message
+    """
+    try:
+        # Validate URL
+        if not base_url.startswith(("http://", "https://")):
+            return ORJSONResponse(
+                content={"error": "Invalid URL: must start with http:// or https://"},
+                status_code=400
+            )
+        
+        # Construct OpenAPI spec URL
+        openapi_url = f"{base_url.rstrip('/')}/openapi.json"
+        LOGGER.info(f"Fetching OpenAPI spec from {openapi_url}")
+        
+        # Fetch the spec with timeout
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(openapi_url)
+            response.raise_for_status()
+            spec = response.json()
+            
+        # Validate basic structure
+        if not isinstance(spec, dict) or "paths" not in spec:
+            return ORJSONResponse(
+                content={"error": "Invalid OpenAPI spec: missing 'paths' key"},
+                status_code=400
+            )
+            
+        return ORJSONResponse(content=spec, status_code=200)
+        
+    except httpx.TimeoutException:
+        LOGGER.warning(f"Timeout fetching OpenAPI spec from {base_url}")
+        return ORJSONResponse(
+            content={"error": f"Timeout fetching OpenAPI spec from {base_url}"},
+            status_code=504
+        )
+    except httpx.HTTPStatusError as e:
+        LOGGER.warning(f"HTTP error fetching OpenAPI spec: {e}")
+        return ORJSONResponse(
+            content={"error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}"},
+            status_code=e.response.status_code
+        )
+    except Exception as e:
+        LOGGER.error(f"Error fetching OpenAPI spec: {e}")
+        return ORJSONResponse(
+            content={"error": f"Failed to fetch OpenAPI spec: {str(e)}"},
+            status_code=500
+        )
+
+
 @admin_router.post("/tools/{tool_id}/state")
 @require_permission("tools.update", allow_admin_bypass=False)
 async def admin_set_tool_state(
