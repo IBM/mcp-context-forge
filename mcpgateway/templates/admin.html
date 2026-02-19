@@ -11131,7 +11131,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         onchange="toggleServerCodeExecutionSection('edit')"
                       >
                         <option value="standard">standard</option>
-                        {% if code_execution_enabled %}<option value="code_execution">code_execution</option>{% endif %}
+                        <option value="code_execution" {% if not code_execution_enabled %}disabled{% endif %}>code_execution</option>
                       </select>
                       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         `code_execution` uses mount rules and sandbox policy instead of attaching explicit tools.
