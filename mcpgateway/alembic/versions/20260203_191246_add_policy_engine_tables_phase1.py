@@ -20,6 +20,10 @@ depends_on = None
 
 def upgrade():
     """Create policy engine tables."""
+    # Check if tables already exist (idempotency)
+    inspector = sa.inspect(op.get_bind())
+    if "access_permissions" in inspector.get_table_names():
+        return
 
     # AccessPermission table
     op.create_table(
@@ -31,7 +35,7 @@ def upgrade():
         sa.Column("action", sa.String(length=50), nullable=True),
         sa.Column("is_system", sa.Boolean(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("name"),
@@ -48,7 +52,7 @@ def upgrade():
         sa.Column("priority", sa.Integer(), nullable=True),
         sa.Column("conditions", sa.JSON, nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_by", sa.String(length=255), nullable=True),
         sa.PrimaryKeyConstraint("id"),
@@ -60,7 +64,7 @@ def upgrade():
     op.create_table(
         "access_decisions",
         sa.Column("id", sa.UUID(), nullable=False),
-        sa.Column("timestamp", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("timestamp", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("subject_email", sa.String(length=255), nullable=True),
         sa.Column("subject_type", sa.String(length=50), nullable=True),
         sa.Column("permission", sa.String(length=100), nullable=True),
@@ -91,7 +95,7 @@ def upgrade():
         sa.Column("allowed_roles", sa.JSON, nullable=True),
         sa.Column("denied_users", sa.JSON, nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=True),
         sa.ForeignKeyConstraint(
             ["policy_id"],
             ["access_policies.id"],

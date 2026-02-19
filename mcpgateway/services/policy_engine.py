@@ -387,7 +387,7 @@ def require_permission_v2(permission: str, resource_type: Optional[str] = None, 
 
             # Extract user from kwargs (supports different parameter names)
             user = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user_ctx") or kwargs.get("current_user")
-            db = kwargs.get("db") or (user.get("db") if isinstance(user, dict) else getattr(user, "db", None))
+            db = kwargs.get("db") or kwargs.get("_db") or (user.get("db") if isinstance(user, dict) else getattr(user, "db", None))
 
             if not user:
                 raise HTTPException(status_code=401, detail="Authentication required")
