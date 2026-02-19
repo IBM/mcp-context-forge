@@ -2675,7 +2675,16 @@ class ToolService:
         """Invoke shell_exec/fs_browse on code_execution virtual servers."""
         headers = request_headers or {}
 
-        global_context = plugin_global_context or GlobalContext(metadata={}, state={})
+        if plugin_global_context is not None:
+            global_context = plugin_global_context
+        else:
+            request_id = get_correlation_id() or uuid.uuid4().hex
+            global_context = GlobalContext(
+                request_id=request_id,
+                server_id=server.id if server else "unknown",
+                tenant_id=None,
+                user=app_user_email,
+            )
         context_table = plugin_context_table
 
         # Fire plugin pre-invoke for shell_exec/fs_browse meta-tools.
