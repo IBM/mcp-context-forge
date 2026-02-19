@@ -44,3 +44,4 @@ nav:
   - 39 Adopt Fully Independent Plugin Crates Architecture: 039-adopt-fully-independent-plugin-crates-architecture.md
   - 40 Flexible Admin UI Section Visibility: 040-flexible-admin-ui-sections.md
   - 41 Secure Code Execution and Virtual Tool Filesystem: 041-secure-code-execution-virtual-tool-filesystem.md
+  - 42 Code Execution Session Persistence: 042-code-execution-session-persistence.md
