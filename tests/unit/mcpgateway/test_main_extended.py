@@ -4122,7 +4122,7 @@ class TestExportImportEndpoints:
 
         # Create mock request with invalid strategy
         mock_request = MagicMock()
-        mock_request.body = AsyncMock(return_value=b'{"import_data": {}, "conflict_strategy": "invalid"}')
+        mock_request.body = AsyncMock(return_value=b'{"import_data": {"tools": []}, "conflict_strategy": "invalid"}')
 
         with pytest.raises(HTTPException) as excinfo:
             await main_mod.import_configuration.__wrapped__(request=mock_request, db=MagicMock(), user={"email": "user@example.com"})
