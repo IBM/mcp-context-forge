@@ -940,7 +940,13 @@ class TeamManagementService:
                         team_data = team.copy()
                         for key, value in team_data.items():
                             if key in ("created_at", "updated_at") and isinstance(value, str):
-                                team_data[key] = datetime.fromisoformat(value)
+                                # Parse ISO format datetime (includes timezone info from isoformat())
+                                dt = datetime.fromisoformat(value)
+                                # Ensure timezone-aware (UTC) to match DB model
+                                if dt.tzinfo is None:
+                                    from datetime import timezone
+                                    dt = dt.replace(tzinfo=timezone.utc)
+                                team_data[key] = dt
                         teams.append(CachedTeamData(**team_data))
                     return teams
                 except Exception as e:
