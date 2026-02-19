@@ -1363,7 +1363,7 @@
       "type": "boolean"
     },
     "code_execution_enabled": {
-      "default": true,
+      "default": false,
       "description": "Enable code_execution virtual servers and shell_exec/fs_browse meta-tools",
       "title": "Code Execution Enabled",
       "type": "boolean"

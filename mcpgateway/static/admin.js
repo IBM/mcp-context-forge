@@ -337,17 +337,14 @@ const CODE_EXECUTION_FIELD_TEMPLATES = Object.freeze({
     sandbox_policy: JSON.stringify(
         {
             runtime: "deno",
-            limits: {
-                max_execution_time_ms: 30000,
-                max_memory_mb: 256,
-                max_runs_per_minute: 20,
-            },
-            permissions: {
-                network: {
-                    allow_tool_calls: true,
-                    allow_raw_http: false,
-                },
-            },
+            max_execution_time_ms: 30000,
+            max_memory_mb: 256,
+            max_cpu_percent: 50,
+            max_network_connections: 0,
+            max_file_size_mb: 10,
+            max_total_disk_mb: 100,
+            max_runs_per_minute: 20,
+            allow_raw_http: false,
         },
         null,
         2,

@@ -3418,6 +3418,7 @@ async def admin_ui(
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
+            "code_execution_enabled": settings.code_execution_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
             "observability_enabled": getattr(settings, "observability_enabled", False),

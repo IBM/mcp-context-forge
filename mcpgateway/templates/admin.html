@@ -3104,7 +3104,7 @@
                 onchange="toggleServerCodeExecutionSection('create')"
               >
                 <option value="standard" selected>standard</option>
-                <option value="code_execution">code_execution</option>
+                {% if code_execution_enabled %}<option value="code_execution">code_execution</option>{% endif %}
               </select>
               <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 `code_execution` exposes `shell_exec` and `fs_browse` meta-tools with a virtual tool filesystem.
@@ -3168,7 +3168,7 @@
                     id="server-sandbox-policy"
                     name="sandbox_policy"
                     rows="6"
-                    placeholder="{&quot;runtime&quot;:&quot;deno&quot;,&quot;limits&quot;:{&quot;max_execution_time_ms&quot;:30000,&quot;max_memory_mb&quot;:256},&quot;permissions&quot;:{&quot;network&quot;:{&quot;allow_tool_calls&quot;:true,&quot;allow_raw_http&quot;:false}}}"
+                    placeholder="{&quot;runtime&quot;:&quot;deno&quot;,&quot;max_execution_time_ms&quot;:30000,&quot;max_memory_mb&quot;:256,&quot;max_runs_per_minute&quot;:20,&quot;allow_raw_http&quot;:false}"
                     class="mt-1 px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:text-gray-300 font-mono text-xs"
                   ></textarea>
                   <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -11131,7 +11131,7 @@ class="fixed z-50 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         onchange="toggleServerCodeExecutionSection('edit')"
                       >
                         <option value="standard">standard</option>
-                        <option value="code_execution">code_execution</option>
+                        {% if code_execution_enabled %}<option value="code_execution">code_execution</option>{% endif %}
                       </select>
                       <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
                         `code_execution` uses mount rules and sandbox policy instead of attaching explicit tools.

@@ -3963,7 +3963,7 @@ class ServerCreate(BaseModel):
         if self.server_type == "code_execution":
             # Apply defaults only when this is a code execution server.
             if self.stub_language is None:
-                runtime = self.sandbox_policy.runtime if self.sandbox_policy else "deno"
+                runtime = self.sandbox_policy.runtime if self.sandbox_policy else settings.code_execution_default_runtime
                 self.stub_language = "typescript" if runtime == "deno" else "python"
         else:
             # Keep non-code_execution servers clean to avoid accidental config drift.

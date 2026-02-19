@@ -354,7 +354,8 @@ describe("applyCodeExecutionFieldTemplate", () => {
 
         const parsed = JSON.parse(field.value);
         expect(parsed.runtime).toBe("deno");
-        expect(parsed.permissions.network.allow_tool_calls).toBe(true);
+        expect(parsed.max_execution_time_ms).toBe(30000);
+        expect(parsed.allow_raw_http).toBe(false);
     });
 
     test("applies template to CodeMirror-backed textarea and keeps it focused", () => {

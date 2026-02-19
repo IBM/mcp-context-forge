@@ -654,7 +654,7 @@
               "type": "string",
               "enum": ["true", "false"],
               "description": "Enable code_execution virtual servers and related meta-tools",
-              "default": "true"
+              "default": "false"
             },
             "CODE_EXECUTION_SHELL_EXEC_ENABLED": {
               "type": "string",
