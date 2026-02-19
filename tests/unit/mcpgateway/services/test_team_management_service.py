@@ -1789,7 +1789,10 @@ class TestTeamManagementService:
     # ---- get_user_teams cache paths ---- #
     @pytest.mark.asyncio
     async def test_get_user_teams_cache_hit_with_objects(self, service, mock_db):
-        """get_user_teams returns teams from cache when cache hit with team objects."""
+        """get_user_teams returns CachedTeamData from cache when cache hit with team objects."""
+        # Third-Party
+        from mcpgateway.schemas import CachedTeamData
+
         now = datetime.now(timezone.utc)
         cached_teams = [
             {
@@ -1813,6 +1816,8 @@ class TestTeamManagementService:
 
         result = await service.get_user_teams("user@test.com")
         assert len(result) == 1
+        # Verify it returns CachedTeamData (Pydantic model), not EmailTeam (SQLAlchemy ORM)
+        assert isinstance(result[0], CachedTeamData)
         assert result[0].id == "team-1"
         assert result[0].name == "Team One"
 

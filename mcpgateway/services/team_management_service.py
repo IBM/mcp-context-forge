@@ -33,6 +33,7 @@ from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
+from mcpgateway.schemas import CachedTeamData
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.pagination import unified_paginate
@@ -886,18 +887,31 @@ class TeamManagementService:
             logger.error(f"Failed to get member {user_email} in team {team_id}: {e}")
             return None
 
-    async def get_user_teams(self, user_email: str, include_personal: bool = True) -> List[EmailTeam]:
+    async def get_user_teams(self, user_email: str, include_personal: bool = True) -> Union[List[EmailTeam], List[CachedTeamData]]:
         """Get all teams a user belongs to.
 
         Uses caching to reduce database queries (called 20+ times per request).
         Cache can be disabled via AUTH_CACHE_TEAMS_ENABLED=false.
+
+        IMPORTANT: When returning from cache, this method returns List[CachedTeamData]
+        (Pydantic models) instead of List[EmailTeam] (SQLAlchemy ORM objects).
+        This prevents DetachedInstanceError when callers attempt to access relationships
+        or perform session operations on cached objects.
+
+        Callers should treat cached results as read-only data and avoid:
+        - Accessing relationships (e.g., team.members)
+        - Database operations (db.add(), db.merge(), db.commit())
+        - Modifying and persisting changes
+
+        If you need full ORM functionality, disable caching or refetch from database.
 
         Args:
             user_email: Email of the user
             include_personal: Whether to include personal teams
 
         Returns:
-            List[EmailTeam]: List of teams the user belongs to
+            Union[List[EmailTeam], List[CachedTeamData]]: List of teams the user belongs to.
+                Returns EmailTeam objects from database or CachedTeamData from cache.
 
         Examples:
             User dashboard showing team memberships.
@@ -911,10 +925,10 @@ class TeamManagementService:
             if cached_teams is not None:
                 if not cached_teams:  # Empty list = user has no teams
                     return []
-                # Reconstruct EmailTeam objects from cached dicts
+                # Return Pydantic models from cached dicts (read-only, not attached to session)
                 try:
                     teams = [
-                        EmailTeam(
+                        CachedTeamData(
                             id=team["id"],
                             name=team["name"],
                             slug=team.get("slug"),
