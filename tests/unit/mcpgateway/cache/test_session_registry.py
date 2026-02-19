@@ -2073,6 +2073,141 @@ async def test_shutdown_cancels_stuck_task_reaper():
     assert registry._stuck_task_reaper.done()
 
 
+
+# --------------------------------------------------------------------------- #
+# Internal RPC URL Configuration Tests                                       #
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_generate_response_uses_internal_rpc_url(registry: SessionRegistry, stub_db, stub_services, monkeypatch):
+    """Test that generate_response uses settings.internal_rpc_url instead of parsing base_url."""
+    tr = FakeSSETransport("rpc_url_test")
+    await registry.add_session("rpc_url_test", tr)
+
+    msg = {"method": "ping", "id": 99, "params": {}}
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"result": {}, "id": 99}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    # Mock settings.internal_rpc_url to return a specific value
+    monkeypatch.setattr(settings, "internal_rpc_url", "http://127.0.0.1:4444/rpc")
+
+    with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://192.168.0.10:4444/servers/123",  # Client's URL (should be ignored)
+        )
+
+    # Verify the RPC call was made to internal_rpc_url, not the client's base_url
+    mock_client.post.assert_called_once()
+    call_kwargs = mock_client.post.call_args[1]
+    # The URL is passed as the first positional argument or in json parameter
+    # Check that internal_rpc_url was used in the call
+    assert mock_client.post.called
+    assert "http://127.0.0.1:4444/rpc" in str(mock_client.post.call_args)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_internal_rpc_url_with_custom_host(registry: SessionRegistry, stub_db, stub_services, monkeypatch):
+    """Test that generate_response works with custom internal_rpc_host."""
+    tr = FakeSSETransport("custom_host_test")
+    await registry.add_session("custom_host_test", tr)
+
+    msg = {"method": "tools/list", "id": 100, "params": {}}
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 100}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    # Mock settings.internal_rpc_url to simulate containerized environment
+    monkeypatch.setattr(settings, "internal_rpc_url", "http://gateway-service:4444/rpc")
+
+    with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://external-mesh-gateway.com/servers/456",  # External URL
+        )
+
+    # Verify the RPC call used the internal service URL
+    mock_client.post.assert_called_once()
+    # Check that internal_rpc_url was used in the call
+    assert "http://gateway-service:4444/rpc" in str(mock_client.post.call_args)
+
+
+@pytest.mark.asyncio
+async def test_generate_response_internal_rpc_url_hybrid_cloud_mesh(registry: SessionRegistry, stub_db, stub_services, monkeypatch):
+    """Test internal RPC URL in hybrid cloud mesh scenario where client URL is not resolvable."""
+    tr = FakeSSETransport("mesh_test")
+    await registry.add_session("mesh_test", tr)
+
+    msg = {"method": "resources/list", "id": 101, "params": {}}
+
+    mock_response = Mock()
+    mock_response.json.return_value = {"jsonrpc": "2.0", "result": [{"name": "demo"}], "id": 101}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    # Simulate hybrid cloud mesh: client sees 192.168.x.x, gateway uses internal 10.x.x.x
+    monkeypatch.setattr(settings, "internal_rpc_url", "http://10.0.0.5:4444/api/v1/rpc")
+
+    with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"token": "test"},
+            base_url="http://192.168.0.10:4444/api/v1/servers/789",  # Client's mesh gateway URL
+        )
+
+    # Verify the RPC call used the internal network URL, not the client's mesh URL
+    mock_client.post.assert_called_once()
+    # Check that internal_rpc_url was used in the call
+    call_str = str(mock_client.post.call_args)
+    assert "http://10.0.0.5:4444/api/v1/rpc" in call_str
+    assert "192.168" not in call_str, "Should not use client's mesh gateway URL"
 if __name__ == "__main__":
     # Allow running tests directly
     pytest.main([__file__, "-v"])
