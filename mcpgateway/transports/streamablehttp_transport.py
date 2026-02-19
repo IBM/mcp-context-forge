@@ -468,6 +468,7 @@ def get_user_email_from_context() -> str:
         return user.get("email") or user.get("sub") or "unknown"
     return str(user) if user else "unknown"
 
+
 async def update_headers_with_passthrough_headers(gateway: Any, request_headers: dict) -> dict:
     """
     Build headers for forwarding to remote gateway, including auth headers and passthrough headers.
@@ -477,7 +478,7 @@ async def update_headers_with_passthrough_headers(gateway: Any, request_headers:
         request_headers: Original request headers from the client
 
     Returns:
-        Dictionary of headers to include in the proxied request to the remote gateway    
+        Dictionary of headers to include in the proxied request to the remote gateway
     """
 
     headers = build_gateway_auth_headers(gateway)
@@ -490,7 +491,6 @@ async def update_headers_with_passthrough_headers(gateway: Any, request_headers:
                 headers[header_name] = header_value
 
     return headers
-
 
 
 async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
@@ -608,7 +608,7 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
 
 
 async def _proxy_get_prompt_to_gateway(
-    gateway: Any, request_headers: dict, user_context: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None
+    gateway: Any, request_headers: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None
 ) -> Optional[types.GetPromptResult]:  # pylint: disable=unused-argument
     """Proxy prompts/get request directly to remote MCP gateway using MCP SDK.
 
@@ -618,7 +618,6 @@ async def _proxy_get_prompt_to_gateway(
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        user_context: User context (not used - auth comes from gateway config)
         name: Prompt name to retrieve
         arguments: Optional argument substitutions
         meta: Request metadata (_meta) from the original request
