@@ -1292,3 +1292,303 @@ async def test_require_admin_auth_email_auth_fallback_returns_json_401(monkeypat
 
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
     assert "Authentication required. Please login with email/password or use basic auth." in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# require_auth_header_first
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_header_wins_over_request_cookie(monkeypatch):
+    """Bearer Authorization header wins over a jwt_token present in request.cookies."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    header_token = _token({"user": "header-user"})
+    cookie_token = _token({"user": "cookie-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    # Cookie is set directly in request.cookies (the path require_auth reads via step-1)
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth_header_first(
+        auth_header=f"Bearer {header_token}",
+        jwt_token=None,  # cookie not passed as parameter either
+        request=mock_request,
+    )
+    assert payload["user"] == "header-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_header_wins_over_jwt_token_param(monkeypatch):
+    """Bearer Authorization header wins over the jwt_token keyword argument."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    header_token = _token({"user": "header-user"})
+    cookie_token = _token({"user": "cookie-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    payload = await vc.require_auth_header_first(
+        auth_header=f"Bearer {header_token}",
+        jwt_token=cookie_token,
+        request=mock_request,
+    )
+    assert payload["user"] == "header-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_cookie_used_when_no_header(monkeypatch):
+    """Cookie is used when no Authorization header is present."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    cookie_token = _token({"user": "cookie-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth_header_first(
+        auth_header=None,
+        jwt_token=None,
+        request=mock_request,
+    )
+    assert payload["user"] == "cookie-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_jwt_token_param_fallback(monkeypatch):
+    """jwt_token parameter is used when no header and no cookie in request.cookies."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    param_token = _token({"user": "param-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    payload = await vc.require_auth_header_first(
+        auth_header=None,
+        jwt_token=param_token,
+        request=mock_request,
+    )
+    assert payload["user"] == "param-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_no_token_raises_401(monkeypatch):
+    """Raises 401 when auth_required=True and no token from any source."""
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert exc.value.detail == "Not authenticated"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_returns_anonymous_when_not_required(monkeypatch):
+    """Returns 'anonymous' when auth_required=False and no token."""
+    monkeypatch.setattr(vc.settings, "auth_required", False, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+    assert result == "anonymous"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_non_bearer_header_falls_to_cookie(monkeypatch):
+    """Unknown auth scheme in header does not extract a token; falls through to cookie."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    cookie_token = _token({"user": "cookie-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth_header_first(
+        auth_header="Token some-opaque-value",
+        jwt_token=None,
+        request=mock_request,
+    )
+    assert payload["user"] == "cookie-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_no_request_uses_jwt_token_param(monkeypatch):
+    """When request=None a default empty request is created; jwt_token param provides auth."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    param_token = _token({"user": "param-user"})
+
+    payload = await vc.require_auth_header_first(auth_header=None, jwt_token=param_token, request=None)
+    assert payload["user"] == "param-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_proxy_auth_returns_proxy_user(monkeypatch):
+    """Proxy user is returned when mcp_client_auth_enabled=False and trust_proxy_auth=True."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {"x-authenticated-user": "proxy-user@example.com"}
+    mock_request.cookies = {}
+
+    result = await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+    assert result["sub"] == "proxy-user@example.com"
+    assert result["source"] == "proxy"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_proxy_auth_missing_header_raises_401(monkeypatch):
+    """When proxy auth is required but header missing, raises 401."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "proxy_user_header", "x-authenticated-user", raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Proxy authentication header required" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_no_auth_method_configured_raises_401(monkeypatch):
+    """mcp_client_auth_enabled=False without proxy trust raises 401 when auth required."""
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", False, raising=False)
+    monkeypatch.setattr(vc.settings, "trust_proxy_auth", False, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {}
+
+    with pytest.raises(HTTPException) as exc:
+        await vc.require_auth_header_first(auth_header=None, jwt_token=None, request=mock_request)
+
+    assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+    assert "Authentication required but no auth method configured" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_basic_auth_when_docs_allowed(monkeypatch):
+    """Basic auth header is handled when docs_allow_basic_auth=True."""
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_user", "alice", raising=False)
+    monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+
+    basic_header = f"Basic {base64.b64encode(b'alice:secret').decode()}"
+    result = await vc.require_auth_header_first(auth_header=basic_header, jwt_token=None, request=None)
+    assert result == "alice"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_empty_string_auth_header_falls_to_cookie(monkeypatch):
+    """Empty string auth_header is treated as absent; falls through to cookie."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    cookie_token = _token({"user": "cookie-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth_header_first(
+        auth_header="",  # empty string, not None
+        jwt_token=None,
+        request=mock_request,
+    )
+    assert payload["user"] == "cookie-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_bearer_with_no_token_falls_to_cookie(monkeypatch):
+    """'Bearer ' with no token value falls through to cookie (empty param is falsy)."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    cookie_token = _token({"user": "cookie-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth_header_first(
+        auth_header="Bearer ",  # Bearer scheme with empty token
+        jwt_token=None,
+        request=mock_request,
+    )
+    assert payload["user"] == "cookie-user"
+
+
+@pytest.mark.asyncio
+async def test_require_auth_header_first_request_cookie_wins_over_jwt_token_param(monkeypatch):
+    """When no header, request.cookies jwt_token wins over jwt_token parameter."""
+    monkeypatch.setattr(vc.settings, "jwt_secret_key", SECRET, raising=False)
+    monkeypatch.setattr(vc.settings, "jwt_algorithm", ALGO, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+
+    cookie_token = _token({"user": "cookie-user"})
+    param_token = _token({"user": "param-user"})
+
+    mock_request = Mock(spec=Request)
+    mock_request.headers = {}
+    mock_request.cookies = {"jwt_token": cookie_token}
+
+    payload = await vc.require_auth_header_first(
+        auth_header=None,
+        jwt_token=param_token,  # different token in parameter
+        request=mock_request,
+    )
+    # request.cookies wins over jwt_token parameter (step 2 before step 3)
+    assert payload["user"] == "cookie-user"

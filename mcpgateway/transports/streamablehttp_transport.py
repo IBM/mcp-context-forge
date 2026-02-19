@@ -68,7 +68,7 @@ from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
 from mcpgateway.utils.orjson_response import ORJSONResponse
-from mcpgateway.utils.verify_credentials import require_auth_override, verify_credentials
+from mcpgateway.utils.verify_credentials import require_auth_header_first, verify_credentials
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -994,12 +994,13 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         req_headers = dict(request.headers)
 
         # Extract and verify user context
+        # Use require_auth_header_first to match streamable_http_auth token precedence:
+        # Authorization header > request cookies > jwt_token parameter
         auth_header = req_headers.get("authorization")
-        # In stateful session, cookie might be more reliable
         cookie_token = request.cookies.get("jwt_token")
 
         try:
-            raw_payload = await require_auth_override(auth_header=auth_header, jwt_token=cookie_token, request=request)
+            raw_payload = await require_auth_header_first(auth_header=auth_header, jwt_token=cookie_token, request=request)
             if isinstance(raw_payload, str):  # "anonymous"
                 user_ctx = {}
             elif isinstance(raw_payload, dict):
@@ -1032,7 +1033,7 @@ def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     ``_get_request_context_or_default`` returns an identical shape.
 
     Args:
-        payload: Raw JWT payload dict from ``require_auth_override``.
+        payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated.

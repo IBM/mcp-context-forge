@@ -8034,10 +8034,10 @@ async def test_get_request_context_stateful_success(monkeypatch):
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
-    # Use realistic JWT payload shape (raw from require_auth_override)
+    # Use realistic JWT payload shape (raw from require_auth_header_first)
     raw_jwt = {"sub": "test_user@example.com", "token_use": "api", "teams": ["team-1"]}
     mock_auth_override = AsyncMock(return_value=raw_jwt)
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth_override)
 
     # Mock normalization to avoid DB/cache dependencies
     normalized = {"email": "test_user@example.com", "teams": ["team-1"], "is_admin": False, "is_authenticated": True}
@@ -8075,7 +8075,7 @@ async def test_get_request_context_auth_failure(monkeypatch, caplog):
     mock_ctx.request = mock_request
 
     mock_auth_override = AsyncMock(side_effect=Exception("Auth failed"))
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth_override)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth_override)
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
@@ -8246,7 +8246,7 @@ async def test_get_request_context_anonymous_user(monkeypatch):
     mock_ctx.request = mock_request
 
     mock_auth = AsyncMock(return_value="anonymous")
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth)
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
@@ -8276,10 +8276,10 @@ async def test_get_request_context_url_without_server_id(monkeypatch):
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
-    # Use realistic JWT payload shape (raw from require_auth_override)
+    # Use realistic JWT payload shape (raw from require_auth_header_first)
     raw_jwt = {"sub": "test@example.com", "token_use": "api"}
     mock_auth = AsyncMock(return_value=raw_jwt)
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth)
 
     # Mock normalization to avoid DB/cache dependencies
     normalized = {"email": "test@example.com", "teams": [], "is_admin": False, "is_authenticated": True}
@@ -8361,7 +8361,7 @@ async def test_get_request_context_generic_exception_fallback(caplog):
 
 @pytest.mark.asyncio
 async def test_get_request_context_cookie_token_used(monkeypatch):
-    """Cookie JWT token is passed to require_auth_override when present."""
+    """Cookie JWT token is passed to require_auth_header_first when present and no header."""
     # Standard
     from unittest.mock import PropertyMock
 
@@ -8378,10 +8378,10 @@ async def test_get_request_context_cookie_token_used(monkeypatch):
     mock_ctx = MagicMock()
     mock_ctx.request = mock_request
 
-    # Use realistic JWT payload shape (raw from require_auth_override)
+    # Use realistic JWT payload shape (raw from require_auth_header_first)
     raw_jwt = {"sub": "cookie-user@test.com", "token_use": "session"}
     mock_auth = AsyncMock(return_value=raw_jwt)
-    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_override", mock_auth)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth)
 
     # Mock normalization to avoid DB/cache dependencies
     normalized = {"email": "cookie-user@test.com", "teams": [], "is_admin": False, "is_authenticated": True}
@@ -8396,6 +8396,61 @@ async def test_get_request_context_cookie_token_used(monkeypatch):
             mock_auth.assert_awaited_once_with(auth_header=None, jwt_token="cookie-jwt-value", request=mock_request)
     finally:
         server_id_var.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_request_context_header_wins_over_cookie(monkeypatch):
+    """Identity drift fix: Authorization header token is used when both header and cookie JWT present.
+
+    This test reproduces the bug where _get_request_context_or_default used
+    cookie-first precedence (via require_auth_override -> require_auth) while
+    streamable_http_auth middleware used header-first.  After the fix, the
+    fallback must match the middleware: header beats cookie.
+    """
+    # Standard
+    from unittest.mock import PropertyMock
+
+    # First-Party
+    import mcpgateway.utils.verify_credentials as vc
+    from mcpgateway.transports.streamablehttp_transport import _get_request_context_or_default, mcp_app, server_id_var
+
+    t = server_id_var.set("default_server_id")
+
+    mock_request = MagicMock()
+    mock_request.url.path = "/servers/aabb-ccdd-1234/mcp"
+    mock_request.headers = {"authorization": "Bearer header-token-value"}
+    mock_request.cookies = {"jwt_token": "cookie-token-value"}
+
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    # Capture which token reaches verify_credentials_cached
+    captured_tokens: list[str] = []
+
+    async def fake_verify(token, request=None):
+        captured_tokens.append(token)
+        return {"sub": "verified-user", "aud": "mcpgateway-api"}
+
+    monkeypatch.setattr(vc, "verify_credentials_cached", fake_verify)
+    monkeypatch.setattr(vc.settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(vc.settings, "auth_required", True, raising=False)
+    monkeypatch.setattr(vc.settings, "docs_allow_basic_auth", False, raising=False)
+
+    normalized = {"email": "verified-user", "teams": [], "is_admin": False, "is_authenticated": True}
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload", lambda payload: normalized)
+
+    try:
+        with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            sid, headers, user = await _get_request_context_or_default()
+
+            assert captured_tokens, "verify_credentials_cached was never called"
+            assert captured_tokens[0] == "header-token-value", (
+                f"Expected header token to be used, got {captured_tokens[0]!r}. "
+                "Cookie-first bug: cookie token was used instead of Authorization header."
+            )
+            assert user == normalized
+    finally:
+        server_id_var.reset(t)
 
 
 # ---------------------------------------------------------------------------
