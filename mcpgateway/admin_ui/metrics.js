@@ -1263,7 +1263,7 @@ export const createStandardPaginationControls = function (
         get hasPrev() { return this.currentPage > 1; },
         get startItem() { return Math.min((this.currentPage - 1) * this.perPage + 1, this.totalItems); },
         get endItem() { return Math.min(this.currentPage * this.perPage, this.totalItems); },
-    
+
         goToPage(page) {
             if (page >= 1 && page <= this.totalPages && page !== this.currentPage) {
                 this.currentPage = page;
@@ -1303,12 +1303,12 @@ export const createStandardPaginationControls = function (
             </select>
             <span>per page</span>
         </div>
-  
+
         <!-- Page Info -->
         <div class="text-sm text-gray-700 dark:text-gray-300">
             <span x-text="\`Showing \${startItem} - \${endItem} of \${totalItems.toLocaleString()} items\`"></span>
         </div>
-  
+
         <!-- Page Navigation -->
         <div class="flex items-center gap-2">
             <!-- First Page Button -->
@@ -1321,7 +1321,7 @@ export const createStandardPaginationControls = function (
             >
                 ⏮️
             </button>
-  
+
             <!-- Previous Page Button -->
             <button
                 @click="prevPage()"
@@ -1332,7 +1332,7 @@ export const createStandardPaginationControls = function (
             >
                 ◀️ Prev
             </button>
-  
+
             <!-- Page Number Display -->
             <div class="flex items-center gap-1">
                 <!-- Show first page if not near start -->
@@ -1344,12 +1344,12 @@ export const createStandardPaginationControls = function (
                         1
                     </button>
                 </template>
-  
+
                 <!-- Ellipsis if needed -->
                 <template x-if="currentPage > 4">
                     <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
                 </template>
-  
+
                 <!-- Show 2 pages before current -->
                 <template x-for="i in [currentPage - 2, currentPage - 1]" :key="i">
                     <button
@@ -1359,14 +1359,14 @@ export const createStandardPaginationControls = function (
                         x-text="i"
                     ></button>
                 </template>
-  
+
                 <!-- Current Page (highlighted) -->
                 <button
                     class="px-3 py-1 rounded-md border-2 border-indigo-600 dark:border-indigo-400 bg-indigo-50 dark:bg-indigo-900/20 font-semibold text-indigo-700 dark:text-indigo-300"
                     disabled
                     x-text="currentPage"
                 ></button>
-  
+
                 <!-- Show 2 pages after current -->
                 <template x-for="i in [currentPage + 1, currentPage + 2]" :key="i">
                     <button
@@ -1376,12 +1376,12 @@ export const createStandardPaginationControls = function (
                         x-text="i"
                     ></button>
                 </template>
-  
+
                 <!-- Ellipsis if needed -->
                 <template x-if="currentPage < totalPages - 3">
                     <span class="px-2 text-gray-500 dark:text-gray-500">...</span>
                 </template>
-  
+
                 <!-- Show last page if not near end -->
                 <template x-if="currentPage < totalPages - 2">
                     <button
@@ -1391,7 +1391,7 @@ export const createStandardPaginationControls = function (
                     ></button>
                 </template>
             </div>
-  
+
             <!-- Next Page Button -->
             <button
                 @click="nextPage()"
@@ -1402,7 +1402,7 @@ export const createStandardPaginationControls = function (
             >
                 Next ▶️
             </button>
-  
+
             <!-- Last Page Button -->
             <button
                 @click="goToPage(totalPages)"

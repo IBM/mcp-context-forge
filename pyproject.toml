@@ -369,6 +369,7 @@ ignore = [
     "tests/**",
     ".github/**",
     "Makefile",
+    "mcpgateway/admin_ui/**",
 ]
 
 [tool.black]

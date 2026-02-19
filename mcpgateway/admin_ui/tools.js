@@ -2,25 +2,25 @@ import { AppState } from "./appState.js";
 import { updateEditToolRequestTypes } from "./formFieldHandlers.js";
 import { getSelectedGatewayIds } from "./gateway.js";
 import { closeModal, openModal } from "./modals.js";
-import { 
-  escapeHtml, 
-  safeSetInnerHTML, 
-  validateInputName, 
-  validateJson, 
+import {
+  escapeHtml,
+  safeSetInnerHTML,
+  validateInputName,
+  validateJson,
   validatePassthroughHeader,
-  validateUrl, 
+  validateUrl,
 } from "./security.js";
 import { getUiHiddenSections } from "./tabs.js";
-import { 
+import {
   decodeHtml,
-  fetchWithTimeout, 
-  getCurrentTeamId, 
-  handleFetchError, 
-  isInactiveChecked, 
-  safeGetElement, 
-  showErrorMessage, 
+  fetchWithTimeout,
+  getCurrentTeamId,
+  handleFetchError,
+  isInactiveChecked,
+  safeGetElement,
+  showErrorMessage,
   showSuccessMessage,
-  updateEditToolUrl, 
+  updateEditToolUrl,
 } from "./utils.js";
 
 // ===================================================================
@@ -919,14 +919,14 @@ export const initToolSelect = function (
   const warnBox = safeGetElement(warnId);
   const clearBtn = clearBtnId ? safeGetElement(clearBtnId) : null;
   const selectBtn = selectBtnId ? safeGetElement(selectBtnId) : null;
-  
+
   if (!container || !pillsBox || !warnBox) {
     console.warn(
       `Tool select elements not found: ${selectId}, ${pillsId}, ${warnId}`,
     );
     return;
   }
-  
+
   // Instrument changes to the data-selected-tools attribute for debugging
   if (!container.dataset.attrObserverAttached) {
     try {
@@ -946,14 +946,14 @@ export const initToolSelect = function (
           }
         }
       });
-      
+
       // Observe attribute changes and capture previous value
       attrObserver.observe(container, {
         attributes: true,
         attributeOldValue: true,
         attributeFilter: ["data-selected-tools"],
       });
-      
+
       // Prevent double attaching
       container.dataset.attrObserverAttached = "true";
       // Keep a reference so it doesn't get GC'd (and so we could disconnect if needed)
@@ -965,17 +965,17 @@ export const initToolSelect = function (
       );
     }
   }
-  
+
   const pillClasses =
   "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
-  
+
   const update = function () {
     try {
       const checkboxes = container.querySelectorAll(
         'input[type="checkbox"]',
       );
       const checked = Array.from(checkboxes).filter((cb) => cb.checked);
-      
+
       // Check if "Select All" mode is active
       const selectAllInput = container.querySelector(
         'input[name="selectAllTools"]',
@@ -983,11 +983,11 @@ export const initToolSelect = function (
       const allIdsInput = container.querySelector(
         'input[name="allToolIds"]',
       );
-      
+
       // Check if this is the edit server tools container
       const isEditServerMode = selectId === "edit-server-tools";
       let serverTools = null;
-      
+
       if (isEditServerMode) {
         const dataAttr = container.getAttribute("data-server-tools");
         if (dataAttr) {
@@ -998,7 +998,7 @@ export const initToolSelect = function (
           }
         }
       }
-      
+
       // Get persisted selections for Add Server mode
       let persistedToolIds = [];
       if (selectId === "associatedTools") {
@@ -1017,10 +1017,10 @@ export const initToolSelect = function (
           persistedToolIds = window.Admin._selectedAssociatedTools.slice();
         }
       }
-      
+
       let count = checked.length;
       const pillsData = [];
-      
+
       // If Select All mode is active, use the count from allToolIds
       if (
         selectAllInput &&
@@ -1059,11 +1059,11 @@ export const initToolSelect = function (
           });
         }
       }
-      
+
       // Rebuild pills safely - show first 3, then summarize the rest
       pillsBox.innerHTML = "";
       const maxPillsToShow = 3;
-      
+
       // Determine which pills to display based on mode
       if (selectId === "associatedTools" && pillsData.length > 0) {
         // In Add Server mode with persisted data, show pills from persisted selections
@@ -1103,7 +1103,7 @@ export const initToolSelect = function (
           pillsBox.appendChild(span);
         });
       }
-      
+
       // If more than maxPillsToShow, show a summary pill
       if (count > maxPillsToShow) {
         const span = document.createElement("span");
@@ -1113,7 +1113,7 @@ export const initToolSelect = function (
         span.textContent = `+${remaining} more`;
         pillsBox.appendChild(span);
       }
-      
+
       // Warning when > max
       if (count > max) {
         warnBox.textContent = `Selected ${count} tools. Selecting more than ${max} tools can degrade agent performance with the server.`;
@@ -1124,20 +1124,20 @@ export const initToolSelect = function (
       console.error("Error updating tool select:", error);
     }
   }
-  
+
   // Remove old event listeners by cloning and replacing (preserving ID)
   if (clearBtn && !clearBtn.dataset.listenerAttached) {
     clearBtn.dataset.listenerAttached = "true";
     const newClearBtn = clearBtn.cloneNode(true);
     newClearBtn.dataset.listenerAttached = "true";
     clearBtn.parentNode.replaceChild(newClearBtn, clearBtn);
-    
+
     newClearBtn.addEventListener("click", () => {
       const checkboxes = container.querySelectorAll(
         'input[type="checkbox"]',
       );
       checkboxes.forEach((cb) => (cb.checked = false));
-      
+
       // Clear the "select all" flag
       const selectAllInput = container.querySelector(
         'input[name="selectAllTools"]',
@@ -1151,23 +1151,23 @@ export const initToolSelect = function (
       if (allIdsInput) {
         allIdsInput.remove();
       }
-      
+
       update();
     });
   }
-  
+
   if (selectBtn && !selectBtn.dataset.listenerAttached) {
     selectBtn.dataset.listenerAttached = "true";
     const newSelectBtn = selectBtn.cloneNode(true);
     newSelectBtn.dataset.listenerAttached = "true";
     selectBtn.parentNode.replaceChild(newSelectBtn, selectBtn);
-    
+
     newSelectBtn.addEventListener("click", async () => {
       // Disable button and show loading state
       const originalText = newSelectBtn.textContent;
       newSelectBtn.disabled = true;
       newSelectBtn.textContent = "Selecting all tools...";
-      
+
       try {
         // Prefer full-set selection when pagination/infinite-scroll is present
         const loadedCheckboxes = container.querySelectorAll(
@@ -1176,7 +1176,7 @@ export const initToolSelect = function (
         const visibleCheckboxes = Array.from(loadedCheckboxes).filter(
           (cb) => cb.offsetParent !== null,
         );
-        
+
         // Detect pagination/infinite-scroll controls for tools
         const hasPaginationControls = !!safeGetElement(
           "tools-pagination-controls",
@@ -1185,9 +1185,9 @@ export const initToolSelect = function (
           "[id^='tools-scroll-trigger']",
         );
         const isPaginated = hasPaginationControls || hasScrollTrigger;
-        
+
         let allToolIds = [];
-        
+
         if (!isPaginated && visibleCheckboxes.length > 0) {
           // No pagination and some visible items => select visible set
           allToolIds = visibleCheckboxes.map((cb) => cb.value);
@@ -1217,7 +1217,7 @@ export const initToolSelect = function (
           // Check loaded checkboxes so UI shows selection where possible
           loadedCheckboxes.forEach((cb) => (cb.checked = true));
         }
-        
+
         // Add a hidden input to indicate "select all" mode
         let selectAllInput = container.querySelector(
           'input[name="selectAllTools"]',
@@ -1229,7 +1229,7 @@ export const initToolSelect = function (
           container.appendChild(selectAllInput);
         }
         selectAllInput.value = "true";
-        
+
         // Also store the IDs as a JSON array for the backend
         let allIdsInput = container.querySelector(
           'input[name="allToolIds"]',
@@ -1241,9 +1241,9 @@ export const initToolSelect = function (
           container.appendChild(allIdsInput);
         }
         allIdsInput.value = JSON.stringify(allToolIds);
-        
+
         update();
-        
+
         newSelectBtn.textContent = `✓ All ${allToolIds.length} tools selected`;
         setTimeout(() => {
           newSelectBtn.textContent = originalText;
@@ -1258,9 +1258,9 @@ export const initToolSelect = function (
       }
     });
   }
-  
+
   update(); // Initial render
-  
+
   // Attach change listeners to checkboxes (using delegation for dynamic content)
   if (!container.dataset.changeListenerAttached) {
     container.dataset.changeListenerAttached = "true";
@@ -1273,7 +1273,7 @@ export const initToolSelect = function (
         const allIdsInput = container.querySelector(
           'input[name="allToolIds"]',
         );
-        
+
         if (
           selectAllInput &&
           selectAllInput.value === "true" &&
@@ -1284,7 +1284,7 @@ export const initToolSelect = function (
           try {
             let allIds = JSON.parse(allIdsInput.value);
             const toolId = e.target.value;
-            
+
             if (e.target.checked) {
               // Add the ID if it's not already there
               if (!allIds.includes(toolId)) {
@@ -1294,7 +1294,7 @@ export const initToolSelect = function (
               // Remove the ID from the array
               allIds = allIds.filter((id) => id !== toolId);
             }
-            
+
             // Update the hidden field
             allIdsInput.value = JSON.stringify(allIds);
           } catch (error) {
@@ -1307,7 +1307,7 @@ export const initToolSelect = function (
           const dataAttr =
           container.getAttribute("data-server-tools");
           let serverTools = [];
-          
+
           if (dataAttr) {
             try {
               serverTools = JSON.parse(dataAttr);
@@ -1318,12 +1318,12 @@ export const initToolSelect = function (
               );
             }
           }
-          
+
           // Get the tool name from toolMapping to update serverTools array
           const toolId = e.target.value;
           const toolName =
           window.Admin.toolMapping && window.Admin.toolMapping[toolId];
-          
+
           if (toolName) {
             if (e.target.checked) {
               // Add tool name to server tools if not already there
@@ -1336,7 +1336,7 @@ export const initToolSelect = function (
                 (name) => name !== toolName,
               );
             }
-            
+
             // Update the data attribute
             container.setAttribute(
               "data-server-tools",
@@ -1353,7 +1353,7 @@ export const initToolSelect = function (
             // not present in the current DOM.
             const changedEl = e.target;
             const changedId = changedEl.value;
-            
+
             // Load existing persisted set: prefer container attribute,
             // fall back to the in-memory window variable.
             let persisted = [];
@@ -1377,7 +1377,7 @@ export const initToolSelect = function (
             ) {
               persisted = window.Admin._selectedAssociatedTools.slice();
             }
-            
+
             if (changedEl.checked) {
               if (!persisted.includes(changedId)) {
                 persisted.push(changedId);
@@ -1387,7 +1387,7 @@ export const initToolSelect = function (
                 (x) => x !== changedId,
               );
             }
-            
+
             // Ensure any currently visible checked boxes are included
             const visibleChecked = Array.from(
               container.querySelectorAll(
@@ -1399,7 +1399,7 @@ export const initToolSelect = function (
                 persisted.push(id);
               }
             });
-            
+
             // Persist back to both the container attribute and global fallback
             container.setAttribute(
               "data-selected-tools",
@@ -1420,7 +1420,7 @@ export const initToolSelect = function (
             );
           }
         }
-        
+
         update();
       }
     });
@@ -1447,13 +1447,13 @@ let toolInputSchemaRegistry = null;
 export const testTool = async function (toolId) {
   try {
     console.log(`Testing tool ID: ${toolId}`);
-    
+
     // 1. ENHANCED DEBOUNCING: More aggressive to prevent rapid clicking
     const now = Date.now();
     const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
     const timeSinceLastRequest = now - lastRequest;
     const enhancedDebounceDelay = 2000; // Increased from 1000ms
-    
+
     if (timeSinceLastRequest < enhancedDebounceDelay) {
       console.log(
         `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
@@ -1466,13 +1466,13 @@ export const testTool = async function (toolId) {
       );
       return;
     }
-    
+
     // 2. MODAL PROTECTION: Enhanced check
     if (AppState.isModalActive("tool-test-modal")) {
       console.warn("Tool test modal is already active");
       return; // Silent fail for better UX
     }
-    
+
     // 3. BUTTON STATE: Immediate feedback with better state management
     const testButton = document.querySelector(
       `[onclick*="testTool('${toolId}')"]`,
@@ -1488,7 +1488,7 @@ export const testTool = async function (toolId) {
       testButton.textContent = "Testing...";
       testButton.classList.add("opacity-50", "cursor-not-allowed");
     }
-    
+
     // 4. REQUEST CANCELLATION: Enhanced cleanup
     const existingController = toolTestState.activeRequests.get(toolId);
     if (existingController) {
@@ -1496,12 +1496,12 @@ export const testTool = async function (toolId) {
       existingController.abort();
       toolTestState.activeRequests.delete(toolId);
     }
-    
+
     // 5. CREATE NEW REQUEST with longer timeout
     const controller = new AbortController();
     toolTestState.activeRequests.set(toolId, controller);
     toolTestState.lastRequestTime.set(toolId, now);
-    
+
     // 6. MAKE REQUEST with increased timeout
     const response = await fetchWithTimeout(
       `${window.ROOT_PATH}/admin/tools/${toolId}`,
@@ -1514,7 +1514,7 @@ export const testTool = async function (toolId) {
       },
       toolTestState.requestTimeout, // Use the increased timeout
     );
-    
+
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error(
@@ -1534,21 +1534,21 @@ export const testTool = async function (toolId) {
         );
       }
     }
-    
+
     const tool = await response.json();
     console.log(`Tool ${toolId} fetched successfully`, tool);
     toolInputSchemaRegistry = tool;
-    
+
     // 7. CLEAN STATE before proceeding
     toolTestState.activeRequests.delete(toolId);
-    
+
     // Store in safe state
     AppState.currentTestTool = tool;
-    
+
     // Set modal title and description safely - NO DOUBLE ESCAPING
     const titleElement = safeGetElement("tool-test-modal-title");
     const descElement = safeGetElement("tool-test-modal-description");
-    
+
     if (titleElement) {
       titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
     }
@@ -1564,15 +1564,15 @@ export const testTool = async function (toolId) {
         descElement.textContent = "No description available.";
       }
     }
-    
+
     const container = safeGetElement("tool-test-form-fields");
     if (!container) {
       console.error("Tool test form fields container not found");
       return;
     }
-    
+
     container.innerHTML = ""; // Clear previous fields
-    
+
     // Parse the input schema safely
     let schema = tool.inputSchema;
     if (typeof schema === "string") {
@@ -1583,32 +1583,32 @@ export const testTool = async function (toolId) {
         schema = {};
       }
     }
-    
+
     // Dynamically create form fields based on schema.properties
     if (schema && schema.properties) {
       for (const key in schema.properties) {
         const prop = schema.properties[key];
-        
+
         // Validate the property name
         const keyValidation = validateInputName(key, "schema property");
         if (!keyValidation.valid) {
           console.warn(`Skipping invalid schema property: ${key}`);
           continue;
         }
-        
+
         const fieldDiv = document.createElement("div");
         fieldDiv.className = "mb-4";
-        
+
         // Field label - use textContent to avoid double escaping
         const label = document.createElement("label");
         label.className =
         "block text-sm font-medium text-gray-700 dark:text-gray-300";
-        
+
         // Create span for label text
         const labelText = document.createElement("span");
         labelText.textContent = keyValidation.value;
         label.appendChild(labelText);
-        
+
         // Add red star if field is required
         if (schema.required && schema.required.includes(key)) {
           const requiredMark = document.createElement("span");
@@ -1616,9 +1616,9 @@ export const testTool = async function (toolId) {
           requiredMark.className = "text-red-500";
           label.appendChild(requiredMark);
         }
-        
+
         fieldDiv.appendChild(label);
-        
+
         // Description help text - use textContent
         if (prop.description) {
           const description = document.createElement("small");
@@ -1626,26 +1626,26 @@ export const testTool = async function (toolId) {
           description.className = "text-gray-500 block mb-1";
           fieldDiv.appendChild(description);
         }
-        
+
         if (prop.type === "array") {
           const arrayContainer = document.createElement("div");
           arrayContainer.className = "space-y-2";
-          
+
           const createArrayInput = function (value = "") {
             const wrapper = document.createElement("div");
             wrapper.className = "flex items-center space-x-2";
-            
+
             const input = document.createElement("input");
             input.name = keyValidation.value;
             input.required =
             schema.required && schema.required.includes(key);
             input.className =
             "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-            
+
             const itemTypes = Array.isArray(prop.items?.anyOf)
               ? prop.items.anyOf.map((t) => t.type)
               : [prop.items?.type];
-            
+
             if (
               itemTypes.includes("number") ||
               itemTypes.includes("integer")
@@ -1661,14 +1661,14 @@ export const testTool = async function (toolId) {
             } else {
               input.type = "text";
             }
-            
+
             if (
               typeof value === "string" ||
               typeof value === "number"
             ) {
               input.value = value;
             }
-            
+
             const delBtn = document.createElement("button");
             delBtn.type = "button";
             delBtn.className =
@@ -1678,9 +1678,9 @@ export const testTool = async function (toolId) {
             delBtn.addEventListener("click", () => {
               arrayContainer.removeChild(wrapper);
             });
-            
+
             wrapper.appendChild(input);
-            
+
             if (itemTypes.includes("boolean")) {
               const hidden = document.createElement("input");
               hidden.type = "hidden";
@@ -1688,11 +1688,11 @@ export const testTool = async function (toolId) {
               hidden.value = "false";
               wrapper.appendChild(hidden);
             }
-            
+
             wrapper.appendChild(delBtn);
             return wrapper;
           }
-          
+
           const addBtn = document.createElement("button");
           addBtn.type = "button";
           addBtn.className =
@@ -1701,7 +1701,7 @@ export const testTool = async function (toolId) {
           addBtn.addEventListener("click", () => {
             arrayContainer.appendChild(createArrayInput());
           });
-          
+
           if (Array.isArray(prop.default)) {
             if (prop.default.length > 0) {
               prop.default.forEach((val) => {
@@ -1716,7 +1716,7 @@ export const testTool = async function (toolId) {
           } else {
             arrayContainer.appendChild(createArrayInput());
           }
-          
+
           fieldDiv.appendChild(arrayContainer);
           fieldDiv.appendChild(addBtn);
         } else {
@@ -1738,7 +1738,7 @@ export const testTool = async function (toolId) {
               fieldInput.rows = 1;
             }
           }
-          
+
           fieldInput.name = keyValidation.value;
           fieldInput.required =
           schema.required && schema.required.includes(key);
@@ -1746,7 +1746,7 @@ export const testTool = async function (toolId) {
           prop.type === "boolean"
             ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
             : "mt-1 px-1.5 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-          
+
           // Set default values here
           if (prop.default !== undefined) {
             if (fieldInput.type === "checkbox") {
@@ -1757,7 +1757,7 @@ export const testTool = async function (toolId) {
               fieldInput.value = prop.default;
             }
           }
-          
+
           fieldDiv.appendChild(fieldInput);
           if (prop.default !== undefined) {
             if (fieldInput.type === "checkbox") {
@@ -1769,21 +1769,21 @@ export const testTool = async function (toolId) {
             }
           }
         }
-        
+
         container.appendChild(fieldDiv);
       }
     }
-    
+
     openModal("tool-test-modal");
     console.log("✓ Tool test modal loaded successfully");
   } catch (error) {
     console.error("Error fetching tool details for testing:", error);
-    
+
     // Clean up state on error
     toolTestState.activeRequests.delete(toolId);
-    
+
     let errorMessage = error.message;
-    
+
     // Enhanced error handling for rapid clicking scenarios
     if (error.name === "AbortError") {
       errorMessage = "Request was cancelled. Please try again.";
@@ -1803,7 +1803,7 @@ export const testTool = async function (toolId) {
       errorMessage =
       "Request timed out. Please try again in a few seconds.";
     }
-    
+
     showErrorMessage(errorMessage);
   } finally {
     // 8. ALWAYS RESTORE BUTTON STATE
@@ -1835,7 +1835,7 @@ export const loadTools = async function () {
       const response = await fetch(`${window.ROOT_PATH}/admin/tools`, {
         method: "GET",
       });
-      
+
       if (!response.ok) {
         throw new Error("Failed to load tools");
       }
@@ -1844,14 +1844,14 @@ export const loadTools = async function () {
         tools = tools.data;
       }
       console.log("Fetched tools:", tools);
-      
+
       if (!tools.length) {
         toolBody.innerHTML = `
                 <tr><td colspan="5" class="text-center py-4 text-gray-500">No tools found.</td></tr>
                 `;
         return;
       }
-      
+
       const rows = tools
         .map((tool) => {
           const { id, name, integrationType, enabled, reachable } =
@@ -1930,7 +1930,7 @@ export const enrichTool = async function (toolId) {
     const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
     const timeSinceLastRequest = now - lastRequest;
     const enhancedDebounceDelay = 2000; // Increased from 1000ms
-    
+
     if (timeSinceLastRequest < enhancedDebounceDelay) {
       console.log(
         `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
@@ -1943,7 +1943,7 @@ export const enrichTool = async function (toolId) {
       );
       return;
     }
-    
+
     // 3. BUTTON STATE: Immediate feedback with better state management
     const enrichButton = document.querySelector(
       `[onclick*="enrichTool('${toolId}')"]`,
@@ -1959,7 +1959,7 @@ export const enrichTool = async function (toolId) {
       enrichButton.textContent = "Enriching...";
       enrichButton.classList.add("opacity-50", "cursor-not-allowed");
     }
-    
+
     // 4. REQUEST CANCELLATION: Enhanced cleanup
     const existingController = toolTestState.activeRequests.get(toolId);
     if (existingController) {
@@ -1967,12 +1967,12 @@ export const enrichTool = async function (toolId) {
       existingController.abort();
       toolTestState.activeRequests.delete(toolId);
     }
-    
+
     // 5. CREATE NEW REQUEST with longer timeout
     const controller = new AbortController();
     toolTestState.activeRequests.set(toolId, controller);
     toolTestState.lastRequestTime.set(toolId, now);
-    
+
     // 6. MAKE REQUEST with increased timeout
     //    const response = await fetchWithTimeout(`/enrich_tools_util`, {
     const response = await fetchWithTimeout(
@@ -2007,17 +2007,17 @@ export const enrichTool = async function (toolId) {
         );
       }
     }
-    
+
     const data = await response.json();
     enrichButton.disabled = false;
     enrichButton.textContent = "Enrich";
     enrichButton.classList.remove("opacity-50", "cursor-not-allowed");
     console.log(`Tool ${toolId} enriched successfully`, data);
     // showSuccessMessage(`Tool ${toolId} enriched successfully`);
-    
+
     const newDesc = safeGetElement("view-new-description");
     const oldDesc = safeGetElement("view-old-description");
-    
+
     if (newDesc) {
       newDesc.textContent = data.enriched_desc || "";
     }
@@ -2050,7 +2050,7 @@ export const generateToolTestCases = async function (toolId) {
     const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
     const timeSinceLastRequest = now - lastRequest;
     const enhancedDebounceDelay = 2000; // Increased from 1000ms
-    
+
     if (timeSinceLastRequest < enhancedDebounceDelay) {
       console.log(
         `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
@@ -2063,7 +2063,7 @@ export const generateToolTestCases = async function (toolId) {
       );
       return;
     }
-    
+
     // 3. BUTTON STATE: Immediate feedback with better state management
     const tcgButton = document.querySelector(
       `[onclick*="generateToolTestCases('${toolId}')"]`,
@@ -2079,7 +2079,7 @@ export const generateToolTestCases = async function (toolId) {
       tcgButton.textContent = "Generating Test Cases...";
       tcgButton.classList.add("opacity-50", "cursor-not-allowed");
     }
-    
+
     // 4. REQUEST CANCELLATION: Enhanced cleanup
     const existingController = toolTestState.activeRequests.get(toolId);
     if (existingController) {
@@ -2087,21 +2087,21 @@ export const generateToolTestCases = async function (toolId) {
       existingController.abort();
       toolTestState.activeRequests.delete(toolId);
     }
-    
+
     // 5. CREATE NEW REQUEST with longer timeout
     const controller = new AbortController();
     toolTestState.activeRequests.set(toolId, controller);
     toolTestState.lastRequestTime.set(toolId, now);
-    
+
     const toolIdElement = safeGetElement("gen-test-tool-id");
     if (toolIdElement) {
       toolIdElement.textContent = toolId || "Unknown";
     }
     safeGetElement("gen-test-tool-id").style.display = "none";
     // safeGetElement("gen-test-tool-id").style.display = 'block';
-    
+
     openModal("testcase-gen-modal");
-    
+
     tcgButton.disabled = false;
     tcgButton.textContent = "Generate Test Cases";
     tcgButton.classList.remove("opacity-50", "cursor-not-allowed");
@@ -2132,7 +2132,7 @@ export const generateTestCases = async function () {
   console.log(
     `Generate ${testCases} test cases with ${variations} variations for tool ${toolId}`,
   );
-  
+
   try {
     showSuccessMessage(
       "Test case generation started successfully for the tool.",
@@ -2150,7 +2150,7 @@ export const generateTestCases = async function () {
         body: JSON.stringify({ tool_id: toolId }),
       },
     );
-    
+
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error(
@@ -2191,13 +2191,13 @@ export const generateTestCases = async function () {
 export const validateTool = async function (toolId) {
   try {
     console.log(`Validating tool ID: ${toolId}`);
-    
+
     // 1. ENHANCED DEBOUNCING: More aggressive to prevent rapid clicking
     const now = Date.now();
     const lastRequest = toolTestState.lastRequestTime.get(toolId) || 0;
     const timeSinceLastRequest = now - lastRequest;
     const enhancedDebounceDelay = 2000; // Increased from 1000ms
-    
+
     if (timeSinceLastRequest < enhancedDebounceDelay) {
       console.log(
         `Tool ${toolId} test request debounced (${timeSinceLastRequest}ms ago)`,
@@ -2210,13 +2210,13 @@ export const validateTool = async function (toolId) {
       );
       return;
     }
-    
+
     // 2. MODAL PROTECTION: Enhanced check
     if (AppState.isModalActive("tool-validation-modal")) {
       console.warn("Tool validation modal is already active");
       return; // Silent fail for better UX
     }
-    
+
     // 3. BUTTON STATE: Immediate feedback with better state management
     const validateButton = document.querySelector(
       `[onclick*="validateTool('${toolId}')"]`,
@@ -2232,7 +2232,7 @@ export const validateTool = async function (toolId) {
       validateButton.textContent = "Generating Test Cases...";
       validateButton.classList.add("opacity-50", "cursor-not-allowed");
     }
-    
+
     // 4. REQUEST CANCELLATION: Enhanced cleanup
     const existingController = toolTestState.activeRequests.get(toolId);
     if (existingController) {
@@ -2240,12 +2240,12 @@ export const validateTool = async function (toolId) {
       existingController.abort();
       toolTestState.activeRequests.delete(toolId);
     }
-    
+
     // 5. CREATE NEW REQUEST with longer timeout
     const controller = new AbortController();
     toolTestState.activeRequests.set(toolId, controller);
     toolTestState.lastRequestTime.set(toolId, now);
-    
+
     // 6. MAKE REQUEST with increased timeout
     const response = await fetchWithTimeout(
       `${window.ROOT_PATH}/admin/tools/${toolId}`,
@@ -2258,7 +2258,7 @@ export const validateTool = async function (toolId) {
       },
       toolTestState.requestTimeout, // Use the increased timeout
     );
-    
+
     if (!response.ok) {
       if (response.status === 404) {
         throw new Error(
@@ -2281,17 +2281,17 @@ export const validateTool = async function (toolId) {
     const tool = await response.json();
     console.log(`Tool ${toolId} fetched successfully`, tool);
     toolInputSchemaRegistry = tool;
-    
+
     // 7. CLEAN STATE before proceeding
     toolTestState.activeRequests.delete(toolId);
-    
+
     // Store in safe state
     AppState.currentTestTool = tool;
-    
+
     // Set modal title and description safely - NO DOUBLE ESCAPING
     const titleElement = safeGetElement("tool-validation-modal-title");
     const descElement = safeGetElement("tool-validation-modal-description");
-    
+
     if (titleElement) {
       titleElement.textContent = "Test Tool: " + (tool.name || "Unknown");
     }
@@ -2313,15 +2313,15 @@ export const validateTool = async function (toolId) {
         descElement.textContent = "No description available.";
       }
     }
-    
+
     const container = safeGetElement("tool-validation-form-fields");
     if (!container) {
       console.error("Tool validation form fields container not found");
       return;
     }
-    
+
     container.innerHTML = ""; // Clear previous fields
-    
+
     // Parse the input schema safely
     let schema = tool.inputSchema;
     if (typeof schema === "string") {
@@ -2332,7 +2332,7 @@ export const validateTool = async function (toolId) {
         schema = {};
       }
     }
-    
+
     // Modal setup
     const title = safeGetElement("tool-validation-modal-title");
     const desc = safeGetElement("tool-validation-modal-description");
@@ -2345,9 +2345,9 @@ export const validateTool = async function (toolId) {
     if (!container) {
       return;
     }
-    
+
     container.innerHTML = "";
-    
+
     // Parse schema safely
     if (typeof schema === "string") {
       try {
@@ -2357,13 +2357,13 @@ export const validateTool = async function (toolId) {
         schema = {};
       }
     }
-    
+
     // Example validat cases (you can replace this with API-provided cases)
     let testCases = tool.testCases || [
       { id: "t1", name: "Test Case 1", input_parameters: {} },
       { id: "t2", name: "Test Case 2", input_parameters: {} },
     ];
-    
+
     const validationStatusResponse = await fetchWithTimeout(
       `/toolops/validation/generate_testcases?tool_id=${toolId}&mode=status`,
       {
@@ -2377,12 +2377,12 @@ export const validateTool = async function (toolId) {
       },
       toolTestState.requestTimeout, // Use the increased timeout
     );
-    
+
     if (validationStatusResponse.ok) {
       const vsres = await validationStatusResponse.json();
       console.log(JSON.stringify(vsres));
       let validationStatus = await vsres;
-      
+
       if (validationStatus.constructor === Array) {
         validationStatus = validationStatus[0].status;
         if (validationStatus === "not-initiated") {
@@ -2415,20 +2415,20 @@ export const validateTool = async function (toolId) {
             },
             toolTestState.requestTimeout, // Use the increased timeout
           );
-          
+
           if (validationResponse.ok) {
             const vres = await validationResponse.json();
             // console.log(JSON.stringify(vres))
             testCases = await vres;
           }
-          
+
           // Render accordion-style test cases
           testCases.forEach((test, index) => {
             const inputParameters = test.input_parameters;
             const acc = document.createElement("div");
             acc.className =
             "border border-gray-300 dark:border-gray-700 rounded-lg overflow-hidden";
-            
+
             const header = document.createElement("button");
             header.type = "button";
             header.className =
@@ -2437,11 +2437,11 @@ export const validateTool = async function (toolId) {
                             <span>${`Test Case ${index + 1}`}</span>
                             <span class="toggle-icon">+</span>
                         `;
-            
+
             const body = document.createElement("div");
             body.className =
             "hidden bg-white dark:bg-gray-900 px-4 py-4 space-y-3";
-            
+
             // Toggle open/close
             header.addEventListener("click", () => {
               const isOpen = !body.classList.contains("hidden");
@@ -2449,20 +2449,20 @@ export const validateTool = async function (toolId) {
               header.querySelector(".toggle-icon").textContent =
               isOpen ? "+" : "−";
             });
-            
+
             acc.appendChild(header);
             acc.appendChild(body);
             container.appendChild(acc);
-            
+
             // Render fields
             const formDiv = document.createElement("form");
             formDiv.id = `tool-validation-form-${index}`;
             formDiv.className = "space-y-3";
-            
+
             if (schema && schema.properties) {
               for (const key in schema.properties) {
                 const prop = schema.properties[key];
-                
+
                 // Validate the property name
                 const keyValidation = validateInputName(
                   key,
@@ -2474,10 +2474,10 @@ export const validateTool = async function (toolId) {
                   );
                   continue;
                 }
-                
+
                 const fieldDiv = document.createElement("div");
                 fieldDiv.className = "mb-4";
-                
+
                 // Field label - use textContent to avoid double escaping
                 const label = document.createElement("label");
                 // label.textContent = key;
@@ -2493,7 +2493,7 @@ export const validateTool = async function (toolId) {
                   defaultValue =
                   inputParameters[keyValidation.value];
                 }
-                
+
                 // Add red star if field is required
                 if (
                   schema.required &&
@@ -2505,9 +2505,9 @@ export const validateTool = async function (toolId) {
                   requiredMark.className = "text-red-500";
                   label.appendChild(requiredMark);
                 }
-                
+
                 fieldDiv.appendChild(label);
-                
+
                 // Description help text - use textContent
                 if (prop.description) {
                   const description =
@@ -2517,25 +2517,25 @@ export const validateTool = async function (toolId) {
                   "text-gray-500 block mb-1";
                   fieldDiv.appendChild(description);
                 }
-                
+
                 // const input = document.createElement("input");
                 // input.name = key;
                 // input.className =
                 // "mt-1 block w-full rounded-md border border-gray-300 dark:border-gray-600 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-800 text-gray-200";
                 // input.value = test.inputs[key] || prop.default || "";
                 // fieldDiv.appendChild(input);
-                
+
                 if (prop.type === "array") {
                   const arrayContainer =
                   document.createElement("div");
                   arrayContainer.className = "space-y-2";
-                  
+
                   const createArrayInput = function (value = "") {
                     const wrapper =
                     document.createElement("div");
                     wrapper.className =
                     "flex items-center space-x-2";
-                    
+
                     const input =
                     document.createElement("input");
                     input.name = keyValidation.value;
@@ -2544,7 +2544,7 @@ export const validateTool = async function (toolId) {
                     schema.required.includes(key);
                     input.className =
                     "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                    
+
                     const itemTypes = Array.isArray(
                       prop.items?.anyOf,
                     )
@@ -2552,7 +2552,7 @@ export const validateTool = async function (toolId) {
                         (t) => t.type,
                       )
                       : [prop.items?.type];
-                    
+
                     if (
                       itemTypes.includes("number") ||
                       itemTypes.includes("integer")
@@ -2574,14 +2574,14 @@ export const validateTool = async function (toolId) {
                     } else {
                       input.type = "text";
                     }
-                    
+
                     if (
                       typeof value === "string" ||
                       typeof value === "number"
                     ) {
                       input.value = value;
                     }
-                    
+
                     const delBtn =
                     document.createElement("button");
                     delBtn.type = "button";
@@ -2592,9 +2592,9 @@ export const validateTool = async function (toolId) {
                     delBtn.addEventListener("click", () => {
                       arrayContainer.removeChild(wrapper);
                     });
-                    
+
                     wrapper.appendChild(input);
-                    
+
                     if (itemTypes.includes("boolean")) {
                       const hidden =
                       document.createElement("input");
@@ -2603,11 +2603,11 @@ export const validateTool = async function (toolId) {
                       hidden.value = "false";
                       wrapper.appendChild(hidden);
                     }
-                    
+
                     wrapper.appendChild(delBtn);
                     return wrapper;
                   }
-                  
+
                   const addBtn =
                   document.createElement("button");
                   addBtn.type = "button";
@@ -2619,7 +2619,7 @@ export const validateTool = async function (toolId) {
                       createArrayInput(),
                     );
                   });
-                  
+
                   defaultValue = defaultValue[0];
                   if (Array.isArray(defaultValue)) {
                     if (defaultValue.length > 0) {
@@ -2639,7 +2639,7 @@ export const validateTool = async function (toolId) {
                       createArrayInput(),
                     );
                   }
-                  
+
                   fieldDiv.appendChild(arrayContainer);
                   fieldDiv.appendChild(addBtn);
                 } else {
@@ -2669,7 +2669,7 @@ export const validateTool = async function (toolId) {
                       fieldInput.rows = 1;
                     }
                   }
-                  
+
                   fieldInput.name = keyValidation.value;
                   fieldInput.required =
                   schema.required &&
@@ -2678,7 +2678,7 @@ export const validateTool = async function (toolId) {
                   prop.type === "boolean"
                     ? "mt-1 h-4 w-4 text-indigo-600 dark:text-indigo-200 border border-gray-300 rounded"
                     : "mt-1 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 text-gray-700 dark:text-gray-300 dark:border-gray-700 dark:focus:border-indigo-400 dark:focus:ring-indigo-400";
-                  
+
                   // Set default values here
                   if (prop.default !== undefined) {
                     if (fieldInput.type === "checkbox") {
@@ -2707,13 +2707,13 @@ export const validateTool = async function (toolId) {
                 formDiv.appendChild(fieldDiv);
               }
             }
-            
+
             // First section - Passthrough Headers
             const headerSection = document.createElement("div");
             headerSection.className = "mt-4 border-t pt-4";
-            
+
             const headerDiv = document.createElement("div");
-            
+
             const label = document.createElement("label");
             label.setAttribute(
               "for",
@@ -2722,13 +2722,13 @@ export const validateTool = async function (toolId) {
             label.className =
             "block text-sm font-medium text-gray-700 dark:text-gray-400";
             label.textContent = "Passthrough Headers (Optional)";
-            
+
             const small = document.createElement("small");
             small.className =
             "text-gray-500 dark:text-gray-400 block mb-2";
             small.textContent =
             'Additional headers to send with the request (format: "Header-Name: Value", one per line)';
-            
+
             const textarea = document.createElement("textarea");
             textarea.id = "validation-passthrough-headers";
             textarea.name = "passthrough_headers";
@@ -2737,12 +2737,12 @@ export const validateTool = async function (toolId) {
             "Authorization: Bearer your-token\nX-Tenant-Id: tenant-123\nX-Trace-Id: trace-456";
             textarea.className =
             "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
-            
+
             headerDiv.appendChild(label);
             headerDiv.appendChild(small);
             headerDiv.appendChild(textarea);
             headerSection.appendChild(headerDiv);
-            
+
             const nlUtteranceSection =
             document.createElement("div");
             nlUtteranceSection.className = "mt-4 border-t pt-4";
@@ -2757,14 +2757,14 @@ export const validateTool = async function (toolId) {
             "block text-sm font-bold text-green-700 dark:text-green-400";
             nlUtterancelabel.textContent =
             "Generated Test Utterance";
-            
+
             const nlUtterancesmall =
             document.createElement("small");
             nlUtterancesmall.className =
             "text-gray-500 dark:text-gray-400 block mb-2";
             nlUtterancesmall.textContent =
             "Modify or add new utterances to test using the agent.";
-            
+
             const nlutextarea = document.createElement("textarea");
             nlutextarea.id = `validation-passthrough-nlUtterances-${index}`;
             nlutextarea.name = "passthrough_nlUtterances";
@@ -2772,18 +2772,18 @@ export const validateTool = async function (toolId) {
             nlutextarea.value = test.nl_utterance.join("\n\n");
             nlutextarea.className =
             "w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-200";
-            
+
             nlUtteranceDiv.appendChild(nlUtterancelabel);
             nlUtteranceDiv.appendChild(nlUtterancesmall);
             nlUtteranceDiv.appendChild(nlutextarea);
             nlUtteranceSection.appendChild(nlUtteranceDiv);
-            
+
             // // Result area
             // const resultBox = document.createElement("pre");
             // resultBox.id = `test-result-${index}`;
             // resultBox.className =
             // "bg-gray-50 dark:bg-gray-800 text-sm text-gray-700 dark:text-gray-200 p-3 rounded overflow-x-auto hidden border border-gray-200 dark:border-gray-700";
-            
+
             // Run button
             const runBtn = document.createElement("button");
             runBtn.textContent = "Run Test";
@@ -2793,7 +2793,7 @@ export const validateTool = async function (toolId) {
             runBtn.addEventListener("click", async () => {
               await runToolValidation(index);
             });
-            
+
             // Run Agent button
             const runAgentBtn = document.createElement("button");
             runAgentBtn.textContent = "Run With Agent";
@@ -2803,23 +2803,23 @@ export const validateTool = async function (toolId) {
             runAgentBtn.addEventListener("click", async () => {
               await runToolAgentValidation(index);
             });
-            
+
             // Loading spinner
             const loadingDiv = document.createElement("div");
             loadingDiv.id = `tool-validation-loading-${index}`;
             loadingDiv.style.display = "none";
-            
+
             const spinner = document.createElement("div");
             spinner.className = "spinner";
             loadingDiv.appendChild(spinner);
-            
+
             // Result area
             const resultDiv = document.createElement("div");
             resultDiv.id = `tool-validation-result-${index}`;
             resultDiv.className =
             "mt-4 bg-gray-100 p-2 rounded overflow-auto dark:bg-gray-900 dark:text-gray-300";
             resultDiv.style.height = "400px";
-            
+
             body.appendChild(formDiv);
             body.appendChild(headerSection);
             body.appendChild(nlUtteranceSection);
@@ -2828,7 +2828,7 @@ export const validateTool = async function (toolId) {
             body.appendChild(loadingDiv);
             body.appendChild(resultDiv);
           });
-          
+
           // Run All Tests button
           const runAllDiv = document.createElement("div");
           runAllDiv.className = "mt-6 text-center";
@@ -2838,7 +2838,7 @@ export const validateTool = async function (toolId) {
                         Run All Tests
                         </button>`;
           container.appendChild(runAllDiv);
-          
+
           // Run All Tests wit hAgent button
           // const runAGentAllDiv = document.createElement("div");
           // runAGentAllDiv.className = "mt-6 text-center";
@@ -2848,7 +2848,7 @@ export const validateTool = async function (toolId) {
           //     Run With Agent
           //     </button>`;
           // container.appendChild(runAGentAllDiv);
-          
+
           // Hook up Run All button
           document
             .getElementById("run-all-tests-btn")
@@ -2877,7 +2877,7 @@ export const validateTool = async function (toolId) {
                 await runToolValidation(i);
               }
             });
-          
+
           openModal("tool-validation-modal");
           console.log(
             "✓ Test modal with accordions loaded successfully",
@@ -2915,19 +2915,19 @@ export const runToolValidation = async function (testIndex) {
   const runButton = document.querySelector(
     'button[onclick="runToolValidation()"]',
   );
-  
+
   if (!form || !AppState.currentTestTool) {
     console.error("Tool test form or current tool not found");
     showErrorMessage("Tool test form not available");
     return;
   }
-  
+
   // Prevent multiple concurrent test runs
   if (runButton && runButton.disabled) {
     console.log("Tool test already running");
     return;
   }
-  
+
   try {
     // Disable run button
     if (runButton) {
@@ -2935,7 +2935,7 @@ export const runToolValidation = async function (testIndex) {
       runButton.textContent = "Running...";
       runButton.classList.add("opacity-50");
     }
-    
+
     // Show loading
     if (loadingElement) {
       loadingElement.style.display = "block";
@@ -2943,7 +2943,7 @@ export const runToolValidation = async function (testIndex) {
     if (resultContainer) {
       resultContainer.innerHTML = "";
     }
-    
+
     const formData = new FormData(form);
     // const formData = {};
     // form.querySelectorAll("input, textarea, select").forEach((input) => {
@@ -2951,9 +2951,9 @@ export const runToolValidation = async function (testIndex) {
     //     input.type === "checkbox" ? input.checked : input.value;
     // });
     const params = {};
-    
+
     const schema = toolInputSchemaRegistry.inputSchema;
-    
+
     if (schema && schema.properties) {
       for (const key in schema.properties) {
         const prop = schema.properties[key];
@@ -2971,7 +2971,7 @@ export const runToolValidation = async function (testIndex) {
               const itemType = Array.isArray(prop.items.anyOf)
                 ? prop.items.anyOf.map((t) => t.type)
                 : [prop.items.type];
-              
+
               if (
                 itemType.includes("number") ||
                 itemType.includes("integer")
@@ -3010,7 +3010,7 @@ export const runToolValidation = async function (testIndex) {
                 value = inputValues;
               }
             }
-            
+
             // Handle empty values
             if (
               value.length === 0 ||
@@ -3058,23 +3058,23 @@ export const runToolValidation = async function (testIndex) {
         }
       }
     }
-    
+
     const payload = {
       jsonrpc: "2.0",
       id: Date.now(),
       method: AppState.currentTestTool.name,
       params,
     };
-    
+
     // Parse custom headers from the passthrough headers field
     const requestHeaders = {
       "Content-Type": "application/json",
     };
-    
+
     // Authentication will be handled automatically by the JWT cookie
     // that was set when the admin UI loaded. The 'credentials: "include"'
     // in the fetch request ensures the cookie is sent with the request.
-    
+
     const passthroughHeadersField = safeGetElement(
       "validation-passthrough-headers",
     );
@@ -3093,7 +3093,7 @@ export const runToolValidation = async function (testIndex) {
             const headerValue = trimmedLine
               .substring(colonIndex + 1)
               .trim();
-            
+
             // Validate header name and value
             const validation = validatePassthroughHeader(
               headerName,
@@ -3105,7 +3105,7 @@ export const runToolValidation = async function (testIndex) {
               );
               return;
             }
-            
+
             if (headerName && headerValue) {
               requestHeaders[headerName] = headerValue;
             }
@@ -3118,7 +3118,7 @@ export const runToolValidation = async function (testIndex) {
         }
       }
     }
-    
+
     // Use longer timeout for test execution
     const response = await fetchWithTimeout(
       `${window.ROOT_PATH}/rpc`,
@@ -3130,10 +3130,10 @@ export const runToolValidation = async function (testIndex) {
       },
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
     );
-    
+
     const result = await response.json();
     const resultStr = JSON.stringify(result, null, 2);
-    
+
     if (resultContainer && window.CodeMirror) {
       try {
         AppState.toolTestResultEditor = window.CodeMirror(
@@ -3162,7 +3162,7 @@ export const runToolValidation = async function (testIndex) {
       pre.textContent = resultStr;
       resultContainer.appendChild(pre);
     }
-    
+
     console.log("✓ Tool test completed successfully");
   } catch (error) {
     console.error("Tool test error:", error);
@@ -3197,19 +3197,19 @@ export const runToolAgentValidation = async function (testIndex) {
   const runButton = document.querySelector(
     'button[onclick="runToolAgentValidation()"]',
   );
-  
+
   if (!form || !AppState.currentTestTool) {
     console.error("Tool test form or current tool not found");
     showErrorMessage("Tool test form not available");
     return;
   }
-  
+
   // Prevent multiple concurrent test runs
   if (runButton && runButton.disabled) {
     console.log("Tool test already running");
     return;
   }
-  
+
   try {
     // Disable run button
     if (runButton) {
@@ -3217,7 +3217,7 @@ export const runToolAgentValidation = async function (testIndex) {
       runButton.textContent = "Running...";
       runButton.classList.add("opacity-50");
     }
-    
+
     // Show loading
     if (loadingElement) {
       loadingElement.style.display = "block";
@@ -3225,30 +3225,30 @@ export const runToolAgentValidation = async function (testIndex) {
     if (resultContainer) {
       resultContainer.innerHTML = "";
     }
-    
+
     const nlTestCases = document
       .getElementById(`validation-passthrough-nlUtterances-${testIndex}`)
       .value.split(/\r?\n\r?\n/);
     const toolId = AppState.currentTestTool.id;
-    
+
     console.log(nlTestCases);
     console.log(
       "Running validation for the Tool: ",
       AppState.currentTestTool.name,
     );
     console.log("Running validation for the Tool Id: ", toolId);
-    
+
     const payload = { tool_id: toolId, tool_nl_test_cases: nlTestCases };
-    
+
     // Parse custom headers from the passthrough headers field
     const requestHeaders = {
       "Content-Type": "application/json",
     };
-    
+
     // Authentication will be handled automatically by the JWT cookie
     // that was set when the admin UI loaded. The 'credentials: "include"'
     // in the fetch request ensures the cookie is sent with the request.
-    
+
     const passthroughHeadersField = safeGetElement(
       "validation-passthrough-headers",
     );
@@ -3267,7 +3267,7 @@ export const runToolAgentValidation = async function (testIndex) {
             const headerValue = trimmedLine
               .substring(colonIndex + 1)
               .trim();
-            
+
             // Validate header name and value
             const validation = validatePassthroughHeader(
               headerName,
@@ -3279,7 +3279,7 @@ export const runToolAgentValidation = async function (testIndex) {
               );
               return;
             }
-            
+
             if (headerName && headerValue) {
               requestHeaders[headerName] = headerValue;
             }
@@ -3292,7 +3292,7 @@ export const runToolAgentValidation = async function (testIndex) {
         }
       }
     }
-    
+
     const response = await fetchWithTimeout(
       "/toolops/validation/execute_tool_nl_testcases",
       {
@@ -3306,10 +3306,10 @@ export const runToolAgentValidation = async function (testIndex) {
       },
       toolTestState.requestTimeout, // Use the increased timeout
     );
-    
+
     const result = await response.json();
     const resultStr = JSON.stringify(result, null, 2);
-    
+
     if (resultContainer && window.CodeMirror) {
       try {
         AppState.toolTestResultEditor = window.CodeMirror(
@@ -3338,7 +3338,7 @@ export const runToolAgentValidation = async function (testIndex) {
       pre.textContent = resultStr;
       resultContainer.appendChild(pre);
     }
-    
+
     console.log("✓ Tool test completed successfully");
   } catch (error) {
     console.error("Tool test error:", error);
@@ -3367,19 +3367,19 @@ export const runToolTest = async function () {
   const loadingElement = safeGetElement("tool-test-loading");
   const resultContainer = safeGetElement("tool-test-result");
   const runButton = document.querySelector('button[onclick="runToolTest()"]');
-  
+
   if (!form || !AppState.currentTestTool) {
     console.error("Tool test form or current tool not found");
     showErrorMessage("Tool test form not available");
     return;
   }
-  
+
   // Prevent multiple concurrent test runs
   if (runButton && runButton.disabled) {
     console.log("Tool test already running");
     return;
   }
-  
+
   try {
     // Disable run button
     if (runButton) {
@@ -3387,7 +3387,7 @@ export const runToolTest = async function () {
       runButton.textContent = "Running...";
       runButton.classList.add("opacity-50");
     }
-    
+
     // Show loading
     if (loadingElement) {
       loadingElement.style.display = "block";
@@ -3395,12 +3395,12 @@ export const runToolTest = async function () {
     if (resultContainer) {
       resultContainer.innerHTML = "";
     }
-    
+
     const formData = new FormData(form);
     const params = {};
-    
+
     const schema = toolInputSchemaRegistry.inputSchema;
-    
+
     if (schema && schema.properties) {
       for (const key in schema.properties) {
         const prop = schema.properties[key];
@@ -3418,7 +3418,7 @@ export const runToolTest = async function () {
               const itemType = Array.isArray(prop.items.anyOf)
                 ? prop.items.anyOf.map((t) => t.type)
                 : [prop.items.type];
-              
+
               if (
                 itemType.includes("number") ||
                 itemType.includes("integer")
@@ -3457,7 +3457,7 @@ export const runToolTest = async function () {
                 value = inputValues;
               }
             }
-            
+
             // Handle empty values
             if (
               value.length === 0 ||
@@ -3505,23 +3505,23 @@ export const runToolTest = async function () {
         }
       }
     }
-    
+
     const payload = {
       jsonrpc: "2.0",
       id: Date.now(),
       method: AppState.currentTestTool.name,
       params,
     };
-    
+
     // Parse custom headers from the passthrough headers field
     const requestHeaders = {
       "Content-Type": "application/json",
     };
-    
+
     // Authentication will be handled automatically by the JWT cookie
     // that was set when the admin UI loaded. The 'credentials: "include"'
     // in the fetch request ensures the cookie is sent with the request.
-    
+
     const passthroughHeadersField = safeGetElement(
       "test-passthrough-headers",
     );
@@ -3540,7 +3540,7 @@ export const runToolTest = async function () {
             const headerValue = trimmedLine
               .substring(colonIndex + 1)
               .trim();
-            
+
             // Validate header name and value
             const validation = validatePassthroughHeader(
               headerName,
@@ -3552,7 +3552,7 @@ export const runToolTest = async function () {
               );
               return;
             }
-            
+
             if (headerName && headerValue) {
               requestHeaders[headerName] = headerValue;
             }
@@ -3565,7 +3565,7 @@ export const runToolTest = async function () {
         }
       }
     }
-    
+
     // Use longer timeout for test execution
     const response = await fetchWithTimeout(
       `${window.ROOT_PATH}/rpc`,
@@ -3577,10 +3577,10 @@ export const runToolTest = async function () {
       },
       window.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT || 60000, // Use configurable timeout
     );
-    
+
     const result = await response.json();
     const resultStr = JSON.stringify(result, null, 2);
-    
+
     if (resultContainer && window.CodeMirror) {
       try {
         AppState.toolTestResultEditor = window.CodeMirror(
@@ -3609,7 +3609,7 @@ export const runToolTest = async function () {
       pre.textContent = resultStr;
       resultContainer.appendChild(pre);
     }
-    
+
     console.log("✓ Tool test completed successfully");
   } catch (error) {
     console.error("Tool test error:", error);
@@ -3646,11 +3646,11 @@ export const cleanupToolTestState = function () {
       console.warn(`Error cancelling request for tool ${toolId}:`, error);
     }
   }
-  
+
   // Clear all state
   toolTestState.activeRequests.clear();
   toolTestState.lastRequestTime.clear();
-  
+
   console.log("✓ Tool test state cleaned up");
 };
 
@@ -3661,7 +3661,7 @@ export const cleanupToolTestModal = function () {
   try {
     // Clear current test tool
     AppState.currentTestTool = null;
-    
+
     // Clear result editor
     if (AppState.toolTestResultEditor) {
       try {
@@ -3674,25 +3674,25 @@ export const cleanupToolTestModal = function () {
         );
       }
     }
-    
+
     // Reset form
     const form = safeGetElement("tool-test-form");
     if (form) {
       form.reset();
     }
-    
+
     // Clear result container
     const resultContainer = safeGetElement("tool-test-result");
     if (resultContainer) {
       resultContainer.innerHTML = "";
     }
-    
+
     // Hide loading
     const loadingElement = safeGetElement("tool-test-loading");
     if (loadingElement) {
       loadingElement.style.display = "none";
     }
-    
+
     console.log("✓ Tool test modal cleaned up");
   } catch (error) {
     console.error("Error cleaning up tool test modal:", error);

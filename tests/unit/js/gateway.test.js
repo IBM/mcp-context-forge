@@ -15,7 +15,7 @@ import {
   testGateway,
 } from "../../../mcpgateway/admin_ui/gateway.js";
 import { fetchWithTimeout, showErrorMessage } from "../../../mcpgateway/admin_ui/utils";
-import { openModal, closeModal } from "../../../mcpgateway/admin_ui/modals";
+import { openModal } from "../../../mcpgateway/admin_ui/modals";
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
   loadAuthHeaders: vi.fn(),

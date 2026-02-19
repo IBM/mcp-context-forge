@@ -12,7 +12,6 @@ import {
   fetchWithAuth,
   getTeamNameById,
   updateTeamScopingWarning,
-  displayTokensList,
   loadTokensList,
   initializeTeamScopingMonitor,
   setupCreateTokenForm,
@@ -57,10 +56,10 @@ describe("getAuthToken", () => {
 
   test("falls back to localStorage", async () => {
     getCookie.mockReturnValue(null);
-    const spy = vi.spyOn(Storage.prototype, "getItem").mockReturnValue("local-789");
+    vi.stubGlobal("localStorage", { getItem: vi.fn(() => "local-789") });
     const token = await getAuthToken();
     expect(token).toBe("local-789");
-    spy.mockRestore();
+    vi.unstubAllGlobals();
   });
 
   test("returns empty string when no token found", async () => {
@@ -204,66 +203,6 @@ describe("updateTeamScopingWarning", () => {
 });
 
 // ---------------------------------------------------------------------------
-// displayTokensList
-// ---------------------------------------------------------------------------
-describe("displayTokensList", () => {
-  afterEach(() => {
-    document.body.innerHTML = "";
-  });
-
-  test("shows empty message when no tokens", () => {
-    const container = document.createElement("div");
-    container.id = "tokens-list";
-    document.body.appendChild(container);
-
-    displayTokensList([]);
-    expect(container.innerHTML).toContain("No tokens found");
-  });
-
-  test("shows empty message when tokens is null", () => {
-    const container = document.createElement("div");
-    container.id = "tokens-list";
-    document.body.appendChild(container);
-
-    displayTokensList(null);
-    expect(container.innerHTML).toContain("No tokens found");
-  });
-
-  test("renders token cards for provided tokens", () => {
-    window.USERTEAMSDATA = [{ id: "t1", name: "Team1" }];
-    const container = document.createElement("div");
-    container.id = "tokens-list";
-    document.body.appendChild(container);
-
-    displayTokensList([
-      {
-        id: "tok-1",
-        name: "My Token",
-        description: "Test token",
-        is_active: true,
-        created_at: "2024-01-01T00:00:00Z",
-        expires_at: null,
-        last_used: null,
-        team_id: "t1",
-        ip_restrictions: [],
-        server_id: null,
-        resource_scopes: [],
-      },
-    ]);
-
-    expect(container.innerHTML).toContain("My Token");
-    expect(container.innerHTML).toContain("Active");
-    expect(container.innerHTML).toContain("Details");
-    expect(container.innerHTML).toContain("Revoke");
-    delete window.USERTEAMSDATA;
-  });
-
-  test("does nothing when tokens-list element is missing", () => {
-    expect(() => displayTokensList([])).not.toThrow();
-  });
-});
-
-// ---------------------------------------------------------------------------
 // loadTokensList
 // ---------------------------------------------------------------------------
 describe("loadTokensList", () => {
@@ -272,44 +211,9 @@ describe("loadTokensList", () => {
     delete window.ROOT_PATH;
   });
 
-  test("does nothing when tokens-list element is missing", async () => {
+  test("does nothing when tokens-table element is missing", async () => {
     await loadTokensList();
     expect(fetchWithTimeout).not.toHaveBeenCalled();
-  });
-
-  test("shows loading state and fetches tokens", async () => {
-    window.ROOT_PATH = "";
-    getCookie.mockImplementation((name) => (name === "jwt_token" ? "tok" : null));
-
-    const container = document.createElement("div");
-    container.id = "tokens-list";
-    document.body.appendChild(container);
-
-    fetchWithTimeout.mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ tokens: [] }),
-    });
-
-    await loadTokensList();
-
-    expect(fetchWithTimeout).toHaveBeenCalled();
-    expect(container.innerHTML).toContain("No tokens found");
-  });
-
-  test("shows error on fetch failure", async () => {
-    window.ROOT_PATH = "";
-    getCookie.mockReturnValue("tok");
-
-    const container = document.createElement("div");
-    container.id = "tokens-list";
-    document.body.appendChild(container);
-
-    fetchWithTimeout.mockRejectedValue(new Error("Network error"));
-
-    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    await loadTokensList();
-    expect(container.innerHTML).toContain("Error loading tokens");
-    consoleSpy.mockRestore();
   });
 });
 

@@ -4,7 +4,7 @@
  *        addTagToFilter, updateFilterEmptyState, clearTagFilter, initializeTagFiltering
  */
 
-import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, vi, afterEach } from "vitest";
 
 import {
   extractAvailableTags,
@@ -18,6 +18,11 @@ import {
 
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
+vi.mock("../../../mcpgateway/admin_ui/search.js", () => ({
+  getPanelSearchConfig: vi.fn(() => null),
+  loadSearchablePanel: vi.fn(),
+  queueSearchablePanelReload: vi.fn(),
 }));
 
 // Helper to build a minimal table with tags column

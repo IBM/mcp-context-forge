@@ -96,7 +96,16 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
 }));
 vi.mock("../../../mcpgateway/admin_ui/tabs", () => ({
   ADMIN_ONLY_TABS: ["users", "tokens", "logs"],
+  getDefaultTabName: vi.fn(() => null),
+  getUiHiddenSections: vi.fn(() => new Set()),
+  getVisibleSidebarTabs: vi.fn(() => []),
+  isAdminOnlyTab: vi.fn(() => false),
+  isTabAvailable: vi.fn(() => true),
+  isTabHidden: vi.fn(() => false),
+  normalizeTabName: vi.fn(() => null),
+  resolveTabForNavigation: vi.fn(() => null),
   showTab: vi.fn(),
+  updateHashForTab: vi.fn(),
 }));
 vi.mock("../../../mcpgateway/admin_ui/tools", () => ({
   initToolSelect: vi.fn(),

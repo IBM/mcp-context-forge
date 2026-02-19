@@ -101,7 +101,7 @@ export const AppState = {
   getCurrentTeamRelationshipFilter() {
     return this.currentTeamRelationshipFilter;
   },
-  
+
   setCurrentTeamRelationshipFilter(teamRelationshipFilter) {
     this.currentTeamRelationshipFilter = teamRelationshipFilter;
   },

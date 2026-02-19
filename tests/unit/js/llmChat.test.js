@@ -5,7 +5,7 @@
  * (parseThinkTags is already tested in tests/js/)
  */
 
-import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, vi, afterEach } from "vitest";
 
 import {
   buildLLMConfigLegacy,
@@ -13,7 +13,6 @@ import {
   handleChatInputKeydown,
   handleLLMModelChange,
   loadVirtualServersForChat,
-  sendChatMessage,
   initializeLLMChat,
   connectLLMChat,
   disconnectLLMChat,

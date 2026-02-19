@@ -11,7 +11,6 @@ import {
   parseErrorResponse,
   safeParseJsonResponse,
   safeSetInnerHTML,
-  logRestrictedContext,
   safeReplaceState,
 } from "../../../mcpgateway/admin_ui/security.js";
 
@@ -236,7 +235,6 @@ describe("safeSetInnerHTML", () => {
 // logRestrictedContext
 // ---------------------------------------------------------------------------
 describe("logRestrictedContext", () => {
-  let mockAppState;
 
   beforeEach(() => {
     // Reset the module-level AppState mock

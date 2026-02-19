@@ -52,11 +52,8 @@ vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   showErrorMessage: vi.fn(),
 }));
 
-let locationHref;
-
 beforeEach(() => {
   window.ROOT_PATH = "";
-  locationHref = "";
   Object.defineProperty(window, "location", {
     value: {
       href: "http://localhost/admin",

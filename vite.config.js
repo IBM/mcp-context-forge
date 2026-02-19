@@ -7,7 +7,7 @@ function cleanOldBundles() {
   return {
     name: 'clean-old-bundles',
     buildStart() {
-      const outDir = path.resolve(__dirname, 'mcpgateway/admin_ui');
+      const outDir = path.resolve(__dirname, 'mcpgateway/static');
       if (fs.existsSync(outDir)) {
         const files = fs.readdirSync(outDir);
         for (const file of files) {

@@ -66,11 +66,11 @@ describe("clearSearch", () => {
     expect(win.performTokenSearch).toHaveBeenCalledWith("");
   });
 
-    test("calls legacy filter function to immediately clear rows for panel entities", () => {
-        // clearSearch invokes the entity-specific filter as a fallback to keep
-        // rows visible even when the HTMX reload is delayed or missed.
-        const original = win.filterToolsTable;
-        win.filterToolsTable = vi.fn();
+  test("calls legacy filter function to immediately clear rows for panel entities", () => {
+    // clearSearch invokes the entity-specific filter as a fallback to keep
+    // rows visible even when the HTMX reload is delayed or missed.
+    const original = win.filterToolsTable;
+    win.filterToolsTable = vi.fn();
 
     const searchInput = doc.createElement("input");
     searchInput.id = "tools-search-input";
@@ -82,9 +82,9 @@ describe("clearSearch", () => {
 
     f()("tools");
 
-        expect(win.filterToolsTable).toHaveBeenCalledWith("");
-        win.filterToolsTable = original;
-    });
+    expect(win.filterToolsTable).toHaveBeenCalledWith("");
+    win.filterToolsTable = original;
+  });
 });
 
 // ---------------------------------------------------------------------------
