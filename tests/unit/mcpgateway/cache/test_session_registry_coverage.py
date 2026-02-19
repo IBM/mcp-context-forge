@@ -2538,7 +2538,7 @@ class TestGenerateResponseInternalRPCURL:
 
         # Set a distinct internal URL
         custom_rpc_url = "http://custom-internal-host:5555/rpc"
-        
+
         with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
             with patch("mcpgateway.config.settings.internal_rpc_url", custom_rpc_url):
                 await registry.generate_response(
