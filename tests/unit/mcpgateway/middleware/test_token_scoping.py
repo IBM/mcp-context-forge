@@ -265,8 +265,9 @@ class TestTokenScopingMiddleware:
         }
 
         with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["team-123"]) as mock_normalize:
+            # Mock _resolve_session_teams to return the embedded team
+            with patch("mcpgateway.auth._resolve_session_teams", return_value=["team-123"]) as mock_resolve_session:
+                with patch("mcpgateway.auth._resolve_teams_from_db") as mock_resolve_teams:
                     # Mock _check_team_membership to avoid DB query
                     with patch.object(middleware, "_check_team_membership", return_value=True):
                         # Mock _check_resource_team_ownership to avoid DB query
@@ -279,11 +280,11 @@ class TestTokenScopingMiddleware:
                             assert result == "success"
                             call_next.assert_called_once()
 
-                            # Verify normalize_token_teams was called (teams came from token)
-                            mock_normalize.assert_called_once()
+                            # Verify _resolve_session_teams was called (new helper function)
+                            mock_resolve_session.assert_called_once()
 
-                    # Verify _resolve_teams_from_db was NOT called
-                    mock_resolve_teams.assert_not_called()
+                            # Verify _resolve_teams_from_db was NOT called directly
+                            mock_resolve_teams.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_session_token_without_teams_claim_resolves_from_db(self, middleware, mock_request):
@@ -300,25 +301,22 @@ class TestTokenScopingMiddleware:
         }
 
         with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team-1"]) as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams") as mock_normalize:
-                    call_next = AsyncMock(return_value="success")
+            # Mock _resolve_session_teams to return DB teams
+            with patch("mcpgateway.auth._resolve_session_teams", return_value=["db-team-1"]) as mock_resolve_session:
+                call_next = AsyncMock(return_value="success")
 
-                    result = await middleware(mock_request, call_next)
+                result = await middleware(mock_request, call_next)
 
-                    # Verify request was allowed
-                    assert result == "success"
-                    call_next.assert_called_once()
+                # Verify request was allowed
+                assert result == "success"
+                call_next.assert_called_once()
 
-                    # Verify _resolve_teams_from_db WAS called
-                    mock_resolve_teams.assert_called_once()
-
-                    # Verify normalize_token_teams was NOT called (teams came from DB)
-                    mock_normalize.assert_not_called()
+                # Verify _resolve_session_teams WAS called (new helper function)
+                mock_resolve_session.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_session_token_with_null_teams_uses_db_resolve(self, middleware, mock_request):
-        """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
+        """Test that session tokens with teams=null use _resolve_session_teams (which returns None for admin)."""
         mock_request.url.path = "/servers"
         mock_request.method = "GET"
         mock_request.headers = {"Authorization": "Bearer session_token"}
@@ -333,21 +331,18 @@ class TestTokenScopingMiddleware:
         }
 
         with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
-            with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None) as mock_resolve_teams:
-                with patch("mcpgateway.middleware.token_scoping.normalize_token_teams") as mock_normalize:
-                    call_next = AsyncMock(return_value="success")
+            # Mock _resolve_session_teams to return None (admin bypass)
+            with patch("mcpgateway.auth._resolve_session_teams", return_value=None) as mock_resolve_session:
+                call_next = AsyncMock(return_value="success")
 
-                    result = await middleware(mock_request, call_next)
+                result = await middleware(mock_request, call_next)
 
-                    # Verify request was allowed
-                    assert result == "success"
-                    call_next.assert_called_once()
+                # Verify request was allowed
+                assert result == "success"
+                call_next.assert_called_once()
 
-                    # Verify _resolve_teams_from_db was called (teams=null is not a list with len==1)
-                    mock_resolve_teams.assert_called_once()
-
-                    # Verify normalize_token_teams was NOT called
-                    mock_normalize.assert_not_called()
+                # Verify _resolve_session_teams was called (new helper function)
+                mock_resolve_session.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_api_token_always_uses_embedded_teams(self, middleware, mock_request):

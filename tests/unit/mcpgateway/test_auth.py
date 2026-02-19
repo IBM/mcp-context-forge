@@ -492,7 +492,7 @@ class TestGetCurrentUser:
 
     @pytest.mark.asyncio
     async def test_session_token_with_null_teams_claim_uses_db_resolve(self):
-        """Test that session tokens with teams=null use _resolve_teams_from_db (which returns None for admin)."""
+        """Test that session tokens with teams=null use _resolve_session_teams (which returns None for admin)."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="session_jwt_null_teams")
 
         # Session token with explicit null teams (admin bypass)
@@ -517,15 +517,15 @@ class TestGetCurrentUser:
 
         with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
             with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
-                with patch("mcpgateway.auth._resolve_teams_from_db", return_value=None) as mock_resolve_teams:
+                with patch("mcpgateway.auth._resolve_session_teams", return_value=None) as mock_resolve_session:
                     with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
                         user = await get_current_user(credentials=credentials)
 
                         # Verify user was authenticated
                         assert user.email == mock_user.email
 
-                        # Verify _resolve_teams_from_db WAS called (teams=null is not a list with len==1)
-                        mock_resolve_teams.assert_called_once()
+                        # Verify _resolve_session_teams WAS called (new helper function)
+                        mock_resolve_session.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_api_token_always_uses_embedded_teams(self):
