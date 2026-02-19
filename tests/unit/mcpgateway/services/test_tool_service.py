@@ -967,7 +967,9 @@ class TestToolService:
     @pytest.mark.asyncio
     async def test_list_tools_denies_unknown_team(self, tool_service, test_db):
         """Test list_tools returns empty when user lacks team membership."""
-        test_db.execute = Mock()
+        # Mock DB execute chain for unified_paginate: execute().scalars().all()
+        # Returns empty list because query has WHERE FALSE condition
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="other-team", is_personal=True)
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
@@ -976,7 +978,8 @@ class TestToolService:
 
         assert result == []
         assert next_cursor is None
-        test_db.execute.assert_not_called()
+        # Query IS executed but returns empty due to WHERE FALSE condition
+        test_db.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_list_tools_with_limit(self, tool_service, test_db, monkeypatch):
@@ -3963,7 +3966,8 @@ class TestToolListingGracefulErrorHandling:
     @pytest.mark.asyncio
     async def test_list_tools_for_user_team_no_access(self, tool_service, test_db):
         """Team filter should return empty when user lacks access."""
-        test_db.execute = Mock()
+        # Mock DB execute - should NOT be called due to early return
+        test_db.execute = Mock(return_value=MagicMock(scalars=Mock(return_value=MagicMock(all=Mock(return_value=[])))))
         mock_team = MagicMock(id="team-1", is_personal=True)
 
         with patch("mcpgateway.services.tool_service.TeamManagementService") as mock_team_service:
@@ -3972,6 +3976,7 @@ class TestToolListingGracefulErrorHandling:
 
         assert result == []
         assert next_cursor is None
+        # Early return when user lacks team access - no DB query executed
         test_db.execute.assert_not_called()
 
 
