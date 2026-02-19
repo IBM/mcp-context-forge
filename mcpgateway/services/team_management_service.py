@@ -492,6 +492,14 @@ class TeamManagementService:
             team.updated_at = utc_now()
             self.db.commit()
 
+            # Invalidate cache for all team members since team properties changed
+            try:
+                memberships = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.is_active.is_(True)).all()
+                for membership in memberships:
+                    self._fire_and_forget(auth_cache.invalidate_user_teams(membership.user_email))
+            except Exception as cache_error:
+                logger.debug(f"Failed to invalidate caches on team update: {cache_error}")
+
             logger.info(f"Updated team {team_id} by {updated_by}")
             return True
 
@@ -944,7 +952,9 @@ class TeamManagementService:
                                 dt = datetime.fromisoformat(value)
                                 # Ensure timezone-aware (UTC) to match DB model
                                 if dt.tzinfo is None:
+                                    # Standard
                                     from datetime import timezone
+
                                     dt = dt.replace(tzinfo=timezone.utc)
                                 team_data[key] = dt
                         teams.append(CachedTeamData(**team_data))
