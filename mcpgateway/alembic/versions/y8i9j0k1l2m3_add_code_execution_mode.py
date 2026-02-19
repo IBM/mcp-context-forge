@@ -34,11 +34,18 @@ def upgrade() -> None:
     # -------------------------
     server_columns = {col["name"] for col in inspector.get_columns("servers")}
 
+    # Phase 1: Add columns as nullable to avoid table rewrites on MySQL/MariaDB.
+    # PostgreSQL 11+ handles NOT NULL + DEFAULT as metadata-only, but MySQL may
+    # require a full table copy.  The phased approach is safe on all backends.
     if "server_type" not in server_columns:
         op.add_column(
             "servers",
-            sa.Column("server_type", sa.String(length=32), nullable=False, server_default="standard"),
+            sa.Column("server_type", sa.String(length=32), nullable=True, server_default="standard"),
         )
+        # Phase 2: Backfill existing rows
+        op.execute("UPDATE servers SET server_type = 'standard' WHERE server_type IS NULL")
+        # Phase 3: Apply NOT NULL constraint
+        op.alter_column("servers", "server_type", nullable=False)
     if "stub_language" not in server_columns:
         op.add_column("servers", sa.Column("stub_language", sa.String(length=32), nullable=True))
     if "mount_rules" not in server_columns:
@@ -52,8 +59,10 @@ def upgrade() -> None:
     if "skills_require_approval" not in server_columns:
         op.add_column(
             "servers",
-            sa.Column("skills_require_approval", sa.Boolean(), nullable=False, server_default=sa.false()),
+            sa.Column("skills_require_approval", sa.Boolean(), nullable=True, server_default=sa.false()),
         )
+        op.execute("UPDATE servers SET skills_require_approval = 0 WHERE skills_require_approval IS NULL")
+        op.alter_column("servers", "skills_require_approval", nullable=False)
 
     server_indexes = {idx["name"] for idx in inspector.get_indexes("servers")}
     if "ix_servers_server_type" not in server_indexes and "server_type" in {c["name"] for c in inspector.get_columns("servers")}:
