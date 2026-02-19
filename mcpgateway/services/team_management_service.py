@@ -934,22 +934,14 @@ class TeamManagementService:
                     return []
                 # Return Pydantic models from cached dicts (read-only, not attached to session)
                 try:
-                    teams = [
-                        CachedTeamData(
-                            id=team["id"],
-                            name=team["name"],
-                            slug=team.get("slug"),
-                            description=team.get("description"),
-                            created_by=team.get("created_by"),
-                            is_personal=team.get("is_personal", False),
-                            visibility=team.get("visibility", "public"),
-                            max_members=team.get("max_members"),
-                            is_active=team.get("is_active", True),
-                            created_at=datetime.fromisoformat(team["created_at"]) if team.get("created_at") else None,
-                            updated_at=datetime.fromisoformat(team["updated_at"]) if team.get("updated_at") else None,
-                        )
-                        for team in cached_teams
-                    ]
+                    teams = []
+                    for team in cached_teams:
+                        # Auto-adapt to model changes: reconstruct datetime fields
+                        team_data = team.copy()
+                        for key, value in team_data.items():
+                            if key in ("created_at", "updated_at") and isinstance(value, str):
+                                team_data[key] = datetime.fromisoformat(value)
+                        teams.append(CachedTeamData(**team_data))
                     return teams
                 except Exception as e:
                     logger.warning(f"Failed to reconstruct teams from cache: {e}")
@@ -967,22 +959,17 @@ class TeamManagementService:
 
             # Update cache with serialized team objects
             if cache:
-                team_dicts = [
-                    {
-                        "id": str(team.id),
-                        "name": team.name,
-                        "slug": team.slug,
-                        "description": team.description,
-                        "created_by": team.created_by,
-                        "is_personal": team.is_personal,
-                        "visibility": team.visibility,
-                        "max_members": team.max_members,
-                        "is_active": team.is_active,
-                        "created_at": team.created_at.isoformat() if team.created_at else None,
-                        "updated_at": team.updated_at.isoformat() if team.updated_at else None,
-                    }
-                    for team in teams
-                ]
+                # Auto-adapt to model changes: serialize all columns
+                team_dicts = []
+                for team in teams:
+                    team_dict = {c.name: getattr(team, c.name) for c in EmailTeam.__table__.columns}
+                    # Handle datetime serialization
+                    for key, value in team_dict.items():
+                        if isinstance(value, datetime):
+                            team_dict[key] = value.isoformat()
+                        elif hasattr(value, "__str__"):  # Convert UUID, etc. to string
+                            team_dict[key] = str(value)
+                    team_dicts.append(team_dict)
                 await cache.set_user_teams(cache_key, team_dicts)
 
             return teams
