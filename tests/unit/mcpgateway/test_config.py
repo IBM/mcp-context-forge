@@ -177,7 +177,7 @@ def test_internal_rpc_url_hybrid_cloud_mesh():
     # Simulates internal service hostname in hybrid cloud
     s = Settings(port=4444, internal_rpc_host="gateway.internal.mesh", app_root_path="/gateway", _env_file=None)
     assert s.internal_rpc_url == "http://gateway.internal.mesh:4444/gateway/rpc"
-    
+
 
 # --------------------------------------------------------------------------- #
 #                           get_settings LRU cache                            #

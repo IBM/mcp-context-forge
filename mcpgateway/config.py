@@ -2013,7 +2013,7 @@ Disallow: /
             >>> settings3 = Settings(port=4444, internal_rpc_host="http://gateway-service:4444/rpc")
             >>> settings3.internal_rpc_url
             'http://gateway-service:4444/rpc'
-            
+
         """
         if "/rpc" in self.internal_rpc_host:
             return self.internal_rpc_host
