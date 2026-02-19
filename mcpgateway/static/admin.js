@@ -7090,7 +7090,11 @@ function getEditSelections(containerId) {
 }
 
 function resetEditSelections() {
-    ["edit-server-tools", "edit-server-resources", "edit-server-prompts"].forEach((k) => {
+    [
+        "edit-server-tools",
+        "edit-server-resources",
+        "edit-server-prompts",
+    ].forEach((k) => {
         delete window.editServerSelections[k];
     });
 }
@@ -7130,33 +7134,39 @@ function ensureAddStoreListeners() {
     if (window._addStoreListenersAttached) return;
     window._addStoreListenersAttached = true;
 
-    ["associatedTools", "associatedResources", "associatedPrompts"].forEach((containerId) => {
-        const container = document.getElementById(containerId);
-        if (!container) return;
-        container.addEventListener("change", function (e) {
-            const target = e.target;
-            if (
-                target.type === "checkbox" &&
-                (target.name === "associatedTools" ||
-                    target.name === "associatedResources" ||
-                    target.name === "associatedPrompts")
-            ) {
-                const sel = getEditSelections(containerId);
-                const value = String(target.value);
-                if (target.checked) {
-                    sel.add(value);
-                } else {
-                    sel.delete(value);
+    ["associatedTools", "associatedResources", "associatedPrompts"].forEach(
+        (containerId) => {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            container.addEventListener("change", function (e) {
+                const target = e.target;
+                if (
+                    target.type === "checkbox" &&
+                    (target.name === "associatedTools" ||
+                        target.name === "associatedResources" ||
+                        target.name === "associatedPrompts")
+                ) {
+                    const sel = getEditSelections(containerId);
+                    const value = String(target.value);
+                    if (target.checked) {
+                        sel.add(value);
+                    } else {
+                        sel.delete(value);
+                    }
                 }
-            }
-        });
-    });
+            });
+        },
+    );
 
     // Clear selections when the add-server form is reset
     const form = document.getElementById("add-server-form");
     if (form) {
         form.addEventListener("reset", function () {
-            ["associatedTools", "associatedResources", "associatedPrompts"].forEach((k) => {
+            [
+                "associatedTools",
+                "associatedResources",
+                "associatedPrompts",
+            ].forEach((k) => {
                 delete window.editServerSelections[k];
             });
         });
@@ -7464,7 +7474,9 @@ if (window.htmx && !window._resourcesHtmxHandlerAttached) {
 
                     // If we're in the Add Server resources container, restore persisted selections
                     else if (container.id === "associatedResources") {
-                        const addResSel = getEditSelections("associatedResources");
+                        const addResSel = getEditSelections(
+                            "associatedResources",
+                        );
                         if (addResSel.size > 0) {
                             newCheckboxes.forEach((cb) => {
                                 if (addResSel.has(cb.value)) {
@@ -7598,7 +7610,8 @@ if (window.htmx && !window._promptsHtmxHandlerAttached) {
 
                     // If we're in the Add Server prompts container, restore persisted selections
                     else if (container.id === "associatedPrompts") {
-                        const addPromptSel = getEditSelections("associatedPrompts");
+                        const addPromptSel =
+                            getEditSelections("associatedPrompts");
                         if (addPromptSel.size > 0) {
                             newCheckboxes.forEach((cb) => {
                                 if (addPromptSel.has(cb.value)) {
@@ -8864,7 +8877,6 @@ function initToolSelect(
         return;
     }
 
-
     const pillClasses =
         "inline-block bg-green-100 text-green-800 text-xs px-2 py-1 rounded-full dark:bg-green-900 dark:text-green-200";
 
@@ -9635,7 +9647,9 @@ function initResourceSelect(
                     try {
                         const changedEl = e.target;
                         const changedId = String(changedEl.value);
-                        const addResSel = getEditSelections("associatedResources");
+                        const addResSel = getEditSelections(
+                            "associatedResources",
+                        );
                         if (changedEl.checked) {
                             addResSel.add(changedId);
                         } else {
@@ -10041,7 +10055,8 @@ function initPromptSelect(
                     try {
                         const changedEl = e.target;
                         const changedId = String(changedEl.value);
-                        const addPromptSel = getEditSelections("associatedPrompts");
+                        const addPromptSel =
+                            getEditSelections("associatedPrompts");
                         if (changedEl.checked) {
                             addPromptSel.add(changedId);
                         } else {
@@ -10741,7 +10756,9 @@ function reloadAssociatedItems() {
                 // Restore persisted selections from Map store (Add Server mode)
                 if (resourcesContainerId === "associatedResources") {
                     try {
-                        const addResSel = getEditSelections("associatedResources");
+                        const addResSel = getEditSelections(
+                            "associatedResources",
+                        );
                         if (addResSel.size > 0) {
                             const resourceCheckboxes =
                                 resourcesContainer.querySelectorAll(
@@ -10860,12 +10877,15 @@ function reloadAssociatedItems() {
                 // Restore persisted selections from Map store (Add Server mode)
                 if (promptsContainerId === "associatedPrompts") {
                     try {
-                        const addPromptSel = getEditSelections("associatedPrompts");
-                        const containerEl = document.getElementById(promptsContainerId);
+                        const addPromptSel =
+                            getEditSelections("associatedPrompts");
+                        const containerEl =
+                            document.getElementById(promptsContainerId);
                         if (containerEl && addPromptSel.size > 0) {
-                            const promptCheckboxes = containerEl.querySelectorAll(
-                                'input[type="checkbox"][name="associatedPrompts"]',
-                            );
+                            const promptCheckboxes =
+                                containerEl.querySelectorAll(
+                                    'input[type="checkbox"][name="associatedPrompts"]',
+                                );
                             promptCheckboxes.forEach((cb) => {
                                 if (addPromptSel.has(String(cb.value))) {
                                     cb.checked = true;
@@ -15144,7 +15164,9 @@ async function handleServerFormSubmit(e) {
                 });
             if (resSel.size > 0) {
                 formData.delete("associatedResources");
-                resSel.forEach((id) => formData.append("associatedResources", id));
+                resSel.forEach((id) =>
+                    formData.append("associatedResources", id),
+                );
             }
         }
 
@@ -15159,7 +15181,9 @@ async function handleServerFormSubmit(e) {
                 });
             if (promptSel.size > 0) {
                 formData.delete("associatedPrompts");
-                promptSel.forEach((id) => formData.append("associatedPrompts", id));
+                promptSel.forEach((id) =>
+                    formData.append("associatedPrompts", id),
+                );
             }
         }
 
@@ -26890,9 +26914,8 @@ async function serverSideToolSearch(searchTerm) {
                     const checkboxes = container.querySelectorAll(
                         'input[name="associatedTools"]',
                     );
-                    const normalizedIds = Array.from(toolSel);
                     checkboxes.forEach((cb) => {
-                        if (normalizedIds.includes(String(cb.value))) {
+                        if (toolSel.has(String(cb.value))) {
                             cb.checked = true;
                         }
                     });
@@ -27187,9 +27210,8 @@ async function serverSidePromptSearch(searchTerm) {
                 const checkboxes = container.querySelectorAll(
                     'input[name="associatedPrompts"]',
                 );
-                const normalizedIds = Array.from(promptSel);
                 checkboxes.forEach((cb) => {
-                    if (normalizedIds.includes(String(cb.value))) {
+                    if (promptSel.has(String(cb.value))) {
                         cb.checked = true;
                     }
                 });
@@ -27400,9 +27422,8 @@ async function serverSideResourceSearch(searchTerm) {
                 const checkboxes = container.querySelectorAll(
                     'input[name="associatedResources"]',
                 );
-                const normalizedIds = Array.from(resSel);
                 checkboxes.forEach((cb) => {
-                    if (normalizedIds.includes(String(cb.value))) {
+                    if (resSel.has(String(cb.value))) {
                         cb.checked = true;
                     }
                 });
