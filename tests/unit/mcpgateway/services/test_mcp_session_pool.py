@@ -1476,7 +1476,7 @@ class TestExecuteForwardedRequest:
                 result = await pool._execute_forwarded_request(request)
 
         assert result == {"result": {"tools": []}}
-        
+
         mock_client.post.assert_called_once()
         call_args = mock_client.post.call_args
         assert call_args[0][0] == "http://internal-host/rpc"
