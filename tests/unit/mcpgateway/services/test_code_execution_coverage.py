@@ -1336,6 +1336,25 @@ class TestMountRules:
         tool = SimpleNamespace(tags=[], name="t", original_name="t", gateway=None)
         assert svc._tool_matches_mount_rules(tool, {}) is True
 
+    def test_include_tags_match_with_dict_tags(self) -> None:
+        """Tags stored as dicts (e.g. [{"name": "csv"}]) must not raise TypeError."""
+        svc = CodeExecutionService()
+        tool = SimpleNamespace(tags=[{"name": "csv"}, {"name": "data"}], name="t", original_name="t", gateway=None)
+        rules = {"include_tags": ["csv"]}
+        assert svc._tool_matches_mount_rules(tool, rules) is True
+
+    def test_exclude_tags_with_dict_tags(self) -> None:
+        svc = CodeExecutionService()
+        tool = SimpleNamespace(tags=[{"name": "deprecated"}], name="t", original_name="t", gateway=None)
+        rules = {"exclude_tags": ["deprecated"]}
+        assert svc._tool_matches_mount_rules(tool, rules) is False
+
+    def test_mixed_string_and_dict_tags(self) -> None:
+        svc = CodeExecutionService()
+        tool = SimpleNamespace(tags=["csv", {"name": "data"}], name="t", original_name="t", gateway=None)
+        rules = {"include_tags": ["data"]}
+        assert svc._tool_matches_mount_rules(tool, rules) is True
+
     def test_server_mount_rules_normalization(self) -> None:
         svc = CodeExecutionService()
         server = SimpleNamespace(mount_rules={"include_tags": ["csv"]})
