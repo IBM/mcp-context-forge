@@ -7049,23 +7049,23 @@ async def import_configuration(
         body_bytes = await request.body()
         if not body_bytes:
             raise HTTPException(status_code=400, detail="Empty request body")
-        
+
         try:
             body = orjson.loads(body_bytes)
         except orjson.JSONDecodeError as e:
             raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
-        
+
         # Extract and validate import_data (required)
         import_data = body.get("import_data")
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing 'import_data' in request body")
-        
+
         # Extract optional parameters with defaults
         conflict_strategy_str = body.get("conflict_strategy", "update")
         dry_run = body.get("dry_run", False)
         rekey_secret = body.get("rekey_secret")
         selected_entities = body.get("selected_entities")
-        
+
         logger.info(f"User {user} requested configuration import (dry_run={dry_run})")
 
         # Validate conflict strategy
@@ -7089,6 +7089,9 @@ async def import_configuration(
 
         return import_status.to_dict()
 
+    except HTTPException:
+        # Re-raise HTTPException as-is (includes our validation errors)
+        raise
     except ImportValidationError as e:
         logger.error(f"Import validation failed for user {user}: {str(e)}")
         raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
