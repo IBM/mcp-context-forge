@@ -3279,8 +3279,14 @@ async def create_code_execution_skill(
     description = str(payload.get("description")) if payload.get("description") is not None else None
     if not name:
         raise HTTPException(status_code=422, detail="name is required")
+    if len(name) > 255:
+        raise HTTPException(status_code=422, detail="name must be 255 characters or fewer")
     if not source_code.strip():
         raise HTTPException(status_code=422, detail="source_code is required")
+    if len(source_code) > 1_048_576:
+        raise HTTPException(status_code=422, detail="source_code must be 1 MB or fewer")
+    if description and len(description) > 10_000:
+        raise HTTPException(status_code=422, detail="description must be 10,000 characters or fewer")
 
     metadata = MetadataCapture.extract_creation_metadata(request, user)
     owner_email = get_user_email(user)
@@ -3308,6 +3314,17 @@ async def create_code_execution_skill(
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _require_skill_moderation_access(server, user) -> None:
+    """Enforce that skill moderation on teamless servers requires platform_admin.
+
+    When a code_execution server has no team_id (public/global), the RBAC
+    decorator's check_any_team fallback would allow any team_admin to moderate
+    skills.  Restrict moderation of teamless servers to platform admins only.
+    """
+    if server.team_id is None and not user.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Skill moderation on public servers requires platform admin privileges")
+
+
 @server_router.get("/{server_id}/skills/approvals", response_model=List[Dict[str, Any]])
 @require_permission("skills.approve")
 async def list_skill_approvals(
@@ -3317,10 +3334,10 @@ async def list_skill_approvals(
     user=Depends(get_current_user_with_permissions),
 ) -> List[Dict[str, Any]]:
     """List skill approval requests for a server."""
-    _ = user
     server = await code_execution_service.get_server_or_none(db, server_id)
     if not code_execution_service.is_code_execution_server(server):
         raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
     query = select(DbSkillApproval).join(DbCodeExecutionSkill).where(DbCodeExecutionSkill.server_id == server_id)
     if status_filter:
         query = query.where(DbSkillApproval.status == status_filter)
@@ -3355,6 +3372,7 @@ async def approve_skill_request(
     server = await code_execution_service.get_server_or_none(db, server_id)
     if not code_execution_service.is_code_execution_server(server):
         raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
     reviewer_email = get_user_email(user)
     notes = payload.get("notes")
     try:
@@ -3377,6 +3395,7 @@ async def reject_skill_request(
     server = await code_execution_service.get_server_or_none(db, server_id)
     if not code_execution_service.is_code_execution_server(server):
         raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
     reviewer_email = get_user_email(user)
     reason = str(payload.get("reason") or "Rejected")
     try:
@@ -3399,6 +3418,7 @@ async def revoke_skill(
     server = await code_execution_service.get_server_or_none(db, server_id)
     if not code_execution_service.is_code_execution_server(server):
         raise HTTPException(status_code=404, detail="code_execution server not found")
+    _require_skill_moderation_access(server, user)
     reviewer_email = get_user_email(user)
     reason = payload.get("reason")
     try:

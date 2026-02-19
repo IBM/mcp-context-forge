@@ -2051,3 +2051,50 @@ class TestFsBrowsePolicyEnforcement:
         read_fn = lambda p: (svc._enforce_fs_permission(policy, "read", p), svc._read_virtual_text_file(session, p))[1]
         with pytest.raises(CodeExecutionSecurityError, match="EACCES"):
             read_fn("/tools/test.txt")
+
+
+# ---------------------------------------------------------------------------
+# Skill moderation access control on teamless servers (Finding 1 fix)
+# ---------------------------------------------------------------------------
+
+
+class TestSkillModerationAccess:
+    """Verify _require_skill_moderation_access enforces platform_admin for teamless servers."""
+
+    def test_teamless_server_blocks_non_admin(self):
+        """Team admin from another team must NOT moderate skills on a teamless server."""
+        # Third-Party
+        from fastapi import HTTPException
+
+        from mcpgateway.main import _require_skill_moderation_access
+
+        server = SimpleNamespace(team_id=None)
+        user = {"email": "teamadmin@example.com", "is_admin": False}
+        with pytest.raises(HTTPException) as exc_info:
+            _require_skill_moderation_access(server, user)
+        assert exc_info.value.status_code == 403
+        assert "platform admin" in exc_info.value.detail
+
+    def test_teamless_server_allows_platform_admin(self):
+        """Platform admin (is_admin=True) can moderate skills on a teamless server."""
+        from mcpgateway.main import _require_skill_moderation_access
+
+        server = SimpleNamespace(team_id=None)
+        user = {"email": "admin@example.com", "is_admin": True}
+        _require_skill_moderation_access(server, user)  # Should not raise
+
+    def test_team_scoped_server_allows_team_admin(self):
+        """Team admin can moderate skills on a server that belongs to a team."""
+        from mcpgateway.main import _require_skill_moderation_access
+
+        server = SimpleNamespace(team_id="team-123")
+        user = {"email": "teamadmin@example.com", "is_admin": False}
+        _require_skill_moderation_access(server, user)  # Should not raise
+
+    def test_team_scoped_server_allows_platform_admin(self):
+        """Platform admin can moderate skills on any team's server."""
+        from mcpgateway.main import _require_skill_moderation_access
+
+        server = SimpleNamespace(team_id="team-123")
+        user = {"email": "admin@example.com", "is_admin": True}
+        _require_skill_moderation_access(server, user)  # Should not raise
