@@ -140,7 +140,7 @@ You can also use the implementations directly:
 
 ```python
 # Use Rust implementation explicitly
-from plugin_rust import PluginRust
+from plugin_rust.plugin_rust import PluginRust
 
 config = {"option1": True, "option2": "value"}
 plugin = PluginRust(config)
@@ -155,7 +155,7 @@ result = plugin.process(data)
 
 ```bash
 # Verify Rust plugin is available
-python -c "from plugin_rust import PluginRust; print('✓ Rust plugin available')"
+python -c "from plugin_rust.plugin_rust import PluginRust; print('✓ Rust plugin available')"
 
 # Check implementation being used
 python -c "
@@ -279,7 +279,7 @@ cd plugins_rust/pii_filter
 cargo test
 
 # Python integration tests
-pytest tests/unit/mcpgateway/plugins/test_pii_filter_rust.py
+pytest tests/unit/mcpgateway/plugins/test_pii_filter.py
 
 # Differential tests (Rust vs Python compatibility)
 pytest tests/differential/test_pii_filter_differential.py
@@ -306,7 +306,7 @@ The Rust plugin system includes comprehensive testing:
 **Solutions**:
 ```bash
 # 1. Check if Rust extension is installed
-python -c "from pii_filter_rust import PIIDetectorRust; print('OK')"
+python -c "from pii_filter import PIIDetectorRust; print('OK')"
 
 # 2. Build from source
 cd plugins_rust/pii_filter
@@ -401,7 +401,7 @@ fn my_plugin_rust(_py: Python, m: &PyModule) -> PyResult<()> {
 4. **Create Python Wrapper**:
 ```python
 # plugins/my_plugin/my_plugin_rust.py
-from my_plugin_rust import MyPluginRust
+from my_plugin_rust.my_plugin_rust import MyPluginRust
 
 class RustMyPlugin:
     def __init__(self, config):
@@ -410,6 +410,10 @@ class RustMyPlugin:
     def process(self, text: str) -> str:
         return self._rust.process(text)
 ```
+
+**Note**: The double-nested import (`my_plugin_rust.my_plugin_rust`) is required because:
+- First `my_plugin_rust` = package name (from `Cargo.toml` `[lib] name`)
+- Second `my_plugin_rust` = module name (from `#[pymodule]` in `lib.rs`)
 
 5. **Add Auto-Detection**:
 ```python

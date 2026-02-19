@@ -26,74 +26,46 @@ plugins_rust/
     └── src/
 ```
 
-## 📦 Quick Start
-
-### Build from Source
+## 📦 Installation
 
 ```bash
 # Install Rust toolchain
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Build a specific plugin
-cd plugins_rust/pii_filter
-make install
+# Build all plugins
+cd plugins_rust && make install
 
-# Or build all plugins from project root
-make rust-dev
+# Or build specific plugin
+cd pii_filter && make install
 ```
 
 ## 🔧 Development
 
-### Per-Plugin Commands
-
 ```bash
-cd plugins_rust/pii_filter
-
-make develop          # Development build
+# Per-plugin commands (run from plugin directory)
+make install          # Install plugin
 make test             # Run tests
 make bench            # Run benchmarks
 make fmt              # Format code
 make clippy           # Lint
+
+# All plugins (run from plugins_rust directory)
+make test             # Test all
+make fmt              # Format all
+make clippy           # Lint all
 ```
 
-### Gateway Integration
-
-Rust plugins are **auto-detected** at runtime with graceful fallback:
-
-```python
-try:
-    from pii_filter_rust import PIIDetectorRust  # Fast Rust implementation
-    detector = PIIDetectorRust(config)
-except ImportError:
-    detector = PythonPIIDetector(config)  # Fallback to Python
-```
-
-Start gateway normally - Rust plugins activate automatically:
+## 🧪 Verification
 
 ```bash
-make dev              # Development server
-make serve            # Production server
+# Verify installation
+python -c "from pii_filter import PIIDetectorRust; print('OK')"
+
+# Security audit
+cd plugins_rust/pii_filter && cargo audit
 ```
 
-
-## 🧪 Testing & Verification
-
-```bash
-# Verify PII filter installation
-python -c "from pii_filter_rust import PIIDetectorRust; print('OK')"
-
-# Run benchmarks
-cd plugins_rust/pii_filter
-make bench-compare
-```
-
-## 🔒 Security
-
-```bash
-cargo audit           # Check vulnerabilities (run from plugin directory)
-```
-
-Rust guarantees memory safety (no buffer overflows, use-after-free, data races).
+Rust plugins auto-activate with graceful Python fallback. Start gateway normally with `make dev` or `make serve`.
 
 ## 📚 Resources
 

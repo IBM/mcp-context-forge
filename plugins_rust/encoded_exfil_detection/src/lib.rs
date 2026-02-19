@@ -1,27 +1,28 @@
-use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE};
+use base64::Engine;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
+use pyo3_stub_gen::define_stub_info_gatherer;
+use pyo3_stub_gen::derive::*;
 use regex::Regex;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 static BASE64_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Match base64: alphanumeric+/+ with optional padding
-    // Use character class boundaries to simulate lookbehind/lookahead
-    Regex::new(r"(?:^|[^A-Za-z0-9+/=])([A-Za-z0-9+/]{16,}={0,2})(?:[^A-Za-z0-9+/=]|$)")
-        .expect("failed to compile BASE64_RE")
+    // Match core pattern only; validate boundaries in code to avoid consuming adjacent matches
+    Regex::new(r"[A-Za-z0-9+/]{16,}={0,2}").expect("failed to compile BASE64_RE")
 });
 
 static BASE64URL_RE: LazyLock<Regex> = LazyLock::new(|| {
     // Match base64url: alphanumeric with - and _ instead of + and /
-    Regex::new(r"(?:^|[^A-Za-z0-9_\-])([A-Za-z0-9_\-]{16,}={0,2})(?:[^A-Za-z0-9_\-]|$)")
-        .expect("failed to compile BASE64URL_RE")
+    // Match core pattern only; validate boundaries in code to avoid consuming adjacent matches
+    Regex::new(r"[A-Za-z0-9_\-]{16,}={0,2}").expect("failed to compile BASE64URL_RE")
 });
 
 static HEX_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:^|[^A-Fa-f0-9])([A-Fa-f0-9]{24,})(?:[^A-Fa-f0-9]|$)")
-        .expect("failed to compile HEX_RE")
+    // Match core pattern only; validate boundaries in code to avoid consuming adjacent matches
+    Regex::new(r"[A-Fa-f0-9]{24,}").expect("failed to compile HEX_RE")
 });
 
 static PERCENT_RE: LazyLock<Regex> =
@@ -318,6 +319,35 @@ fn has_egress_context(text: &str, start: usize, end: usize) -> bool {
     EGRESS_HINTS.iter().any(|hint| window.contains(hint))
 }
 
+/// Validate that a match has proper word boundaries (not part of a larger alphanumeric sequence)
+/// This prevents false positives and allows adjacent matches without consuming boundary chars
+fn has_valid_boundaries(text: &str, start: usize, end: usize, core_chars: &str) -> bool {
+    let bytes = text.as_bytes();
+
+    // Check character before match (if exists)
+    // Note: '=' is only valid as padding at the END of base64, not before it
+    if start > 0 {
+        let prev_char = bytes[start - 1] as char;
+        // Exclude '=' from boundary check since it's only valid as padding at the end
+        let boundary_chars = core_chars.replace('=', "");
+        if boundary_chars.contains(prev_char) {
+            return false; // Previous char is part of the core pattern alphabet
+        }
+    }
+
+    // Check character after match (if exists)
+    if end < bytes.len() {
+        let next_char = bytes[end] as char;
+        // Exclude '=' from boundary check since it's only valid as padding at the end
+        let boundary_chars = core_chars.replace('=', "");
+        if boundary_chars.contains(next_char) {
+            return false; // Next char is part of the core pattern alphabet
+        }
+    }
+
+    true
+}
+
 fn evaluate_candidate(
     text: &str,
     path: &str,
@@ -433,57 +463,36 @@ fn scan_text(text: &str, path: &str, cfg: &DetectorConfig) -> (String, Vec<Findi
             continue;
         }
 
-        // For base64, base64url, and hex, we use capture groups to exclude boundary chars
-        let use_capture_group = matches!(encoding, "base64" | "base64url" | "hex");
+        // Define valid characters for each encoding to validate boundaries
+        let valid_chars = match encoding {
+            "base64" => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=",
+            "base64url" => "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-=",
+            "hex" => "ABCDEFabcdef0123456789",
+            _ => "", // percent_encoding and escaped_hex don't need boundary validation
+        };
 
-        if use_capture_group {
-            for caps in regex.captures_iter(text) {
-                if let Some(matched) = caps.get(1)
-                    && let Some(finding) = evaluate_candidate(
-                        text,
-                        path,
-                        encoding,
-                        matched.as_str(),
-                        matched.start(),
-                        matched.end(),
-                        cfg,
-                    )
-                {
-                    let key = (finding.start, finding.end);
-                    match findings_by_span.get(&key) {
-                        Some(existing) if existing.score >= finding.score => {}
-                        _ => {
-                            findings_by_span.insert(key, finding);
-                        }
-                    }
+        for matched in regex.find_iter(text) {
+            let start = matched.start();
+            let end = matched.end();
 
-                    if findings_by_span.len() >= cfg.max_findings_per_value {
-                        break;
+            // Validate boundaries for encodings that need it
+            if !valid_chars.is_empty() && !has_valid_boundaries(text, start, end, valid_chars) {
+                continue;
+            }
+
+            if let Some(finding) =
+                evaluate_candidate(text, path, encoding, matched.as_str(), start, end, cfg)
+            {
+                let key = (finding.start, finding.end);
+                match findings_by_span.get(&key) {
+                    Some(existing) if existing.score >= finding.score => {}
+                    _ => {
+                        findings_by_span.insert(key, finding);
                     }
                 }
-            }
-        } else {
-            for matched in regex.find_iter(text) {
-                if let Some(finding) = evaluate_candidate(
-                    text,
-                    path,
-                    encoding,
-                    matched.as_str(),
-                    matched.start(),
-                    matched.end(),
-                    cfg,
-                ) {
-                    let key = (finding.start, finding.end);
-                    match findings_by_span.get(&key) {
-                        Some(existing) if existing.score >= finding.score => {}
-                        _ => {
-                            findings_by_span.insert(key, finding);
-                        }
-                    }
 
-                    if findings_by_span.len() >= cfg.max_findings_per_value {
-                        break;
-                    }
+                if findings_by_span.len() >= cfg.max_findings_per_value {
+                    break;
                 }
             }
         }
@@ -593,6 +602,7 @@ fn scan_container<'py>(
     Ok((0, container.clone(), PyList::empty(py)))
 }
 
+#[gen_stub_pyfunction]
 #[pyfunction]
 fn py_scan_container<'py>(
     py: Python<'py>,
@@ -604,10 +614,13 @@ fn py_scan_container<'py>(
 }
 
 #[pymodule]
-fn encoded_exfil_detection(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn encoded_exfil_detection_rust(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(py_scan_container, m)?)?;
     Ok(())
 }
+
+// Define stub info gatherer for generating Python type stubs
+define_stub_info_gatherer!(stub_info);
 
 #[cfg(test)]
 mod tests {
@@ -648,5 +661,26 @@ mod tests {
         let text = "token=YWJjZA==";
         let (_, findings) = scan_text(text, "", &cfg);
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn test_scan_text_detects_adjacent_matches() {
+        // Test that adjacent base64 strings are both detected (boundary chars not consumed)
+        let cfg = DetectorConfig::default();
+        let encoded1 = STANDARD.encode(b"password=secret-value-one");
+        let encoded2 = STANDARD.encode(b"token=secret-value-two");
+        let text = format!("[{}] [{}]", encoded1, encoded2);
+        let (_, findings) = scan_text(&text, "", &cfg);
+
+        // Both base64 strings should be detected
+        assert_eq!(
+            findings.len(),
+            2,
+            "Expected 2 findings for adjacent base64 strings"
+        );
+
+        // Verify they are distinct matches
+        assert_ne!(findings[0].start, findings[1].start);
+        assert_ne!(findings[0].end, findings[1].end);
     }
 }

@@ -12,15 +12,14 @@ from plugins.secrets_detection.secrets_detection import SecretsDetectionPlugin
 
 # Try to import Rust implementation
 try:
-    import secret_detection as rust_secret_detection
+    import secrets_detection_rust.secrets_detection_rust  # noqa: F401 - imported to check availability
 
     RUST_AVAILABLE = True
 except ImportError:
     RUST_AVAILABLE = False
-    rust_secret_detection = None
     # Fail in CI if Rust plugins are required
     if os.environ.get("REQUIRE_RUST_PLUGINS") == "1":
-        raise ImportError("Rust plugin 'secret_detection' is required in CI but not available")
+        raise ImportError("Rust plugin 'secrets_detection' is required in CI but not available")
 
 
 @pytest.mark.asyncio

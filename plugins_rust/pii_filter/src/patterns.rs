@@ -39,12 +39,28 @@ static SSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
 });
 
 // BSN patterns (Dutch Burgerservicenummer)
+// Match 9-digit numbers with BSN context keywords to avoid false positives
+// Positive context: BSN, Citizen ID, Burgerservicenummer, ID, Order, Invoice, Tracking, Numbers, etc.
+// Note: Removed negative lookbehind (not supported by standard regex crate)
+// Phone numbers are filtered by the phone detector which runs first
 static BSN_PATTERNS: Lazy<Vec<PatternDef>> = Lazy::new(|| {
-    vec![(
-        r"\b\d{9}\b",
-        "Dutch BSN (Burgerservicenummer)",
-        MaskingStrategy::Partial,
-    )]
+    vec![
+        (
+            r"\b(?:BSN|Citizen\s+ID|Burgerservicenummer)[:\s#]*\d{9}\b",
+            "Dutch BSN with explicit context",
+            MaskingStrategy::Partial,
+        ),
+        (
+            r"\b(?:ID|Order|Invoice|Tracking|Numbers?)[:\s#]*\d{9}\b",
+            "9-digit ID with generic context",
+            MaskingStrategy::Partial,
+        ),
+        (
+            r"\b(?:My\s+)?BSN\s+(?:is\s+)?\d{9}\b",
+            "BSN with 'is' context",
+            MaskingStrategy::Partial,
+        ),
+    ]
 });
 
 // Credit card patterns

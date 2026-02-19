@@ -8,11 +8,15 @@
 #   make install      - Build & install encoded_exfil_detection plugin
 #   make test         - Test encoded_exfil_detection plugin
 #   make coverage     - Generate code coverage report
+#   make compare      - Run performance comparison (if available)
 
-.PHONY: help build dev test clean check lint fmt audit doc install coverage bench bench-compare compare verify test-integration test-all
+.PHONY: help build dev test clean check lint fmt audit doc install coverage bench bench-compare compare verify test-integration test-all build-target
 
 # Default target
 .DEFAULT_GOAL := help
+
+# Project metadata
+DIST_DIR := target
 
 # Colors for output
 BLUE := \033[0;34m
@@ -33,21 +37,21 @@ help: ## Show this help message
 	@echo "  make coverage     # Generate coverage report"
 
 # Build targets
-build: ## Build plugin in release mode
-	@echo "$(GREEN)Building encoded_exfil_detection plugin...$(NC)"
-	maturin build --release
+stub-gen: ## Generate Python type stubs (.pyi files)
+	@echo "$(GREEN)Generating Python type stubs...$(NC)"
+	@cargo run --bin stub_gen
+	@echo "$(GREEN)Type stubs generated $(NC)"
 
-build-target: ## Build for specific target (use TARGET=...)
+
+build-target: stub-gen ## Build for specific target (use TARGET=...)
 	@echo "$(GREEN)Building for target: $(TARGET)...$(NC)"
-	@maturin build --release --target $(TARGET)
+	@cd ../.. && uv run maturin build --release --manifest-path plugins_rust/encoded_exfil_detection/Cargo.toml --target $(TARGET)
 	@echo "$(GREEN)Build complete for $(TARGET)$(NC)"
 
-install: ## Build and install plugin (uses maturin develop)
-	@echo "$(GREEN)Installing encoded_exfil_detection plugin...$(NC)"
-	maturin develop --release
-	@echo "$(GREEN)Verifying installation...$(NC)"
-	@python -c "import encoded_exfil_detection; print('✓ encoded_exfil_detection installed'); print('✓ Module:', encoded_exfil_detection.__file__)" || { echo "$(RED)Installation verification failed!$(NC)"; exit 1; }
-	@echo "$(GREEN)Installation verified successfully!$(NC)"
+install: stub-gen
+	@echo "$(GREEN)Installing $(PACKAGE_NAME) plugin...$(NC)"
+	@cd ../.. && uv run maturin develop --release --manifest-path plugins_rust/encoded_exfil_detection/Cargo.toml
+	@echo "$(GREEN)Installation complete$(NC)"
 
 # Testing targets
 test: ## Run Rust tests for plugin
@@ -60,7 +64,7 @@ test-verbose: ## Run plugin tests (verbose)
 
 test-python: ## Run Python unit tests for plugin (requires dev install)
 	@echo "$(GREEN)Running Python unit tests...$(NC)"
-	cd ../.. && pytest tests -k encoded_exfil -v
+	cd ../.. && uv run pytest tests -k encoded_exfil -v
 
 fmt: ## Format code with rustfmt
 	@echo "$(GREEN)Formatting code...$(NC)"
@@ -82,7 +86,7 @@ check-all: ## Run all checks (format, lint, test)
 
 verify: ## Verify plugin installation
 	@echo "$(GREEN)Verifying encoded_exfil_detection installation...$(NC)"
-	@python3 -c "import encoded_exfil_detection; print('✅ encoded_exfil_detection available')" || echo "⚠️  encoded_exfil_detection not installed"
+	@uv run python -c "import encoded_exfil_detection; print('✅ encoded_exfil_detection available')" || echo "⚠️  encoded_exfil_detection not installed"
 
 test-integration: ## Run integration tests
 	@echo "$(GREEN)Running integration tests...$(NC)"
@@ -106,11 +110,13 @@ compare: install ## Run performance comparison
 # Coverage targets
 coverage: install ## Generate code coverage report
 	@echo "$(GREEN)Generating code coverage...$(NC)"
-	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
+	@command -v cargo-llvm-cov >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-llvm-cov...$(NC)"; cargo install cargo-llvm-cov; }
 	@echo "$(YELLOW)Building extension with maturin first...$(NC)"
 	@$(MAKE) --no-print-directory install
-	@echo "$(YELLOW)Running tarpaulin...$(NC)"
-	cargo tarpaulin --out Html --out Xml --output-dir coverage
+	@echo "$(YELLOW)Running cargo-llvm-cov...$(NC)"
+	@mkdir -p coverage
+	cargo llvm-cov --cobertura --output-path coverage/cobertura.xml
+	@echo "$(GREEN)Coverage report generated at coverage/cobertura.xml$(NC)"
 
 # Security and audit targets
 audit: ## Run security audit with cargo-audit
@@ -132,6 +138,11 @@ doc-open: doc ## Build and open documentation in browser
 	cargo doc --no-deps --document-private-items --open
 
 # Cleaning targets
+uninstall: ## Uninstall plugin from Python environment
+	@echo "$(YELLOW)Uninstalling encoded_exfil_detection...$(NC)"
+	@uv pip uninstall -y encoded_exfil_detection 2>/dev/null || pip uninstall -y encoded_exfil_detection 2>/dev/null || true
+	@echo "$(GREEN)encoded_exfil_detection uninstalled$(NC)"
+
 clean: ## Remove build artifacts
 	@echo "$(YELLOW)Cleaning build artifacts...$(NC)"
 	cargo clean
@@ -150,8 +161,8 @@ info: ## Show build information
 	@echo "$(BLUE)Build Information:$(NC)"
 	@echo "  Rust version:    $$(rustc --version)"
 	@echo "  Cargo version:   $$(cargo --version)"
-	@echo "  Maturin version: $$(maturin --version 2>/dev/null || echo 'not installed')"
-	@echo "  Python version:  $$(python --version)"
+	@echo "  Maturin version: $$(uv run maturin --version 2>/dev/null || echo 'not installed')"
+	@echo "  Python version:  $$(uv run python --version)"
 	@echo ""
 	@echo "$(BLUE)Plugin Information:$(NC)"
 	@echo "  Name:    encoded_exfil_detection"
@@ -160,17 +171,19 @@ info: ## Show build information
 
 deps: ## Install/update dependencies
 	@echo "$(GREEN)Installing/updating dependencies...$(NC)"
-	@command -v maturin >/dev/null 2>&1 || { echo "$(YELLOW)Installing maturin...$(NC)"; pip install maturin; }
+	@command -v uv >/dev/null 2>&1 && uv pip install maturin || { echo "$(YELLOW)Installing maturin...$(NC)"; uv pip install maturin; }
 	@command -v cargo-audit >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-audit...$(NC)"; cargo install cargo-audit; }
 	@command -v cargo-tarpaulin >/dev/null 2>&1 || { echo "$(YELLOW)Installing cargo-tarpaulin...$(NC)"; cargo install cargo-tarpaulin; }
 	@echo "$(GREEN)Dependencies installed!$(NC)"
 
 # All PHONY targets
-.PHONY: help build dev install \
-        test test-verbose test-python \
-        fmt fmt-check clippy \
+.PHONY: help install build-target \
+        test test-verbose test-python test-integration test-all \
+        fmt fmt-check clippy check-all \
+        bench bench-compare compare \
         audit audit-fix \
         doc doc-open \
         coverage \
         clean clean-all \
+        uninstall verify stub-gen \
         info deps
