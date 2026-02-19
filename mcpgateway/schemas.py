@@ -4077,6 +4077,7 @@ class ServerRead(BaseModelWithConfigDict):
     # is_active: bool
     enabled: bool
     associated_tools: List[str] = []
+    associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
