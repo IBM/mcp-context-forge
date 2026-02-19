@@ -107,6 +107,17 @@ services:
           memory: 512M
 
   # ──────────────────────────────────────────────────────────────────────
+  # Volume init - fix ownership for shared code execution volume (ADR-0042)
+  # Docker named volumes are created as root:root; the gateway runs as uid 1001.
+  # ──────────────────────────────────────────────────────────────────────
+  code_exec_init:
+    image: busybox:latest
+    command: ["sh", "-c", "chown -R 1001:0 /data && chmod 2775 /data"]
+    volumes:
+      - code_exec_data:/data
+    networks: [mcpnet]
+
+  # ──────────────────────────────────────────────────────────────────────
   # MCP Gateway - the main API server for the MCP stack
   # ──────────────────────────────────────────────────────────────────────
   gateway:
@@ -583,6 +594,8 @@ services:
         condition: service_healthy   # ▶ wait for connection pooler
       redis:
         condition: service_started
+      code_exec_init:
+        condition: service_completed_successfully  # ▶ volume ownership fix (ADR-0042)
       # Direct PostgreSQL (uncomment if bypassing PgBouncer):
       # postgres:
       #   condition: service_healthy
