@@ -131,7 +131,6 @@ def test_cors_settings_branches():
     assert result == {}  # Empty dict when disabled
 
 
-
 # --------------------------------------------------------------------------- #
 #                    Internal RPC Configuration Tests                         #
 # --------------------------------------------------------------------------- #
