@@ -9043,6 +9043,8 @@ function initToolSelect(
             );
             checkboxes.forEach((cb) => (cb.checked = false));
 
+            getEditSelections(selectId).clear();
+
             // Clear the "select all" flag
             const selectAllInput = container.querySelector(
                 'input[name="selectAllTools"]',
@@ -9465,6 +9467,8 @@ function initResourceSelect(
             );
             checkboxes.forEach((cb) => (cb.checked = false));
 
+            getEditSelections(selectId).clear();
+
             // Remove any select-all hidden inputs
             const selectAllInput = container.querySelector(
                 'input[name="selectAllResources"]',
@@ -9872,6 +9876,8 @@ function initPromptSelect(
                 'input[type="checkbox"]',
             );
             checkboxes.forEach((cb) => (cb.checked = false));
+
+            getEditSelections(selectId).clear();
 
             // Remove any select-all hidden inputs
             const selectAllInput = container.querySelector(
@@ -15783,8 +15789,8 @@ async function handleEditServerFormSubmit(e) {
                 });
 
             // Override FormData with the full store contents
+            formData.delete(fieldName);
             if (sel.size > 0) {
-                formData.delete(fieldName);
                 sel.forEach((uuid) => formData.append(fieldName, uuid));
             }
         });
