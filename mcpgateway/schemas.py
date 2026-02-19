@@ -760,6 +760,14 @@ class ToolCreate(BaseModel):
         # 2. It has no properties defined (empty properties dict)
         # 3. It's the default factory value
         def is_empty_schema(schema):
+            """Check if a JSON schema is empty or has no properties defined.
+
+            Args:
+                schema: JSON schema dict to check
+
+            Returns:
+                True if schema is None, empty dict, or has no properties
+            """
             if not schema or schema == {}:
                 return True
             # Check if it's a schema with empty properties
@@ -1309,6 +1317,14 @@ class ToolUpdate(BaseModelWithConfigDict):
 
         # Determine if schemas need population
         def is_empty_schema(schema):
+            """Check if a JSON schema is empty or has no properties defined.
+
+            Args:
+                schema: JSON schema dict to check
+
+            Returns:
+                True if schema is None, empty dict, or has no properties
+            """
             if not schema or schema == {}:
                 return True
             if isinstance(schema, dict):

@@ -10127,6 +10127,19 @@ async def admin_unified_search(
         }
 
     async def _safe_entity_search(search_callable, empty_key: str, **kwargs: Any) -> dict[str, Any]:
+        """Safely execute entity search, returning empty results on auth errors.
+
+        Args:
+            search_callable: Async function to call for searching entities
+            empty_key: Key name for empty results list in response
+            **kwargs: Additional arguments to pass to search_callable
+
+        Returns:
+            Search results dict, or empty results dict on 401/403 errors
+
+        Raises:
+            HTTPException: Re-raises non-auth HTTP exceptions
+        """
         try:
             return await search_callable(**kwargs)
         except HTTPException as exc:
