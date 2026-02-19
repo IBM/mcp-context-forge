@@ -2015,7 +2015,8 @@ Disallow: /
             'http://gateway-service:4444/rpc'
 
         """
-        if "/rpc" in self.internal_rpc_host:
+
+        if self.internal_rpc_host.startswith(("http://", "https://")) and self.internal_rpc_host.endswith("/rpc"):
             return self.internal_rpc_host
         return f"http://{self.internal_rpc_host}:{self.port}{self.app_root_path}/rpc"
 
