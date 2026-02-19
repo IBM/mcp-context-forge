@@ -44,7 +44,7 @@ import re
 
 # Third-Party
 from fastapi import Response, status
-from prometheus_client import Counter, Gauge, REGISTRY
+from prometheus_client import Counter, Gauge, Histogram, REGISTRY
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # First-Party
@@ -95,6 +95,24 @@ password_reset_completions_counter = Counter(
     "password_reset_completions_total",
     "Total number of password reset completion attempts",
     ["outcome"],
+)
+
+siem_events_exported_total = Counter(
+    "siem_events_exported_total",
+    "Total SIEM export attempts by destination and status",
+    ["destination", "status"],
+)
+
+siem_export_latency_seconds = Histogram(
+    "siem_export_latency_seconds",
+    "SIEM export latency in seconds by destination",
+    ["destination"],
+)
+
+siem_queue_depth = Gauge(
+    "siem_queue_depth",
+    "Current SIEM queue depth by destination",
+    ["destination"],
 )
 
 

@@ -90,6 +90,9 @@ def _normalize_env_list_vars() -> None:
         "SSO_GOOGLE_ADMIN_DOMAINS",
         "SSO_ENTRA_ADMIN_GROUPS",
         "LOG_DETAILED_SKIP_ENDPOINTS",
+        "SIEM_EXPORT_EVENT_SOURCES",
+        "SIEM_EXPORT_URL_ALLOWLIST",
+        "SIEM_EXPORT_REDACT_FIELDS",
     ]
     for key in keys:
         raw = os.environ.get(key)
@@ -355,7 +358,7 @@ class Settings(BaseSettings):
     mcp_client_auth_enabled: bool = Field(default=True, description="Enable JWT authentication for MCP client operations")
     mcp_require_auth: bool = Field(
         default=False,
-        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. " "If true, all /mcp requests must include a valid Bearer token.",
+        description="Require authentication for /mcp endpoints. If false, unauthenticated requests can access public items only. If true, all /mcp requests must include a valid Bearer token.",
     )
     trust_proxy_auth: bool = Field(
         default=False,
@@ -369,11 +372,11 @@ class Settings(BaseSettings):
     # Query Parameter Authentication (INSECURE - disabled by default)
     insecure_allow_queryparam_auth: bool = Field(
         default=False,
-        description=("Enable query parameter authentication for gateway peers. " "WARNING: API keys may appear in proxy logs. See CWE-598."),
+        description=("Enable query parameter authentication for gateway peers. WARNING: API keys may appear in proxy logs. See CWE-598."),
     )
     insecure_queryparam_auth_allowed_hosts: List[str] = Field(
         default_factory=list,
-        description=("Allowlist of hosts permitted to use query parameter auth. " "Empty list allows any host when feature is enabled. " "Format: ['mcp.tavily.com', 'api.example.com']"),
+        description=("Allowlist of hosts permitted to use query parameter auth. Empty list allows any host when feature is enabled. Format: ['mcp.tavily.com', 'api.example.com']"),
     )
 
     # ===================================
@@ -398,7 +401,7 @@ class Settings(BaseSettings):
             "fe80::/10",  # IPv6 link-local
         ],
         description=(
-            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. " "Default blocks cloud metadata endpoints. Add private ranges for stricter security."
+            "CIDR ranges to block for SSRF protection. These are ALWAYS blocked regardless of other settings. Default blocks cloud metadata endpoints. Add private ranges for stricter security."
         ),
     )
 
@@ -412,7 +415,7 @@ class Settings(BaseSettings):
 
     ssrf_allow_localhost: bool = Field(
         default=True,
-        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). " "Set to false to block localhost access for stricter security. " "Default true for development compatibility."),
+        description=("Allow localhost/loopback addresses (127.0.0.0/8, ::1). Set to false to block localhost access for stricter security. Default true for development compatibility."),
     )
 
     ssrf_allow_private_networks: bool = Field(
@@ -1009,7 +1012,7 @@ class Settings(BaseSettings):
         default=200,
         ge=10,
         le=1000,
-        description="Maximum total concurrent HTTP connections (global, not per-host). " "Increase for high-traffic deployments with many outbound calls.",
+        description="Maximum total concurrent HTTP connections (global, not per-host). Increase for high-traffic deployments with many outbound calls.",
     )
     httpx_max_keepalive_connections: int = Field(
         default=100,
@@ -1055,7 +1058,7 @@ class Settings(BaseSettings):
         default=30.0,
         ge=1.0,
         le=120.0,
-        description="Read timeout for admin UI operations (model fetching, health checks). " "Shorter than httpx_read_timeout to fail fast on admin pages.",
+        description="Read timeout for admin UI operations (model fetching, health checks). Shorter than httpx_read_timeout to fail fast on admin pages.",
     )
 
     @field_validator("allowed_origins", mode="before")
@@ -1252,6 +1255,29 @@ class Settings(BaseSettings):
     security_threat_score_alert: float = Field(default=0.7, description="Threat score threshold for alerts (0.0-1.0)")
     security_rate_limit_window_minutes: int = Field(default=5, description="Time window for rate limit checks (minutes)")
 
+    # SIEM Export Configuration
+    # SIEM export can run independently of DB-backed security/audit logging.
+    siem_export_enabled: bool = Field(default=False, description="Enable asynchronous SIEM export pipeline")
+    siem_export_batch_size: int = Field(default=100, ge=1, le=1000, description="Maximum events per export batch")
+    siem_export_flush_interval_seconds: int = Field(default=5, ge=1, le=60, description="Queue poll/flush interval in seconds")
+    siem_export_queue_max_size: int = Field(default=10000, ge=100, le=1000000, description="Maximum queue length before backpressure handling")
+    siem_export_max_retries: int = Field(default=10, ge=0, le=50, description="Maximum retries before dead-letter queue")
+    siem_export_backoff_max_seconds: int = Field(default=60, ge=1, le=3600, description="Maximum retry backoff in seconds")
+    siem_export_backpressure_policy: Literal["drop_oldest", "block_producer"] = Field(
+        default="drop_oldest",
+        description="Backpressure mode when queue is full: drop_oldest or block_producer",
+    )
+    siem_export_event_sources: List[str] = Field(default_factory=lambda: ["auth", "security", "audit"], description="Event sources enabled for SIEM export")
+    siem_export_stream_name: str = Field(default="mcpgateway:siem:events", description="Redis Stream name for SIEM events")
+    siem_export_consumer_group: str = Field(default="siem-exporters", description="Redis consumer group name for SIEM workers")
+    siem_export_url_allowlist: List[str] = Field(default_factory=list, description="Optional outbound destination URL allowlist (hostnames or URL prefixes)")
+    siem_export_redact_fields: List[str] = Field(
+        default_factory=lambda: ["user_email", "authorization", "token", "password", "secret", "api_key"],
+        description="Fields to redact before exporting events",
+    )
+    siem_destinations: List[Dict[str, Any]] = Field(default_factory=list, description="SIEM destination configuration (JSON list)")
+    siem_destinations_file: Optional[str] = Field(default=None, description="Optional JSON/YAML file path containing SIEM destination configuration")
+
     # API Token Tracking Configuration
     # Controls how token usage and last_used timestamps are tracked
     token_usage_logging_enabled: bool = Field(default=True, description="Enable API token usage logging middleware")
@@ -1357,6 +1383,98 @@ class Settings(BaseSettings):
     syslog_port: int = Field(default=514, description="Syslog server port")
     webhook_logging_enabled: bool = Field(default=False, description="Send logs to webhook endpoints")
     webhook_logging_urls: List[str] = Field(default_factory=list, description="Webhook URLs for log delivery")
+
+    @field_validator("siem_destinations", mode="before")
+    @classmethod
+    def parse_siem_destinations(cls, value: Any) -> List[Dict[str, Any]]:
+        """Parse SIEM destination config from JSON/YAML strings.
+
+        Supports:
+        - JSON list string
+        - JSON object with `destinations` key
+        - YAML string with `destinations` key
+
+        Args:
+            value: Raw destination config value from environment/settings source.
+
+        Returns:
+            List[Dict[str, Any]]: Normalized destination definitions.
+        """
+        if value is None:
+            return []
+
+        if isinstance(value, list):
+            return [dict(item) for item in value if isinstance(item, dict)]
+
+        if isinstance(value, dict):
+            if isinstance(value.get("destinations"), list):
+                return [dict(item) for item in value["destinations"] if isinstance(item, dict)]
+            return []
+
+        if not isinstance(value, str):
+            return []
+
+        raw = value.strip()
+        if not raw:
+            return []
+
+        # First, try JSON parsing.
+        try:
+            parsed = orjson.loads(raw)
+            if isinstance(parsed, list):
+                return [dict(item) for item in parsed if isinstance(item, dict)]
+            if isinstance(parsed, dict):
+                if isinstance(parsed.get("destinations"), list):
+                    return [dict(item) for item in parsed["destinations"] if isinstance(item, dict)]
+                siem_export = parsed.get("siem_export")
+                if isinstance(siem_export, dict) and isinstance(siem_export.get("destinations"), list):
+                    return [dict(item) for item in siem_export["destinations"] if isinstance(item, dict)]
+            return []
+        except Exception as exc:
+            logger.debug("Failed to parse SIEM destinations as JSON: %s", exc)
+
+        # Then try YAML parsing for convenience.
+        try:
+            # Third-Party
+            import yaml  # pylint: disable=import-outside-toplevel
+
+            parsed_yaml = yaml.safe_load(raw)
+            if isinstance(parsed_yaml, list):
+                return [dict(item) for item in parsed_yaml if isinstance(item, dict)]
+            if isinstance(parsed_yaml, dict):
+                if isinstance(parsed_yaml.get("destinations"), list):
+                    return [dict(item) for item in parsed_yaml["destinations"] if isinstance(item, dict)]
+                siem_export = parsed_yaml.get("siem_export")
+                if isinstance(siem_export, dict) and isinstance(siem_export.get("destinations"), list):
+                    return [dict(item) for item in siem_export["destinations"] if isinstance(item, dict)]
+        except Exception as exc:
+            logger.debug("Failed to parse SIEM destinations as YAML: %s", exc)
+
+        return []
+
+    @model_validator(mode="after")
+    def load_siem_destinations_from_file(self) -> Self:
+        """Load SIEM destinations from optional JSON/YAML config file.
+
+        Returns:
+            Self: Updated settings instance.
+        """
+        if self.siem_destinations or not self.siem_destinations_file:
+            return self
+
+        try:
+            config_path = Path(self.siem_destinations_file).expanduser()
+            if not config_path.exists():
+                logger.warning("SIEM destinations file not found: %s", config_path)
+                return self
+
+            content = config_path.read_text(encoding="utf-8")
+            parsed = self.parse_siem_destinations(content)
+            self.siem_destinations = parsed
+        except Exception as exc:  # pragma: no cover - defensive config loading
+            logger.warning("Failed loading SIEM destinations file '%s': %s", self.siem_destinations_file, exc)
+
+        return self
 
     @field_validator("log_level", mode="before")
     @classmethod

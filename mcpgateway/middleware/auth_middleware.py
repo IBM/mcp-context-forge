@@ -31,28 +31,34 @@ from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.path_filter import should_skip_auth_context
 from mcpgateway.services.security_logger import get_security_logger
+from mcpgateway.services.siem_export_service import get_siem_export_service
 
 logger = logging.getLogger(__name__)
 security_logger = get_security_logger()
 
 
 def _should_log_auth_success() -> bool:
-    """Check if successful authentication should be logged based on settings.
+    """Check if successful authentication should be captured.
 
     Returns:
-        True if security_logging_level is "all", False otherwise.
+        True when DB security logging requires it or SIEM auth source is enabled.
     """
-    return settings.security_logging_level == "all"
+    db_logging_enabled = settings.security_logging_enabled and settings.security_logging_level == "all"
+    siem_service = get_siem_export_service()
+    siem_logging_enabled = (settings.siem_export_enabled or siem_service.enabled or bool(siem_service.destinations)) and siem_service.is_source_enabled("auth")
+    return db_logging_enabled or siem_logging_enabled
 
 
 def _should_log_auth_failure() -> bool:
-    """Check if failed authentication should be logged based on settings.
+    """Check if failed authentication should be captured.
 
     Returns:
-        True if security_logging_level is "all" or "failures_only", False for "high_severity".
+        True when DB security logging requires it or SIEM auth source is enabled.
     """
-    # Log failures for "all" and "failures_only" levels, not for "high_severity"
-    return settings.security_logging_level in ("all", "failures_only")
+    db_logging_enabled = settings.security_logging_enabled and settings.security_logging_level in ("all", "failures_only")
+    siem_service = get_siem_export_service()
+    siem_logging_enabled = (settings.siem_export_enabled or siem_service.enabled or bool(siem_service.destinations)) and siem_service.is_source_enabled("auth")
+    return db_logging_enabled or siem_logging_enabled
 
 
 class AuthContextMiddleware(BaseHTTPMiddleware):
@@ -104,6 +110,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         # Check logging settings once upfront to avoid DB session when not needed
         log_success = _should_log_auth_success()
         log_failure = _should_log_auth_failure()
+        siem_runtime_enabled = settings.siem_export_enabled or get_siem_export_service().enabled
+        persist_to_db = settings.security_logging_enabled or not siem_runtime_enabled
 
         # Try to authenticate and populate user context
         # Note: get_current_user manages its own DB sessions internally
@@ -124,8 +132,28 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log successful authentication (only if logging level is "all")
             # DB session created only when needed
             if log_success:
-                db = SessionLocal()
-                try:
+                if persist_to_db:
+                    db = SessionLocal()
+                    try:
+                        security_logger.log_authentication_attempt(
+                            user_id=user_id,
+                            user_email=user_email,
+                            auth_method="bearer_token",
+                            success=True,
+                            client_ip=request.client.host if request.client else "unknown",
+                            user_agent=request.headers.get("user-agent"),
+                            db=db,
+                            persist=True,
+                        )
+                        db.commit()
+                    except Exception as log_error:
+                        logger.debug(f"Failed to log successful auth: {log_error}")
+                    finally:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.debug(f"Failed to close database session: {close_error}")
+                else:
                     security_logger.log_authentication_attempt(
                         user_id=user_id,
                         user_email=user_email,
@@ -133,16 +161,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         success=True,
                         client_ip=request.client.host if request.client else "unknown",
                         user_agent=request.headers.get("user-agent"),
-                        db=db,
+                        persist=False,
                     )
-                    db.commit()
-                except Exception as log_error:
-                    logger.debug(f"Failed to log successful auth: {log_error}")
-                finally:
-                    try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
 
         except Exception as e:
             # Silently fail - let route handlers enforce auth if needed
@@ -151,8 +171,29 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
             # Log failed authentication attempt (based on logging level)
             # DB session created only when needed
             if log_failure:
-                db = SessionLocal()
-                try:
+                if persist_to_db:
+                    db = SessionLocal()
+                    try:
+                        security_logger.log_authentication_attempt(
+                            user_id="unknown",
+                            user_email=None,
+                            auth_method="bearer_token",
+                            success=False,
+                            client_ip=request.client.host if request.client else "unknown",
+                            user_agent=request.headers.get("user-agent"),
+                            failure_reason=str(e),
+                            db=db,
+                            persist=True,
+                        )
+                        db.commit()
+                    except Exception as log_error:
+                        logger.debug(f"Failed to log auth failure: {log_error}")
+                    finally:
+                        try:
+                            db.close()
+                        except Exception as close_error:
+                            logger.debug(f"Failed to close database session: {close_error}")
+                else:
                     security_logger.log_authentication_attempt(
                         user_id="unknown",
                         user_email=None,
@@ -161,16 +202,8 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                         client_ip=request.client.host if request.client else "unknown",
                         user_agent=request.headers.get("user-agent"),
                         failure_reason=str(e),
-                        db=db,
+                        persist=False,
                     )
-                    db.commit()
-                except Exception as log_error:
-                    logger.debug(f"Failed to log auth failure: {log_error}")
-                finally:
-                    try:
-                        db.close()
-                    except Exception as close_error:
-                        logger.debug(f"Failed to close database session: {close_error}")
 
         # Continue with request
         return await call_next(request)

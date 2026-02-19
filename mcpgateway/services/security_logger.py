@@ -10,10 +10,11 @@ and audit trail management with automated threat analysis and alerting.
 """
 
 # Standard
+from collections import deque
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Deque, Dict, Optional
 
 # Third-Party
 from sqlalchemy import func, select
@@ -22,6 +23,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import AuditTrail, SecurityEvent, SessionLocal
+from mcpgateway.services.siem_export_service import get_siem_export_service
 from mcpgateway.utils.correlation_id import get_correlation_id
 
 logger = logging.getLogger(__name__)
@@ -64,6 +66,7 @@ class SecurityLogger:
         self.failed_auth_threshold = getattr(settings, "security_failed_auth_threshold", 5)
         self.threat_score_alert_threshold = getattr(settings, "security_threat_score_alert", 0.7)
         self.rate_limit_window_minutes = getattr(settings, "security_rate_limit_window", 5)
+        self._memory_failures: Dict[str, Deque[datetime]] = {}
 
     def log_authentication_attempt(
         self,
@@ -76,6 +79,7 @@ class SecurityLogger:
         failure_reason: Optional[str] = None,
         additional_context: Optional[Dict[str, Any]] = None,
         db: Optional[Session] = None,
+        persist: bool = True,
     ) -> Optional[SecurityEvent]:
         """Log authentication attempts with security analysis.
 
@@ -89,14 +93,25 @@ class SecurityLogger:
             failure_reason: Reason for failure if applicable
             additional_context: Additional event context
             db: Optional database session
+            persist: Persist to database when True. Set False for SIEM-only export.
 
         Returns:
             Created SecurityEvent or None if logging disabled
         """
         correlation_id = get_correlation_id()
 
-        # Count recent failed attempts
-        failed_attempts = self._count_recent_failures(user_id=user_id, client_ip=client_ip, db=db)
+        # Count recent failed attempts.
+        # Use DB-backed count when persistence is enabled; otherwise use in-memory tracker
+        # so SIEM-only mode can still detect repeated failures.
+        if persist or db is not None:
+            failed_attempts = self._count_recent_failures(user_id=user_id, client_ip=client_ip, db=db)
+        else:
+            failed_attempts = self._count_recent_failures_memory(user_id=user_id, client_ip=client_ip)
+
+        if not success:
+            self._record_failed_attempt_memory(user_id=user_id, client_ip=client_ip)
+            if not (persist or db is not None):
+                failed_attempts += 1
 
         # Calculate threat score
         threat_score = self._calculate_auth_threat_score(success=success, failed_attempts=failed_attempts, auth_method=auth_method)
@@ -136,6 +151,8 @@ class SecurityLogger:
             action_taken="allowed" if success else "denied",
             correlation_id=correlation_id,
             db=db,
+            source="auth",
+            persist=persist,
         )
 
         # Log to standard logger as well
@@ -359,6 +376,64 @@ class SecurityLogger:
                 db.commit()  # End read-only transaction cleanly
                 db.close()
 
+    def _memory_failure_keys(self, user_id: Optional[str], client_ip: Optional[str]) -> list[str]:
+        """Build in-memory failure tracker keys for user/IP dimensions.
+
+        Args:
+            user_id: Optional user identifier key.
+            client_ip: Optional client IP key.
+
+        Returns:
+            list[str]: Non-empty tracker keys for the provided dimensions.
+        """
+        keys = []
+        if user_id:
+            keys.append(f"user:{user_id}")
+        if client_ip:
+            keys.append(f"ip:{client_ip}")
+        return keys
+
+    def _count_recent_failures_memory(self, user_id: Optional[str], client_ip: Optional[str], minutes: Optional[int] = None) -> int:
+        """Count recent failures from local in-memory tracker.
+
+        Args:
+            user_id: Optional user identifier filter.
+            client_ip: Optional client IP filter.
+            minutes: Optional lookback window in minutes.
+
+        Returns:
+            int: Maximum failure count observed across configured dimensions.
+        """
+        keys = self._memory_failure_keys(user_id=user_id, client_ip=client_ip)
+        if not keys:
+            return 0
+
+        window_minutes = minutes or self.rate_limit_window_minutes
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+
+        max_count = 0
+        for key in keys:
+            entries = self._memory_failures.get(key)
+            if not entries:
+                continue
+            while entries and entries[0] < cutoff:
+                entries.popleft()
+            max_count = max(max_count, len(entries))
+        return max_count
+
+    def _record_failed_attempt_memory(self, user_id: Optional[str], client_ip: Optional[str]) -> None:
+        """Record one failed attempt in local in-memory tracker.
+
+        Args:
+            user_id: Optional user identifier key.
+            client_ip: Optional client IP key.
+        """
+        now = datetime.now(timezone.utc)
+        keys = self._memory_failure_keys(user_id=user_id, client_ip=client_ip)
+        for key in keys:
+            entries = self._memory_failures.setdefault(key, deque())
+            entries.append(now)
+
     def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:  # pylint: disable=unused-argument
         """Calculate threat score for authentication attempt.
 
@@ -413,7 +488,7 @@ class SecurityLogger:
 
         return False
 
-    def _create_security_event(
+    def _create_security_event(  # pylint: disable=too-many-positional-arguments
         self,
         event_type: str,
         severity: SecuritySeverity,
@@ -430,6 +505,8 @@ class SecurityLogger:
         context: Optional[Dict[str, Any]] = None,
         correlation_id: Optional[str] = None,
         db: Optional[Session] = None,
+        source: str = "security",
+        persist: bool = True,
     ) -> Optional[SecurityEvent]:
         """Create a security event record.
 
@@ -449,10 +526,38 @@ class SecurityLogger:
             context: Additional context
             correlation_id: Correlation ID
             db: Optional database session
+            source: Event source channel (security/auth/audit)
+            persist: Persist to DB when True
 
         Returns:
             Created SecurityEvent or None
         """
+        event_type_value = event_type.value if isinstance(event_type, Enum) else str(event_type)
+        severity_value = severity.value if isinstance(severity, Enum) else str(severity).upper()
+
+        self._emit_to_siem(
+            source=source,
+            event={
+                "event_type": event_type_value,
+                "severity": severity_value,
+                "category": category,
+                "user_id": user_id,
+                "user_email": user_email,
+                "client_ip": client_ip,
+                "user_agent": user_agent,
+                "description": description,
+                "action_taken": action_taken,
+                "threat_score": threat_score,
+                "threat_indicators": threat_indicators or {},
+                "failed_attempts_count": failed_attempts_count,
+                "context": context or {},
+                "correlation_id": correlation_id,
+            },
+        )
+
+        if not persist:
+            return None
+
         should_close = False
         if db is None:
             db = SessionLocal()
@@ -460,8 +565,8 @@ class SecurityLogger:
 
         try:
             event = SecurityEvent(
-                event_type=event_type,
-                severity=severity.value,
+                event_type=event_type_value,
+                severity=severity_value,
                 category=category,
                 user_id=user_id,
                 user_email=user_email,
@@ -490,6 +595,19 @@ class SecurityLogger:
         finally:
             if should_close:
                 db.close()
+
+    def _emit_to_siem(self, source: str, event: Dict[str, Any]) -> None:
+        """Submit event to SIEM export pipeline (best-effort, non-blocking).
+
+        Args:
+            source: SIEM source channel (for example auth/security/audit).
+            event: Event payload to enqueue.
+        """
+        try:
+            siem_service = get_siem_export_service()
+            siem_service.submit_event(event=event, source=source)
+        except Exception as exc:  # pragma: no cover - defensive path
+            logger.debug("Failed to enqueue SIEM event from security logger: %s", exc)
 
     def _create_audit_trail(  # pylint: disable=too-many-positional-arguments
         self,
@@ -539,6 +657,40 @@ class SecurityLogger:
         Returns:
             Created AuditTrail or None
         """
+        if not success:
+            audit_severity = "HIGH"
+        elif requires_review or data_classification in ["confidential", "restricted"]:
+            audit_severity = "MEDIUM"
+        else:
+            audit_severity = "LOW"
+
+        self._emit_to_siem(
+            source="audit",
+            event={
+                "event_type": f"audit_{str(action).lower()}",
+                "severity": audit_severity,
+                "category": "audit",
+                "description": f"Audit action {action} on {resource_type}/{resource_id or '-'}",
+                "user_id": user_id,
+                "user_email": user_email,
+                "client_ip": client_ip or "unknown",
+                "user_agent": user_agent,
+                "action_taken": "allowed" if success else "denied",
+                "threat_score": 0.6 if (not success or requires_review) else 0.1,
+                "context": {
+                    "action": action,
+                    "resource_type": resource_type,
+                    "resource_id": resource_id,
+                    "resource_name": resource_name,
+                    "data_classification": data_classification,
+                    "requires_review": requires_review,
+                    "error_message": error_message,
+                    **(context or {}),
+                },
+                "correlation_id": correlation_id,
+            },
+        )
+
         should_close = False
         if db is None:
             db = SessionLocal()

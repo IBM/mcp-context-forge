@@ -4,9 +4,6 @@
 # Standard
 from unittest.mock import MagicMock
 
-# Third-Party
-import pytest
-
 # First-Party
 from mcpgateway.services import audit_trail_service as svc
 
@@ -61,6 +58,25 @@ def test_log_action_disabled_returns_none(monkeypatch):
         user_id="user-1",
     )
     assert result is None
+
+
+def test_log_action_disabled_still_emits_siem(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", False)
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert result is None
+    mock_siem.submit_event.assert_called_once()
 
 
 def test_log_action_builds_context_and_requires_review(monkeypatch):
