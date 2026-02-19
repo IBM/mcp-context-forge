@@ -1888,7 +1888,7 @@ class CodeExecutionService:
                 return
             await client.set(redis_key, json.dumps(meta), ex=ttl)
         except Exception:  # pragma: no cover - Redis unavailable
-            pass
+            logger.debug("Redis session meta set failed for %s", redis_key, exc_info=True)
 
     async def _redis_delete_session_meta(self, redis_key: str) -> None:
         """Remove session metadata from Redis.  Silently ignores failures."""
@@ -1901,7 +1901,7 @@ class CodeExecutionService:
                 return
             await client.delete(redis_key)
         except Exception:  # pragma: no cover - Redis unavailable
-            pass
+            logger.debug("Redis session meta delete failed for %s", redis_key, exc_info=True)
 
     def _session_redis_key(self, server_id: str, user_email: str, language: str) -> str:
         """Build the Redis key for a code execution session."""
