@@ -56,6 +56,71 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_empty.sso_entra_admin_groups == []
 
 
+def test_parse_siem_destinations_input_variants(monkeypatch):
+    """siem_destinations parser should normalize supported value shapes."""
+    assert Settings.parse_siem_destinations(None) == []
+    assert Settings.parse_siem_destinations(123) == []
+    assert Settings.parse_siem_destinations("   ") == []
+
+    from_list = Settings.parse_siem_destinations([{"name": "d1"}, "skip"])
+    assert from_list == [{"name": "d1"}]
+
+    from_dict = Settings.parse_siem_destinations({"destinations": [{"name": "d2"}]})
+    assert from_dict == [{"name": "d2"}]
+    assert Settings.parse_siem_destinations({"unexpected": "value"}) == []
+
+    from_json_list = Settings.parse_siem_destinations('[{"name":"d3"}]')
+    assert from_json_list == [{"name": "d3"}]
+
+    from_json_dict = Settings.parse_siem_destinations('{"destinations":[{"name":"d4"}]}')
+    assert from_json_dict == [{"name": "d4"}]
+    assert Settings.parse_siem_destinations("{}") == []
+
+    from_nested_json = Settings.parse_siem_destinations('{"siem_export":{"destinations":[{"name":"d5"}]}}')
+    assert from_nested_json == [{"name": "d5"}]
+
+    from_yaml = Settings.parse_siem_destinations("- name: d6\n  type: webhook\n")
+    assert from_yaml == [{"name": "d6", "type": "webhook"}]
+
+    from_yaml_dict = Settings.parse_siem_destinations("destinations:\n  - name: d7\n    type: webhook\n")
+    assert from_yaml_dict == [{"name": "d7", "type": "webhook"}]
+
+    from_yaml_nested = Settings.parse_siem_destinations("siem_export:\n  destinations:\n    - name: d8\n      type: webhook\n")
+    assert from_yaml_nested == [{"name": "d8", "type": "webhook"}]
+
+    # Force YAML parser failure after JSON parsing fails.
+    import yaml
+
+    monkeypatch.setattr(yaml, "safe_load", lambda _raw: (_ for _ in ()).throw(ValueError("bad yaml")))
+    assert Settings.parse_siem_destinations("{not valid json or yaml}") == []
+
+
+def test_load_siem_destinations_from_file(tmp_path: Path):
+    """Settings should load SIEM destinations from the configured file."""
+    cfg = tmp_path / "siem.json"
+    cfg.write_text('[{"name":"file-dest","type":"webhook","url":"https://example.com/hook"}]', encoding="utf-8")
+
+    settings = Settings(
+        siem_destinations=[],
+        siem_destinations_file=str(cfg),
+        _env_file=None,
+    )
+
+    assert settings.siem_destinations == [{"name": "file-dest", "type": "webhook", "url": "https://example.com/hook"}]
+
+
+def test_load_siem_destinations_missing_file(tmp_path: Path):
+    """Missing SIEM destination config file should not raise."""
+    missing = tmp_path / "does-not-exist.json"
+    settings = Settings(
+        siem_destinations=[],
+        siem_destinations_file=str(missing),
+        _env_file=None,
+    )
+
+    assert settings.siem_destinations == []
+
+
 # --------------------------------------------------------------------------- #
 #                          database / CORS helpers                            #
 # --------------------------------------------------------------------------- #

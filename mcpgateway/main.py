@@ -597,6 +597,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
+    siem_export_service: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -604,6 +605,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Initialize Redis client early (shared pool for all services)
     await get_redis_client()
+
+    # Initialize SIEM export service early so security/audit events can flow from startup.
+    # First-Party
+    from mcpgateway.services.siem_export_service import get_siem_export_service  # pylint: disable=import-outside-toplevel
+
+    siem_export_service = get_siem_export_service()
+    await siem_export_service.initialize()
 
     # Initialize shared HTTP client (connection pool for all outbound requests)
     # First-Party
@@ -871,6 +879,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             streamable_http_session,
             session_registry,
         ]
+
+        if siem_export_service is not None:
+            services_to_shutdown.insert(0, siem_export_service)
 
         # Add cancellation service if enabled
         if settings.mcpgateway_tool_cancellation_enabled:
@@ -1870,13 +1881,14 @@ if settings.correlation_id_enabled:
 
 # Add authentication context middleware if security logging is enabled
 # This middleware extracts user context and logs security events (authentication attempts)
-# Note: This is independent of observability - security logging is always important
-if settings.security_logging_enabled:
+# Note: SIEM export can also require auth event capture even when DB security logging is off.
+_siem_auth_source_enabled = settings.siem_export_enabled and "auth" in {str(item).lower() for item in getattr(settings, "siem_export_event_sources", [])}
+if settings.security_logging_enabled or _siem_auth_source_enabled or settings.mcpgateway_admin_api_enabled:
     # First-Party
     from mcpgateway.middleware.auth_middleware import AuthContextMiddleware
 
     app.add_middleware(AuthContextMiddleware)
-    logger.info("🔐 Authentication context middleware enabled - logging security events")
+    logger.info("🔐 Authentication context middleware enabled - capturing authentication security events")
 else:
     logger.info("🔐 Security event logging disabled")
 
@@ -7173,6 +7185,16 @@ if getattr(settings, "structured_logging_enabled", True):
         logger.warning(f"Failed to import log search router: {e}")
 else:
     logger.info("Log search router not included - structured logging disabled")
+
+# Include SIEM admin router for destination management and health endpoints
+try:
+    # First-Party
+    from mcpgateway.routers.siem import router as siem_router
+
+    app.include_router(siem_router)
+    logger.info("SIEM router included")
+except ImportError as e:  # pragma: no cover - optional import guard
+    logger.warning(f"SIEM router not available: {e}")
 
 # Conditionally include observability router if enabled
 if settings.observability_enabled:

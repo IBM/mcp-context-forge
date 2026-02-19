@@ -4,9 +4,6 @@
 # Standard
 from unittest.mock import MagicMock
 
-# Third-Party
-import pytest
-
 # First-Party
 from mcpgateway.services import audit_trail_service as svc
 
@@ -61,6 +58,87 @@ def test_log_action_disabled_returns_none(monkeypatch):
         user_id="user-1",
     )
     assert result is None
+
+
+def test_log_action_disabled_still_emits_siem(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", False)
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert result is None
+    mock_siem.submit_event.assert_called_once()
+
+
+def test_emit_audit_event_to_siem_sets_high_and_description_details(monkeypatch):
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.enabled = True
+    mock_siem.destinations = {}
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    service._emit_audit_event_to_siem(
+        action="DELETE",
+        resource_type="tool",
+        resource_id="tool-1",
+        resource_name="tool-name",
+        user_id="user-1",
+        user_email="user@example.com",
+        client_ip="1.2.3.4",
+        user_agent="pytest",
+        success=False,
+        data_classification=None,
+        requires_review=False,
+        error_message="forbidden",
+        context=None,
+        correlation_id="corr-1",
+    )
+
+    event_payload = mock_siem.submit_event.call_args.kwargs["event"]
+    assert event_payload["severity"] == "HIGH"
+    assert "(tool-name)" in event_payload["description"]
+    assert event_payload["description"].endswith(": forbidden")
+
+
+def test_emit_audit_event_to_siem_sets_medium_for_review(monkeypatch):
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.enabled = True
+    mock_siem.destinations = {}
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    service._emit_audit_event_to_siem(
+        action="UPDATE",
+        resource_type="token",
+        resource_id="tok-1",
+        resource_name=None,
+        user_id="user-1",
+        user_email=None,
+        client_ip=None,
+        user_agent=None,
+        success=True,
+        data_classification=svc.DataClassification.CONFIDENTIAL.value,
+        requires_review=True,
+        error_message=None,
+        context={},
+        correlation_id="corr-2",
+    )
+
+    event_payload = mock_siem.submit_event.call_args.kwargs["event"]
+    assert event_payload["severity"] == "MEDIUM"
 
 
 def test_log_action_builds_context_and_requires_review(monkeypatch):
