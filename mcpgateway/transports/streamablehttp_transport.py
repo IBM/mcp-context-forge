@@ -604,7 +604,7 @@ async def _proxy_list_prompts_to_gateway(gateway: Any, request_headers: dict, us
 
 
 async def _proxy_get_prompt_to_gateway(
-    gateway: Any, request_headers: dict, user_context: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None
+    gateway: Any, request_headers: dict, name: str, arguments: dict[str, str] | None = None, meta: Optional[Any] = None
 ) -> Optional[types.GetPromptResult]:  # pylint: disable=unused-argument
     """Proxy prompts/get request directly to remote MCP gateway using MCP SDK.
 
@@ -614,7 +614,6 @@ async def _proxy_get_prompt_to_gateway(
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        user_context: User context (not used - auth comes from gateway config)
         name: Prompt name to retrieve
         arguments: Optional argument substitutions
         meta: Request metadata (_meta) from the original request
