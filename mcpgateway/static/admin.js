@@ -258,6 +258,67 @@ function updateDefaultVisibility() {
     });
 }
 
+function ensureCodeExecutionEditors(mode = "create") {
+    const isEdit = mode === "edit";
+    const configs = isEdit
+        ? [
+              {
+                  id: "edit-server-mount-rules",
+                  varName: "editServerMountRulesEditor",
+              },
+              {
+                  id: "edit-server-sandbox-policy",
+                  varName: "editServerSandboxPolicyEditor",
+              },
+              {
+                  id: "edit-server-tokenization",
+                  varName: "editServerTokenizationEditor",
+              },
+          ]
+        : [
+              {
+                  id: "server-mount-rules",
+                  varName: "serverMountRulesEditor",
+              },
+              {
+                  id: "server-sandbox-policy",
+                  varName: "serverSandboxPolicyEditor",
+              },
+              {
+                  id: "server-tokenization",
+                  varName: "serverTokenizationEditor",
+              },
+          ];
+    configs.forEach((config) => {
+        if (window[config.varName]) {
+            return;
+        }
+        const element = safeGetElement(config.id, true);
+        if (element && window.CodeMirror) {
+            try {
+                window[config.varName] = window.CodeMirror.fromTextArea(
+                    element,
+                    {
+                        mode: "application/json",
+                        theme: "monokai",
+                        lineNumbers: false,
+                        autoCloseBrackets: true,
+                        matchBrackets: true,
+                        tabSize: 2,
+                        lineWrapping: true,
+                    },
+                );
+                console.log(`✓ Lazy-initialized ${config.varName}`);
+            } catch (error) {
+                console.error(
+                    `Failed to lazy-initialize ${config.varName}:`,
+                    error,
+                );
+            }
+        }
+    });
+}
+
 function toggleServerCodeExecutionSection(mode = "create") {
     const isEdit = mode === "edit";
     const typeField = safeGetElement(
@@ -281,9 +342,15 @@ function toggleServerCodeExecutionSection(mode = "create") {
     section.classList.toggle("hidden", !isCodeExecution);
     if (isCodeExecution && wasHidden) {
         if (typeof window.requestAnimationFrame === "function") {
-            window.requestAnimationFrame(() => refreshEditors());
+            window.requestAnimationFrame(() => {
+                ensureCodeExecutionEditors(mode);
+                refreshEditors();
+            });
         } else {
-            window.setTimeout(() => refreshEditors(), 0);
+            window.setTimeout(() => {
+                ensureCodeExecutionEditors(mode);
+                refreshEditors();
+            }, 0);
         }
     }
 }
