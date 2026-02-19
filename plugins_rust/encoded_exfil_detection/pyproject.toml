@@ -3,9 +3,9 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "mcpgateway-pii-filter"
+name = "mcpgateway-encoded-exfil-detection"
 version = "1.0.0-RC-1"
-description = "High-performance PII detection and masking library for MCP Gateway"
+description = "High-performance encoded exfiltration detection library for MCP Gateway"
 authors = [{ name = "MCP Gateway Contributors" }]
 license = { text = "Apache-2.0" }
 requires-python = ">=3.11"
@@ -17,6 +17,6 @@ classifiers = [
 ]
 
 [tool.maturin]
-module-name = "pii_filter_rust"
+module-name = "encoded_exfil_detection_rust"
 python-source = "python"
 features = ["pyo3/extension-module"]

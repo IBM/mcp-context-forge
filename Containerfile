@@ -103,7 +103,7 @@ RUN python3 -m venv /app/.venv && \
     if [ "$ENABLE_RUST" = "true" ] && ls /tmp/rust-wheels/*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing Rust plugins..."; \
         /app/.venv/bin/python3 -m pip install /tmp/rust-wheels/*.whl && \
-        /app/.venv/bin/python3 -c "from pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')" || true; \
+        /app/.venv/bin/python3 -c "from pii_filter_rust.pii_filter_rust import PIIDetectorRust; print('✓ Rust PII filter installed successfully')"; \
     else \
         echo "⏭️  Rust plugins not available - using Python implementations"; \
     fi && \

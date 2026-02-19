@@ -63,18 +63,32 @@ jobs:
           key: ${{ runner.os }}-cargo-build-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run all checks for plugins
-        run: make rust-check
+        run: make rust-test
 
   # Build wheels for multiple platforms (all plugins in one job per OS)
   build-wheels:
+<<<<<<< HEAD
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+||||||| parent of 7947a0e3b (fix: improve license checker file filtering)
+    name: Build wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+=======
+    name: Build wheels for all plugins
+    runs-on: ubuntu-latest
+>>>>>>> 7947a0e3b (fix: improve license checker file filtering)
     strategy:
       fail-fast: false
+<<<<<<< HEAD
       matrix:
         os: ${{ github.event_name == 'pull_request' && fromJSON('["ubuntu-latest"]') || fromJSON('["ubuntu-latest", "macos-latest", "windows-latest"]') }}
+||||||| parent of 7947a0e3b (fix: improve license checker file filtering)
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+=======
+>>>>>>> 7947a0e3b (fix: improve license checker file filtering)
 
     steps:
       - uses: actions/checkout@v4
@@ -87,8 +101,13 @@ jobs:
       - name: Install Rust stable
         run: rustup default stable
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+
+      - name: Install maturin as CLI tool
+        run: uv tool install maturin
 
       - name: Build wheels for all plugins
         run: make rust-build-wheels
@@ -96,7 +115,7 @@ jobs:
       - name: Upload wheels as artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-build
           path: plugins_rust/*/dist/*.whl
 
   # Security audit (all plugins in one job)
@@ -120,10 +139,22 @@ jobs:
 
   # Benchmark tests (verify benchmarks compile and run)
   benchmark-tests:
+<<<<<<< HEAD
     if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Benchmark Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
+||||||| parent of 7947a0e3b (fix: improve license checker file filtering)
+    name: Benchmark Tests
+    runs-on: ubuntu-latest
+=======
+    name: Benchmark Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+>>>>>>> 7947a0e3b (fix: improve license checker file filtering)
 
     steps:
       - uses: actions/checkout@v4
@@ -186,7 +217,7 @@ jobs:
       - name: Install coverage tools
         run: |
           uv pip install pytest pytest-cov pydantic
-          cargo install cargo-tarpaulin
+          cargo install cargo-llvm-cov
 
       - name: Run coverage for all plugins
         run: make rust-coverage
@@ -243,8 +274,13 @@ jobs:
       - name: Install Rust stable
         run: rustup default stable
 
-      - name: Install maturin
-        run: pip install maturin
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.9.2"
+
+      - name: Install maturin as CLI tool
+        run: uv tool install maturin
 
       - name: Build and publish release wheels
         env:
