@@ -1,5 +1,5 @@
-use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE};
+use base64::Engine;
 use pyo3::prelude::*;
 use pyo3::types::{PyAny, PyDict, PyList, PyString};
 use pyo3_stub_gen::define_stub_info_gatherer;

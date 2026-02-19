@@ -275,6 +275,7 @@ class TestPIIDetectorParametric:
             detection_keys = normalize_detection_keys(detections)
             # At least one type should be detected
             assert len(detection_keys) > 0, f"{description}: No detection for: {text}"
+            # Note: Due to overlapping patterns, multiple types may be detected
 
     def test_bsn_eleven_proof_validation_note(self, detector_class):
         """Document the need for 11-proef (modulo-11) validation for BSN.

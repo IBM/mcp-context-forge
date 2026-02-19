@@ -4,7 +4,7 @@
 // Stub file generator for encoded_exfil_detection module
 //
 // This binary generates Python type stub files (.pyi) for the encoded_exfil_detection module.
-// Run with: cargo run --bin encoded_exfil_detection_stub_gen
+// Run with: cargo run --bin stub_gen
 
 use encoded_exfil_detection_rust::stub_info;
 

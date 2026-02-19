@@ -8107,6 +8107,12 @@ rust-stub-gen: rust-ensure-deps         ## Generate Python type stubs for maturi
 	done
 	@echo "✅ All stub files generated"
 
+rust-verify-stubs: rust-ensure-deps     ## Verify stub generation and pyproject.toml for all Rust plugins
+	@$(MAKE) -C plugins_rust verify-stubs
+
+rust-clean-stubs: rust-ensure-deps      ## Remove all generated stub files from Rust plugins
+	@$(MAKE) -C plugins_rust clean-stubs
+
 rust-install-deps: rust-ensure-deps     ## Install all Rust build dependencies
 	@echo "✅ Rust build dependencies installed"
 

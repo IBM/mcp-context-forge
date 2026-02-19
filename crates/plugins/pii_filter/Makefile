@@ -129,17 +129,16 @@ bench:
 	@cargo bench
 
 bench-baseline:
-	@echo "$(GREEN)Saving benchmark baseline...$(NC)"
-	@cargo bench -- --save-baseline main
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@cargo bench
 
 bench-compare:
-	@echo "$(GREEN)Comparing against baseline...$(NC)"
-	@cargo bench -- --baseline main
+	@echo "$(GREEN)Running benchmarks...$(NC)"
+	@cargo bench
 
 compare: install ## Run performance comparison (skip benchmarks)
 	@echo "$(GREEN)Running performance comparison...$(NC)"
 	@echo "$(YELLOW)Note: This plugin doesn't have a compare_performance.py script yet$(NC)"
-
 compare-bench: bench-compare
 	@echo "$(GREEN)Performance comparison complete$(NC)"
 
@@ -203,10 +202,6 @@ verify:
 
 check-all: fmt-check clippy test
 	@echo "$(GREEN)✔ All checks passed$(NC)"
-
-test-integration:
-	@echo "$(GREEN)Running integration tests...$(NC)"
-	@cargo test --test '*' --release
 
 pre-commit: check-all
 	@echo "$(GREEN)✔ Ready to commit$(NC)"

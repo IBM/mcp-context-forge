@@ -4,7 +4,7 @@
 // Stub file generator for secrets_detection module
 //
 // This binary generates Python type stub files (.pyi) for the secrets_detection module.
-// Run with: cargo run --bin secrets_detection_stub_gen
+// Run with: cargo run --bin stub_gen
 
 use secrets_detection_rust::stub_info;
 
