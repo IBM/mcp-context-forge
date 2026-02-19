@@ -1,0 +1,75 @@
+name: linting-security-pip-audit
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+    inputs:
+      enforce_strict:
+        description: "Run strict blocking mode"
+        required: false
+        default: false
+        type: boolean
+      ignore_ids:
+        description: "Optional comma-separated vulnerability IDs to ignore"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  linting-security-pip-audit-advisory:
+    name: linting-security-pip-audit-advisory
+    runs-on: ubuntu-latest
+    env:
+      VENV_DIR: .venv
+      VENVS_DIR: .
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6.0.0
+
+      - name: Run advisory dependency audit
+        run: make --no-print-directory linting-security-pip-audit-advisory
+
+  linting-security-pip-audit-enforce:
+    name: linting-security-pip-audit-enforce
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.enforce_strict }}
+    runs-on: ubuntu-latest
+    env:
+      VENV_DIR: .venv
+      VENVS_DIR: .
+      PIP_AUDIT_IGNORE_IDS: ${{ inputs.ignore_ids }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0d8abe699bfb85fec6de9f7adb5ae17292296ff # v6.0.0
+
+      - name: Run strict dependency audit
+        run: make --no-print-directory linting-security-pip-audit-enforce

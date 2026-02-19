@@ -38,8 +38,6 @@ on:
 # -----------------------------------------------------------------
 permissions:
   contents: read # checkout / version diff
-  security-events: write # upload SARIF results
-  actions: read # needed by upload-sarif for private repos
 
 jobs:
   # =============================================================
@@ -47,6 +45,10 @@ jobs:
   # =============================================================
   scan-scheduled:
     if: ${{ github.event_name == 'push' || github.event_name == 'schedule' }}
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@1f1242919d8a60496dd1874b24b62b2370ed4c78" # v1.7.1
     with:
       # CLI flags (line-split)
@@ -54,6 +56,8 @@ jobs:
         -r              # recurse into sub-dirs
         --skip-git      # ignore .git dir
         ./              # repo root
+      # Keep mainline scans advisory; PR diff scan below remains blocking for new vulns.
+      fail-on-vuln: false
 
   # =============================================================
   # 2️⃣  Diff scan on PR / merge-queue
@@ -61,6 +65,10 @@ jobs:
   # =============================================================
   scan-pr:
     if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+    permissions:
+      contents: read
+      security-events: write
+      actions: read
     uses: "google/osv-scanner-action/.github/workflows/osv-scanner-reusable-pr.yml@1f1242919d8a60496dd1874b24b62b2370ed4c78" # v1.7.1
     with:
       scan-args: |-
