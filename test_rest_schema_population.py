@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Test script to demonstrate REST tool schema population from OpenAPI spec.
 
@@ -22,12 +23,12 @@ try:
         "path_template": "/calculate",
         "description": "A calculator tool",
     }
-    
+
     tool = ToolCreate(**tool_data)
     print(f"✓ Tool created successfully: {tool.name}")
     print(f"✓ Input Schema: {tool.input_schema}")
     print(f"✓ Output Schema: {tool.output_schema}")
-    
+
 except ValueError as e:
     print(f"✗ Error: {e}")
     print("\nThis is expected if:")
@@ -48,11 +49,11 @@ try:
         "path_template": "/nonexistent",
         "description": "Tool with nonexistent path",
     }
-    
+
     tool = ToolCreate(**tool_data)
     print(f"✓ Tool created with fallback schema: {tool.name}")
     print(f"✓ Input Schema (default): {tool.input_schema}")
-    
+
 except ValueError as e:
     print(f"✗ Unexpected error: {e}")
 
@@ -83,12 +84,12 @@ try:
         },
         "description": "Tool with manual schemas",
     }
-    
+
     tool = ToolCreate(**tool_data)
     print(f"✓ Tool created with manual schemas: {tool.name}")
     print(f"✓ Input Schema: {tool.input_schema}")
     print(f"✓ Output Schema: {tool.output_schema}")
-    
+
 except ValueError as e:
     print(f"✗ Error: {e}")
 
