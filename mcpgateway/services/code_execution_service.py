@@ -77,7 +77,9 @@ security_logger = SecurityLogger()
 CODE_EXECUTION_SERVER_TYPE = "code_execution"
 META_TOOL_SHELL_EXEC = "shell_exec"
 META_TOOL_FS_BROWSE = "fs_browse"
-CODE_EXECUTION_META_TOOLS = (META_TOOL_SHELL_EXEC, META_TOOL_FS_BROWSE)
+META_TOOL_FS_READ = "fs_read"
+META_TOOL_FS_WRITE = "fs_write"
+CODE_EXECUTION_META_TOOLS = (META_TOOL_SHELL_EXEC, META_TOOL_FS_BROWSE, META_TOOL_FS_READ, META_TOOL_FS_WRITE)
 VFS_SCHEMA_VERSION = "2026-02-01"
 
 _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
@@ -995,6 +997,9 @@ class CodeExecutionService:
         self._default_ttl = int(getattr(settings, "code_execution_session_ttl_seconds", 900))
         self._shell_exec_enabled = bool(getattr(settings, "code_execution_shell_exec_enabled", True))
         self._fs_browse_enabled = bool(getattr(settings, "code_execution_fs_browse_enabled", True))
+        self._fs_read_enabled = bool(getattr(settings, "code_execution_fs_read_enabled", True))
+        self._fs_write_enabled = bool(getattr(settings, "code_execution_fs_write_enabled", True))
+        self._fs_read_max_size_bytes = int(getattr(settings, "code_execution_fs_read_max_size_bytes", 1048576))
         self._replay_enabled = bool(getattr(settings, "code_execution_replay_enabled", True))
         self._rust_acceleration_enabled = bool(getattr(settings, "code_execution_rust_acceleration_enabled", True))
         self._python_inprocess_fallback_enabled = bool(getattr(settings, "code_execution_python_inprocess_fallback_enabled", True))
@@ -1127,18 +1132,39 @@ class CodeExecutionService:
             "original_name": META_TOOL_SHELL_EXEC,
             "custom_name": META_TOOL_SHELL_EXEC,
             "custom_name_slug": META_TOOL_SHELL_EXEC,
-            "description": "Execute sandboxed code against virtual /tools, /scratch, /skills, /results.",
+            "description": (
+                "Execute code in a sandboxed environment. "
+                "Supports Python and TypeScript. "
+                "Output is captured from stdout (print / console.log). "
+                "Virtual filesystem layout: "
+                "/tools (read-only, auto-generated tool stubs you can import), "
+                "/scratch (read-write temp workspace), "
+                "/skills (read-write shared skill scripts), "
+                "/results (read-write execution outputs). "
+                "Only pass 'code' and optionally 'language'. "
+                "Do NOT pass timeout_ms unless the user explicitly requests a custom timeout."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "code": {"type": "string"},
-                    "language": {"type": "string", "enum": ["typescript", "python"]},
+                    "code": {
+                        "type": "string",
+                        "description": (
+                            "Source code to execute. " "Python: use print() to produce output. " "TypeScript: use console.log(). " "You can import tool stubs from /tools/<server>/<tool>.py (or .ts)."
+                        ),
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["typescript", "python"],
+                        "description": "Execution language: 'python' or 'typescript'. Defaults to the server's configured language if omitted.",
+                    },
                     "timeout_ms": {
                         "type": "integer",
                         "minimum": 100,
-                        "maximum": int(self._sandbox_limit_defaults.get("max_execution_time_ms", 30000)),
+                        "description": (
+                            "Execution timeout in milliseconds. " "Omit this parameter to use the server default (recommended). " "The server enforces its own maximum regardless of this value."
+                        ),
                     },
-                    "stream": {"type": "boolean"},
                 },
                 "required": ["code"],
             },
@@ -1150,19 +1176,92 @@ class CodeExecutionService:
             "original_name": META_TOOL_FS_BROWSE,
             "custom_name": META_TOOL_FS_BROWSE,
             "custom_name_slug": META_TOOL_FS_BROWSE,
-            "description": "List files/directories in the virtual tool filesystem without full code execution.",
+            "description": (
+                "List files and directories in the virtual tool filesystem. "
+                "Use this to discover available tool stubs before importing them in shell_exec. "
+                "Browse / to see all virtual roots. "
+                "Directories: /tools/<server>/<tool>.py|.ts (importable stubs), "
+                "/scratch (temp workspace), /skills (shared scripts), /results (outputs). "
+                "Returns file names, sizes, and types. Does not execute code."
+            ),
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "default": "/tools"},
-                    "include_hidden": {"type": "boolean", "default": False},
+                    "path": {
+                        "type": "string",
+                        "default": "/tools",
+                        "description": (
+                            "Directory path to list. "
+                            "Use / to see all virtual roots. "
+                            "Valid roots: /tools, /scratch, /skills, /results. "
+                            "Use /tools to see available servers, /tools/<server> to see tool stubs."
+                        ),
+                    },
+                    "include_hidden": {
+                        "type": "boolean",
+                        "default": False,
+                        "description": "Include hidden files (prefixed with dot). Usually not needed.",
+                    },
                     "max_entries": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": self._fs_browse_max_entries,
                         "default": self._fs_browse_default_max_entries,
+                        "description": "Maximum number of directory entries to return.",
                     },
                 },
+            },
+        }
+        read_tool = {
+            **base_fields,
+            "id": f"codeexec:{server_id}:fs_read",
+            "name": META_TOOL_FS_READ,
+            "original_name": META_TOOL_FS_READ,
+            "custom_name": META_TOOL_FS_READ,
+            "custom_name_slug": META_TOOL_FS_READ,
+            "description": (
+                "Read the contents of a file in the virtual tool filesystem. "
+                "Use this to inspect tool stubs, check script contents, or read data files. "
+                "Faster than shell_exec for reading files since it does not start a sandbox. "
+                "Paths: /tools/<server>/<tool>.py|.ts, /scratch/*, /skills/*, /results/*."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": ("Absolute virtual path to the file to read, e.g. /tools/my-server/get_data.py " "or /scratch/output.json. Use fs_browse first to discover available files."),
+                    },
+                },
+                "required": ["path"],
+            },
+        }
+        write_tool = {
+            **base_fields,
+            "id": f"codeexec:{server_id}:fs_write",
+            "name": META_TOOL_FS_WRITE,
+            "original_name": META_TOOL_FS_WRITE,
+            "custom_name": META_TOOL_FS_WRITE,
+            "custom_name_slug": META_TOOL_FS_WRITE,
+            "description": (
+                "Write or overwrite a text file in the virtual filesystem. "
+                "Only writable paths are allowed: /scratch/* and /results/*. "
+                "Faster than shell_exec for writing files since it does not start a sandbox. "
+                "Use this to save data, create scripts, or store intermediate results."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": ("Absolute virtual path to write to, e.g. /scratch/data.json " "or /results/report.txt. Must be under /scratch or /results."),
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The text content to write to the file. Overwrites any existing content.",
+                    },
+                },
+                "required": ["path", "content"],
             },
         }
         tools: List[Dict[str, Any]] = []
@@ -1170,6 +1269,10 @@ class CodeExecutionService:
             tools.append(shell_tool)
         if self._fs_browse_enabled:
             tools.append(browse_tool)
+        if self._fs_read_enabled:
+            tools.append(read_tool)
+        if self._fs_write_enabled:
+            tools.append(write_tool)
         return tools
 
     async def fs_browse(
@@ -1200,6 +1303,29 @@ class CodeExecutionService:
         language = getattr(server, "stub_language", None) or "python"
         session = await self._get_or_create_session(db=db, server=server, user_email=user_email or "anonymous", language=language, token_teams=token_teams)
         virtual_path = path or "/tools"
+
+        # Browsing "/" returns a synthetic listing of the four virtual roots.
+        normalized_vpath = "/" + virtual_path.strip().lstrip("/")
+        if normalized_vpath == "/":
+            vfs_roots = [
+                ("/tools", "read-only tool stubs (importable scripts)", session.tools_dir),
+                ("/scratch", "read-write temporary workspace", session.scratch_dir),
+                ("/skills", "read-write shared skill scripts", session.skills_dir),
+                ("/results", "read-write execution outputs", session.results_dir),
+            ]
+            entries: List[Dict[str, Any]] = []
+            for vroot, description, real_root in vfs_roots:
+                entry: Dict[str, Any] = {
+                    "name": vroot.lstrip("/"),
+                    "path": vroot,
+                    "type": "directory",
+                    "description": description,
+                }
+                if real_root.exists():
+                    entry["size_bytes"] = sum(1 for _ in real_root.iterdir() if not _.name.startswith("."))
+                entries.append(entry)
+            return {"path": "/", "entries": entries, "truncated": False}
+
         real_path = self._virtual_to_real_path(session, virtual_path)
         if real_path is None:
             raise CodeExecutionSecurityError(f"Path '{virtual_path}' is outside the virtual filesystem")
@@ -1210,7 +1336,7 @@ class CodeExecutionService:
         if not real_path.exists():
             raise CodeExecutionError(f"Path not found: {virtual_path}")
 
-        entries: List[Dict[str, Any]] = []
+        entries = []
         if real_path.is_file():
             stat = real_path.stat()
             entries.append(
@@ -1244,6 +1370,100 @@ class CodeExecutionService:
             "path": virtual_path,
             "entries": entries,
             "truncated": len(entries) >= max_entries_value,
+        }
+
+    async def fs_read(
+        self,
+        db: Session,
+        server: DbServer,
+        path: str,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Dict[str, Any]:
+        """Read a file from the virtual filesystem without starting a sandbox."""
+        if not self._fs_read_enabled:
+            raise CodeExecutionError("fs_read meta-tool is disabled by configuration")
+        if not path or not path.strip():
+            raise CodeExecutionError("path is required")
+
+        language = getattr(server, "stub_language", None) or "python"
+        session = await self._get_or_create_session(db=db, server=server, user_email=user_email or "anonymous", language=language, token_teams=token_teams)
+        virtual_path = path.strip()
+
+        policy = self._server_sandbox_policy(server)
+        self._enforce_fs_permission(policy, "read", virtual_path)
+
+        real_path = self._virtual_to_real_path(session, virtual_path)
+        if real_path is None:
+            raise CodeExecutionSecurityError(f"Path '{virtual_path}' is outside the virtual filesystem")
+        if not real_path.exists():
+            raise CodeExecutionError(f"Path not found: {virtual_path}")
+        if not real_path.is_file():
+            raise CodeExecutionError(f"Path is a directory, not a file: {virtual_path}. Use fs_browse to list directories.")
+
+        stat = real_path.stat()
+        if stat.st_size > self._fs_read_max_size_bytes:
+            raise CodeExecutionError(f"File too large ({stat.st_size} bytes, limit {self._fs_read_max_size_bytes}). " "Use shell_exec to read large files with custom parsing.")
+
+        content = real_path.read_text(encoding="utf-8")
+        return {
+            "path": virtual_path,
+            "content": content,
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+        }
+
+    async def fs_write(
+        self,
+        db: Session,
+        server: DbServer,
+        path: str,
+        content: str,
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> Dict[str, Any]:
+        """Write a file to the virtual filesystem without starting a sandbox."""
+        if not self._fs_write_enabled:
+            raise CodeExecutionError("fs_write meta-tool is disabled by configuration")
+        if not path or not path.strip():
+            raise CodeExecutionError("path is required")
+        if content is None:
+            raise CodeExecutionError("content is required")
+
+        language = getattr(server, "stub_language", None) or "python"
+        session = await self._get_or_create_session(db=db, server=server, user_email=user_email or "anonymous", language=language, token_teams=token_teams)
+        virtual_path = path.strip()
+
+        policy = self._server_sandbox_policy(server)
+        self._enforce_fs_permission(policy, "write", virtual_path)
+
+        real_path = self._virtual_to_real_path(session, virtual_path)
+        if real_path is None:
+            raise CodeExecutionSecurityError(f"Path '{virtual_path}' is outside the virtual filesystem")
+
+        # Enforce writable roots: only /scratch and /results
+        allowed_roots = (session.scratch_dir.resolve(), session.results_dir.resolve())
+        resolved = real_path.resolve()
+        if not any(_is_path_within(resolved, root) for root in allowed_roots):
+            raise CodeExecutionSecurityError(f"EACCES: write denied for path: {virtual_path}. Only /scratch and /results are writable.")
+
+        # Enforce file size limit from policy
+        max_file_bytes = int(policy.get("max_file_size_mb", self._sandbox_limit_defaults["max_file_size_mb"])) * 1024 * 1024
+        content_bytes = len(content.encode("utf-8"))
+        if content_bytes > max_file_bytes:
+            raise CodeExecutionError(f"Content too large ({content_bytes} bytes, limit {max_file_bytes}). Reduce content size.")
+
+        real_path.parent.mkdir(parents=True, exist_ok=True)
+        real_path.write_text(content, encoding="utf-8")
+
+        # Enforce aggregate disk limits after writing
+        self._enforce_disk_limits(session, policy)
+
+        stat = real_path.stat()
+        return {
+            "path": virtual_path,
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
         }
 
     async def shell_exec(  # pylint: disable=too-many-arguments,too-many-locals

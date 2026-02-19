@@ -622,6 +622,9 @@ class Settings(BaseSettings):
     code_execution_session_ttl_seconds: int = Field(default=900, ge=60, le=86400, description="TTL for sandbox sessions (seconds)")
     code_execution_shell_exec_enabled: bool = Field(default=True, description="Enable shell_exec meta-tool for code_execution servers")
     code_execution_fs_browse_enabled: bool = Field(default=True, description="Enable fs_browse meta-tool for code_execution servers")
+    code_execution_fs_read_enabled: bool = Field(default=True, description="Enable fs_read meta-tool for code_execution servers")
+    code_execution_fs_write_enabled: bool = Field(default=True, description="Enable fs_write meta-tool for code_execution servers")
+    code_execution_fs_read_max_size_bytes: int = Field(default=1048576, ge=1024, le=10485760, description="Maximum file size in bytes for fs_read meta-tool (default 1MB)")
     code_execution_replay_enabled: bool = Field(default=True, description="Enable replay API for previous code execution runs")
     code_execution_rust_acceleration_enabled: bool = Field(
         default=True,

@@ -72,6 +72,8 @@ def _policy() -> Dict[str, Any]:
 def test_build_meta_tools_respects_feature_flags(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_shell_exec_enabled", False, raising=False)
     monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_read_enabled", False, raising=False)
+    monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_write_enabled", False, raising=False)
     monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_default_max_entries", 25, raising=False)
     monkeypatch.setattr("mcpgateway.services.code_execution_service.settings.code_execution_fs_browse_max_entries", 40, raising=False)
 
