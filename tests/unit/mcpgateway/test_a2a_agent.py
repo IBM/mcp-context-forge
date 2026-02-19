@@ -3,7 +3,7 @@
 Copyright 2025
 SPDX-License-Identifier: Apache-2.0
 
-Tests for GitHub Issue #840: A2A Agent testing bugs.
+A2A Agent testing.
 
 This module contains tests that replicate the issues described in #840:
 1. A2A agent is exposed as an API endpoint but there is no way to test it
@@ -46,7 +46,7 @@ def mock_logging_services():
         yield
 
 
-class TestIssue840UserInputForA2AAgentTest:
+class TestUserInputForA2AAgentTest:
     """Test suite for Issue #840 - Part 1: A2A agent test endpoint lacks user input field.
 
     The issue reports that A2A agents exposed as API endpoints cannot be tested
@@ -305,7 +305,7 @@ class TestIssue840UserInputForA2AAgentTest:
         assert actual_query == "weather: Dallas", f"Query should be 'weather: Dallas', got '{actual_query}'"
 
 
-class TestIssue840A2AToolsNotListedInGlobalTools:
+class TestA2AToolsNotListedInGlobalTools:
     """Test suite for Issue #840 - Part 2: A2A tools not appearing in Global Tools.
 
     The issue reports that tools from A2A Agents are not getting listed under
@@ -781,3 +781,188 @@ class TestIssue840CustomAgentQueryFormat:
         message = params.get("message")
         assert isinstance(message, dict), "params.message should be dict for JSONRPC agents"
         assert "parts" in message, "message should have parts array"
+
+
+class TestIssueCascadeAgentDeactivationToTool:
+    """Test suite for Cascade A2A agent deactivation to associated tool.
+
+    When an A2A agent is deactivated, its associated tool should also be
+    deactivated. When re-activated, the tool should be re-activated too.
+    """
+
+    @pytest.fixture
+    def a2a_service(self):
+        """Create A2A agent service instance."""
+        return A2AAgentService()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create mock database session."""
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def sample_agent_with_tool(self):
+        """Sample A2A agent with an associated tool."""
+        agent = MagicMock(spec=DbA2AAgent)
+        agent.id = uuid.uuid4().hex
+        agent.name = "test-agent"
+        agent.slug = "test-agent"
+        agent.description = "Test agent"
+        agent.endpoint_url = "http://localhost:8000/run"
+        agent.agent_type = "custom"
+        agent.protocol_version = "1.0"
+        agent.capabilities = {}
+        agent.config = {}
+        agent.enabled = True
+        agent.reachable = True
+        agent.tool_id = uuid.uuid4().hex
+        agent.tags = []
+        agent.team_id = None
+        agent.owner_email = None
+        agent.visibility = "public"
+        agent.created_at = datetime.now(timezone.utc)
+        agent.updated_at = datetime.now(timezone.utc)
+        agent.version = 1
+        agent.metrics = []
+        agent.servers = []
+        return agent
+
+    @patch("mcpgateway.services.a2a_service._get_registry_cache")
+    @patch("mcpgateway.services.a2a_service.a2a_stats_cache")
+    async def test_deactivating_agent_deactivates_tool(
+        self,
+        mock_stats_cache,
+        mock_get_cache,
+        a2a_service,
+        mock_db,
+        sample_agent_with_tool,
+    ):
+        """Test that deactivating an A2A agent sets its tool to enabled=False."""
+        agent = sample_agent_with_tool
+        agent.enabled = True
+
+        # Mock DB to return the agent
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        # Mock cache
+        mock_cache = MagicMock()
+        mock_cache.invalidate_agents = AsyncMock()
+        mock_cache.invalidate_tools = AsyncMock()
+        mock_get_cache.return_value = mock_cache
+
+        # Track the update call for the tool
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 1
+
+        # First execute call returns agent, second is the tool update
+        execute_results = [MagicMock(scalar_one_or_none=MagicMock(return_value=agent)), tool_update_result]
+        mock_db.execute.side_effect = execute_results
+
+        # Mock convert_agent_to_read
+        with patch.object(a2a_service, "convert_agent_to_read", return_value=MagicMock()):
+            await a2a_service.set_agent_state(mock_db, agent.id, activate=False)
+
+        # Verify agent was deactivated
+        assert agent.enabled is False
+
+        # Verify db.execute was called twice (once for agent lookup, once for tool update)
+        assert mock_db.execute.call_count == 2
+
+        # Verify tools cache was invalidated
+        mock_cache.invalidate_tools.assert_called_once()
+
+    @patch("mcpgateway.services.a2a_service._get_registry_cache")
+    @patch("mcpgateway.services.a2a_service.a2a_stats_cache")
+    async def test_activating_agent_activates_tool(
+        self,
+        mock_stats_cache,
+        mock_get_cache,
+        a2a_service,
+        mock_db,
+        sample_agent_with_tool,
+    ):
+        """Test that activating an A2A agent sets its tool to enabled=True."""
+        agent = sample_agent_with_tool
+        agent.enabled = False
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        mock_cache = MagicMock()
+        mock_cache.invalidate_agents = AsyncMock()
+        mock_cache.invalidate_tools = AsyncMock()
+        mock_get_cache.return_value = mock_cache
+
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 1
+
+        execute_results = [MagicMock(scalar_one_or_none=MagicMock(return_value=agent)), tool_update_result]
+        mock_db.execute.side_effect = execute_results
+
+        with patch.object(a2a_service, "convert_agent_to_read", return_value=MagicMock()):
+            await a2a_service.set_agent_state(mock_db, agent.id, activate=True)
+
+        assert agent.enabled is True
+        assert mock_db.execute.call_count == 2
+        mock_cache.invalidate_tools.assert_called_once()
+
+    @patch("mcpgateway.services.a2a_service._get_registry_cache")
+    @patch("mcpgateway.services.a2a_service.a2a_stats_cache")
+    async def test_no_tool_update_when_agent_has_no_tool(
+        self,
+        mock_stats_cache,
+        mock_get_cache,
+        a2a_service,
+        mock_db,
+        sample_agent_with_tool,
+    ):
+        """Test that no tool update occurs when agent has no associated tool."""
+        agent = sample_agent_with_tool
+        agent.tool_id = None  # No associated tool
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        mock_cache = MagicMock()
+        mock_cache.invalidate_agents = AsyncMock()
+        mock_cache.invalidate_tools = AsyncMock()
+        mock_get_cache.return_value = mock_cache
+
+        with patch.object(a2a_service, "convert_agent_to_read", return_value=MagicMock()):
+            await a2a_service.set_agent_state(mock_db, agent.id, activate=False)
+
+        # Only one execute call (agent lookup), no tool update
+        assert mock_db.execute.call_count == 1
+        mock_cache.invalidate_tools.assert_not_called()
+
+    @patch("mcpgateway.services.a2a_service._get_registry_cache")
+    @patch("mcpgateway.services.a2a_service.a2a_stats_cache")
+    async def test_no_tool_update_when_tool_already_matches(
+        self,
+        mock_stats_cache,
+        mock_get_cache,
+        a2a_service,
+        mock_db,
+        sample_agent_with_tool,
+    ):
+        """Test that no commit occurs when tool already has matching enabled state."""
+        agent = sample_agent_with_tool
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = agent
+
+        mock_cache = MagicMock()
+        mock_cache.invalidate_agents = AsyncMock()
+        mock_cache.invalidate_tools = AsyncMock()
+        mock_get_cache.return_value = mock_cache
+
+        # Tool update returns 0 rows (already in desired state)
+        tool_update_result = MagicMock()
+        tool_update_result.rowcount = 0
+
+        execute_results = [MagicMock(scalar_one_or_none=MagicMock(return_value=agent)), tool_update_result]
+        mock_db.execute.side_effect = execute_results
+
+        with patch.object(a2a_service, "convert_agent_to_read", return_value=MagicMock()):
+            await a2a_service.set_agent_state(mock_db, agent.id, activate=False)
+
+        # Tool update was attempted but no commit needed (rowcount=0)
+        assert mock_db.execute.call_count == 2
+        mock_cache.invalidate_tools.assert_not_called()
